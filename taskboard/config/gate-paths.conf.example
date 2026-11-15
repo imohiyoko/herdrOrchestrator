@@ -1,0 +1,21 @@
+# 常に人に回すパス(人が編集する。実ファイル config/gate-paths.conf は gitignore。このファイルをコピーして使う)
+# 当たった変更は点数に関係なく ask(hard)。1 行 1 パターン。# 以降はコメント。
+# 実ファイルが無い・構文エラーのときは評価不能(終了コード 21)。場所は固定で、環境変数では差し替えられない。
+#
+# 書き方: パスは作業ツリーの根からの相対。* は / も越えて一致する(広めに当たる = 人に回る側)。
+#         **/ で始めると根直下にも当たる。大文字小文字は区別しない。改名は旧パスと新パスの両方を見る。
+#
+# 次は設定がなくても常に効く(外せない): .github/**  **/gate*.conf  **/gate-paths.conf  **/gate*.sh  **/approvals.conf  **/risk-rules.conf
+
+.github/**
+**/routes.conf
+**/spawn-policy.conf
+**/pr-queue.conf
+roles/**
+**/.claude/settings*.json
+**/CLAUDE.md
+scheduler/**
+publish/**
+bin/gh
+**/lib/approvals.sh
+**/lib/risk.sh

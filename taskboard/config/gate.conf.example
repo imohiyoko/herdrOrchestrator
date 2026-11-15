@@ -1,0 +1,25 @@
+# merge / approve の判定の設定(人が編集する。実ファイル config/gate.conf は gitignore。このファイルをコピーして使う)
+# 説明: docs/gate.md。段 0 は判定の参考値を出すだけで、実行(tb gate execute)は常に無効。
+#
+# 実ファイルが無い・読めない・構文エラー・未知のキー・範囲外の値は「評価不能」(終了コード 21 = ask と同じ扱い)。
+# 場所は固定で、環境変数では差し替えられない。tb に編集コマンドは無い(人が手で編集する)。
+# 値は例(架空)。実際の値は人が決める。
+
+[mode]
+state = disabled              # disabled | shadow | enabled(段 0 では挙動に影響しない)
+
+[repos]
+allow = example-owner/example-repo     # コンマ区切り。空 = どこでも allow にならない
+
+[pr-kinds]                    # 段 0 では検査するだけで、判定には使わない
+approve = docs-only
+merge   = docs-only
+
+[threshold]                   # 点がこの値以下で allow(hard に当たらないとき)
+approve = 2                   # 上限 2。これより大きい値は警告して上限のままにする
+merge   = 1                   # 上限 1
+
+[limits]                      # 段 0 では検査するだけ
+merge-per-day = 3
+merge-min-interval-min = 30
+approve-per-day = 5
