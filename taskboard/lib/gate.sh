@@ -293,12 +293,13 @@ gate_eval() {
   for ((i = 0; i < ${#R_LIN[@]}; i++)); do
     ((R_OK[i])) || continue
     [[ $failed != *" ${R_LIN[i]} "* ]] || continue         # 同じ sha で 1 件でも fail の系統は数えない
+    [[ ${R_BY[i]} != human ]] || continue                  # 送信者 human(pane が無い = 誰でも名乗れる)は独立な系統の根拠に数えない(fail は上で効く)
     ((R_SHD[i] > 0)) && should=1
     [[ $lins != *" ${R_LIN[i]} "* && $senders != *" ${R_BY[i]} "* ]] || continue   # 系統も送信者も、すでに数えたものと別であること
     lins+="${R_LIN[i]} "; senders+="${R_BY[i]} "; nlin=$((nlin+1))
   done
   if ((nvalid == 0)); then GATE_HARD+=("H-03 head に対する有効なレビューの記録が無い")
-  elif ((nlin < 2)); then GATE_HARD+=("H-03 独立した 2 系統の pass がそろっていない(数えられた系統: $nlin)"); fi
+  elif ((nlin < 2)); then GATE_HARD+=("H-03 独立した 2 系統の pass がそろっていない(数えられた系統: $nlin。送信者 human は数えない)"); fi
   if [[ $G_TEST == run ]]; then
     if ((G_TEST_EXIT != 0)); then GATE_HARD+=("H-03 テストが失敗(exit=$G_TEST_EXIT)")
     elif [[ $G_TEST_SHA != "$G_HEAD" ]]; then GATE_HARD+=("H-03 テストの sha が head と一致しない"); fi
