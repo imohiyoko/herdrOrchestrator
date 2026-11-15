@@ -1,0 +1,17 @@
+# 外部レビュー(CodeRabbit など)の取り込み(tb gate ingest-review)の設定。人が編集する。
+# 実ファイル config/gate-ingest.conf は gitignore。このファイルをコピーして使う。説明: docs/gate.md
+# 場所は固定で、環境変数では差し替えられない。tb に編集コマンドは無い。無い・壊れている・gh が使えないときは取り込みを止める(fail-closed)。
+
+[gh]
+# 読み取り専用の gh ラッパーの絶対パス(必須。PATH 上の gh には落とさない)。tb は GET の api だけを呼ぶ
+path =
+
+[source]
+# 取り込む外部レビューの投稿者(これ以外の投稿者の指摘・レビューは数えない)
+login = coderabbitai[bot]
+
+[severity]
+# 重大度の表記 = blocker | should。指摘の 1 行目に表記(小文字化して部分一致)があれば対応先に数える。複数当たれば blocker が優先。
+# 表に無い表記は should(保守的)。blocker に上げる方向の変更だけが効く(should に下げる設定は警告して無視)。
+# 既定: critical = blocker / major = blocker / potential issue, minor, trivial, nitpick, refactor suggestion = should
+# security = blocker

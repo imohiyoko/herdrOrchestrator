@@ -9,6 +9,10 @@ GATE_CONF="${TB_ROOT:-.}/config/gate.conf"
 GATE_PATHS="${TB_ROOT:-.}/config/gate-paths.conf"
 # レビュー結果の記録(追記専用の定型ファイル。tb review-submit だけが追記する)。場所は固定で、env では差し替えられない
 GATE_REVIEWS="${TB_ROOT:-.}/data/gate-reviews.log"
+# 外部レビューの取り込み(tb gate ingest-review)の設定。場所は固定で、env では差し替えられない
+GATE_INGEST_CONF="${TB_ROOT:-.}/config/gate-ingest.conf"
+# 取り込み口の送信者名(固定)。agent が review-submit では名乗れない。外部系統の記録は、この送信者のものだけを数える
+GATE_INGEST_SENDER="ingest"
 # agent の pane から review-submit できる役割(固定。roles/ の固定の置き場と台帳から決める。env では変えられない)
 GATE_REVIEW_ROLES=" reviewer "
 # 外部系統(agent が名乗れない系統)。scheduler などの非 agent の経路だけが記録する
@@ -241,7 +245,7 @@ GATE_REC_RE='^ts=([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z) task=(
 # R_* に、この chain の記録を入れる(R_OK=1: head の sha と一致し pr も矛盾しない = 有効 / 0 = 無効。理由は R_NOTE)
 _gate_load_reviews() {
   local LC_ALL=C chain=$1 head=$2 pr=$3 line n=0
-  R_TS=(); R_BY=(); R_LIN=(); R_SHA=(); R_BLK=(); R_SHD=(); R_VER=(); R_OK=(); R_NOTE=()
+  R_TS=(); R_BY=(); R_LIN=(); R_SHA=(); R_BLK=(); R_SHD=(); R_VER=(); R_OK=(); R_NOTE=(); R_CNT=()
   local f=$GATE_REVIEWS
   [[ -e $f ]] || { GATE_ERR="レビューの記録がありません(data/gate-reviews.log)"; return 1; }
   [[ -f $f && ! -L $f && -r $f ]] || { GATE_ERR="レビューの記録を読めません(通常のファイルではない)"; return 1; }
@@ -252,9 +256,17 @@ _gate_load_reviews() {
     [[ ${BASH_REMATCH[2]} == "$chain" ]] || continue
     R_TS+=("${BASH_REMATCH[1]}"); R_BY+=("${BASH_REMATCH[3]}"); R_LIN+=("${BASH_REMATCH[5]}"); R_SHA+=("${BASH_REMATCH[6]}")
     R_BLK+=("$((10#${BASH_REMATCH[7]}))"); R_SHD+=("$((10#${BASH_REMATCH[8]}))"); R_VER+=("${BASH_REMATCH[9]}")
+    local cnt=1 cnote=""
+    if [[ ${BASH_REMATCH[3]} == human ]]; then cnt=0; cnote="独立系統には数えない: 送信者 human"
+    elif [[ $GATE_RESERVED_LINEAGES == *" ${BASH_REMATCH[5]} "* && ${BASH_REMATCH[3]} != "$GATE_INGEST_SENDER" ]]; then
+      cnt=0; cnote="独立系統には数えない: 外部系統は送信者 $GATE_INGEST_SENDER の記録だけが数えられる(自称)"
+    elif [[ $GATE_RESERVED_LINEAGES != *" ${BASH_REMATCH[5]} "* && ${BASH_REMATCH[3]} == "$GATE_INGEST_SENDER" ]]; then
+      cnt=0; cnote="独立系統には数えない: 送信者 $GATE_INGEST_SENDER は外部系統の記録だけに使われる"
+    fi
+    R_CNT+=("$cnt")
     if [[ ${BASH_REMATCH[6]} != "$head" ]]; then R_OK+=(0); R_NOTE+=("無効: sha が head と一致しない")
     elif [[ ${BASH_REMATCH[4]} != - && -n $pr && ${BASH_REMATCH[4]} != "$pr" ]]; then R_OK+=(0); R_NOTE+=("無効: 記録の PR(${BASH_REMATCH[4]})が対象と違う")
-    else R_OK+=(1); R_NOTE+=("有効"); fi
+    else R_OK+=(1); R_NOTE+=("有効${cnote:+($cnote)}"); fi
   done <"$f"
   return 0
 }
@@ -309,13 +321,13 @@ gate_eval() {
   for ((i = 0; i < ${#R_LIN[@]}; i++)); do
     ((R_OK[i])) || continue
     [[ $failed != *" ${R_LIN[i]} "* ]] || continue         # 同じ sha で 1 件でも fail の系統は数えない
-    [[ ${R_BY[i]} != human ]] || continue                  # 送信者 human(pane が無い = 誰でも名乗れる)は独立な系統の根拠に数えない(fail は上で効く)
+    ((R_CNT[i])) || continue                               # 送信者 human(誰でも名乗れる)と、自称の外部系統(送信者が ingest でない coderabbit など)は、独立な系統の根拠に数えない(fail は上で効く)
     ((R_SHD[i] > 0)) && should=1
     [[ $lins != *" ${R_LIN[i]} "* && $senders != *" ${R_BY[i]} "* ]] || continue   # 系統も送信者も、すでに数えたものと別であること
     lins+="${R_LIN[i]} "; senders+="${R_BY[i]} "; nlin=$((nlin+1))
   done
   if ((nvalid == 0)); then GATE_HARD+=("H-03 head に対する有効なレビューの記録が無い")
-  elif ((nlin < 2)); then GATE_HARD+=("H-03 独立した 2 系統の pass がそろっていない(数えられた系統: $nlin。送信者 human は数えない)"); fi
+  elif ((nlin < 2)); then GATE_HARD+=("H-03 独立した 2 系統の pass がそろっていない(数えられた系統: $nlin。送信者 human と自称の外部系統は数えない)"); fi
   if [[ $G_TEST == run ]]; then
     if ((G_TEST_EXIT != 0)); then GATE_HARD+=("H-03 テストが失敗(exit=$G_TEST_EXIT)")
     elif [[ $G_TEST_SHA != "$G_HEAD" ]]; then GATE_HARD+=("H-03 テストの sha が head と一致しない"); fi
@@ -390,8 +402,9 @@ cmd_gate() {
   local sub=${1:-}; shift || true
   case $sub in
     evaluate) _gate_cmd_evaluate "$@";;
+    ingest-review) _gate_cmd_ingest "$@";;
     execute) _gate_cmd_execute "$@";;
-    *) usage "使い方: tb gate evaluate|execute <chain-id> --action merge|approve";;
+    *) usage "使い方: tb gate evaluate|execute <chain-id> --action merge|approve / tb gate ingest-review <task-id> --pr <o>/<r>#<n> --sha <sha>";;
   esac
 }
 
@@ -430,6 +443,17 @@ _gate_cmd_execute() {
   _gate_args 0 "$@"
   echo "gate: execute は無効です(段 0。何も実行せず、何も記録しません)" >&2
   return 30
+}
+
+# ---------- 記録の追記(review-submit と ingest-review の共通) ----------
+# _gate_append_record <task> <by> <pr> <lin> <sha> <blk> <shd> <ver> <ev>。固定の置き場に 1 行だけ追記する。symlink は拒否。既存の行は書き換えない
+_gate_append_record() {
+  local f=$GATE_REVIEWS line
+  mkdir -p "$(dirname "$f")" || die "記録の置き場を作れません"
+  if [[ -L $f || ( -e $f && ! -f $f ) ]]; then die "記録の置き場が通常のファイルではありません"; fi
+  line="ts=$(now) task=$1 by=$2 pr=$3 REVIEW $4 $5 blocker=$6 should=$7 verdict=$8 evidence=$9"
+  [[ $line =~ $GATE_REC_RE ]] || die "記録の形を作れませんでした(内部エラー)"
+  ( umask 077; printf '%s\n' "$line" >>"$f" ) || die "記録に失敗しました"
 }
 
 # ---------- review-submit(レビュー結果の記録の口) ----------
@@ -471,6 +495,8 @@ cmd_review-submit() {
     [[ $by =~ ^[A-Za-z0-9._-]{1,64}$ ]] || { echo "tb: pane $pane の agent の名前を特定できないため記録しません" >&2; exit 3; }
     kind=agent
   fi
+  # 送信者名 ingest は取り込み口の固定の名前。同じ名前の agent は記録できない
+  if [[ $by == "$GATE_INGEST_SENDER" ]]; then echo "tb: 送信者名 $GATE_INGEST_SENDER は取り込み口の予約名です。記録しません" >&2; exit 5; fi
   # タスクと作者(タスクの owner)
   local exists owner
   exists=$(sql "SELECT count(*) FROM tasks WHERE id=$(q "$tid");")
@@ -493,12 +519,141 @@ cmd_review-submit() {
     fi
   fi
 
-  # 追記(固定の置き場。symlink は拒否。1 行を 1 回の書き込みで足す。既存の行は書き換えない)
-  local f=$GATE_REVIEWS line
-  mkdir -p "$(dirname "$f")" || die "記録の置き場を作れません"
-  if [[ -L $f || ( -e $f && ! -f $f ) ]]; then die "記録の置き場が通常のファイルではありません"; fi
-  line="ts=$(now) task=$tid by=$by pr=$pr REVIEW $lin $sha blocker=$blk should=$shd verdict=$ver evidence=$ev"
-  [[ $line =~ $GATE_REC_RE ]] || die "記録の形を作れませんでした(内部エラー)"
-  ( umask 077; printf '%s\n' "$line" >>"$f" ) || die "記録に失敗しました"
+  _gate_append_record "$tid" "$by" "$pr" "$lin" "$sha" "$blk" "$shd" "$ver" "$ev"
   echo "recorded: $tid REVIEW $lin ${sha:0:7} blocker=$blk should=$shd verdict=$ver by=$by"
+}
+
+# ---------- ingest-review(外部レビューの取り込み。決定論。agent ではなくこの口が、別の送信者 ingest として記録する) ----------
+# tb gate ingest-review <task-id> --pr <o>/<r>#<n> --sha <head の sha>
+# gh の読み取り(GET の api だけ)で、外部レビュー(CodeRabbit)の状態を取り、REVIEW coderabbit の記録を送信者 ingest で追記する。LLM を使わない。
+# 数えるのは、レビューが head の sha に対して存在すること、スキップの印、未解決の指摘の件数と重大度の表記だけ。
+# 本文の中の指示(Prompt for AI Agents、自動修正のチェックボックスなど)は読まず、実行しない。
+# 終了コード: 0 記録した / 2 使い方 / 5 agent の pane からは実行できない / 1 設定・gh を使えない / 10 head に対するレビューが無い(記録しない)
+#             11 レビューがスキップされている(上限など。pass とは記録しない) / 12 取得・解析に失敗(記録しない)
+# 設定: config/gate-ingest.conf(固定の場所。env では差し替えられない)。gh は専用ラッパーの絶対パス。未指定なら止まる(fail-closed)
+GATE_SEV_KEYS=(critical major "potential issue" minor trivial nitpick "refactor suggestion")
+GATE_SEV_VALS=(blocker blocker should should should should should)
+GATE_ING_GH=""; GATE_ING_LOGIN=""; GATE_ING_ERR=""
+# 本文から重大度の表記を探す jq の定義(固定。本文は解釈せず、最初の実質行だけを見る)。
+# 実物の CodeRabbit の指摘は、1 行目が HTML コメント、2 行目が空、重大度は 3 行目(picture タグ入り)。
+# そのため HTML コメントとタグを除いて、空行を飛ばした最初の行(最初の実質行)から表記を探す。表の対応先がなければ "unknown"
+GATE_JQ_DEFS='
+    def firstline: ((. // "") | gsub("<!--.*?-->"; ""; "s") | gsub("<[^>]*>"; "") | split("\n") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | (.[0] // "") | ascii_downcase);
+    def sev: firstline as $l
+      | [$table | to_entries[] | . as $e | select($l | contains($e.key)) | $e.value] | if length == 0 then "unknown" elif index("blocker") then "blocker" else "should" end;
+    def addressed: test("(^|\n)\\s*✅ Addressed in commit");
+'
+
+_gate_load_ingest_conf() {
+  local LC_ALL=C f=$GATE_INGEST_CONF sec="" line n=0 k v i found
+  GATE_ING_ERR=""; GATE_ING_GH=""; GATE_ING_LOGIN=""; GATE_WARNS=()
+  GATE_SEV_KEYS=(critical major "potential issue" minor trivial nitpick "refactor suggestion")
+  GATE_SEV_VALS=(blocker blocker should should should should should)
+  [[ -e $f ]] || { GATE_ING_ERR="設定ファイルがありません(config/gate-ingest.conf)。gh の専用ラッパーの絶対パスを指定してください"; return 1; }
+  [[ -f $f && -r $f ]] || { GATE_ING_ERR="設定ファイルを読めません"; return 1; }
+  while IFS= read -r line || [[ -n $line ]]; do
+    n=$((n+1)); line=$(_gate_trim "${line%%#*}")
+    [[ -z $line ]] && continue
+    if [[ $line =~ ^\[([a-z]+)\]$ ]]; then
+      sec=${BASH_REMATCH[1]}
+      [[ $sec == gh || $sec == source || $sec == severity ]] || { GATE_ING_ERR="L$n: 未知の節 [$sec]"; return 1; }
+      continue
+    fi
+    [[ -n $sec && $line == *=* ]] || { GATE_ING_ERR="L$n: '[節]' の後の 'キー = 値' の形ではありません"; return 1; }
+    k=$(_gate_trim "${line%%=*}"); v=$(_gate_trim "${line#*=}")
+    case $sec.$k in
+      gh.path) GATE_ING_GH=$v;;
+      source.login) [[ $v =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,38}(\[bot\])?$ ]] || { GATE_ING_ERR="L$n: login の形が不正です"; return 1; }; GATE_ING_LOGIN=$v;;
+      severity.*)
+        [[ $k =~ ^[a-z][a-z0-9\ -]{0,31}$ ]] || { GATE_ING_ERR="L$n: 重大度の表記は小文字英数字・空白・- の 32 文字までです: $k"; return 1; }
+        [[ $v == blocker || $v == should ]] || { GATE_ING_ERR="L$n: 重大度の対応先は blocker | should です: $v"; return 1; }
+        found=0
+        for ((i = 0; i < ${#GATE_SEV_KEYS[@]}; i++)); do
+          [[ ${GATE_SEV_KEYS[i]} == "$k" ]] || continue
+          found=1
+          if [[ ${GATE_SEV_VALS[i]} == blocker && $v == should ]]; then GATE_WARNS+=("緩め設定は無効: [severity] $k = should(blocker のまま)")
+          else GATE_SEV_VALS[i]=$v; fi
+        done
+        ((found)) || { GATE_SEV_KEYS+=("$k"); GATE_SEV_VALS+=("$v"); };;
+      *) GATE_ING_ERR="L$n: 未知のキー [$sec] $k"; return 1;;
+    esac
+  done <"$f"
+  [[ -n $GATE_ING_LOGIN ]] || { GATE_ING_ERR="[source] login がありません(例: coderabbitai[bot])"; return 1; }
+  if [[ -z $GATE_ING_GH ]]; then GATE_ING_ERR="[gh] path が指定されていないため止めます(fail-closed)。専用の gh ラッパーの絶対パスを指定してください。PATH 上の gh には落としません"; return 1; fi
+  if [[ $GATE_ING_GH != /* || ! -f $GATE_ING_GH || ! -x $GATE_ING_GH ]]; then GATE_ING_ERR="指定された gh を使えないため止めます(fail-closed): $GATE_ING_GH"; return 1; fi
+  return 0
+}
+
+# _gate_ingest_fetch <gh> <path> <出力ファイル>: GET の api だけを固定の引数で呼ぶ。ページを連結して 1 つの配列にする。失敗は 1
+_gate_ingest_fetch() {
+  local out
+  out=$("$1" api --paginate "$2" 2>/dev/null) || return 1
+  printf '%s' "$out" | jq -s 'if length > 0 and all(.[]; type == "array") then add else error("not an array") end' >"$3" 2>/dev/null || return 1
+}
+
+_gate_cmd_ingest() {
+  [[ $# -ge 1 ]] || usage "gate ingest-review <task-id> --pr <o>/<r>#<n> --sha <head の sha>"
+  local LC_ALL=C tid=$1 pr="" sha=""; shift
+  valid_id "$tid"
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --pr) need_arg "$@"; pr=$2; shift 2;;
+      --sha) need_arg "$@"; sha=$2; shift 2;;
+      *) usage "gate ingest-review: 不明な引数 $1";;
+    esac
+  done
+  [[ $pr =~ ^([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)#([0-9]+)$ ]] || usage "--pr は <owner>/<repo>#<n>"
+  local owner=${BASH_REMATCH[1]} repo=${BASH_REMATCH[2]} num=${BASH_REMATCH[3]}
+  [[ $sha =~ ^[0-9a-f]{7,40}$ ]] || usage "--sha は 7〜40 桁の小文字 16 進"
+  # agent の pane からは実行できない(送信者 ingest を名乗らせない)。既知の限界: 環境変数を外せば破れる(docs/gate.md)
+  if [[ -n ${HERDR_PANE_ID:-} ]]; then echo "tb: gate ingest-review は agent の pane からは実行できません" >&2; exit 5; fi
+  local exists; exists=$(sql "SELECT count(*) FROM tasks WHERE id=$(q "$tid");")
+  [[ $exists == 1 ]] || die "タスクが見つかりません: $tid"
+  _gate_load_ingest_conf || { echo "tb: gate ingest-review: $GATE_ING_ERR" >&2; exit 1; }
+  local w; for w in "${GATE_WARNS[@]:-}"; do [[ -n $w ]] && echo "warn: $w" >&2; done
+  local tmp; tmp=$(mktemp -d) || die "一時ディレクトリを作れません"
+  # shellcheck disable=SC2064
+  trap "rm -rf '$tmp'" RETURN
+  local base="repos/$owner/$repo"
+  _gate_ingest_fetch "$GATE_ING_GH" "$base/pulls/$num/reviews" "$tmp/reviews.json" \
+    && _gate_ingest_fetch "$GATE_ING_GH" "$base/pulls/$num/comments" "$tmp/comments.json" \
+    && _gate_ingest_fetch "$GATE_ING_GH" "$base/issues/$num/comments" "$tmp/issues.json" \
+    || { echo "tb: gate ingest-review: 取得または解析に失敗したため記録しません(記録なし = 条件を満たさない)" >&2; exit 12; }
+  local table i; table="{}"
+  for ((i = 0; i < ${#GATE_SEV_KEYS[@]}; i++)); do table=$(jq -c --arg k "${GATE_SEV_KEYS[i]}" --arg v "${GATE_SEV_VALS[i]}" '. + {($k): $v}' <<<"$table"); done
+  # 判定は jq の固定のプログラム。本文は、1 行目の重大度の表記と、決まった印の有無を見るだけ
+  local res
+  res=$(jq -nc --arg login "$GATE_ING_LOGIN" --arg sha "$sha" --argjson table "$table" \
+      --slurpfile rv "$tmp/reviews.json" --slurpfile cm "$tmp/comments.json" --slurpfile is "$tmp/issues.json" "$GATE_JQ_DEFS"'
+    def lines($n): ((. // "") | split("\n")[:$n] | join("\n"));
+    def skipmark: lines(12) | test("rate limit|review skipped|reviews paused|usage limit|quota"; "i");
+    ($rv[0]) as $R | ($cm[0]) as $C | ($is[0]) as $I
+    | [$R[] | select(.user.login == $login and ((.commit_id // "") | test("^[0-9a-f]{40}$")) and ((.commit_id) | startswith($sha))
+        and (.state | IN("COMMENTED", "APPROVED", "CHANGES_REQUESTED")))] | sort_by(.submitted_at // "") as $heads
+    | if ($heads | length) == 0 then {status: "none"}
+      else ($heads | last) as $h
+      | if ($h.body | skipmark) then {status: "skipped"}
+        elif ([$I[] | select(.user.login == $login and ((.updated_at // "") > ($h.submitted_at // "")) and (.body | skipmark))] | length) > 0 then {status: "skipped"}
+        else
+          [$C[] | select(.user.login == $login and (.position != null or .subject_type == "file") and ((.body // "") | addressed | not)) | (.body | sev)] as $sevs
+          | {status: "ok", blocker: ([$sevs[] | select(. == "blocker")] | length), unknown: ([$sevs[] | select(. == "unknown")] | length),
+             should: ([$sevs[] | select(. == "should" or . == "unknown")] | length)}
+        end
+      end' 2>/dev/null) || { echo "tb: gate ingest-review: 解析に失敗したため記録しません" >&2; exit 12; }
+  local st blk shd ver
+  st=$(jq -r '.status // ""' <<<"$res")
+  case $st in
+    none) echo "tb: gate ingest-review: head($sha)に対する外部レビューがありません。記録しません(記録なし = 条件を満たさない)" >&2; exit 10;;
+    skipped) echo "tb: gate ingest-review: 外部レビューはスキップされています(上限など)。pass とは記録しません" >&2; exit 11;;
+    ok) ;;
+    *) echo "tb: gate ingest-review: 解析結果が不正なため記録しません" >&2; exit 12;;
+  esac
+  local unk
+  blk=$(jq -r '.blocker' <<<"$res"); shd=$(jq -r '.should' <<<"$res"); unk=$(jq -r '.unknown' <<<"$res")
+  [[ $blk =~ ^[0-9]{1,4}$ && $shd =~ ^[0-9]{1,4}$ && $unk =~ ^[0-9]{1,4}$ ]] || { echo "tb: gate ingest-review: 件数が範囲外のため記録しません" >&2; exit 12; }
+  # 重大度の表記が見つからなかった指摘は should として数える(blocker には数えない)。見落としに気づけるよう、件数を警告に出す
+  ((unk == 0)) || echo "warn: 重大度の表記が見つからない指摘が ${unk} 件あります(should として数えました。blocker には数えていません)" >&2
+  ver=pass; ((blk == 0)) || ver=fail
+  _gate_append_record "$tid" "$GATE_INGEST_SENDER" "$pr" coderabbit "$sha" "$blk" "$shd" "$ver" -
+  echo "recorded: $tid REVIEW coderabbit ${sha:0:7} blocker=$blk should=$shd verdict=$ver by=$GATE_INGEST_SENDER unknown-label=$unk"
 }
