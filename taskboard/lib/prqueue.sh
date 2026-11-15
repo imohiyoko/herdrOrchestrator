@@ -121,6 +121,7 @@ pq_guard() {
 pq_repo_dir_ok() {
   local d=${PR_QUEUE_REPO_DIR:-}
   [[ -n $d ]] || { PQ_REASON="PR_QUEUE_REPO_DIR が空(差分のガードは必須。clone のパスを指定する)"; return 1; }
+  [[ $d == /* ]] || { PQ_REASON="PR_QUEUE_REPO_DIR が絶対パスではない"; return 1; }
   [[ -d $d ]] || { PQ_REASON="PR_QUEUE_REPO_DIR が見つからない"; return 1; }
   git -C "$d" rev-parse -q --git-dir >/dev/null 2>&1 || { PQ_REASON="PR_QUEUE_REPO_DIR が git のリポジトリではない"; return 1; }
 }
@@ -256,7 +257,7 @@ pq_auth_locked() {  # $1=dry
 
 # scheduler の COMMAND から。approved だけを処理する。--dry-run は gh pr create も DB 更新もしない
 pq_run() {
-  local dry=0 gh id row repo branch title file out rc n url made=0 maxc lrc
+  local dry=0 gh id row repo branch title file out rc n url made=0 maxc lrc locked=0
   case ${1:-} in "") ;; --dry-run) dry=1;; *) usage "pr-queue run [--dry-run]";; esac
   pq_gh || return 1; gh=$PQ_GH
   # 環境の不備(clone が無い)で承認済みの行を却下しない。行には触らず、警告して止まる(直せば次の回に進む)
@@ -274,13 +275,12 @@ pq_run() {
     fi
     # 重複確認(読み取り)。取れないときは作らない(次の回に回す)
     out=$("$gh" pr list --repo "$repo" --head "$branch" --state open --json number 2>/dev/null) && lrc=0 || lrc=$?
-    if ((lrc == PQ_AUTH_RC)); then pq_auth_locked "$dry"; break; fi
+    if ((lrc == PQ_AUTH_RC)); then pq_auth_locked "$dry"; locked=1; break; fi
     if ((lrc != 0)) || ! jq -e 'type=="array"' <<<"$out" >/dev/null 2>&1; then
       echo "PQ-$id skipped: 重複確認の gh pr list に失敗(作らない)"
       ((dry)) || sql "UPDATE pr_queue SET attempts=attempts+1, last_error='重複確認に失敗' WHERE id=$id;"
       pq_cap_attempts "$id" "$dry"; continue
     fi
-    ((dry)) || sql "UPDATE pr_queue SET last_error=NULL WHERE last_error='auth-locked';"   # token が取れた = 止まりは解けた
     n=$(jq 'length' <<<"$out")
     if ((n > 0)); then
       echo "PQ-$id rejected: 同じ head の open PR が既にある"
@@ -293,13 +293,15 @@ pq_run() {
       url=$(grep -Eo 'https://[^[:space:]]+/pull/[0-9]+' <<<"$out" | head -n 1 || true)
       sql "UPDATE pr_queue SET status='created', pr_url=NULLIF($(q "$url"),''), last_error=NULL, executed_at=$(q "$(now)") WHERE id=$id AND status='approved';"
       echo "PQ-$id created${url:+: $url}"; made=$((made+1))
-    elif ((rc == PQ_AUTH_RC)); then pq_auth_locked 0; break
+    elif ((rc == PQ_AUTH_RC)); then pq_auth_locked 0; locked=1; break
     else
       sql "UPDATE pr_queue SET attempts=attempts+1, last_error=$(q "gh pr create が失敗(exit $rc)") WHERE id=$id;"
       echo "PQ-$id error: gh pr create が失敗(exit $rc)"
       pq_cap_attempts "$id" 0
     fi
   done < <(sql "SELECT id FROM pr_queue WHERE status='approved' ORDER BY id;")
+  # 印を消すのは、この run が認証で止まらずに最後まで進んだときだけ(list が通って create が 75 のときに毎回消えて、毎回通知されるのを防ぐ)
+  ((locked || dry)) || sql "UPDATE pr_queue SET last_error=NULL WHERE last_error='auth-locked';"
   return 0
 }
 
@@ -328,7 +330,7 @@ pq_scan() {
   repos=$(pq_repos); [[ -n $repos ]] || { echo "pr-queue scan: 許可リスト(config/repos.md)が空" >&2; return 0; }
   if [[ -z $repo ]]; then n=$(grep -c . <<<"$repos"); ((n == 1)) || { echo "pr-queue scan: 許可リストが複数。--repo を付ける" >&2; return 0; }; repo=$repos; fi
   grep -qxF -- "$repo" <<<"$repos" || { echo "pr-queue scan: リポジトリが許可リストに無い" >&2; return 0; }
-  [[ -n $d && -d $d ]] || { echo "pr-queue scan: PR_QUEUE_REPO_DIR(clone)が必要" >&2; return 0; }
+  pq_repo_dir_ok || { echo "pr-queue scan: $PQ_REASON。止めます(fail-closed)" >&2; return 1; }
   pq_gh || return 1; gh=$PQ_GH
   root=$(pq_body_root) || { echo "pr-queue scan: 本文のルートが無い" >&2; return 0; }
   auto=$(pq_conf auto_approve 0); [[ $auto == 1 ]] && st=approved || st=pending

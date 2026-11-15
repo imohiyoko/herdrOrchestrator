@@ -144,6 +144,7 @@ for _bad in "" "$TMP/no-such-dir" "$TMP"; do
   : >"$FAKE_GH_LOG"; PR_QUEUE_REPO_DIR=$_bad $TB pr-queue run >/dev/null 2>&1
   eq "diff guard required: run with REPO_DIR='${_bad##*/}' creates nothing and leaves it approved" "$(pqgh 'pr create') $(pqsql "SELECT status FROM pr_queue WHERE id=$rqid;")" "0 approved"
 done
+eq "diff guard required: a relative PR_QUEUE_REPO_DIR is refused (run and scan stop, exit 1)" "$(cd "$TMP" && PR_QUEUE_REPO_DIR=pq-clone rc $TB pr-queue run) $(cd "$TMP" && PR_QUEUE_REPO_DIR=pq-clone rc $TB pr-queue scan) $(PR_QUEUE_REPO_DIR= rc $TB pr-queue scan)" "1 1 1"
 unset _bad; $TB pr-queue reject $rqid -m 'REPO_DIR テスト用' >/dev/null
 # ---- scan: origin の agent/* を走査してキューに積む(疑似 git: ls-remote / fetch / log だけ差し替え、残りは本物の git)
 PQ_FAKEGIT=$TMP/pq-git; mkdir -p "$TMP/pq-titles"
@@ -250,6 +251,13 @@ eq "auth-locked on gh pr create (75): attempts not consumed" "$(pqsql "SELECT st
 FAKE_GH_RC=1 $TB pr-queue run >/dev/null 2>&1
 eq "any other failure (exit 1) still consumes attempts" "$(pqsql "SELECT status||attempts FROM pr_queue WHERE id=$al3;")" "approved1"
 $TB pr-queue run >/dev/null 2>&1
+# list は通り create だけ 75 を返し続ける状態: run を 4 回しても通知は 1 件。印を消すのは、run が認証で止まらず最後まで進んだときだけ
+pqbody al4; pqadd agent/al4 al4 >/dev/null; al4=$(pqsql 'SELECT MAX(id) FROM pr_queue;'); $TB pr-queue approve $al4 >/dev/null
+w1=$(pqwarn)
+for _i in 1 2 3 4; do PR_QUEUE_GH=$TMP/pq-gh75 $TB pr-queue run >/dev/null 2>&1; done
+eq "list ok + create 75 x4: one notification, mark stays, attempts untouched" "$(($(pqwarn)-w1)) $(pqsql "SELECT status||attempts||':'||last_error FROM pr_queue WHERE id=$al4;")" "1 approved0:auth-locked"
+$TB pr-queue run >/dev/null 2>&1
+eq "a run that goes through (no auth stop) clears the mark and creates" "$(pqsql "SELECT status||(last_error IS NULL) FROM pr_queue WHERE id=$al4;")" "created1"
 unset TB_NOTIFY_DEDUPE_SEC TB_NOTIFY_ENABLED TB_NOTIFY_DIR TB_NOTIFY_CONF
 
 # ---- failed から人が戻す: tb pr-queue retry <PQ-n>(人だけ。failed だけ。attempts を 0 に戻し approved へ)
