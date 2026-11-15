@@ -97,7 +97,8 @@ POST/PUT/DELETE/PATCH は 405。
 | `/agents` | agent 一覧(状態・workspace・いま何を・最終入力/停止・警告・止めてよいか・停止ボタン)、承認待ちの agent 操作、停止中の agent(復活ボタン)、直近の操作 |
 | `/agent-new` | 新しい agent を作るフォーム(名前・作業ディレクトリ・モデル・役割・止めてよいか・最初の指示) |
 | `/agents/<名前>` | 状態、担当タスク、直近の出力(`herdr agent read`)、最終入力/停止、`session_id`、手元で開く `herdr agent attach`(`claude --resume` は会話が枝分かれするので出さない) |
-| `/tasks`, `/tasks/<id>` | タスク一覧(`?project=` `?status=` で絞り込み)と詳細(報告・成果物・代行依頼) |
+| `/tasks` | タスク一覧(読み取りのみ)。状態の件数サマリ(todo / in_progress / review / done / blocked)、`?project=` `?owner=`(担当 agent) `?status=` `?unreported=1`(未報告だけ) `?stale=1`(in_progress のまま 24 時間超更新が無い「停滞」だけ。しきい値は `app/config.py` の `TASK_STALE_HOURS`)で絞り込み、`?sort=`(`oldest` / `created` / `id`)で並び替え。親子(parent_id)、session、報告の種別ごとの件数(人が未対応の question / blocked を強調)、成果物の数、停滞の目印を出す。題は先頭 80 文字だけ。期限・優先度は tb に無いので出さない |
+| `/tasks/<id>` | タスクの詳細: 親へのリンク・子タスクの一覧・session・成果物のパス・報告(先頭 1000 文字、人が対応済みにしたか)・代行依頼。報告の「対応済みにする」(`/resolve`)は既存の操作で、このページで増えた書き込みは無い |
 | `/inbox` | 要対応(question・blocked・pending-human・blocked の agent)を上に、直近の報告を下に |
 | `/docs` | agent が成果物として報告したドキュメント(ローカルのファイル)の一覧。新しい順、`?q=` で絞り込み |
 | `/docs/view?ref=<参照>` | そのドキュメントを読む。Markdown は整形して表示(Mermaid は図に。「元のテキストを表示」で切り替え)、フォルダなら中のファイル一覧 |

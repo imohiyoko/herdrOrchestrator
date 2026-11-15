@@ -14,6 +14,7 @@ HOST = "127.0.0.1"
 COOKIE = "herdr_webui_session"
 REFRESH_SEC = 8
 CACHE_TTL = 3.0
+TASK_STALE_HOURS = 24  # in_progress のまま最終更新からこの時間を超えたタスクに「停滞」の目印を付ける
 STALL_MIN = 30  # working のまま最終入力から何分超で滞留警告にするか
 
 

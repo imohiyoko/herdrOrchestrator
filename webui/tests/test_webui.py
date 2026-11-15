@@ -13,6 +13,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timedelta, timezone
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -297,6 +298,19 @@ for i in range(110):
     _c.execute("INSERT INTO messages (kind,ref,target,body,result,created_at) VALUES ('report','T-1','gamma',?,'sent','2026-11-06T01:00:00Z')", (f"reportbody-{i}",))
 _c.execute("INSERT INTO messages (kind,ref,target,body,result,created_at) VALUES ('scheduler','j1','alpha','sched-busy','busy','2026-11-03T01:00:00Z')")
 _c.execute("INSERT INTO messages (kind,ref,target,body,result,created_at) VALUES ('send','O-99','alpha',?,'sent','2026-11-05T02:00:00Z')", ("\nSECOND-LINE-SECRET-LEAD",))
+
+# タスク一覧の fixture(親子・担当・PJ・未報告・停滞・長い題・長い報告)
+_now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+_t_ins = "INSERT INTO tasks VALUES (?,?,?,?,NULL,NULL,?,?,'[]',NULL,NULL,?,?,?)"
+for _row in [("T-2", "pj", "親 " + XSS, "beta", "todo", None, None, _now_iso, _now_iso),
+             ("T-3", "pj2", "子", "alpha", "in_progress", "T-2", "2026-11-07T00:00:00Z", _now_iso, _now_iso),
+             ("T-4", "pj2", "x" * 200 + "TITLETAIL", "alpha", "done", "T-2", "2026-11-07T00:00:00Z", _now_iso, _now_iso),
+             ("T-5", "pj2", "古い", "gamma", "blocked", None, None, "2026-11-01T00:00:00Z", "2026-11-01T00:00:00Z")]:
+    _c.execute(_t_ins, _row)
+_cm = "INSERT INTO comments (task_id,kind,text,from_name,from_pane,from_session,created_at) VALUES (?,?,?,'alpha','w1:p1','s','2026-11-07T00:00:00Z')"
+_c.execute(_cm, ("T-3", "progress", "進捗1")); _c.execute(_cm, ("T-3", "progress", "進捗2"))
+_c.execute(_cm, ("T-3", "blocked", "解決済みの詰まり"))
+_c.execute("UPDATE comments SET resolved_at='2026-11-08T00:00:00Z' WHERE text='解決済みの詰まり'")
 _c.commit()
 _c.close()
 # 旧方式の run/token が残っていても無視される
@@ -402,7 +416,7 @@ for path in PAGES:
     check(f"GET {path} が 200", s_ == 200, str(s_))
     # 入力欄(対応済みにする)があるページは自動更新しない
     check(f"{path}: 共通ナビ・meta refresh・バッジ",
-          (('http-equiv="refresh"' in b) != ('action="/resolve"' in b or path in ("/ledger", "/perms"))) and 'href="/ledger"' in b and 'class="badge"' in b, path)
+          (('http-equiv="refresh"' in b) != ('action="/resolve"' in b or path in ("/ledger", "/perms", "/tasks"))) and 'href="/ledger"' in b and 'class="badge"' in b, path)
     check(f"{path}: スクリプトは同一オリジンの notify.js だけ",
           re.findall(r"<script[^>]*>", b, re.I) == [NOTIFY_TAG[:-9]] and "<script" not in no_js(b).lower()
           and "<img" not in b.lower(), str(re.findall(r"<script[^>]*>", b, re.I)))
@@ -519,6 +533,54 @@ check("送信履歴: kind=send では他種別の failed を畳み件数に数�
 _KP = cl.get("/ledger?kind=proposal")[2]
 check("送信履歴: kind=proposal は failed 150 件を畳み件数に出す", "failed 150 件は畳んでいます" in _KP)
 check("送信履歴: 全角数字の日付は不正", "YYYY-MM-DD" in cl.get("/ledger?from=%EF%BC%92%EF%BC%90%EF%BC%92%EF%BC%96-%EF%BC%90%EF%BC%91-%EF%BC%90%EF%BC%91")[2])
+
+# ---- タスク一覧・詳細(読み取りのみ)
+def _rows(html):
+    return re.findall(r'<a href="/tasks/(T-[A-Za-z0-9_-]+)">', html.split("<h2>状態の件数</h2>")[1].split("<table>")[1].split("</table>")[0]) if "<table>" in html else []
+def _ids(path):
+    h = cl.get(path)[2]
+    t = h.split("</form>", 1)[1] if "</form>" in h else h
+    return list(dict.fromkeys(re.findall(r'<tr><td><a href="/tasks/(T-\d+)">', t)))
+# 未解決の質問は要対応の件数に入るので、この区間だけテスト側で足して最後に消す
+_cx = sqlite3.connect(env["WEBUI_TB_DB"])
+_cx.execute(_cm, ("T-3", "question", "長い質問 " + "あ" * 3000 + "REPORT-TAIL"))
+_cx.commit()
+TL = cl.get("/tasks")
+check("タスク: 状態の件数サマリ", all(x in TL[2] for x in ("todo 1", "in_progress 2", "review 0", "done 1", "blocked 1", "全部 5")), "")
+check("タスク: 既定は 5 件すべて", sorted(_ids("/tasks")) == ["T-1", "T-2", "T-3", "T-4", "T-5"], str(_ids("/tasks")))
+check("タスク: PJ で絞る(件数サマリも PJ 内)", sorted(_ids("/tasks?project=pj2")) == ["T-3", "T-4", "T-5"] and "in_progress 1" in cl.get("/tasks?project=pj2")[2])
+check("タスク: 担当で絞る", sorted(_ids("/tasks?owner=alpha")) == ["T-1", "T-3", "T-4"])
+check("タスク: 担当 + 状態", _ids("/tasks?owner=alpha&status=done") == ["T-4"])
+check("タスク: 担当 + PJ + 状態", _ids("/tasks?owner=alpha&project=pj2&status=in_progress") == ["T-3"])
+check("タスク: 未報告だけ", sorted(_ids("/tasks?unreported=1")) == ["T-1", "T-2", "T-5"])
+check("タスク: 未報告 + 担当", _ids("/tasks?unreported=1&owner=alpha") == ["T-1"])
+check("タスク: 停滞だけ(in_progress で更新が古いもの)", _ids("/tasks?stale=1") == ["T-1"])
+check("タスク: 停滞の目印", "停滞 " in TL[2] and TL[2].count("停滞 ") >= 1 and _ids("/tasks?stale=1&owner=beta") == [])
+check("タスク: 並び替え(更新が古い順 / ID 順)", _ids("/tasks?sort=oldest")[:2] == ["T-5", "T-1"] and _ids("/tasks?sort=id") == ["T-1", "T-2", "T-3", "T-4", "T-5"])
+check("タスク: 親子の表示(親リンクと子の件数)", '<a href="/tasks/T-2">T-2</a>' in TL[2] and "子 2" in TL[2])
+check("タスク: 報告の種別ごとの件数と未対応", "progress 2" in TL[2] and "question 1" in TL[2] and "未対応 1" in TL[2])
+check("タスク: 題は先頭 80 文字だけ", "TITLETAIL" not in TL[2] and ("x" * 80) in TL[2] and ("x" * 100) not in TL[2])
+check("タスク: 題の HTML はエスケープ", XSS not in TL[2] and "&lt;script&gt;" in TL[2])
+check("タスク: 期限・優先度の列は無い", "期限" not in TL[2].split("<table>")[1].split("</tr>")[0] and "優先度" not in TL[2].split("<table>")[1].split("</tr>")[0])
+for bad in ["status=zzz", "owner=a%20b%3Cx", "sort=zz", "project=%27%3B--", "unreported=%27"]:
+    r = cl.get("/tasks?" + bad)
+    check(f"タスク: 不正な絞り込み {bad} でも 200", r[0] == 200 and "'--" not in r[2], str(r[0]))
+check("タスク: 自動更新しない(入力欄あり)", 'http-equiv="refresh"' not in TL[2])
+check("タスク: POST は 405", cl.raw("POST", "/tasks", {"a": "b"})[0] == 405)
+TD = cl.get("/tasks/T-3")[2]
+check("タスク詳細: 親へのリンク・session・報告の件数", 'href="/tasks/T-2"' in TD and "progress 2" in TD and "未対応 1" in TD)
+check("タスク詳細: 報告は先頭 1000 文字だけ", "REPORT-TAIL" not in TD and "長い質問" in TD and "…" in TD)
+check("タスク詳細: 人が対応済みにした報告が分かる", "対応済み 2026-11-08T00:00:00Z" in TD)
+T2 = cl.get("/tasks/T-2")[2]
+check("タスク詳細: 子タスクの一覧", "<h2>子タスク</h2>" in T2 and 'href="/tasks/T-3"' in T2 and 'href="/tasks/T-4"' in T2)
+check("タスク詳細: 停滞の目印(T-1)", "停滞: in_progress のまま" in cl.get("/tasks/T-1")[2])
+_cx.execute("DELETE FROM comments WHERE text LIKE '長い質問%'")
+_cx.commit()
+_cx.close()
+for _pth in ["/tasks?owner=alpha", "/tasks/T-3", "/tasks?stale=1"]:
+    _r = Client(port).get(_pth)
+    check(f"未ログインの {_pth} は /login へ(本文なし)", _r[0] == 302 and _r[1].get("Location", "").startswith("/login") and "T-3" not in _r[2] and "TITLETAIL" not in _r[2])
+
 check("送信履歴: kind で絞る", K[2].count("SECOND") == 0 and "一行目" in K[2] and "reportbody-" not in K[2])
 T = cl.get("/ledger?target=alpha")
 check("送信履歴: 宛先で絞る(busy も出る)", "sched-busy" in T[2] and "reportbody-" not in T[2])
@@ -996,7 +1058,7 @@ out2 = stop_out(p)
 check("ログに再設定の成功と拒否(期限切れ・不正)が残る", "reset: ok" in out2 and "reset: denied (expired)" in out2 and "reset: denied (invalid)" in out2 and "reset: denied (missing)" in out2, out2[-600:])
 leak = [x for x in (PW, NEWPW, WRONG, cookie_val, old.split("=", 1)[1], "legacy-token") if x in out1 + out2]
 check("ログ(stdout/stderr)にパスワード・セッション値を出さない", not leak, f"{len(leak)} 件")
-leak2 = [x for x in ("failbody-", "reportbody-", "SECOND-LINE-SECRET", "send:task:dd-x", "send:task:w1", "approvals.conf") if x in out1 + out2]
+leak2 = [x for x in ("failbody-", "reportbody-", "SECOND-LINE-SECRET", "TITLETAIL", "REPORT-TAIL", "owner=alpha", "send:task:dd-x", "send:task:w1", "approvals.conf") if x in out1 + out2]
 check("ログに送信履歴の本文・権限の検索語(URL のクエリ)を出さない", not leak2, str(leak2))
 _src = open(os.path.join(os.path.dirname(SERVER), "app", "perms.py"), encoding="utf-8").read()
 check("権限の画面は tb も他のコマンドも呼ばない(agent の pane から効く経路を作らない)",

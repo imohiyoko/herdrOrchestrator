@@ -4,12 +4,13 @@ import json
 import os
 import re
 import shlex
+from datetime import datetime, timedelta, timezone
 from urllib.parse import quote, unquote, urlencode
 
-from .config import HERDR_ROOT, JOB_RE, REFRESH_SEC, SCHED_LOGS, STALL_MIN
+from .config import HERDR_ROOT, JOB_RE, REFRESH_SEC, SCHED_LOGS, STALL_MIN, TASK_STALE_HOURS
 from .sanitize import clean, e
 from .herdr import agent_key, agent_session, get_agents, read_agent, workspace_label
-from .data import NOTIFY_POLL_SEC, QUEUED_WARN_SEC, outbox_rows, activity_for, agent_ops, agent_registry, stopped_agents, db_conn, needs_human, parse_jsonl, q, stalled, tail_lines, tasks_for_agent, urgent_items, LEDGER_MAX, LEDGER_RESULTS, approval_history, ledger_kinds, ledger_rows, ledger_summary
+from .data import has_resolution, parse_ts, NOTIFY_POLL_SEC, QUEUED_WARN_SEC, outbox_rows, activity_for, agent_ops, agent_registry, stopped_agents, db_conn, needs_human, parse_jsonl, q, stalled, tail_lines, tasks_for_agent, urgent_items, LEDGER_MAX, LEDGER_RESULTS, approval_history, ledger_kinds, ledger_rows, ledger_summary
 from .actions import NOTE_MAX
 from .jobs import DAY_PRESETS, DAY_TOKENS, INTERVAL_UNITS, interval_sec, interval_text, job_info, job_last, job_names
 from . import docs, perms
@@ -285,36 +286,124 @@ def page_agent(key):
 TASK_STATUSES = ["todo", "in_progress", "review", "done", "blocked"]
 
 
-def page_tasks(qs):
-    proj = (qs.get("project") or [""])[0]
-    st = (qs.get("status") or [""])[0]
-    where, params = [], []
+TASK_SORTS = {"": ("更新が新しい順(PJ ごと)", "project, updated_at DESC"), "oldest": ("更新が古い順", "updated_at ASC"),
+              "created": ("作成が新しい順", "created_at DESC"), "id": ("タスク ID 順", "id ASC")}
+OWNER_RE = re.compile(r"[A-Za-z0-9._-]{1,64}")
+TASK_LIST_MAX = 300
+TITLE_MAX = 80
+REPORT_MAX = 1000
+
+
+def _head(text, n):
+    """先頭 n 文字だけ(エスケープ前)。"""
+    s = clean("" if text is None else text)
+    return s[:n] + ("…" if len(s) > n else "")
+
+
+def task_stale(t, now=None):
+    """in_progress のまま TASK_STALE_HOURS を超えて更新がない(経過時間 or None)。"""
+    if t.get("status") != "in_progress":
+        return None
+    u = parse_ts(t.get("updated_at"))
+    if not u:
+        return None
+    now = now or datetime.now(timezone.utc)
+    h = (now - u).total_seconds() / 3600
+    return int(h) if h > TASK_STALE_HOURS else None
+
+
+def report_counts():
+    """{task_id: {kind: 件数, "open": 人が未対応の question / blocked の件数}}(comments を 1 回の集計で)。"""
+    out = {}
+    for r in q("SELECT task_id, kind, COUNT(*) AS n FROM comments GROUP BY task_id, kind"):
+        out.setdefault(r["task_id"], {})[r["kind"]] = r["n"]
+    if has_resolution():
+        for r in q("SELECT task_id, COUNT(*) AS n FROM comments WHERE kind IN ('question','blocked') AND resolved_at IS NULL GROUP BY task_id"):
+            out.setdefault(r["task_id"], {})["open"] = r["n"]
+    return out
+
+
+def counts_label(c):
+    if not c:
+        return '<span class=note>(報告なし)</span>'
+    out = e(" / ".join(f"{k} {c[k]}" for k in ("done", "progress", "question", "blocked") if c.get(k)))
+    if c.get("open"):
+        out += f' <span class=warn>(未対応 {int(c["open"])})</span>'
+    return out
+
+
+def page_tasks(qs, ctx=None):
+    """タスク一覧(読み取りのみ)。担当・PJ・状態・未報告・停滞で絞り込み、並び替え、状態の件数サマリ。"""
+    if ctx is not None:
+        ctx["norefresh"] = True   # 入力欄があるので自動更新しない
+    proj, st, owner = _one(qs, "project")[:100], _one(qs, "status"), _one(qs, "owner")
+    unrep, stale = _one(qs, "unreported") == "1", _one(qs, "stale") == "1"
+    sort = _one(qs, "sort")
+    errs = []
+    if st and st not in TASK_STATUSES:
+        errs.append("状態は todo / in_progress / review / done / blocked のどれかです"); st = ""
+    if owner and not OWNER_RE.fullmatch(owner):
+        errs.append("担当は英数字と . _ - だけです"); owner = ""
+    if sort not in TASK_SORTS:
+        sort = ""
+    base_w, base_p = [], []   # 状態以外の絞り込み(状態の件数サマリにも使う)
     if proj:
-        where.append("project=?")
-        params.append(proj)
-    if st in TASK_STATUSES:
-        where.append("status=?")
-        params.append(st)
+        base_w.append("project=?"); base_p.append(proj)
+    if owner:
+        base_w.append("owner_agent=?"); base_p.append(owner)
+    if unrep:
+        base_w.append("reported_at IS NULL")
+    where, params = list(base_w), list(base_p)
+    if st:
+        where.append("status=?"); params.append(st)
+    # 停滞は in_progress で最終更新が古いもの。時刻は ISO(UTC)の文字列比較で絞る
+    if stale:
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=TASK_STALE_HOURS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        where += ["status='in_progress'", "updated_at<?"]; params.append(cutoff)
     sql = "SELECT * FROM tasks" + (" WHERE " + " AND ".join(where) if where else "") + \
-          " ORDER BY project, updated_at DESC LIMIT 300"
+          " ORDER BY " + TASK_SORTS[sort][1] + " LIMIT " + str(TASK_LIST_MAX)
     rows = q(sql, params)
+    summ = {r["status"]: r["n"] for r in q(
+        "SELECT status, COUNT(*) AS n FROM tasks" + (" WHERE " + " AND ".join(base_w) if base_w else "") + " GROUP BY status", base_p)}
     projects = [r["project"] for r in q("SELECT DISTINCT project FROM tasks ORDER BY project")]
+    owners = [r["owner_agent"] for r in q("SELECT DISTINCT owner_agent FROM tasks WHERE owner_agent IS NOT NULL ORDER BY owner_agent")]
+    kids = {r["parent_id"]: r["n"] for r in q("SELECT parent_id, COUNT(*) AS n FROM tasks WHERE parent_id IS NOT NULL GROUP BY parent_id")}
+    rc = report_counts()
 
     def href(**kw):
-        d = {"project": proj, "status": st}
+        d = {"project": proj, "status": st, "owner": owner, "unreported": "1" if unrep else "", "stale": "1" if stale else "", "sort": sort}
         d.update(kw)
         d = {k: v for k, v in d.items() if v}
         return "/tasks" + ("?" + urlencode(d) if d else "")
-    f = "PJ: " + " ".join(f'<a href="{e(href(project=p))}">{e(p)}</a>' for p in projects)
-    f += f' <a href="{e(href(project=""))}">[全部]</a><br>状態: ' + " ".join(
-        f'<a href="{e(href(status=s))}">{e(s)}</a>' for s in TASK_STATUSES) + f' <a href="{e(href(status=""))}">[全部]</a>'
+    cells = [f'<a href="{e(href(status=s))}">{e(s)} {summ.get(s, 0)}</a>' for s in TASK_STATUSES]
+    body = err_html("。".join(errs)) * bool(errs)
     if not db_conn_ok():
-        f += '<p class=err>タスク DB がありません(または開けません)</p>'
-    body = f + table(
-        ["タスク", "PJ", "題", "状態", "担当", "session_id", "成果物", "報告済み"],
-        [[tlink(t["id"]), e(t["project"]), e(t["title"]), e(t["status"]), e(t["owner_agent"]),
-          e(t["session_id"]), str(len(safe_json_list(t["deliverables"]))), "○" if t["reported_at"] else "-"]
-         for t in rows])
+        body += '<p class=err>タスク DB がありません(または開けません)</p>'
+    body += ("<h2>状態の件数</h2><p>" + " / ".join(cells) + f' / <a href="{e(href(status=""))}">全部 {sum(summ.values())}</a></p>')
+    popts = '<option value="">(すべて)</option>' + "".join(f'<option value="{e(p_)}"{" selected" if p_ == proj else ""}>{e(p_)}</option>' for p_ in projects)
+    oopts = '<option value="">(すべて)</option>' + "".join(f'<option value="{e(o)}"{" selected" if o == owner else ""}>{e(o)}</option>' for o in owners)
+    sopts = '<option value="">(すべて)</option>' + "".join(f'<option value="{s_}"{" selected" if s_ == st else ""}>{s_}</option>' for s_ in TASK_STATUSES)
+    ropts = "".join(f'<option value="{k}"{" selected" if k == sort else ""}>{e(v[0])}</option>' for k, v in TASK_SORTS.items())
+    body += ('<form method=get action="/tasks"><p>'
+             f'<label>PJ <select name=project>{popts}</select></label> <label>担当 <select name=owner>{oopts}</select></label> '
+             f'<label>状態 <select name=status>{sopts}</select></label> '
+             f'<label><input type=checkbox name=unreported value=1{" checked" if unrep else ""}> 未報告だけ</label> '
+             f'<label><input type=checkbox name=stale value=1{" checked" if stale else ""}> 停滞だけ({TASK_STALE_HOURS} 時間超の in_progress)</label> '
+             f'<label>並び <select name=sort>{ropts}</select></label> '
+             '<button type=submit>絞り込む</button> <a href="/tasks">解除</a></p></form>')
+    now = datetime.now(timezone.utc)
+    out = []
+    for t in rows:
+        sh = task_stale(t, now)
+        mark = f'<span class=warn>停滞 {sh} 時間</span>' if sh is not None else ""
+        par = tlink(t["parent_id"]) if t.get("parent_id") else ""
+        kid = f'子 {kids[t["id"]]}' if kids.get(t["id"]) else ""
+        out.append([tlink(t["id"]), e(t["project"]), e(_head(t["title"], TITLE_MAX)), e(t["status"]), e(t["owner_agent"]),
+                    " ".join(x for x in (par, e(kid)) if x) or "-", e(t["session_id"]), counts_label(rc.get(t["id"])),
+                    str(len(safe_json_list(t["deliverables"]))), "○" if t["reported_at"] else "-", e(t["updated_at"]), mark])
+    body += table(["タスク", "PJ", "題(先頭 80 文字)", "状態", "担当", "親 / 子", "session_id", "報告(種別ごとの件数)", "成果物", "報告済み", "更新", "目印"], out)
+    body += (f'<p class=note>最大 {TASK_LIST_MAX} 件。「報告済み」は tb report で指揮官に届いたもの。未対応は人がまだ「対応済み」にしていない question / blocked。'
+             "期限・優先度は tb に無いので出していません。題は先頭だけ、本文は出しません(詳細画面で報告の先頭を見られます)。</p>")
     return "タスク", body
 
 
@@ -373,14 +462,25 @@ def page_task(tid, qs=None, ctx=None):
         return None
     t = rows[0]
     info = [(k, e(t.get(k))) for k in ["id", "project", "title", "status", "owner_agent", "session_id", "account",
-                                        "parent_id", "summary", "note", "reported_at", "created_at", "updated_at"]]
+                                        "parent_id", "reported_at", "created_at", "updated_at"]]
+    if t.get("parent_id"):
+        info[7] = ("parent_id", tlink(t["parent_id"]))
+    info.append(("summary", e(_head(t.get("summary"), REPORT_MAX))))
+    info.append(("note", e(_head(t.get("note"), REPORT_MAX))))
+    sh = task_stale(t)
+    if sh is not None:
+        info.append(("目印", f'<span class=warn>停滞: in_progress のまま {sh} 時間更新がありません</span>'))
     info.append(("成果物", "<br>".join(doc_link(r, raw) for r, raw in docs.task_refs(t["id"], t["deliverables"])) or "-"))
     body = resolve_notice(qs or {}) + "<table>" + "".join(f"<tr><th>{k}</th><td>{v}</td></tr>" for k, v in info) + "</table>"
+    kids = q("SELECT id, title, status, owner_agent, updated_at FROM tasks WHERE parent_id=? ORDER BY id", (tid,))
+    if kids:
+        body += "<h2>子タスク</h2>" + table(["タスク", "題", "状態", "担当", "更新"],
+            [[tlink(k["id"]), e(_head(k["title"], TITLE_MAX)), e(k["status"]), e(k["owner_agent"]), e(k["updated_at"])] for k in kids])
     cm = q("SELECT * FROM comments WHERE task_id=? ORDER BY id DESC", (tid,))
     back = "/tasks/" + quote(str(tid), safe="")
-    body += "<h2>報告</h2>" + table(
-        ["id", "種別", "本文", "成果物", "from", "配送", "時刻", "対応"],
-        [[f"C-{c['id']}", e(c["kind"]), f'<pre>{e(c["text"])}</pre>',
+    body += "<h2>報告</h2>" + counts_label(report_counts().get(tid)) + table(
+        ["id", "種別", "本文(先頭)", "成果物", "from", "配送", "時刻", "対応"],
+        [[f"C-{c['id']}", e(c["kind"]), f'<pre>{e(_head(c["text"], REPORT_MAX))}</pre>',
           "<br>".join(doc_link(r, raw) for r, raw in docs.comment_refs(c["id"], c["deliverables"])), e(c["from_name"]),
           "済" if c["delivered_at"] else "未", e(c["created_at"]), resolve_cell(c, back, ctx)] for c in cm])
     px = q("SELECT * FROM proxy_requests WHERE task_id=? ORDER BY id DESC", (tid,))
@@ -930,6 +1030,8 @@ def route(path, qs, ctx=None):
         return page_docs(qs, ctx)
     if path == "/docs/view":
         return page_doc(qs, ctx)
+    if path == "/tasks":
+        return page_tasks(qs, ctx)
     if path in STATIC:
         t, b = STATIC[path](qs)
         return t, b
