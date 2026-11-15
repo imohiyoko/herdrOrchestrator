@@ -29,7 +29,7 @@ C
 rv() { printf 'ts=2026-11-15T00:00:00Z task=%s by=%s pr=- REVIEW %s %s blocker=%s should=%s verdict=%s evidence=-\n' "$@"; }
 # mkrv <名前> <行>... → $GT/<名前>.log を作ってパスを出す
 mkrv() { local n=$1; shift; printf '%s\n' "$@" >"$GT/$n.log"; printf '%s' "$GT/$n.log"; }
-mkrv reviews-good "$(rv T-1 rev-a self 3f9c2ab 0 0 pass)" "$(rv T-1 rev-b coderabbit 3f9c2ab 0 0 pass)" >/dev/null
+mkrv reviews-good "$(rv T-1 rev-a self 3f9c2ab 0 0 pass)" "$(rv T-1 ingest coderabbit 3f9c2ab 0 0 pass)" >/dev/null
 # 基準の事実(docs のみ・小さい・2 系統・全部そろう)。行を足す・差し替えるテストは gtf で作る
 BASE=(
   'HEAD 3f9c2ab'
@@ -86,8 +86,8 @@ eq "gate T-01: not run → score 2 = threshold(approve) → allow" "$(gtf 'TEST'
 eq "gate T-01: not run → exceeds threshold(merge 1) → ask" "$(gtf 'TEST' 'TEST none' | G1 merge | sed -n '1p;$p' | tr '\n' '|')" "gate: ask|rc=20|"
 # R-01(レビューは記録から読む)
 rr() { gtf - | RVF=$(mkrv rr "$@") G1 approve | rsn | grep '^R-01'; }
-eq "gate R-01: should remains → +1" "$(rr "$(rv T-1 rev-a self 3f9c2ab 0 2 pass)" "$(rv T-1 rev-b coderabbit 3f9c2ab 0 0 pass)")" "R-01 +1 レビュー: should が残っている"
-eq "gate R-01: two independent pass → +0" "$(rr "$(rv T-1 rev-a self 3f9c2ab 0 0 pass)" "$(rv T-1 rev-b coderabbit 3f9c2ab 0 0 pass)")" "R-01 +0 レビュー: 2 系統とも blocker=0 should=0 sha 一致"
+eq "gate R-01: should remains → +1" "$(rr "$(rv T-1 rev-a self 3f9c2ab 0 2 pass)" "$(rv T-1 ingest coderabbit 3f9c2ab 0 0 pass)")" "R-01 +1 レビュー: should が残っている"
+eq "gate R-01: two independent pass → +0" "$(rr "$(rv T-1 rev-a self 3f9c2ab 0 0 pass)" "$(rv T-1 ingest coderabbit 3f9c2ab 0 0 pass)")" "R-01 +0 レビュー: 2 系統とも blocker=0 should=0 sha 一致"
 # A-01
 for t in low:0 mid:1 high:2 unknown:1; do
   eq "gate A-01: ${t%%:*} → +${t#*:}" "$(gtf 'AUTHOR-REJECT-RATE' "AUTHOR-REJECT-RATE ${t%%:*}" | G1 approve | rsn | grep '^A-01' | cut -d' ' -f1-2)" "A-01 +${t#*:}"
@@ -139,7 +139,7 @@ eq "gate H-06: type/mode change → ask" "$(gtf FILE 'FILE T docs/a.md' | G1 mer
 eq "gate H-02: public check dirty → ask" "$(gtf PUBLIC-CHECK 'PUBLIC-CHECK dirty' | G1 merge | hardl | cut -c1-5)" "H-02 "
 eq "gate H-02: public check unavailable → ask" "$(gtf PUBLIC-CHECK 'PUBLIC-CHECK unavailable' | G1 merge | hardl | cut -c1-5)" "H-02 "
 h3() { gtf - | RVF=$(mkrv h3 "$@") G1 merge | hardl | grep '^H-03' | cut -c1-5 | sort -u | tr '\n' ','; }
-GOODR=("$(rv T-1 rev-a self 3f9c2ab 0 0 pass)" "$(rv T-1 rev-b coderabbit 3f9c2ab 0 0 pass)")
+GOODR=("$(rv T-1 rev-a self 3f9c2ab 0 0 pass)" "$(rv T-1 ingest coderabbit 3f9c2ab 0 0 pass)")
 eq "gate H-03: baseline reviews → no H-03" "$(h3 "${GOODR[@]}")" ""
 eq "gate H-03: review blocker → ask" "$(h3 "$(rv T-1 rev-a self 3f9c2ab 1 0 fail)" "${GOODR[1]}")" "H-03 ,"
 eq "gate H-03: review verdict=fail → ask" "$(h3 "$(rv T-1 rev-a self 3f9c2ab 0 0 fail)" "${GOODR[1]}")" "H-03 ,"
@@ -149,7 +149,7 @@ eq "gate H-03: stale review is listed as invalid in the reasons" "$(gtf - | RVF=
 eq "gate H-03: only one lineage → ask" "$(h3 "${GOODR[0]}")" "H-03 ,"
 eq "gate H-03: two lineages by the same sender are not independent → ask" "$(h3 "$(rv T-1 rev-a self 3f9c2ab 0 0 pass)" "$(rv T-1 rev-a coderabbit 3f9c2ab 0 0 pass)")" "H-03 ,"
 eq "gate H-03: same lineage by two senders counts once → ask" "$(h3 "$(rv T-1 rev-a self 3f9c2ab 0 0 pass)" "$(rv T-1 rev-b self 3f9c2ab 0 0 pass)")" "H-03 ,"
-eq "gate H-03: records of another chain are not counted → ask" "$(h3 "$(rv T-2 rev-a self 3f9c2ab 0 0 pass)" "$(rv T-2 rev-b coderabbit 3f9c2ab 0 0 pass)")" "H-03 ,"
+eq "gate H-03: records of another chain are not counted → ask" "$(h3 "$(rv T-2 rev-a self 3f9c2ab 0 0 pass)" "$(rv T-2 ingest coderabbit 3f9c2ab 0 0 pass)")" "H-03 ,"
 eq "gate H-03: no record for this chain (file exists) → ask, reason says so" "$(gtf - | RVF=$(mkrv h3 "$(rv T-2 rev-a self 3f9c2ab 0 0 pass)") G1 merge | hardl | grep -c '有効なレビューの記録が無い')" "1"
 eq "gate H-03: a record whose PR differs from the target is invalid" "$(h3 "$(rv T-1 rev-a self 3f9c2ab 0 0 pass | sed 's| pr=- | pr=other/repo#9 |')" "${GOODR[1]}")" "H-03 ,"
 eq "gate H-03: a record with the same PR is valid" "$(h3 "$(rv T-1 rev-a self 3f9c2ab 0 0 pass | sed 's| pr=- | pr=example-owner/example-repo#123 |')" "${GOODR[1]}")" ""
@@ -158,11 +158,21 @@ eq "gate R-01: REC line names the sender and time" "$(gtf - | G1 merge | rsn | g
 # human の記録は独立 2 系統の根拠に数えない(pane の無い実行は誰でも名乗れるため)
 eq "gate H-03: a human record does not count as the second lineage → ask" "$(h3 "${GOODR[0]}" "$(rv T-1 human coderabbit 3f9c2ab 0 0 pass)")" "H-03 ,"
 eq "gate H-03: two human records (even different lineages) → ask" "$(h3 "$(rv T-1 human self 3f9c2ab 0 0 pass)" "$(rv T-1 human coderabbit 3f9c2ab 0 0 pass)")" "H-03 ,"
-eq "gate H-03: the reason says human is not counted, with the counted number" "$(gtf - | RVF=$(mkrv h3 "${GOODR[0]}" "$(rv T-1 human coderabbit 3f9c2ab 0 0 pass)") G1 merge | hardl | grep -c '数えられた系統: 1。送信者 human は数えない')" "1"
+eq "gate H-03: the reason says human is not counted, with the counted number" "$(gtf - | RVF=$(mkrv h3 "${GOODR[0]}" "$(rv T-1 human coderabbit 3f9c2ab 0 0 pass)") G1 merge | hardl | grep -c '数えられた系統: 1。送信者 human と自称の外部系統は数えない')" "1"
 eq "gate H-03: a human record that FAILS still blocks (fail counts from anyone)" "$(h3 "${GOODR[@]}" "$(rv T-1 human lint 3f9c2ab 1 0 fail)")" "H-03 ,"
 eq "gate H-03: two different agent senders → allowed path (no H-03)" "$(h3 "$(rv T-1 rev-a self 3f9c2ab 0 0 pass)" "$(rv T-1 rev-b lint 3f9c2ab 0 0 pass)")" ""
 # failed の系統は数えない(この行を消すと、self の pass(rev-b)が数えられて 2 系統になり、理由の数が変わる)
 eq "gate H-03: a failed lineage is excluded from the count even if another sender passed it" "$(gtf - | RVF=$(mkrv h3 "$(rv T-1 rev-a self 3f9c2ab 0 0 fail)" "$(rv T-1 rev-b self 3f9c2ab 0 0 pass)" "$(rv T-1 rev-c lint 3f9c2ab 0 0 pass)") G1 merge | hardl | grep -c '数えられた系統: 1。')" "1"
+# 外部系統(coderabbit)は、送信者 ingest の記録だけが独立な系統に数えられる(自称は数えない)。自称の fail は、ほかの fail と同じく効く
+eq "gate H-03: a self-declared coderabbit (by an agent) does not count → ask" "$(h3 "${GOODR[0]}" "$(rv T-1 rev-b coderabbit 3f9c2ab 0 0 pass)")" "H-03 ,"
+eq "gate H-03: the reason for a self-declared coderabbit is shown on the REC line" "$(gtf - | RVF=$(mkrv h3 "${GOODR[0]}" "$(rv T-1 rev-b coderabbit 3f9c2ab 0 0 pass)") G1 merge | rsn | grep -c '^REC coderabbit .* → 有効(独立系統には数えない: 外部系統は送信者 ingest の記録だけが数えられる(自称)')" "1"
+eq "gate H-03: a self-declared coderabbit that FAILS still blocks" "$(h3 "${GOODR[@]}" "$(rv T-1 rev-b coderabbit 3f9c2ab 1 0 fail)")" "H-03 ,"
+eq "gate H-03: sender ingest on a non-external lineage does not count → ask" "$(h3 "${GOODR[0]}" "$(rv T-1 ingest lint 3f9c2ab 0 0 pass)")" "H-03 ,"
+eq "gate H-03: ingest's coderabbit + one agent's self → no H-03 (the intended pair)" "$(h3 "${GOODR[@]}")" ""
+eq "gate H-03: ingest's coderabbit alone is not enough → ask" "$(h3 "${GOODR[1]}")" "H-03 ,"
+eq "gate H-03: ingest's coderabbit + a human self is not enough → ask" "$(h3 "$(rv T-1 human self 3f9c2ab 0 0 pass)" "${GOODR[1]}")" "H-03 ,"
+eq "gate H-03: ingest's coderabbit with a stale sha is ignored → ask" "$(h3 "${GOODR[0]}" "$(rv T-1 ingest coderabbit 1111111 0 0 pass)")" "H-03 ,"
+eq "gate H-03: ingest's coderabbit with blocker (fail) blocks" "$(h3 "${GOODR[0]}" "$(rv T-1 ingest coderabbit 3f9c2ab 2 0 fail)")" "H-03 ,"
 # 記録が無い・読めない・形式違反 → 21(fail-closed)
 eq "gate fail-closed: no review file → 21" "$(gtf - | RVF=$GT/none.log G1 merge | sed -n '1p;$p' | tr '\n' '|')" "gate: ask|rc=21|"
 eq "gate fail-closed: reason names the missing review record" "$(gtf - | RVF=$GT/none.log G1 merge | rsn | grep -c 'レビューの記録がありません')" "1"
