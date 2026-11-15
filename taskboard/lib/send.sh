@@ -114,6 +114,9 @@ cmd_send() {
     approval_of "send:$kind:$target"
     [[ $APPROVAL_VALUE == allow ]] || status=pending
     reason+=" / approvals: $APPROVAL_RULE"
+    # リスク評価(第 1 段: 参考値を reason に残すだけ。status は変えない)
+    risk_collect "$LABEL_NAME" "$target" "$kind" "$text"; risk_eval
+    reason+=" / $(risk_oneline)"
   fi
   oid=$(sql "INSERT INTO outbox (from_name, from_pane, from_session, target, kind, task_id, text, status, reason, created_at)
     VALUES ($(q "$LABEL_NAME"), $(q "$LABEL_PANE"), $(q "$LABEL_SESSION"), $(q "$target"), $(q "$kind"), NULLIF($(q "$tid"),''),
