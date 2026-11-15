@@ -106,7 +106,7 @@ POST/PUT/DELETE/PATCH は 405。
 | `/jobs` | 各 job の実際に効く設定(間隔・時間帯・曜日・有効/一時停止)、最終記録と最後の実行 |
 | `/jobs/<job>` | スケジュールの変更フォーム(自動更新しない)。保存先は `scheduler/settings/<job>.settings`、次の分から反映。「conf の値に戻す」で settings を消す |
 | `/ledger` | 送信履歴(tb の `messages` 表)。種別 × 結果の件数サマリと直近 100 件。failed は既定で畳む。`?kind=` `?result=`(sent / busy / failed / all) `?target=` `?from=` `?to=`(日付 `YYYY-MM-DD`、UTC)で絞り込み。send の `O-n` は `/outbox` にリンクし、本文は 1 行目だけ |
-| `/perms` | 権限(`taskboard/config/approvals.conf` の読み取り)。上から順に順位・パターン・ask/allow・最後の変更(行末の注記と `approval_changes`)・その行で決まる操作の例・警告(`* = ask`、広い allow、上の行に隠れる行(ワイルドカードを含まない行)、「この操作はどの行で決まるか」の検索(`?op=`、tb の `approval_of` と同じ規則をここで再現。tb は呼ばない)、操作ごとの現在の権限(権限カタログ `taskboard/config/approvals-catalog.conf` × approvals.conf: 現在の値・決まる行・規則の有無(明示 / 既定に落ちる)・リスク階層・副作用・allow 候補・状態、`?kind=` `?state=` `?fallback=1` `?allowed=1` で絞り込み、high / human-only の操作が allow なら警告、reserved は薄く表示、カタログに無い規則は「未知の規則」の欄)、変更履歴、`tb allow` / `tb ask` のコマンド行の組み立て表示(`?pat=&val=`。表示だけで実行しない)。変更の操作・POST は無い |
+| `/perms` | 権限(`taskboard/config/approvals.conf` の読み取り)。上から順に順位・パターン・ask/allow・最後の変更(行末の注記と `approval_changes`)・その行で決まる操作の例・警告(`* = ask`、広い allow、上の行に隠れる行(ワイルドカードを含まない行)、「この操作はどの行で決まるか」の検索(`?op=`、tb の `approval_of` と同じ規則をここで再現。tb は呼ばない)、操作ごとの現在の権限(権限カタログ `taskboard/config/approvals-catalog.conf` × approvals.conf: 現在の値・決まる行・規則の有無(明示 / 既定に落ちる)・リスク階層・副作用・allow 候補・状態、`?kind=` `?state=` `?fallback=1` `?allowed=1` で絞り込み、high / human-only の操作が allow なら警告、reserved(将来用)と unwired(承認判定に渡らない。`proxy:*`)は薄く表示し、unwired の操作に当たる規則には「何も効かない」と警告、カタログに無い規則は「未知の規則」の欄)、変更履歴、`tb allow` / `tb ask` のコマンド行の組み立て表示(`?pat=&val=`。表示だけで実行しない)。変更の操作・POST は無い |
 
 名前の無い agent は `pane_id`(例: `w2:p3`)が名前の代わりになる。未知の URL は 404。
 

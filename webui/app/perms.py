@@ -115,7 +115,7 @@ KINDS = ("send", "agent", "alert", "proxy", "role", "gate", "setup")
 SIDE = ("none", "local-write", "external-send", "external-write")
 RISK = ("low", "mid", "high", "human-only")
 ALLOWOK = ("yes", "no", "conditional")
-STATES = ("active", "reserved")
+STATES = ("active", "unwired", "reserved")   # unwired = 操作名はあるが承認判定には渡らない(approvals.conf の行は効かない)
 
 
 def load_catalog():
@@ -127,16 +127,21 @@ def load_catalog():
         return [], "権限カタログ(approvals-catalog.conf)を読めません", 0
     if len(text.encode("utf-8", "replace")) > MAX_BYTES:
         return [], "権限カタログが大きすぎて読めません", 0
-    out, bad = [], 0
+    out, bad, seen = [], 0, set()
     for ln in text.splitlines():
         t = ln.strip()
         if not t or t.startswith("#"):
             continue
         p = [x.strip() for x in ln.split("|", 6)]
         if (len(p) != 7 or not ACTION_RE.fullmatch(p[0]) or p[1] not in KINDS or p[2] not in SIDE or p[3] not in RISK
-                or p[4] not in ALLOWOK or p[5] not in STATES or not p[6]):
+                or p[4] not in ALLOWOK or p[5] not in STATES or not p[6]
+                or p[0].split(":", 1)[0] != p[1]                      # 種別はパターンの先頭と同じ
+                or (p[3] == "human-only" and p[4] != "no")             # human-only は allow 候補にしない
+                or (p[4] == "conditional" and p[0].count(":") < 2)     # 宛先・対象の無い操作名は絞れない
+                or p[0] in seen):                                      # 重複
             bad += 1
             continue
+        seen.add(p[0])
         out.append({"pattern": p[0], "kind": p[1], "side": p[2], "risk": p[3], "allow_ok": p[4], "state": p[5],
                     "desc": clean(p[6])})
     return out, "", bad
@@ -150,6 +155,12 @@ def representative(pattern):
 def covers(cat_pattern, rule_pattern):
     """規則がカタログの項目に当たるか(glob を双方向に当てる)。"""
     return fnmatchcase(cat_pattern, rule_pattern) or fnmatchcase(rule_pattern, cat_pattern)
+
+
+def rule_inert(rule, catalog):
+    """規則が当たるカタログの項目がすべて unwired(承認判定に渡らない)なら True: その行は何も効かない。"""
+    hit = [c for c in catalog if covers(c["pattern"], rule["raw"])]
+    return bool(hit) and all(c["state"] == "unwired" for c in hit)
 
 
 def unknown_rules(rules, catalog):

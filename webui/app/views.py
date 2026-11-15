@@ -693,7 +693,7 @@ def _catalog_section(qs, rules, err, catalog, cerr, cbad):
     out = []
     for r in rows:
         c = r["entry"]
-        dim = c["state"] == "reserved"
+        dim = c["state"] in ("reserved", "unwired")
         cell = (lambda x: f'<span class=note>{x}</span>' if dim else x)
         if r["value"] == "unknown":
             val = f'<b class=warn>判定不能</b>'
@@ -708,6 +708,8 @@ def _catalog_section(qs, rules, err, catalog, cerr, cbad):
             else:
                 via, how = f'{r["rule"]["no"]} 行目 <code>* = ask</code>(既定)', "既定に落ちる"
         warns = []
+        if c["state"] == "unwired":
+            warns.append("承認判定に渡らない操作です。approvals.conf の行は効きません(代行依頼は別の仕組み)")
         if r["risky"]:
             warns.append(f'リスク {e(c["risk"])} / allow 候補 {e(c["allow_ok"])} の操作が allow になっています')
         if r["risky_exc"]:
@@ -719,7 +721,7 @@ def _catalog_section(qs, rules, err, catalog, cerr, cbad):
                     (exc or "") + ("<br>" if exc and warns else "") + "".join(f'<span class=warn>{w}</span>' for w in warns)])
     note = (f"<p class=note>権限カタログ(<code>taskboard/config/approvals-catalog.conf</code>)の {len(catalog)} 件のうち {len(rows)} 件。"
             "現在の値は、パターンの <code>*</code> を例の名前に置いて approvals.conf を上から当てた結果です"
-            "(宛先を絞った規則は「例外」の欄に出ます)。reserved(将来用で未実装)は薄く表示。"
+            "(宛先を絞った規則は「例外」の欄に出ます)。reserved(将来用で未実装)と unwired(操作名はあるが承認判定には渡らない)は薄く表示。"
             "カタログは操作の説明で、判定には使いません。")
     if cbad:
         note += f" 形式が不正でスキップした行が {cbad} 件あります。"
@@ -773,6 +775,8 @@ def page_perms(qs, ctx=None):
         w = perms.warning(r)
         if w:
             notes.append(f'<span class=warn>{e(w)}</span>')
+        if catalog and not err and perms.rule_inert(r, catalog):
+            notes.append('<span class=warn>この規則は何も効きません(当たる操作はカタログで「承認判定に渡らない」とされています)</span>')
         sh = perms.shadowed_by(rules, r)
         if sh:
             notes.append(f'<span class=warn>上の {sh["no"]} 行目(<code>{e(sh["pattern"])}</code>)が先に一致するため、この行は使われません</span>')
