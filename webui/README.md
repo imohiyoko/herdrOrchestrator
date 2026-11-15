@@ -1,6 +1,6 @@
 # webui — herdr 進捗の Web UI
 
-agent・タスク・報告・定期実行・台帳を、ブラウザで見るための小さなサーバー。
+agent・タスク・報告・定期実行・送信履歴・権限を、ブラウザで見るための小さなサーバー。
 Python 3 の標準ライブラリだけで動く(依存なし)。Mermaid の図を描くための `mermaid.min.js` だけは `webui/static/` に同梱している(CDN は使わない)。
 
 - サーバー側で HTML を組み立てる複数ページ構成(SPA ではない)。自動更新は `<meta http-equiv="refresh">`(8 秒)。
@@ -104,7 +104,8 @@ POST/PUT/DELETE/PATCH は 405。
 | `/docs/view?path=<絶対パス>` | パスを指定して読む(agent の作業ディレクトリ配下だけ。`/docs` の入力欄から) |
 | `/jobs` | 各 job の実際に効く設定(間隔・時間帯・曜日・有効/一時停止)、最終記録と最後の実行 |
 | `/jobs/<job>` | スケジュールの変更フォーム(自動更新しない)。保存先は `scheduler/settings/<job>.settings`、次の分から反映。「conf の値に戻す」で settings を消す |
-| `/ledger` | `conductor/dispatch.jsonl` の直近 30 行 |
+| `/ledger` | 送信履歴(tb の `messages` 表)。種別 × 結果の件数サマリと直近 100 件。failed は既定で畳む。`?kind=` `?result=`(sent / busy / failed / all) `?target=` `?from=` `?to=`(日付 `YYYY-MM-DD`、UTC)で絞り込み。send の `O-n` は `/outbox` にリンクし、本文は 1 行目だけ |
+| `/perms` | 権限(`taskboard/config/approvals.conf` の読み取り)。上から順に順位・パターン・ask/allow・最後の変更(行末の注記と `approval_changes`)・その行で決まる操作の例・警告(`* = ask`、広い allow、上の行に隠れる行)、「この操作はどの行で決まるか」の検索(`?op=`、tb の `approval_of` と同じ規則をここで再現。tb は呼ばない)、変更履歴、`tb allow` / `tb ask` のコマンド行の組み立て表示(`?pat=&val=`。表示だけで実行しない)。変更の操作・POST は無い |
 
 名前の無い agent は `pane_id`(例: `w2:p3`)が名前の代わりになる。未知の URL は 404。
 
@@ -113,7 +114,7 @@ POST/PUT/DELETE/PATCH は 405。
 - `herdr agent list` / `herdr agent read`(結果は 3 秒キャッシュ)
 - `taskboard/data/tasks.db`(`mode=ro` で開く。無い・壊れていても落ちず、空の表になる)
 - 成果物として登録されたローカルのファイル(`/docs`。読むだけ)
-- `scheduler/logs/*.log`、`scheduler/jobs/*.conf`(`scheduler/bin/show.sh` 経由)、`conductor/dispatch.jsonl`
+- `scheduler/logs/*.log`、`scheduler/jobs/*.conf`(`scheduler/bin/show.sh` 経由)、`taskboard/config/approvals.conf`(`/perms`)
 - 書き込むのは `scheduler/settings/<job>.settings` だけ。入力は数値(間隔は分か秒)・`HH:MM` か `HH:MM:SS`・決まった曜日だけを受け付け、scheduler が読めない内容なら元に戻す
 
 「滞留」は、`working` のまま最終入力(`agent_activity.last_prompt_at`)から 30 分を超えて停止がない agent。
@@ -178,7 +179,7 @@ ttyd(ブラウザ上の端末)は採用しない。署名が無効で、会社�
 
 ## 見える内容に機密が含まれうる
 
-agent の端末出力、タスクの報告、台帳(送ったプロンプト)には、社内の情報・認証情報の断片・個人名などが含まれうる。
+agent の端末出力、タスクの報告、送信履歴(送ったプロンプト)には、社内の情報・認証情報の断片・個人名などが含まれうる。
 `127.0.0.1` 限定でも、**ログイン情報(ユーザー名・パスワード)を他人に共有しない**(チャット、スクリーンショット、PR にも貼らない)。
 画面共有の前に、表示中のページを確認すること。
 
@@ -211,7 +212,8 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.herdr-webui.plist
 | `WEBUI_DOC_ROOTS` | (なし) | パス指定で開いてよいディレクトリを足す(`:` 区切り)。agent の作業ディレクトリは自動で入る |
 | `HERDR_BIN` | `herdr` | herdr の実行ファイル(テストで疑似に差し替え) |
 | `WEBUI_TB_DB` | `TB_DB`、無ければ `taskboard/data/tasks.db` | tb と同じ DB(既定は `lib/herdr_env.py`) |
-| `WEBUI_SCHED_LOGS` / `WEBUI_SCHED_JOBS` / `WEBUI_SCHED_SETTINGS` / `WEBUI_DISPATCH` / `WEBUI_RUN_DIR` | 兄弟ディレクトリ / `webui/run` | データ源・settings・`run/` の場所 |
+| `WEBUI_SCHED_LOGS` / `WEBUI_SCHED_JOBS` / `WEBUI_SCHED_SETTINGS` / `WEBUI_RUN_DIR` | 兄弟ディレクトリ / `webui/run` | データ源・settings・`run/` の場所 |
+| `WEBUI_APPROVALS` | `TB_APPROVALS`、無ければ `taskboard/config/approvals.conf` | `/perms` が読む approvals.conf(tb と同じ解決順) |
 
 ## コードの構成
 

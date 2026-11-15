@@ -258,3 +258,52 @@ def urgent_items():
                           "href": "/jobs/" + quote(n), "ts": clean(r.get("ts") or "")})
         return items[:NOTIFY_MAX]
     return cached("urgent", load)
+
+
+# ---- 送信履歴(messages 表。tb が送ろうとしたものすべて。読み取り専用)
+LEDGER_MAX = 100
+LEDGER_RESULTS = ("sent", "busy", "failed")
+
+
+def ledger_kinds():
+    return [r["kind"] for r in q("SELECT DISTINCT kind FROM messages ORDER BY kind")]
+
+
+def _ledger_where(target, d_from, d_to, kind=None, result=None, hide_failed=False):
+    w, a = [], []
+    if target:
+        w.append("target=?"); a.append(target)
+    if d_from:
+        w.append("substr(created_at,1,10)>=?"); a.append(d_from)
+    if d_to:
+        w.append("substr(created_at,1,10)<=?"); a.append(d_to)
+    if kind:
+        w.append("kind=?"); a.append(kind)
+    if result:
+        w.append("result=?"); a.append(result)
+    elif hide_failed:
+        w.append("result!='failed'")
+    return (" WHERE " + " AND ".join(w)) if w else "", a
+
+
+def ledger_summary(target, d_from, d_to):
+    """種別 × 結果の件数。宛先と期間だけで絞る(種別・結果の絞り込みでは変えない)。"""
+    where, a = _ledger_where(target, d_from, d_to)
+    return q("SELECT kind, result, COUNT(*) AS n FROM messages" + where + " GROUP BY kind, result ORDER BY kind, result", a)
+
+
+def ledger_rows(target, d_from, d_to, kind, result, include_failed=False):
+    """新しい順に最大 LEDGER_MAX 件(result が空なら failed を除く)。本文は 1 行目の先頭 200 文字だけ返す。"""
+    where, a = _ledger_where(target, d_from, d_to, kind, result, hide_failed=not result and not include_failed)
+    out = []
+    for r in q("SELECT id, kind, ref, target, body, result, created_at FROM messages" + where + " ORDER BY id DESC LIMIT ?",
+               a + [LEDGER_MAX]):
+        first = clean(r["body"] or "").strip().split("\n", 1)[0]
+        out.append({"id": r["id"], "kind": clean(r["kind"]), "ref": clean(r.get("ref") or ""), "target": clean(r["target"]),
+                    "result": clean(r["result"]), "created_at": clean(r["created_at"]),
+                    "first": first[:200] + ("…" if len(first) > 200 else "")})
+    return out
+
+
+def approval_history(limit=50):
+    return q("SELECT id, pattern, value, created_at FROM approval_changes ORDER BY id DESC LIMIT ?", (limit,))

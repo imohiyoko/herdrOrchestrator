@@ -6,13 +6,13 @@ import re
 import shlex
 from urllib.parse import quote, unquote, urlencode
 
-from .config import DISPATCH, HERDR_ROOT, JOB_RE, REFRESH_SEC, SCHED_LOGS, STALL_MIN
+from .config import HERDR_ROOT, JOB_RE, REFRESH_SEC, SCHED_LOGS, STALL_MIN
 from .sanitize import clean, e
 from .herdr import agent_key, agent_session, get_agents, read_agent, workspace_label
-from .data import NOTIFY_POLL_SEC, QUEUED_WARN_SEC, outbox_rows, activity_for, agent_ops, agent_registry, stopped_agents, db_conn, needs_human, parse_jsonl, q, stalled, tail_lines, tasks_for_agent, urgent_items
+from .data import NOTIFY_POLL_SEC, QUEUED_WARN_SEC, outbox_rows, activity_for, agent_ops, agent_registry, stopped_agents, db_conn, needs_human, parse_jsonl, q, stalled, tail_lines, tasks_for_agent, urgent_items, LEDGER_MAX, LEDGER_RESULTS, approval_history, ledger_kinds, ledger_rows, ledger_summary
 from .actions import NOTE_MAX
 from .jobs import DAY_PRESETS, DAY_TOKENS, INTERVAL_UNITS, interval_sec, interval_text, job_info, job_last, job_names
-from . import docs
+from . import docs, perms
 from .markdown import render as render_md
 
 
@@ -38,7 +38,7 @@ code{background:#eaeef2;padding:1px 4px;border-radius:3px}
 .doc h2.md{font-size:20px;border-bottom:1px solid #d0d7de}.doc ul,.doc ol{padding-left:1.5em}.err{background:#ffebe9;border:1px solid #cf222e;padding:6px 10px}
 """
 NAV = [("/", "概要"), ("/notifications", "緊急通知"), ("/agents", "agent"), ("/tasks", "タスク"),
-       ("/inbox", "報告・承認待ち"), ("/outbox", "送信"), ("/docs", "ドキュメント"), ("/jobs", "定期実行"), ("/ledger", "台帳")]
+       ("/inbox", "報告・承認待ち"), ("/outbox", "送信"), ("/docs", "ドキュメント"), ("/jobs", "定期実行"), ("/ledger", "送信履歴"), ("/perms", "権限")]
 
 
 def page(title, body, path, badge, logout="", refresh=True, scripts=()):
@@ -61,7 +61,7 @@ def page(title, body, path, badge, logout="", refresh=True, scripts=()):
         '<script src="/notify.js" defer></script>'
         + "".join(f'<script src="{e(src)}" defer></script>' for src in scripts) + "</head><body>"
         f"<nav>{''.join(links)}{logout}</nav><main><h1>{e(title)}</h1>{body}"
-        f'<p class=note>{f"自動更新 {REFRESH_SEC} 秒" if refresh else "入力欄があるので自動更新なし(再読み込みで更新)"} / 変更できるのは定期実行の設定・報告の「対応済み」・agent の停止 / 復活 / 作成だけ / 機密を含みうる画面です / Chrome 通知は「緊急通知」で設定</p></main></body></html>'
+        f'<p class=note>{f"自動更新 {REFRESH_SEC} 秒" if refresh else "入力欄があるので自動更新なし(再読み込みで更新)"} / 変更できるのは定期実行の設定・報告の「対応済み」・agent の停止 / 復活 / 作成だけ(権限と送信履歴は読み取りのみ) / 機密を含みうる画面です / Chrome 通知は「緊急通知」で設定</p></main></body></html>'
     )
 
 
@@ -477,14 +477,181 @@ def page_job(name, csrf, error="", saved=False):
         f'保存先: <code>scheduler/settings/{e(name)}.settings</code></p><p><a href="/jobs">一覧へ</a></p>')
 
 
-def page_ledger(_qs):
-    recs = parse_jsonl(tail_lines(DISPATCH(), 30))[::-1]
+DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+TARGET_RE = re.compile(r"[A-Za-z0-9._-]{1,64}")
+KIND_RE = re.compile(r"[a-z_-]{1,20}")
+
+
+def _one(qs, name):
+    return ((qs.get(name) or [""])[0]).strip()
+
+
+def page_ledger(qs, ctx=None):
+    """送信履歴(tb の messages 表。読み取り専用)。種別ごとの件数サマリ + 直近 100 件。failed は既定で畳む。"""
+    if ctx is not None:
+        ctx["norefresh"] = True   # 絞り込みの入力欄があるので自動更新しない
+    target, d_from, d_to = _one(qs, "target"), _one(qs, "from"), _one(qs, "to")
+    kind, result = _one(qs, "kind"), _one(qs, "result")
+    errs = []
+    if target and not TARGET_RE.fullmatch(target):
+        errs.append("宛先は英数字と . _ - だけです"); target = ""
+    for nm, v in (("開始日", d_from), ("終了日", d_to)):
+        if v and not DATE_RE.fullmatch(v):
+            errs.append(f"{nm}は YYYY-MM-DD の形です")
+            if nm == "開始日":
+                d_from = ""
+            else:
+                d_to = ""
+    kinds = ledger_kinds()
+    if kind and kind not in kinds:
+        errs.append("その種別は履歴にありません"); kind = ""
+    if result == "all":
+        result = ""
+        show_all = True
+    else:
+        show_all = False
+    if result and result not in LEDGER_RESULTS:
+        errs.append("結果は sent / busy / failed / all のどれかです"); result = ""
+
+    def link(**ch):
+        d = {"target": target, "from": d_from, "to": d_to, "kind": kind, "result": result or ("all" if show_all else "")}
+        d.update(ch)
+        return "/ledger?" + e(urlencode({k: v for k, v in d.items() if v}))
+
+    summ = ledger_summary(target, d_from, d_to)
+    kinds_seen = sorted({r["kind"] for r in summ})
+    sm = {(r["kind"], r["result"]): r["n"] for r in summ}
     rows = []
+    for k in kinds_seen:
+        cells = []
+        for rs in LEDGER_RESULTS:
+            n = sm.get((k, rs), 0)
+            txt = f'<span class=warn>{n}</span>' if rs == "failed" and n else str(n)
+            cells.append(f'<a href="{link(kind=k, result=rs)}">{txt}</a>' if n else "0")
+        rows.append([f'<a href="{link(kind=k, result="")}">{e(k)}</a>'] + cells + [str(sum(sm.get((k, rs), 0) for rs in LEDGER_RESULTS))])
+    failed_total = sum(n for (k, rs), n in sm.items() if rs == "failed")
+    body = "<h2>種別ごとの件数</h2>" + table(["種別", "sent", "busy", "failed", "計"], rows)
+    kopts = '<option value="">(すべて)</option>' + "".join(
+        f'<option value="{e(k)}"{" selected" if k == kind else ""}>{e(k)}</option>' for k in kinds)
+    ropts = "".join(f'<option value="{v}"{" selected" if (result or ("all" if show_all else "")) == v else ""}>{lbl}</option>'
+                    for v, lbl in (("", "failed 以外(既定)"), ("all", "すべて"), ("sent", "sent"), ("busy", "busy"), ("failed", "failed")))
+    form = ('<form method=get action="/ledger"><p>'
+            f'<label>種別 <select name=kind>{kopts}</select></label> '
+            f'<label>結果 <select name=result>{ropts}</select></label> '
+            f'<label>宛先 <input type=text name=target value="{e(target)}" size=16></label> '
+            f'<label>開始日 <input type=date name=from value="{e(d_from)}"></label> '
+            f'<label>終了日 <input type=date name=to value="{e(d_to)}"></label> '
+            '<button type=submit>絞り込む</button> <a href="/ledger">解除</a></p></form>')
+    recs = ledger_rows(target, d_from, d_to, kind, result, include_failed=show_all)
+    out = []
     for r in recs:
-        p = clean(r.get("prompt") or "")
-        rows.append([e(r.get("ts")), e(r.get("action")), e(r.get("target")), e(r.get("profile")),
-                     e(r.get("approved")), e(p[:200] + ("…" if len(p) > 200 else "")), e(r.get("result"))])
-    return "台帳 (直近 30 件)", table(["時刻", "action", "宛先", "profile", "承認", "送った内容(先頭)", "結果"], rows)
+        ref = r["ref"]
+        if r["kind"] == "send" and re.fullmatch(r"O-\d+", ref):
+            ref_html = f'<a href="/outbox">{e(ref)}</a>'
+        else:
+            ref_html = e(ref)
+        res = f'<span class=warn>{e(r["result"])}</span>' if r["result"] == "failed" else e(r["result"])
+        out.append([e(r["created_at"]), e(r["kind"]), ref_html, e(r["target"]), res, e(r["first"])])
+    note = ""
+    if not result and not show_all and failed_total:
+        note = f'<p class=note>failed {failed_total} 件は畳んでいます。<a href="{link(result="failed")}">failed だけを見る</a> / <a href="{link(result="all")}">すべて見る</a></p>'
+    body += "<h2>履歴</h2>" + err_html("。".join(errs)) * bool(errs) + form + note + table(["時刻(UTC)", "種別", "参照", "宛先", "結果", "本文(1 行目)"], out)
+    body += (f"<p class=note>tb の messages 表(送ろうとしたものすべて)を新しい順に最大 {LEDGER_MAX} 件。時刻と日付は UTC。"
+             "send の O-n は送信の依頼の状態(承認待ちなど)を見る <a href=\"/outbox\">送信</a> 画面に対応します。本文は 1 行目だけ(全文は表示しません)。</p>")
+    return "送信履歴", body
+
+
+def page_perms(qs, ctx=None):
+    """権限(approvals.conf の読み取り)。変更操作は置かない。コマンド行を組み立てて表示するだけ。"""
+    if ctx is not None:
+        ctx["norefresh"] = True
+    rules, err = perms.load_rules()
+    op = _one(qs, "op")
+    body = err_html(err) if err else ""
+    # 「この操作はどの行で決まるか」
+    form = ('<form method=get action="/perms"><p><label>操作名 '
+            f'<input type=text name=op value="{e(op)}" size=36 placeholder="send:task:worker1"></label> '
+            '<button type=submit>どの行で決まるか調べる</button></p></form>')
+    res = ""
+    hit = None
+    if op:
+        if not perms.ACTION_RE.fullmatch(op):
+            res = err_html("操作名に使えない文字があります(英数字と . _ : * ? - だけ、128 文字まで)")
+        else:
+            val, hit = perms.decide(rules, op)
+            if hit:
+                res = (f'<p><code>{e(op)}</code> → <b class="{"warn" if val == "allow" else ""}">{e(val)}</b>'
+                       f'(<b>{hit["no"]} 行目</b>: <code>{e(hit["pattern"])} = {e(hit["value"])}</code> で決まる)</p>')
+            else:
+                res = f'<p><code>{e(op)}</code> → <b>ask</b>(どの行にも一致しないので既定の ask)</p>'
+    body += "<h2>この操作はどの行で決まるか</h2>" + form + res + (
+        '<p class=note>tb の <code>tb approval &lt;操作&gt;</code> と同じ規則(上から見て最初に一致した行)をここで再現した結果です。'
+        '実際に tb を呼んだり、何かを書き換えたりはしません。リスク評価(<code>tb approval &lt;操作&gt; --to 宛先 --text 本文</code>)は'
+        '本文が要るので、ここでは出しません。</p>')
+    # 一覧
+    rows = []
+    last_chg = {}
+    for h in approval_history(200):
+        last_chg.setdefault(h["pattern"], h)
+    for r in rules:
+        notes = []
+        w = perms.warning(r)
+        if w:
+            notes.append(f'<span class=warn>{e(w)}</span>')
+        sh = perms.shadowed_by(rules, r)
+        if sh:
+            notes.append(f'<span class=warn>上の {sh["no"]} 行目(<code>{e(sh["pattern"])}</code>)が先に一致するため、この行は使われません</span>')
+        chg = e(r["note"]) if r["note"] else ""
+        hrow = last_chg.get(r["raw"])
+        if hrow:
+            chg += (" / " if chg else "") + f'履歴: {e(hrow["created_at"])} に {e(hrow["value"])}'
+        v = f'<b class=warn>{e(r["value"])}</b>' if r["value"] == "allow" else e(r["value"])
+        mark = ' style="background:#fff8c5"' if hit is r else ""
+        ex = " ".join(f"<code>{e(x)}</code>" for x in perms.examples(rules, r)[:8]) or '<span class=note>(例なし)</span>'
+        rows.append([str(r["no"]), f'<code{mark}>{e(r["pattern"])}</code>', v, chg or '<span class=note>(注記なし)</span>',
+                     ex, "<br>".join(notes)])
+    body += "<h2>ルール一覧(上から順に評価)</h2>" + table(["順位", "パターン", "値", "最後の変更", "この行で決まる操作の例", "警告"], rows)
+    body += (f'<p class=note>元ファイル: <code>{e(perms.conf_path_label())}</code>。「最後の変更」は行末の注記と、tb が残した変更履歴(approval_changes)です。'
+             'どの行にも一致しなければ ask。ワイルドカードは <code>*</code> と <code>?</code>。</p>')
+    # 変更履歴
+    hist = approval_history(50)
+    body += "<h2>変更履歴(直近 50 件)</h2>" + table(
+        ["時刻(UTC)", "パターン", "値"],
+        [[e(h["created_at"]), f'<code>{e(h["pattern"])}</code>', e(h["value"])] for h in hist])
+    body += '<p class=note>tb allow / tb ask が残した履歴です。誰が変えたか・変更前の値は記録されません(tb にその欄がありません)。</p>'
+    # コマンドの組み立て
+    pat, val = _one(qs, "pat"), _one(qs, "val")
+    cmd_html = ""
+    if pat or val:
+        cmd = perms.tb_command(val, pat)
+        if cmd is None:
+            cmd_html = err_html("パターンは英数字と . _ : * ? - だけ(128 文字まで)、値は allow か ask です")
+        else:
+            warns = []
+            probe = {"raw": pat, "value": val}
+            w = perms.warning(probe)
+            if val == "allow" and pat == "*":
+                w = "全体を allow にします。末尾の <code>* = ask</code> は書き換えられてしまいます(tb に止める仕組みがありません)"
+                warns.append(w)
+            elif w:
+                warns.append(e(w))
+            if val == "ask" and pat == "*":
+                warns.append("既定の <code>* = ask</code> と同じ値です")
+            if any(r["raw"] == pat for r in rules):
+                warns.append("同じパターンの行が既にあるので、その行の値が書き換わります")
+            else:
+                warns.append("新しい行は一覧の先頭(コメントの直後)に入り、既存の行より先に一致します")
+            cmd_html = (f'<p>人が<b>自分の端末で</b>実行するコマンド行です(この画面では実行しません):</p><pre>{e(cmd)}</pre>'
+                        + "".join(f"<p class=warn>{x}</p>" for x in warns))
+    pat_form = ('<form method=get action="/perms"><p>'
+                f'<label>パターン <input type=text name=pat value="{e(pat)}" size=30 placeholder="send:task:worker1"></label> '
+                f'<label>値 <select name=val><option value=allow{" selected" if val == "allow" else ""}>allow(承認なしで進めてよい)</option>'
+                f'<option value=ask{" selected" if val == "ask" else ""}>ask(人の承認が要る)</option></select></label> '
+                '<button type=submit>コマンド行を組み立てる</button></p></form>')
+    body += ("<h2>変更したいとき</h2>" + pat_form + cmd_html +
+             "<p class=note>権限の変更は、この画面ではできません(ボタンも POST もありません)。人が端末で <code>tb allow</code> / <code>tb ask</code> を実行します。"
+             "広い allow(例: <code>agent:*</code>)は、agent が自分の承認権限を広げる経路になりえます。</p>")
+    return "権限(approvals.conf)", body
 
 
 def age_label(sec):
@@ -658,7 +825,7 @@ def _doc_body(text, ext, raw_mode, base_q, ctx):
 
 
 STATIC = {"/": page_overview, "/notifications": page_notifications, "/tasks": page_tasks, "/inbox": page_inbox,
-          "/outbox": page_outbox, "/jobs": page_jobs, "/ledger": page_ledger}
+          "/outbox": page_outbox, "/jobs": page_jobs}
 
 
 def route(path, qs, ctx=None):
@@ -673,6 +840,10 @@ def route(path, qs, ctx=None):
     if path == "/agent-new":
         ctx["norefresh"] = True
         return page_agent_new(ctx.get("csrf", ""))
+    if path == "/ledger":
+        return page_ledger(qs, ctx)
+    if path == "/perms":
+        return page_perms(qs, ctx)
     if path == "/docs":
         return page_docs(qs, ctx)
     if path == "/docs/view":
