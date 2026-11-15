@@ -113,6 +113,21 @@ done
 for p in 'taskboard/bin/tb' 'bin/tb' 'tests/run-all.sh' 'taskboard/test/run.sh' 'webui/tests/run.sh' 'taskboard/test/cases/98_gate.sh' 'tests/test_gate.sh' '.github'; do
   eq "gate H-01 builtin: $p hits (merge and approve)" "$(gtf FILE "FILE M $p" | gt approve "$GT/gate.conf" "$GT/empty-paths.conf" | hardl | cut -c1-5)|$(gtf FILE "FILE M $p" | gt merge "$GT/gate.conf" "$GT/empty-paths.conf" | hardl | cut -c1-5)" "H-01 |H-01 "
 done
+# パスの正規形に頼らない: 不正は評価不能(21)。規則を回避できない
+for p in './.github/x' '././.github/workflows/ci.yml' './bin/tb' 'a/../.github/x' '../x' '/etc/x' 'a//b' 'docs/' 'docs/./x.md' '.' '..' 'a/.'; do
+  eq "gate path form: '$p' → 21 (not allow)" "$(gtf FILE "FILE M $p" | G1 approve | rcof)" "21"
+done
+eq "gate path form: rename with a bad new path → 21" "$(gtf FILE 'FILE R docs/a.md ././x' | G1 approve | rcof)" "21"
+eq "gate path form: dot-prefixed names are fine (.github/x hits H-01, not 21)" "$(gtf FILE 'FILE M .github/x' | G1 approve | rcof)" "20"
+eq "gate path form: upper-case .GITHUB hits" "$(gtf FILE 'FILE M .GITHUB/workflows/ci.yml' | G1 approve | rcof)" "20"
+# docs 配下は拡張子の許可リストだけが docs。それ以外は一般のコード(+1)
+for p in docs/x.js docs/x.yml docs/x.plist docs/Makefile docs/deploy docs/RUN.SH docs/run.sh docs/x.py docs/.hidden sub/docs/a.json; do
+  eq "gate P-01: $p is code, not docs (+1)" "$(pk "FILE M $p" | cut -d'|' -f1)" "P-01 +1: 一般のコード"
+done
+for p in docs/a.md docs/a.txt docs/a.rst docs/a.PNG docs/a.svg docs/a.jpg docs/a.jpeg docs/a.gif README.md sub/docs/b.md; do
+  eq "gate P-01: $p is docs (+0)" "$(pk "FILE M $p" | cut -d'|' -f1)" "P-01 +0: docs・tests のみ"
+done
+eq "gate P-01: docs/x.js + docs/a.md → mixed" "$(pk 'FILE M docs/a.md' 'FILE M docs/x.js' | cut -d'|' -f2)" "K-01 +2: mixed"
 eq "gate H-01: an ordinary test file does not hit" "$(gtf FILE 'FILE M taskboard/test/cases/10_tasks.sh' | G1 merge | hardl)" "none"
 eq "gate P-01: executable under docs/ is code, not docs (+1)" "$(pk 'FILE M docs/run.sh' | cut -d'|' -f1)" "P-01 +1: 一般のコード"
 eq "gate P-01: bin/ is important (+2)" "$(pk 'FILE M tool/bin/x' | cut -d'|' -f1)" "P-01 +2: lib・config・scheduler 配下(重要度 高)"

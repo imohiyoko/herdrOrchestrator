@@ -124,7 +124,14 @@ _gate_path_hit() {
 # HEAD <sha> / PR <owner>/<repo>#<n> / REVIEW <系統> <sha> blocker=<n> should=<n> verdict=pass|fail / REVIEW none
 # TEST exit=<n> sha=<sha> / TEST none / PUBLIC-CHECK clean|dirty|unavailable / FILE <A|M|D|T> <path> / FILE R <旧> <新>
 # SIZE <変更行数> <全行数> / AUTHOR <id> / EXECUTOR <id> / AUTHOR-REJECT-RATE low|mid|high|unknown
-_gate_path_ok() { [[ $1 =~ ^[A-Za-z0-9._@/+-]+$ && $1 != /* && $1 != *'//'* && ! ( $1 =~ (^|/)\.\.(/|$) ) ]]; }
+# 入力の正規形に頼らない: 空・.・.. の階層(先頭の ./、連続スラッシュ、末尾スラッシュ、a/../b を含む)、先頭の / は不正(評価不能)。
+# 大文字小文字は規則の側で区別しない。シンボリックリンクは文字列からは分からないので、記録する側が FILE T で渡す前提(docs/gate.md)
+_gate_path_ok() {
+  local seg; local IFS=/
+  [[ $1 =~ ^[A-Za-z0-9._@/+-]+$ && $1 != /* && $1 != */ ]] || return 1
+  for seg in $1; do [[ -n $seg && $seg != . && $seg != .. ]] || return 1; done
+  return 0
+}
 
 # _gate_parse <行>...  → G_* と GATE_INERRS(入力の不足・不正の一覧)
 _gate_parse() {
@@ -171,9 +178,9 @@ _gate_parse() {
         read -r a b c extra <<<"$rest"
         if [[ -n ${extra:-} ]]; then GATE_INERRS+=("FILE の欄が多すぎます")
         elif [[ $a == R ]]; then
-          if [[ -n ${b:-} && -n ${c:-} ]] && _gate_path_ok "$b" && _gate_path_ok "$c"; then G_FILES+=("R $b $c"); else GATE_INERRS+=("FILE R は旧パスと新パスの両方が要り、パスは相対で .. を含みません"); fi
+          if [[ -n ${b:-} && -n ${c:-} ]] && _gate_path_ok "$b" && _gate_path_ok "$c"; then G_FILES+=("R $b $c"); else GATE_INERRS+=("FILE R は旧パスと新パスの両方が要り、パスは相対で、空・.・.. の階層を含みません"); fi
         elif [[ $a =~ ^[AMDT]$ ]]; then
-          if [[ -n ${b:-} && -z ${c:-} ]] && _gate_path_ok "$b"; then G_FILES+=("$a $b"); else GATE_INERRS+=("FILE $a のパスが不正です(相対パスで .. を含まない 1 つ)"); fi
+          if [[ -n ${b:-} && -z ${c:-} ]] && _gate_path_ok "$b"; then G_FILES+=("$a $b"); else GATE_INERRS+=("FILE $a のパスが不正です(相対パスで、空・.・.. の階層を含まない 1 つ)"); fi
         else GATE_INERRS+=("FILE の種別は A | M | D | R | T です"); fi;;
       SIZE)
         read -r a b <<<"$rest"
@@ -217,7 +224,7 @@ gate_eval() {
     return 0
   fi
   case $action in approve) GATE_THRESHOLD=$GATE_TH_APPROVE;; merge) GATE_THRESHOLD=$GATE_TH_MERGE;; esac
-  local i p pts n pct lv cat has_docs=0 has_tests=0 has_code=0 has_imp=0 repo=${G_PR%%#*} allowed=0 r
+  local i p pts n pct lv cat ext has_docs=0 has_tests=0 has_code=0 has_imp=0 repo=${G_PR%%#*} allowed=0 r
 
   # --- hard(点数に関係なく ask)
   for r in "${GATE_REPOS[@]:-}"; do [[ -n $r && $r == "$repo" ]] && allowed=1; done
@@ -227,7 +234,6 @@ gate_eval() {
     read -r st op np <<<"$f"
     [[ $st == T ]] && GATE_HARD+=("H-06 ファイルの種別・モードの変更: $op")
     for p in "$op" ${np:+"$np"}; do
-      p=${p#./}
       if _gate_path_hit "$p"; then GATE_HARD+=("H-01 ガバナンスのパス規則に当たる変更: $p(規則 $GATE_HIT_PAT)"); fi
     done
   done
@@ -257,12 +263,12 @@ gate_eval() {
   for f in "${G_FILES[@]}"; do
     read -r st op np <<<"$f"
     for p in "$op" ${np:+"$np"}; do
-      p=${p#./}
       case $p in
         lib/*|*/lib/*|config/*|*/config/*|scheduler/*|*/scheduler/*|.github/*|bin/*|*/bin/*) has_imp=1; has_code=1;;
-        docs/*.sh|*/docs/*.sh|docs/*.py|*/docs/*.py|docs/*.bash|*/docs/*.bash) has_code=1;;   # docs 配下でも実行できるファイルは docs 扱いにしない
         test/*|tests/*|*/test/*|*/tests/*) has_tests=1;;
-        docs/*|*/docs/*|*.md) has_docs=1;;
+        docs/*|*/docs/*|*.md)   # docs として数えるのは拡張子の許可リストだけ。それ以外(拡張子なし、実行できるもの、設定など)は一般のコード
+          ext=$(printf %s "${p##*/}" | tr A-Z a-z); if [[ $ext == *.* ]]; then ext=${ext##*.}; else ext=""; fi
+          case $ext in md|txt|png|svg|jpg|jpeg|gif|rst) has_docs=1;; *) has_code=1;; esac;;
         *) has_code=1;;
       esac
     done
