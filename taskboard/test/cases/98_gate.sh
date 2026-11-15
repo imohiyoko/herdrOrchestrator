@@ -294,12 +294,28 @@ BUILTIN_HARD=(
   package.json package-lock.json yarn.lock pnpm-lock.yaml bun.lockb .npmrc .yarnrc .yarnrc.yml
   requirements.txt requirements-dev.txt requirements/base.txt Pipfile Pipfile.lock poetry.lock uv.lock pyproject.toml setup.py setup.cfg pip.conf pip.ini .pip/pip.conf .pypirc
   go.mod go.sum go.work go.work.sum Cargo.toml Cargo.lock Gemfile Gemfile.lock composer.json composer.lock pom.xml build.gradle build.gradle.kts
+  .claude.json .agents/skills/a.md .agents/x AGENT.md .aider.conf.yml .aider.conf.yaml
+  conftest.py tests/conftest.py tox.ini noxfile.py .tool-versions .mise.toml mise.toml mise.local.toml .mise.local.toml .mise/config.toml .config/mise.toml .config/mise/config.toml mise/config.toml .cargo/config .cargo/config.toml
+  justfile Justfile .justfile Taskfile.yml Taskfile.yaml Procfile lefthook.yml .lefthook.yml lefthook.yaml .pre-commit-hooks.yaml
+  .bazelrc .bazelrc.user MODULE.bazel WORKSPACE WORKSPACE.bazel
+  .gitlab-ci.yml .gitlab/ci/a.yml .travis.yml azure-pipelines.yml azure-pipelines-ci.yml .azure-pipelines/a.yml bitbucket-pipelines.yml cloudbuild.yaml cloudbuild.yml appveyor.yml .appveyor.yml .drone.yml buildspec.yml buildspec-test.yml
+  renovate.json renovate.json5 .renovaterc .renovaterc.json .dependabot/config.yml
+  .bundle/config .gemrc bunfig.toml .yarn/releases/yarn.cjs .yarn/plugins/a.cjs pnpm-workspace.yaml gradlew gradlew.bat mvnw mvnw.cmd .mvn/wrapper/maven-wrapper.properties .mvn/settings.xml gradle.properties settings.gradle settings.gradle.kts .terraform.lock.hcl Brewfile Brewfile.lock.json flake.nix flake.lock environment.yml
+  Podfile Podfile.lock Package.swift Package.resolved mix.exs mix.lock pubspec.yaml pubspec.lock build.sbt deno.json deno.jsonc deno.lock
 )
 for p in "${BUILTIN_HARD[@]}"; do
   up=$(printf %s "$p" | tr a-z A-Z)
   eq "gate builtin hard: $p → ask in approve and merge (root)" "$(for a in approve merge; do gtf FILE "FILE M $p" | gt $a "$GT/gate.conf" "$GT/empty-paths.conf" | hardl | cut -c1-5; done | tr '\n' '|')" "H-01 |H-01 |"
   eq "gate builtin hard: $p → ask when deep (a/b/c/d/)" "$(gtf FILE "FILE M a/b/c/d/$p" | gt approve "$GT/gate.conf" "$GT/empty-paths.conf" | hardl | cut -c1-5)" "H-01 "
   eq "gate builtin hard: $p → ask in upper case" "$(gtf FILE "FILE M $up" | gt approve "$GT/gate.conf" "$GT/empty-paths.conf" | hardl | cut -c1-5)" "H-01 "
+done
+# 見送ったもの(単一の値の固定・通常のコード・説明の文書)は hard にしない。名前が近い文書も当たらない
+for p in .nvmrc .python-version .ruby-version CMakeLists.txt BUILD .editorconfig .prettierrc tsconfig.json docs/tox-notes.md docs/conftest-usage.md notes/justfile-tips.md docs/cargo-config.md docs/mise-intro.md notes/renovate-guide.md notes/mvnw-notes.md docs/gradlew-usage.md notes/procfile-tips.md; do
+  eq "gate builtin hard (not a hit, deferred): $p" "$(gtf FILE "FILE M $p" | gt approve "$GT/gate.conf" "$GT/empty-paths.conf" | hardl)" "none"
+done
+# 実設定のある隔離ツリーでも、追加した名前の結果は同じ(組み込みは設定で外せない)
+for p in .claude.json AGENT.md conftest.py .cargo/config.toml .mise.toml .gitlab-ci.yml renovate.json; do
+  eq "gate builtin hard: $p same in a tree with a real config" "$(gtf FILE "FILE M $p" | tbi "$ISO1" evaluate T-1 --action merge --facts-stdin | grep -c '^hard: H-01 ')" "1"
 done
 # 隣の名前は hard にならない(入れすぎない)
 for p in README.md docs/guide.md src/package.json.md Makefile.md CODEOWNERS.md docs/docker-notes.md notes/requirements.md; do
