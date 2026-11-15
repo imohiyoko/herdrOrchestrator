@@ -251,6 +251,11 @@ eq "gate: the example files parse (evaluation reaches a real verdict)" "$(gtf - 
 # --- 組み込みの hard(基準: ガバナンス・権限・コードの取得や実行の入口)。規則 1 件につき、根直下・深い階層・大文字小文字を approve と merge の両方で確かめる
 BUILTIN_HARD=(
   CODEOWNERS docs/CODEOWNERS .github/CODEOWNERS .coderabbit.yaml
+  .github/workflows/ci.yml .github/copilot-instructions.md
+  .claude/settings.json .claude/hooks/pre.sh .claude/commands/x.md .claude/agents/a.md .claude/skills/s/SKILL.md .claude/settings.local.json
+  CLAUDE.md CLAUDE.local.md AGENTS.md GEMINI.md copilot-instructions.md
+  .cursor/rules/a.mdc .cursorrules .windsurf/rules/a.md .windsurfrules .clinerules .clinerules.md .roo/rules/a.md .continue/config.json .codex/config.toml .gemini/settings.json
+  mcp.json .vscode/mcp.json .vscode/tasks.json .vscode/settings.json
   .githooks/pre-commit .husky/pre-commit .gitattributes .gitmodules .pre-commit-config.yaml .envrc .mcp.json .devcontainer/devcontainer.json .circleci/config.yml Jenkinsfile
   Makefile docs/Makefile GNUmakefile Dockerfile Dockerfile.dev app.dockerfile docker-compose.yml docker-compose.override.yaml
   package.json package-lock.json yarn.lock pnpm-lock.yaml bun.lockb .npmrc .yarnrc .yarnrc.yml
@@ -281,9 +286,24 @@ eq "gate builtin hard: same hit with an empty paths file, the example paths file
 for p in lib/db.sh Lib/db.sh LIB/x.sh taskboard/Lib/db.sh taskboard/CONFIG/x.conf Webui/Scheduler/x.py; do
   eq "gate P-01 case-insensitive: $p → +2" "$(pk "FILE M $p" | cut -d'|' -f1)" "P-01 +2: lib・config・scheduler 配下(重要度 高)"
 done
-eq "gate P-01 case-insensitive: nocasematch is restored afterwards" "$(shopt -q nocasematch && echo on || echo off)" "off"
+# nocasematch の復元は、gate_eval を呼んだのと同じシェルで確かめる(復元の行を消すと落ちる)。呼ぶ前が off なら off、on なら on に戻る
+ncs() { local init=$1 facts=() l; while IFS= read -r l || [[ -n $l ]]; do facts+=("$l"); done
+  ( TB_ROOT=$HERE/..; source "$HERE/../lib/gate.sh"; GATE_CONF=$GT/gate.conf; GATE_PATHS=$GT/paths.conf; GATE_REVIEWS=$GT/reviews-good.log
+    if [[ $init == on ]]; then shopt -s nocasematch; else shopt -u nocasematch; fi
+    gate_eval merge T-1 "" "${facts[@]}" >/dev/null; shopt -q nocasematch && echo on || echo off ); }
+eq "gate P-01: nocasematch restored in the calling shell (was off → off)" "$(gtf - | ncs off)" "off"
+eq "gate P-01: nocasematch restored in the calling shell (was on → on)" "$(gtf - | ncs on)" "on"
+eq "gate P-01: nocasematch restored also when a path hits H-01 (off)" "$(gtf FILE 'FILE M roles/a.md' | ncs off)" "off"
+eq "gate P-01: nocasematch restored also on an evaluation error (off)" "$(printf 'HEAD 3f9c2ab\n' | ncs off)" "off"
 eq "gate P-01 case-insensitive: Docs dir with .MD is docs" "$(pk 'FILE M DOCS/A.MD' | cut -d'|' -f1)" "P-01 +0: docs・tests のみ"
 # docs の分類の細部(N-C): 先頭の . だけの名前や、末尾の . は拡張子なし = コード
 for p in docs/.md docs/a. docs/a.md.js docs/.txt docs/dir.md/x; do
   eq "gate P-01 docs detail: $p is code (+1)" "$(pk "FILE M $p" | cut -d'|' -f1)" "P-01 +1: 一般のコード"
 done
+
+# .github はどの階層でも hard(ルート直下だけではない)
+for p in sub/.github/x a/b/.github/workflows/ci.yml sub/.GITHUB/x .Github/workflows/ci.yml; do
+  eq "gate builtin hard: $p → ask in approve and merge" "$(for a in approve merge; do gtf FILE "FILE M $p" | gt $a "$GT/gate.conf" "$GT/empty-paths.conf" | hardl | cut -c1-5; done | tr '\n' '|')" "H-01 |H-01 |"
+done
+eq "gate builtin hard: a path that only contains 'github' is not a hit" "$(gtf FILE 'FILE M docs/github-notes.md' | gt approve "$GT/gate.conf" "$GT/empty-paths.conf" | hardl)" "none"
+eq "gate builtin hard: agent-config look-alikes are not hits" "$(gtf FILE 'FILE M docs/claude-usage.md' 'FILE M notes/agent-notes.md' | gt approve "$GT/gate.conf" "$GT/empty-paths.conf" | hardl)" "none"
