@@ -105,7 +105,7 @@ POST/PUT/DELETE/PATCH は 405。
 | `/jobs` | 各 job の実際に効く設定(間隔・時間帯・曜日・有効/一時停止)、最終記録と最後の実行 |
 | `/jobs/<job>` | スケジュールの変更フォーム(自動更新しない)。保存先は `scheduler/settings/<job>.settings`、次の分から反映。「conf の値に戻す」で settings を消す |
 | `/ledger` | 送信履歴(tb の `messages` 表)。種別 × 結果の件数サマリと直近 100 件。failed は既定で畳む。`?kind=` `?result=`(sent / busy / failed / all) `?target=` `?from=` `?to=`(日付 `YYYY-MM-DD`、UTC)で絞り込み。send の `O-n` は `/outbox` にリンクし、本文は 1 行目だけ |
-| `/perms` | 権限(`taskboard/config/approvals.conf` の読み取り)。上から順に順位・パターン・ask/allow・最後の変更(行末の注記と `approval_changes`)・その行で決まる操作の例・警告(`* = ask`、広い allow、上の行に隠れる行)、「この操作はどの行で決まるか」の検索(`?op=`、tb の `approval_of` と同じ規則をここで再現。tb は呼ばない)、変更履歴、`tb allow` / `tb ask` のコマンド行の組み立て表示(`?pat=&val=`。表示だけで実行しない)。変更の操作・POST は無い |
+| `/perms` | 権限(`taskboard/config/approvals.conf` の読み取り)。上から順に順位・パターン・ask/allow・最後の変更(行末の注記と `approval_changes`)・その行で決まる操作の例・警告(`* = ask`、広い allow、上の行に隠れる行(ワイルドカードを含まない行)、「この操作はどの行で決まるか」の検索(`?op=`、tb の `approval_of` と同じ規則をここで再現。tb は呼ばない)、変更履歴、`tb allow` / `tb ask` のコマンド行の組み立て表示(`?pat=&val=`。表示だけで実行しない)。変更の操作・POST は無い |
 
 名前の無い agent は `pane_id`(例: `w2:p3`)が名前の代わりになる。未知の URL は 404。
 
@@ -213,7 +213,7 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.herdr-webui.plist
 | `HERDR_BIN` | `herdr` | herdr の実行ファイル(テストで疑似に差し替え) |
 | `WEBUI_TB_DB` | `TB_DB`、無ければ `taskboard/data/tasks.db` | tb と同じ DB(既定は `lib/herdr_env.py`) |
 | `WEBUI_SCHED_LOGS` / `WEBUI_SCHED_JOBS` / `WEBUI_SCHED_SETTINGS` / `WEBUI_RUN_DIR` | 兄弟ディレクトリ / `webui/run` | データ源・settings・`run/` の場所 |
-| `WEBUI_APPROVALS` | `TB_APPROVALS`、無ければ `taskboard/config/approvals.conf` | `/perms` が読む approvals.conf(tb と同じ解決順) |
+| `WEBUI_APPROVALS` | `TB_APPROVALS`、無ければ `taskboard/config/approvals.conf` | `/perms` が読む approvals.conf(tb と同じ解決順。launchd 運用では tb が読むのと同じ approvals.conf を指すこと) |
 
 ## コードの構成
 

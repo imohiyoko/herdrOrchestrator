@@ -514,6 +514,10 @@ F = cl.get("/ledger?result=failed")
 check("送信履歴: result=failed で failed だけ(最大 100 件)", F[2].count("failbody-") == 100 and "reportbody-" not in F[2])
 A = cl.get("/ledger?result=all&kind=proposal")
 check("送信履歴: result=all で failed も出る", "failbody-" in A[2] and "畳んでいます" not in A[2] and "failbody-" not in cl.get("/ledger?kind=proposal")[2])
+check("送信履歴: kind=send では他種別の failed を畳み件数に数えない", "畳んでいます" not in K[2])
+_KP = cl.get("/ledger?kind=proposal")[2]
+check("送信履歴: kind=proposal は failed 150 件を畳み件数に出す", "failed 150 件は畳んでいます" in _KP)
+check("送信履歴: 全角数字の日付は不正", "YYYY-MM-DD" in cl.get("/ledger?from=%EF%BC%92%EF%BC%90%EF%BC%92%EF%BC%96-%EF%BC%90%EF%BC%91-%EF%BC%90%EF%BC%91")[2])
 check("送信履歴: kind で絞る", K[2].count("SECOND") == 0 and "一行目" in K[2] and "reportbody-" not in K[2])
 T = cl.get("/ledger?target=alpha")
 check("送信履歴: 宛先で絞る(busy も出る)", "sched-busy" in T[2] and "reportbody-" not in T[2])
@@ -525,6 +529,8 @@ for bad in ["kind=zzz", "target=a%20b%3Cx", "from=bad", "to=2026-13-xx%27", "res
 check("送信履歴: POST は 405", cl.raw("POST", "/ledger", {"a": "b"})[0] == 405)
 check("送信履歴: 自動更新しない(入力欄あり)", 'http-equiv="refresh"' not in L[2])
 
+_AP = env["WEBUI_APPROVALS"]
+_m0 = os.stat(_AP).st_mtime_ns
 P = cl.get("/perms")
 check("権限: 200", P[0] == 200 and "approvals.conf" in P[2])
 rows = re.findall(r"<tr><td>(\d+)</td><td><code[^>]*>([^<]*)</code></td><td>(?:<b[^>]*>)?(allow|ask)", P[2])
@@ -548,6 +554,8 @@ check("権限: tb allow のコマンド行を表示するだけ", "<pre>tb allow
 check("権限: * への allow に強い警告", "全体を allow にします" in cl.get("/perms?pat=*&val=allow")[2])
 check("権限: 値・パターンが不正ならコマンドを出さない", "<pre>tb" not in cl.get("/perms?pat=a%3Bb&val=allow")[2] and "<pre>tb" not in cl.get("/perms?pat=ab&val=rm")[2])
 check("権限: シェルの特殊文字を含むパターンは出さない", "<pre>tb" not in cl.get("/perms?pat=%24%28id%29&val=ask")[2])
+check("権限: approvals.conf は GET の前後で変わらない(mtime)", os.stat(_AP).st_mtime_ns == _m0)
+check("権限: 先頭が - の操作名・パターンは不正", "使えない文字" in cl.get("/perms?op=-x")[2] and "<pre>tb" not in cl.get("/perms?pat=-x&val=allow")[2])
 check("権限: POST は 405", cl.raw("POST", "/perms", {"a": "b"})[0] == 405)
 check("権限: 自動更新しない", 'http-equiv="refresh"' not in P[2])
 _un = Client(port)

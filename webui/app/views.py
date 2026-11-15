@@ -477,9 +477,8 @@ def page_job(name, csrf, error="", saved=False):
         f'保存先: <code>scheduler/settings/{e(name)}.settings</code></p><p><a href="/jobs">一覧へ</a></p>')
 
 
-DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}", re.ASCII)
 TARGET_RE = re.compile(r"[A-Za-z0-9._-]{1,64}")
-KIND_RE = re.compile(r"[a-z_-]{1,20}")
 
 
 def _one(qs, name):
@@ -529,7 +528,7 @@ def page_ledger(qs, ctx=None):
             txt = f'<span class=warn>{n}</span>' if rs == "failed" and n else str(n)
             cells.append(f'<a href="{link(kind=k, result=rs)}">{txt}</a>' if n else "0")
         rows.append([f'<a href="{link(kind=k, result="")}">{e(k)}</a>'] + cells + [str(sum(sm.get((k, rs), 0) for rs in LEDGER_RESULTS))])
-    failed_total = sum(n for (k, rs), n in sm.items() if rs == "failed")
+    failed_total = sum(n for (k, rs), n in sm.items() if rs == "failed" and (not kind or k == kind))
     body = "<h2>種別ごとの件数</h2>" + table(["種別", "sent", "busy", "failed", "計"], rows)
     kopts = '<option value="">(すべて)</option>' + "".join(
         f'<option value="{e(k)}"{" selected" if k == kind else ""}>{e(k)}</option>' for k in kinds)

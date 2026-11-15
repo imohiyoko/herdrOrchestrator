@@ -9,7 +9,7 @@ from .config import APPROVALS
 from .sanitize import clean
 
 # tb の valid_action と同じ文字種
-ACTION_RE = re.compile(r"[A-Za-z0-9._:*?-]{1,128}")
+ACTION_RE = re.compile(r"[A-Za-z0-9._:*?][A-Za-z0-9._:*?-]{0,127}")
 
 # 一致の例に使う、tb が実際に出す操作名(宛先は仮の名前)
 SAMPLE_OPS = ["send:task:worker1", "send:info:worker1", "send:answer:worker1", "role:change", "proxy:read-only",
