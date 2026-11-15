@@ -71,7 +71,10 @@ codex / gemini の「no」は「その CLI に無い」ではなく「herdr 経�
 変更しない(migration なし)。`agents.kind` は既にある。
 
 - `agent-new --kind K`: 登録時に `kind` を書く(claude 以外のときだけ `agent_ops.args` に `kind` が入る)
-- `agent_sync`: herdr が教える `agent` 欄が既知の kind なら、新規行にも既存行にも反映する(同名で別の kind が外部から起動されたときに、古い kind のまま resume 検査を通さないため)。空・未知の値のときは、既存の行は保持し、新規の行は `claude`
+- `agent_sync`: herdr が教える `agent` 欄が既知の kind のときだけ採用する。空・未知の値のときは、既存の行の kind と model は変えず、新規の行は `claude` にする。
+  - **個体が変わる**(herdr が既知の kind を教え、台帳の kind と違う = 同名の別個体が外部で起動された)ときは、旧い個体の持ち物を 1 か所でまとめて入れ替える: `kind` は herdr の値、`model` は消す(herdr からは分からない。旧 kind の model が新しい kind の復活を止めないため)、`session_id` は herdr が教えるものだけ(教えなければ消す。別の kind の session を `--resume` に渡さないため)。
+  - 同じ個体(同じ kind、kind を教えない、未知)は従来どおり保持する(`session_id` は herdr が教えたときだけ更新)。
+  - 入れ替えにより、`agent-restart` / `agent-revive` の resume 検査は、いま動いている個体の kind で行われる(codex の pane を閉じてから claude の引数で再開しようとしない)。
 - 古い台帳(`kind` が既定の `claude`)は何も変えずに動く
 
 ## 6. 既知の制約(今回の変更の範囲外)

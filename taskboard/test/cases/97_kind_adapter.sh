@@ -73,6 +73,39 @@ eq "sync: same individual keeps kind" "$(kdsql "SELECT kind FROM agents WHERE na
 export FAKE_AGENTS="[$KD_C,$(kd_ag swap1 wS:p1 newcodex ',"agent":"foo"'),$(kd_ag newfoo wF:p1 sf ',"agent":"foo"')]"; $TB agents >/dev/null
 eq "sync: unknown herdr kind keeps existing row, new row gets claude" "$(kdsql "SELECT name||'='||kind FROM agents WHERE name IN ('swap1','newfoo') ORDER BY name;" | tr '\n' ' ')" "newfoo=claude swap1=codex "
 
+# ---- 個体が変わる(同名で herdr が別の kind を返す)とき、旧い個体の kind / model / session を残さない。同じ個体は保持
+kd_row() { kdsql "INSERT INTO agents (name, kind, herdr_session, cwd, model, session_id, state, killable, created_by, created_at, updated_at)
+  VALUES ('$1', '$2', '$HS', '$TMP', NULLIF('$3',''), NULLIF('$4',''), 'stopped', 'unknown', 'human', 't', 't');"; }
+kd_state() { kdsql "SELECT kind||'|'||COALESCE(model,'-')||'|'||COALESCE(session_id,'-') FROM agents WHERE name='$1';"; }
+kd_stop() { export FAKE_AGENTS="[$KD_C]"; $TB agents >/dev/null; }
+# claude → codex: 旧 model / session を消す(herdr が session を教えないとき)。--fresh の復活が「model 非対応」で止まらない
+kd_row chg1 claude opus oldc
+export FAKE_AGENTS="[$KD_C,$(kd_ag chg1 wX:p1 '' ',"agent":"codex"')]"; $TB agents >/dev/null
+eq "individual change claude→codex: kind updated, old model and session dropped" "$(kd_state chg1)" "codex|-|-"
+kd_stop; : >"$FAKE_LOG"
+eq "individual change claude→codex: revive --fresh starts (old model does not block)" "$(rc $TB agent-revive chg1 --fresh) $(grep -c '^start chg1 --kind codex --pane wA:p1$' "$FAKE_LOG")" "0 1"
+# codex → claude: 旧 codex の session が claude の --resume に渡らない
+kd_row chg2 codex m-old oldx
+export FAKE_AGENTS="[$KD_C,$(kd_ag chg2 wY:p1 '' ',"agent":"claude"')]"; $TB agents >/dev/null
+eq "individual change codex→claude: kind updated, old model and session dropped" "$(kd_state chg2)" "claude|-|-"
+kd_stop; : >"$FAKE_LOG"
+eq "individual change codex→claude: revive starts with no --resume of the codex session" "$(rc $TB agent-revive chg2) $(grep -c '^start chg2 --kind claude --pane wA:p1$' "$FAKE_LOG") $(grep -c 'oldx' "$FAKE_LOG")" "0 1 0"
+# 個体が変わって herdr が新しい session を教えるときは、その session になる
+kd_row chg3 claude opus olds
+export FAKE_AGENTS="[$KD_C,$(kd_ag chg3 wZ:p1 news3 ',"agent":"codex"')]"; $TB agents >/dev/null
+eq "individual change with a new session: the new session, old model dropped" "$(kd_state chg3)" "codex|-|news3"
+# 同じ個体(同じ kind、herdr が kind を教えない・空・未知)は、model と session を保持する
+kd_row same1 claude opus s-same
+export FAKE_AGENTS="[$KD_C,$(kd_ag same1 wS1:p1 s-same ',"agent":"claude"')]"; $TB agents >/dev/null
+eq "same individual (herdr says same kind): model and session kept" "$(kd_state same1)" "claude|opus|s-same"
+export FAKE_AGENTS="[$KD_C,$(kd_ag same1 wS1:p1 '' '')]"; $TB agents >/dev/null
+eq "same individual (herdr gives no kind, no session): everything kept" "$(kd_state same1)" "claude|opus|s-same"
+export FAKE_AGENTS="[$KD_C,$(kd_ag same1 wS1:p1 s-same ',"agent":"foo"')]"; $TB agents >/dev/null
+eq "unknown herdr kind: kind, model and session kept" "$(kd_state same1)" "claude|opus|s-same"
+kd_row same2 codex '' cs2
+export FAKE_AGENTS="[$KD_C,$(kd_ag same2 wS2:p1 cs2 ',"agent":"codex"')]"; $TB agents >/dev/null
+eq "same individual codex: session kept" "$(kd_state same2)" "codex|-|cs2"
+
 # ---- agent-restart: 再開できない kind は、pane を閉じる前に 12 で止める(閉じてから失敗すると会話を失う)
 export FAKE_AGENTS="[$KD_C,$(kd_ag viaherdr wV:p1 sv ',"agent":"codex"')]"
 : >"$FAKE_LOG"; rm -f "$FAKE_LOG.closed"
