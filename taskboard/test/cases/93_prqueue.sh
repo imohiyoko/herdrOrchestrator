@@ -5,16 +5,16 @@ _saved_pane=${HERDR_PANE_ID-}; unset HERDR_PANE_ID
 _pq_saved=$(env | grep -E '^(TB_DB|TB_REPOS_FILE|PR_QUEUE_[A-Z_]+|FAKE_GH_[A-Z_]+|FAKE_AGENTS)=' || true)
 export TB_DB=$TMP/pq.db TB_REPOS_FILE=$TMP/pq-repos.md PR_QUEUE_BODY_ROOT=$TMP/pq-reports PR_QUEUE_GH=$TMP/pq-gh FAKE_GH_LOG=$TMP/pq-gh.log
 export FAKE_AGENTS='[{"pane_id":"wW:p1","name":"worker1","agent_session":{"value":"sw"}}]'
-unset PR_QUEUE_REPO_DIR FAKE_GH_LIST FAKE_GH_LIST_FAIL FAKE_GH_CREATE_FAIL
+unset FAKE_GH_LIST FAKE_GH_LIST_FAIL FAKE_GH_CREATE_FAIL FAKE_GH_RC
 mkdir -p "$PR_QUEUE_BODY_ROOT"; : >"$FAKE_GH_LOG"
 printf '%s\n' '# 許可リスト' '- org/repo   # 対象' >"$TB_REPOS_FILE"
 cat >"$PR_QUEUE_GH" <<'G'
 #!/usr/bin/env bash
 echo "$*" >>"$FAKE_GH_LOG"
 case "$1 $2" in
-  "pr list") [[ -z ${FAKE_GH_LIST_FAIL:-} ]] || exit 1
+  "pr list") [[ -z ${FAKE_GH_RC:-} ]] || exit "$FAKE_GH_RC"; [[ -z ${FAKE_GH_LIST_FAIL:-} ]] || exit 1
     if [[ -n ${FAKE_GH_DUP:-} && " $* " == *" --head $FAKE_GH_DUP "* ]]; then echo '[{"number":5}]'; else echo "${FAKE_GH_LIST:-[]}"; fi;;
-  "pr create") [[ -z ${FAKE_GH_CREATE_FAIL:-} ]] || exit 1; echo "https://github.com/org/repo/pull/77";;
+  "pr create") [[ -z ${FAKE_GH_RC:-} ]] || exit "$FAKE_GH_RC"; [[ -z ${FAKE_GH_CREATE_FAIL:-} ]] || exit 1; echo "https://github.com/org/repo/pull/77";;
   *) exit 9;;
 esac
 G
@@ -25,7 +25,12 @@ export PR_QUEUE_CONF=$TMP/pq.conf; printf '%s\n' "$PQ_RULE" >"$PR_QUEUE_CONF"
 pqbody() { printf '%s\n\n## 原因\nテスト\n' "${2:-$PQ_L1}" >"$PR_QUEUE_BODY_ROOT/$1.md"; }
 pqsql() { sqlite3 "$TB_DB" "$@"; }
 pqgh() { grep -c "$1" "$FAKE_GH_LOG"; }
-pqadd() { $TB pr-queue add --branch "$1" --body-file "$PR_QUEUE_BODY_ROOT/$2.md" --title "題 $2" "${@:3}" 2>&1; }
+# 差分のガードは必須(PR_QUEUE_REPO_DIR が空なら run しない)。clone を先に作り、pqadd がブランチも用意する
+R=$TMP/pq-clone; mkdir -p "$R"; git -C "$R" init -q -b main; git -C "$R" config user.email "t""@example.invalid"; git -C "$R" config user.name t
+echo base >"$R/a.txt"; git -C "$R" add .; git -C "$R" commit -qm base; git -C "$R" update-ref refs/remotes/origin/main HEAD
+mkbranch() { git -C "$R" checkout -q -B "$1" main; mkdir -p "$R/$(dirname "$2")"; printf '%s\n' "$3" >"$R/$2"; git -C "$R" add .; git -C "$R" commit -qm c; git -C "$R" checkout -q main; }
+export PR_QUEUE_REPO_DIR=$R
+pqadd() { git -C "$R" rev-parse -q --verify "refs/heads/$1" >/dev/null 2>&1 || mkbranch "$1" "terraform/${1//\//-}.tf" ok; $TB pr-queue add --branch "$1" --body-file "$PR_QUEUE_BODY_ROOT/$2.md" --title "題 $2" "${@:3}" 2>&1; }
 
 # ---- add: 置くだけ。pending。gh は呼ばれない
 pqbody b1
@@ -115,26 +120,31 @@ eq "run --dry-run: reports, creates nothing, changes nothing" "$(grep -c 'would-
 eq "reject: human rejects an approved item; it is not run" "$($TB pr-queue reject 14 -m 不要) $($TB pr-queue run >/dev/null 2>&1; pqgh 'pr create')" "PQ-14 rejected 0"
 eq "approve: only pending can be approved" "$(rc $TB pr-queue approve 14)" "1"
 
-# ---- 差分のガード(ローカルの clone があるときだけ。読み取りだけ)
-R=$TMP/pq-clone; mkdir -p "$R"; git -C "$R" init -q -b main; git -C "$R" config user.email t@example.invalid; git -C "$R" config user.name t
-echo base >"$R/a.txt"; git -C "$R" add .; git -C "$R" commit -qm base; git -C "$R" update-ref refs/remotes/origin/main HEAD
-mkbranch() { git -C "$R" checkout -q -b "$1" main; mkdir -p "$R/$(dirname "$2")"; printf '%s\n' "$3" >"$R/$2"; git -C "$R" add .; git -C "$R" commit -qm c; git -C "$R" checkout -q main; }
+# ---- 差分のガード(必須。clone が無い・不正なら run しない。読み取りだけ)
 mkbranch agent/df-ok terraform/a.tf 'resource "x" "y" {}'
+for b in df-ok df-ci df-sec df-admin; do pqbody $b; pqadd agent/$b $b >/dev/null; done
+for i in 15 16 17 18; do $TB pr-queue approve $i >/dev/null 2>&1; done   # きれいなうちに承認し、承認後に枝を書き換えて run 時のガードを見る
 mkbranch agent/df-ci .github/workflows/ci.yml 'on: push'
 mkbranch agent/df-sec terraform/b.tf "key = \"$SEC_AWS\""
 mkbranch agent/df-admin terraform/c.tf 'policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"'
-export PR_QUEUE_REPO_DIR=$R
-for b in df-ok df-ci df-sec df-admin; do pqbody $b; pqadd agent/$b $b >/dev/null; done
-for i in 15 16 17 18; do PR_QUEUE_REPO_DIR= $TB pr-queue approve $i >/dev/null 2>&1; done   # approve 時は診断を切って、run 時のガードを見る
 : >"$FAKE_GH_LOG"; out=$($TB pr-queue run 2>&1)
 eq "diff guard: clean change created; CI config / secret-looking / AdministratorAccess rejected" \
   "$(pqsql "SELECT group_concat(status) FROM pr_queue WHERE id IN (15,16,17,18);") $(pqgh 'pr create') $(grep -c "$SEC_AWS" <<<"$out")" "created,rejected,rejected,rejected 1 0"
-mkbranch agent/df-unknown terraform/z.tf 'x'
-pqbody dfx; pqadd agent/df-missing dfx >/dev/null; PR_QUEUE_REPO_DIR= $TB pr-queue approve 19 >/dev/null 2>&1
+pqbody dfx; pqadd agent/df-missing dfx >/dev/null; $TB pr-queue approve 19 >/dev/null 2>&1
+git -C "$R" branch -q -D agent/df-missing
 : >"$FAKE_GH_LOG"; $TB pr-queue run >/dev/null 2>&1
 eq "diff guard: branch missing in the clone → rejected (fail closed)" "$(pqgh 'pr create') $(pqsql 'SELECT status FROM pr_queue WHERE id=19;')" "0 rejected"
-unset PR_QUEUE_REPO_DIR
 
+# ---- 差分のガードの必須化: PR_QUEUE_REPO_DIR が空・存在しない・git でない → approve も run も通さない(以前は空だと素通り)
+pqbody rq1; pqadd agent/rq1 rq1 >/dev/null; rqid=$(pqsql 'SELECT MAX(id) FROM pr_queue;')
+eq "diff guard required: empty PR_QUEUE_REPO_DIR → approve refused, stays pending" "$(rc env PR_QUEUE_REPO_DIR= $TB pr-queue approve $rqid) $(pqsql "SELECT status FROM pr_queue WHERE id=$rqid;")" "1 pending"
+eq "diff guard required: the refusal says why" "$(PR_QUEUE_REPO_DIR= $TB pr-queue approve $rqid 2>&1 | grep -c 'PR_QUEUE_REPO_DIR')" "1"
+$TB pr-queue approve $rqid >/dev/null 2>&1
+for _bad in "" "$TMP/no-such-dir" "$TMP"; do
+  : >"$FAKE_GH_LOG"; PR_QUEUE_REPO_DIR=$_bad $TB pr-queue run >/dev/null 2>&1
+  eq "diff guard required: run with REPO_DIR='${_bad##*/}' creates nothing and leaves it approved" "$(pqgh 'pr create') $(pqsql "SELECT status FROM pr_queue WHERE id=$rqid;")" "0 approved"
+done
+unset _bad; $TB pr-queue reject $rqid -m 'REPO_DIR テスト用' >/dev/null
 # ---- scan: origin の agent/* を走査してキューに積む(疑似 git: ls-remote / fetch / log だけ差し替え、残りは本物の git)
 PQ_FAKEGIT=$TMP/pq-git; mkdir -p "$TMP/pq-titles"
 cat >"$PQ_FAKEGIT" <<'G'
@@ -165,7 +175,7 @@ export FAKE_GIT_HEADS="agent/sc-ok1 agent/sc-nolink agent/sc-dup agent/sc-sec ag
 export FAKE_GH_DUP=agent/sc-dup
 : >"$FAKE_GH_LOG"; out=$($TB pr-queue scan 2>&1)
 eq "scan (auto_approve unset): only the good branch is queued, as pending (never approved)" \
-  "$(pqsql "SELECT group_concat(branch||':'||status) FROM pr_queue WHERE id>=20;") $(pqsql "SELECT title FROM pr_queue WHERE branch='agent/sc-ok1';")" "agent/sc-ok1:pending 対応 ok1"
+  "$(pqsql "SELECT group_concat(branch||':'||status) FROM pr_queue WHERE branch LIKE 'agent/sc-%';") $(pqsql "SELECT title FROM pr_queue WHERE branch='agent/sc-ok1';")" "agent/sc-ok1:pending 対応 ok1"
 eq "scan: skip reasons (no body / no link / placeholder / duplicate / secret / empty title)" \
   "$(grep -c 'sc-nobody: 本文' <<<"$out") $(grep -c 'sc-nolink: .*1 行目' <<<"$out") $(grep -c 'sc-ph: .*プレースホルダ' <<<"$out") $(grep -c 'sc-dup: 同じ head の PR' <<<"$out") $(grep -c 'sc-sec: .*秘密' <<<"$out") $(grep -c 'sc-notitle: 最新コミットの題が空' <<<"$out") $(grep -c "$SEC_AWS" <<<"$out")" "1 1 1 1 1 1 0"
 eq "scan: duplicate check looks at all states; no create happened" "$(grep -c -- '--state all' "$FAKE_GH_LOG") $(pqgh 'pr create')" "2 0"
@@ -191,7 +201,68 @@ eq "retry cap: failing branch becomes failed after 3 attempts and is not re-queu
   "$(pqsql "SELECT status||attempts FROM pr_queue WHERE branch='agent/fl';") $($TB pr-queue scan 2>&1 | grep -c 'fl: 既にキューにある') $(pqsql "SELECT COUNT(*) FROM pr_queue WHERE branch='agent/fl';")" "failed3 1 1"
 eq "scan: no merge/approve/ready in the code or the gh calls" "$(pqgh 'pr merge\|pr review\|pr ready\|pr close\|--approve')" "0"
 for _v in PR_QUEUE_GIT FAKE_GIT_TITLES PR_QUEUE_CONF FAKE_GIT_HEADS FAKE_GH_DUP; do unset "$_v"; done
-unset PR_QUEUE_REPO_DIR
+
+# ---- gh の指定は必須(fail-closed): PR_QUEUE_GH も conf の gh も無ければ、PATH 上の gh に落ちず、警告して止まる
+pqbody gh1; pqadd agent/gh1 gh1 >/dev/null; ghid=$(pqsql 'SELECT MAX(id) FROM pr_queue;'); $TB pr-queue approve $ghid >/dev/null
+export PR_QUEUE_CONF=$TMP/pq-gh.conf; printf '%s\n' "$PQ_RULE" >"$PR_QUEUE_CONF"
+_gh_saved=$PR_QUEUE_GH; unset PR_QUEUE_GH
+: >"$FAKE_GH_LOG"; out=$($TB pr-queue run 2>&1); r=$?
+eq "gh unset: run warns, stops with a non-zero exit, calls no gh, row stays approved" "$r $(grep -c 'PR_QUEUE_GH' <<<"$out") $(wc -l <"$FAKE_GH_LOG" | tr -d ' ') $(pqsql "SELECT status FROM pr_queue WHERE id=$ghid;")" "1 1 0 approved"
+eq "gh unset: --dry-run and scan stop too" "$(rc $TB pr-queue run --dry-run) $(rc $TB pr-queue scan)" "1 1"
+export PR_QUEUE_GH=gh
+eq "gh set to a bare name (resolved via PATH) is refused: must be an absolute path to an executable" "$(rc $TB pr-queue run) $(PR_QUEUE_GH=$TMP/none rc $TB pr-queue run)" "1 1"
+unset PR_QUEUE_GH
+printf '%s\ngh = %s   # conf\n' "$PQ_RULE" "$_gh_saved" >"$PR_QUEUE_CONF"
+: >"$FAKE_GH_LOG"; $TB pr-queue run >/dev/null 2>&1
+eq "gh from config/pr-queue.conf (gh = <absolute path>) works" "$(pqgh 'pr create') $(pqsql "SELECT status FROM pr_queue WHERE id=$ghid;")" "1 created"
+pqbody gh2; pqadd agent/gh2 gh2 >/dev/null; ghid=$(pqsql 'SELECT MAX(id) FROM pr_queue;'); $TB pr-queue approve $ghid >/dev/null
+: >"$FAKE_GH_LOG"; PR_QUEUE_GH=$TMP/none $TB pr-queue run >/dev/null 2>&1
+eq "env PR_QUEUE_GH wins over the config (and a bad one fails closed)" "$(wc -l <"$FAKE_GH_LOG" | tr -d ' ') $(pqsql "SELECT status FROM pr_queue WHERE id=$ghid;")" "0 approved"
+export PR_QUEUE_GH=$_gh_saved; printf '%s\n' "$PQ_RULE" >"$PR_QUEUE_CONF"
+$TB pr-queue run >/dev/null 2>&1   # gh2 を流す
+
+# ---- 認証で止まる(wrapper の終了コード 75 = auth-locked): attempts を使わず、残りを止め、通知は状態が変わったとき 1 回だけ
+export TB_NOTIFY_DEDUPE_SEC=0 TB_NOTIFY_ENABLED=on TB_NOTIFY_DIR=$TMP/pq-nout TB_NOTIFY_CONF=$TMP/pq-notify.conf
+for n in al1 al2; do pqbody $n; pqadd agent/$n $n >/dev/null; $TB pr-queue approve "$(pqsql 'SELECT MAX(id) FROM pr_queue;')" >/dev/null; done
+al1=$(pqsql "SELECT id FROM pr_queue WHERE branch='agent/al1';"); al2=$(pqsql "SELECT id FROM pr_queue WHERE branch='agent/al2';")
+pqwarn() { pqsql "SELECT COUNT(*) FROM notify_events WHERE type='warning' AND text LIKE '%pr-queue%';"; }
+w0=$(pqwarn)
+for _i in 1 2 3 4; do : >"$FAKE_GH_LOG"; FAKE_GH_RC=75 $TB pr-queue run >/dev/null 2>&1; done
+eq "auth-locked (75) x4: attempts not consumed, never failed, still approved, last_error=auth-locked" \
+  "$(pqsql "SELECT group_concat(status||attempts||':'||last_error) FROM pr_queue WHERE id IN ($al1,$al2);")" "approved0:auth-locked,approved0:auth-locked"
+eq "auth-locked: the rest of the run is not processed (one gh call per run) and no create" "$(wc -l <"$FAKE_GH_LOG" | tr -d ' ') $(pqgh 'pr create')" "1 0"
+eq "auth-locked: one notification for the whole stretch (4 runs), mentioning unlock/auth" "$(($(pqwarn)-w0)) $(pqsql "SELECT text FROM notify_events WHERE type='warning' AND text LIKE '%pr-queue%' ORDER BY id DESC LIMIT 1;" | grep -c 'ghtkn')" "1 1"
+eq "auth-locked (75) in --dry-run: changes nothing and notifies nothing" "$(FAKE_GH_RC=75 $TB pr-queue run --dry-run >/dev/null 2>&1; pqsql "SELECT group_concat(attempts) FROM pr_queue WHERE id IN ($al1,$al2);") $(($(pqwarn)-w0))" "0,0 1"
+: >"$FAKE_GH_LOG"; $TB pr-queue run >/dev/null 2>&1
+eq "after unlock: next run creates both, last_error cleared" "$(pqgh 'pr create') $(pqsql "SELECT group_concat(status||(last_error IS NULL)) FROM pr_queue WHERE id IN ($al1,$al2);")" "2 created1,created1"
+pqbody al3; pqadd agent/al3 al3 >/dev/null; al3=$(pqsql 'SELECT MAX(id) FROM pr_queue;'); $TB pr-queue approve $al3 >/dev/null
+FAKE_GH_RC=75 $TB pr-queue run >/dev/null 2>&1
+eq "a new lock after recovery notifies again" "$(($(pqwarn)-w0))" "2"
+# create の側でも 75 は同じ(list は通り create が 75)。他の失敗(exit 1)は従来どおり attempts を使う
+cat >"$TMP/pq-gh75" <<'G'
+#!/usr/bin/env bash
+echo "$*" >>"$FAKE_GH_LOG"
+case "$1 $2" in "pr list") echo '[]';; "pr create") exit 75;; *) exit 9;; esac
+G
+chmod +x "$TMP/pq-gh75"
+PR_QUEUE_GH=$TMP/pq-gh75 $TB pr-queue run >/dev/null 2>&1
+eq "auth-locked on gh pr create (75): attempts not consumed" "$(pqsql "SELECT status||attempts||':'||last_error FROM pr_queue WHERE id=$al3;")" "approved0:auth-locked"
+FAKE_GH_RC=1 $TB pr-queue run >/dev/null 2>&1
+eq "any other failure (exit 1) still consumes attempts" "$(pqsql "SELECT status||attempts FROM pr_queue WHERE id=$al3;")" "approved1"
+$TB pr-queue run >/dev/null 2>&1
+unset TB_NOTIFY_DEDUPE_SEC TB_NOTIFY_ENABLED TB_NOTIFY_DIR TB_NOTIFY_CONF
+
+# ---- failed から人が戻す: tb pr-queue retry <PQ-n>(人だけ。failed だけ。attempts を 0 に戻し approved へ)
+fid=$(pqsql "SELECT id FROM pr_queue WHERE status='failed' ORDER BY id LIMIT 1;")
+export HERDR_PANE_ID=wW:p1
+eq "retry: refused from an agent pane" "$(rc $TB pr-queue retry $fid) $(pqsql "SELECT status FROM pr_queue WHERE id=$fid;")" "1 failed"
+unset HERDR_PANE_ID
+eq "retry: only failed rows (created / pending are refused)" "$(rc $TB pr-queue retry 1) $(rc $TB pr-queue retry 999) $(rc $TB pr-queue retry)" "1 1 2"
+eq "retry: human puts a failed row back to approved, attempts reset" "$($TB pr-queue retry PQ-$fid | cut -d'(' -f1) $(pqsql "SELECT status||attempts FROM pr_queue WHERE id=$fid;")" "PQ-$fid approved approved0"
+: >"$FAKE_GH_LOG"; $TB pr-queue run >/dev/null 2>&1
+eq "retry: the guards still run, and the next run picks it up" "$(pqgh 'pr create') $(pqsql "SELECT status FROM pr_queue WHERE id=$fid;")" "1 created"
+eq "retry: no schema change (pr_queue columns unchanged)" "$(pqsql "SELECT group_concat(name) FROM pragma_table_info('pr_queue');")" "id,repo,branch,title,body_file,body_sha256,task_id,requested_by,status,last_error,attempts,pr_url,created_at,decided_at,executed_at"
+unset PR_QUEUE_CONF
 
 # ---- 設定: branch_prefix を変える / body_first_line が空なら 1 行目は見ない
 export PR_QUEUE_CONF=$TMP/pq2.conf; printf 'branch_prefix = bot/\n' >"$PR_QUEUE_CONF"

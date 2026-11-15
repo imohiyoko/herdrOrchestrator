@@ -358,15 +358,17 @@ agent のセッションに `gh` の書き込み権限を持たせないため�
 ```
 tb pr-queue add --branch agent/<名> --body-file <本文> --title <題> [--repo <org/repo>] [--task T-…]   # agent。pending
 tb pr-queue approve PQ-<n> / reject PQ-<n> [-m 理由]                                                  # 人だけ
+tb pr-queue retry PQ-<n>                                                                              # 人だけ。failed を approved に戻す(attempts を 0 に)
 tb pr-queue run [--dry-run]                                                                           # approved だけを gh pr create --draft
 tb pr-queue scan [--dry-run] [--repo <org/repo>]                                                      # origin の <branch_prefix>* から積む
 ```
 
 - ガードは run のたびにかけ直す: ブランチが `branch_prefix` で始まる・base は main 固定・draft だけ・本文は `body_root` の中の実ファイル(シンボリックリンク不可)で、置いた(承認した)ときから変わっていない・1 行目が `body_first_line` に合う(設定したときだけ)・本文と題に秘密らしい値が無い・同じ head の PR が無い・リポジトリが許可リスト(`config/repos.md`)にある。
-- `PR_QUEUE_REPO_DIR`(ローカルの clone)があれば差分も見る。CI 設定(`.github/workflows`・`.github/actions`)の変更、`AdministratorAccess` の追加、秘密らしい値は作らずに人に回す。
+- `PR_QUEUE_REPO_DIR`(ローカルの clone)で差分も見る(**必須**。空・存在しない・git でないときは approve も run も scan も通さない)。CI 設定(`.github/workflows`・`.github/actions`)の変更、`AdministratorAccess` の追加、秘密らしい値は作らずに人に回す。
 - マージ・approve・ready・close は実装していない。draft を ready にするのは人。
-- 書き込み用の認証は、`PR_QUEUE_GH` で指定する gh のラッパー(人が用意する)に持たせる。
-- 設定は `config/pr-queue.conf`(人だけ。`pr-queue.conf.example` を写して使う): `branch_prefix`(既定 `agent/`)、`body_root`(既定 `taskboard/data/pr-bodies`)、`body_first_line`、`auto_approve`(既定 0。1 なら scan で積んだものを承認済みにする)、`max_create_per_run`(既定 3)。
+- 書き込み用の認証は、gh のラッパー(人が用意する)に持たせる。`PR_QUEUE_GH`(環境変数)か `config/pr-queue.conf` の `gh`(絶対パス)で指定する。**未指定・不正なら run / scan は警告して止まる**(PATH 上の gh には落ちない。fail-closed)。ラッパーの形と置き場は [`docs/pr-queue-gh-wrapper.md`](docs/pr-queue-gh-wrapper.md)。
+- 認証で止まったとき(ラッパーが終了コード 75 を返す。ghtkn が token を返せない)は、attempts を使わず `auth-locked` として残りの行を止め、通知を状態が変わったときだけ 1 回出す。`failed` になったものは `tb pr-queue retry`(人だけ)で戻す。
+- 設定は `config/pr-queue.conf`(人だけ。`pr-queue.conf.example` を写して使う): `gh`、`branch_prefix`(既定 `agent/`)、`body_root`(既定 `taskboard/data/pr-bodies`)、`body_first_line`、`auto_approve`(既定 0。1 なら scan で積んだものを承認済みにする)、`max_create_per_run`(既定 3)。
 
 ## 送信の記録
 
