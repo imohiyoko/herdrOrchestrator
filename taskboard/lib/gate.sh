@@ -14,8 +14,22 @@ GATE_CAP_MERGE=1
 
 # 設定の有無にかかわらず効くパス規則(設定ファイルで外せない。判定・承認・ゲートの設定そのもの)
 # .github(末尾なし)はパスそのものの変更用。bin/tb(全コマンドの入口)とテスト基盤・gate のテストの変更も、判定を弱める経路なので常に人に回す
+# 基準: 「ガバナンス・権限・コードの取得や実行の入口」。どの階層でも効く(**/ は根直下にも当たる)。大文字小文字は区別しない
 GATE_BUILTIN_PATHS=('.github' '.github/**' '**/gate*.conf' '**/gate-paths.conf' '**/gate*.sh' '**/approvals.conf' '**/risk-rules.conf'
-  '**/bin/tb' '**/run-all.sh' '**/test/run.sh' '**/tests/run.sh' '**/test/cases/*gate*' '**/tests/*gate*')
+  '**/bin/tb' '**/run-all.sh' '**/test/run.sh' '**/tests/run.sh' '**/test/cases/*gate*' '**/tests/*gate*'
+  # レビュー必須の規則とレビューの設定(GitHub は CODEOWNERS をルート・docs/・.github/ のどこからも読む)
+  '**/CODEOWNERS' '**/.coderabbit.yaml'
+  # 実行の入口: git の hook・filter・submodule、コミット前検査、起動時に実行される設定、CI の設定
+  '.githooks' '**/.githooks/**' '.husky' '**/.husky/**' '**/.gitattributes' '**/.gitmodules' '**/.pre-commit-config.yaml'
+  '**/.envrc' '**/.mcp.json' '**/.devcontainer/**' '**/.circleci/**' '**/Jenkinsfile'
+  # ビルド・実行の入口
+  '**/Makefile' '**/GNUmakefile' '**/Dockerfile*' '**/*.dockerfile' '**/docker-compose*.yml' '**/docker-compose*.yaml'
+  # 依存定義と lockfile(コードの取得の入口)と、取得先の設定
+  '**/package.json' '**/package-lock.json' '**/yarn.lock' '**/pnpm-lock.yaml' '**/bun.lockb' '**/.npmrc' '**/.yarnrc*'
+  '**/requirements*.txt' '**/Pipfile' '**/Pipfile.lock' '**/poetry.lock' '**/uv.lock' '**/pyproject.toml' '**/setup.py' '**/setup.cfg'
+  '**/pip.conf' '**/pip.ini' '**/.pip/**' '**/.pypirc'
+  '**/go.mod' '**/go.sum' '**/go.work' '**/go.work.sum' '**/Cargo.toml' '**/Cargo.lock'
+  '**/Gemfile' '**/Gemfile.lock' '**/composer.json' '**/composer.lock' '**/pom.xml' '**/build.gradle*')
 
 _gate_trim() { local s=$1; s="${s#"${s%%[![:space:]]*}"}"; printf '%s' "${s%"${s##*[![:space:]]}"}"; }
 
@@ -224,7 +238,7 @@ gate_eval() {
     return 0
   fi
   case $action in approve) GATE_THRESHOLD=$GATE_TH_APPROVE;; merge) GATE_THRESHOLD=$GATE_TH_MERGE;; esac
-  local i p pts n pct lv cat ext has_docs=0 has_tests=0 has_code=0 has_imp=0 repo=${G_PR%%#*} allowed=0 r
+  local i p pts n pct lv cat ext base nc=0 has_docs=0 has_tests=0 has_code=0 has_imp=0 repo=${G_PR%%#*} allowed=0 r
 
   # --- hard(点数に関係なく ask)
   for r in "${GATE_REPOS[@]:-}"; do [[ -n $r && $r == "$repo" ]] && allowed=1; done
@@ -260,6 +274,8 @@ gate_eval() {
   pct=$((G_SIZE_CH * 100 / G_SIZE_TOT))
   if ((pct < 10)); then pts=0; lv=小; elif ((pct < 30)); then pts=1; lv=中; elif ((pct < 60)); then pts=2; lv=大; else pts=3; lv=特大; fi
   GATE_SCORE=$((GATE_SCORE + pts)); GATE_LINES+=("S-01 +$pts 変更の大きさ: $lv")
+  shopt -q nocasematch && nc=1   # 点数の分類も hard と同じく大文字小文字を区別しない(Lib/ と lib/ は同じ扱い)
+  shopt -s nocasematch
   for f in "${G_FILES[@]}"; do
     read -r st op np <<<"$f"
     for p in "$op" ${np:+"$np"}; do
@@ -267,12 +283,13 @@ gate_eval() {
         lib/*|*/lib/*|config/*|*/config/*|scheduler/*|*/scheduler/*|.github/*|bin/*|*/bin/*) has_imp=1; has_code=1;;
         test/*|tests/*|*/test/*|*/tests/*) has_tests=1;;
         docs/*|*/docs/*|*.md)   # docs として数えるのは拡張子の許可リストだけ。それ以外(拡張子なし、実行できるもの、設定など)は一般のコード
-          ext=$(printf %s "${p##*/}" | tr A-Z a-z); if [[ $ext == *.* ]]; then ext=${ext##*.}; else ext=""; fi
+          base=${p##*/}; if [[ ${base#.} == *.* ]]; then ext=$(printf %s "${base##*.}" | tr A-Z a-z); else ext=""; fi   # 先頭の . だけの名前(.md)は拡張子なし
           case $ext in md|txt|png|svg|jpg|jpeg|gif|rst) has_docs=1;; *) has_code=1;; esac;;
         *) has_code=1;;
       esac
     done
   done
+  ((nc)) || shopt -u nocasematch
   if ((has_imp)); then pts=2; cat="lib・config・scheduler 配下(重要度 高)"
   elif ((has_code)); then pts=1; cat="一般のコード"
   else pts=0; cat="docs・tests のみ"; fi

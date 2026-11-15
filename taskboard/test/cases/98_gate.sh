@@ -247,3 +247,43 @@ eq "gate cmd: help lists gate" "$("$TB" help | grep -c 'tb gate evaluate')" "1"
 eq "gate: config examples are in the repo and gitignored when real" "$(for f in gate.conf gate-paths.conf; do [[ -f $HERE/../config/$f.example ]] && git -C "$HERE" check-ignore -q "../config/$f" && echo ok; done | tr '\n' ',')" "ok,ok,"
 # 例の設定は、そのままコピーして評価できる(構文が正しい)
 eq "gate: the example files parse (evaluation reaches a real verdict)" "$(gtf - | gt merge "$HERE/../config/gate.conf.example" "$HERE/../config/gate-paths.conf.example" | rcof)" "0"
+
+# --- 組み込みの hard(基準: ガバナンス・権限・コードの取得や実行の入口)。規則 1 件につき、根直下・深い階層・大文字小文字を approve と merge の両方で確かめる
+BUILTIN_HARD=(
+  CODEOWNERS docs/CODEOWNERS .github/CODEOWNERS .coderabbit.yaml
+  .githooks/pre-commit .husky/pre-commit .gitattributes .gitmodules .pre-commit-config.yaml .envrc .mcp.json .devcontainer/devcontainer.json .circleci/config.yml Jenkinsfile
+  Makefile docs/Makefile GNUmakefile Dockerfile Dockerfile.dev app.dockerfile docker-compose.yml docker-compose.override.yaml
+  package.json package-lock.json yarn.lock pnpm-lock.yaml bun.lockb .npmrc .yarnrc .yarnrc.yml
+  requirements.txt requirements-dev.txt requirements/base.txt Pipfile Pipfile.lock poetry.lock uv.lock pyproject.toml setup.py setup.cfg pip.conf pip.ini .pip/pip.conf .pypirc
+  go.mod go.sum go.work go.work.sum Cargo.toml Cargo.lock Gemfile Gemfile.lock composer.json composer.lock pom.xml build.gradle build.gradle.kts
+)
+for p in "${BUILTIN_HARD[@]}"; do
+  up=$(printf %s "$p" | tr a-z A-Z)
+  eq "gate builtin hard: $p → ask in approve and merge (root)" "$(for a in approve merge; do gtf FILE "FILE M $p" | gt $a "$GT/gate.conf" "$GT/empty-paths.conf" | hardl | cut -c1-5; done | tr '\n' '|')" "H-01 |H-01 |"
+  eq "gate builtin hard: $p → ask when deep (a/b/c/d/)" "$(gtf FILE "FILE M a/b/c/d/$p" | gt approve "$GT/gate.conf" "$GT/empty-paths.conf" | hardl | cut -c1-5)" "H-01 "
+  eq "gate builtin hard: $p → ask in upper case" "$(gtf FILE "FILE M $up" | gt approve "$GT/gate.conf" "$GT/empty-paths.conf" | hardl | cut -c1-5)" "H-01 "
+done
+# 隣の名前は hard にならない(入れすぎない)
+for p in README.md docs/guide.md src/package.json.md Makefile.md CODEOWNERS.md docs/docker-notes.md notes/requirements.md; do
+  eq "gate builtin hard: $p is not a hit" "$(gtf FILE "FILE M $p" | gt approve "$GT/gate.conf" "$GT/empty-paths.conf" | hardl)" "none"
+done
+# 改名・削除・追加でも、旧パスと新パスの両方を見る
+eq "gate builtin hard: rename onto CODEOWNERS hits" "$(gtf FILE 'FILE R docs/a.md docs/CODEOWNERS' | G1 merge | hardl | cut -c1-5)" "H-01 "
+eq "gate builtin hard: delete of a lockfile hits" "$(gtf FILE 'FILE D web/yarn.lock' | G1 merge | hardl | cut -c1-5)" "H-01 "
+eq "gate builtin hard: add of a Dockerfile hits" "$(gtf FILE 'FILE A svc/Dockerfile' | G1 merge | hardl | cut -c1-5)" "H-01 "
+# 実設定の有無・中身によらず同じ結果(パス規則ファイルが空 / 例と同じ / 実設定のあるツリー)
+eq "gate builtin hard: same hit with an empty paths file, the example paths file, and a real config tree" "$(
+  f=$(gtf FILE 'FILE M docs/CODEOWNERS')
+  printf '%s\n' "$f" | gt merge "$GT/gate.conf" "$GT/empty-paths.conf" | hardl | grep -c '^H-01 '
+  printf '%s\n' "$f" | gt merge "$GT/gate.conf" "$HERE/../config/gate-paths.conf.example" | hardl | grep -c '^H-01 '
+  printf '%s\n' "$f" | tbi "$ISO1" evaluate T-1 --action merge --facts-stdin | grep -c '^hard: H-01 ' )" "$(printf '1\n1\n1')"
+# 点数の分類も大文字小文字を区別しない(N-B)
+for p in lib/db.sh Lib/db.sh LIB/x.sh taskboard/Lib/db.sh taskboard/CONFIG/x.conf Webui/Scheduler/x.py; do
+  eq "gate P-01 case-insensitive: $p → +2" "$(pk "FILE M $p" | cut -d'|' -f1)" "P-01 +2: lib・config・scheduler 配下(重要度 高)"
+done
+eq "gate P-01 case-insensitive: nocasematch is restored afterwards" "$(shopt -q nocasematch && echo on || echo off)" "off"
+eq "gate P-01 case-insensitive: Docs dir with .MD is docs" "$(pk 'FILE M DOCS/A.MD' | cut -d'|' -f1)" "P-01 +0: docs・tests のみ"
+# docs の分類の細部(N-C): 先頭の . だけの名前や、末尾の . は拡張子なし = コード
+for p in docs/.md docs/a. docs/a.md.js docs/.txt docs/dir.md/x; do
+  eq "gate P-01 docs detail: $p is code (+1)" "$(pk "FILE M $p" | cut -d'|' -f1)" "P-01 +1: 一般のコード"
+done
