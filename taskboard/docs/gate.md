@@ -99,11 +99,12 @@ AUTHOR-REJECT-RATE low|mid|high|unknown           作者の過去の差し戻し
 
 ## 組み込みの hard のパス
 
-基準は「**ガバナンス・権限・コードの取得や実行の入口**」です。判定を弱める変更と、別の経路でコードを取得・実行させる変更は、点数だけでは通しません。どの階層のパスにも効き(`**/`)、設定ファイルで外せません。
+基準は「**ガバナンス・権限・コードの取得や実行の入口**」です(agent の振る舞いを変える指示・権限の設定を含みます)。判定を弱める変更と、別の経路でコードを取得・実行させる変更は、点数だけでは通しません。どの階層のパスにも効き(`**/`)、設定ファイルで外せません。
 
 | 分類 | パス |
 |---|---|
-| 判定・承認の設定と実装、`tb` の入口、テスト基盤 | `.github`、`gate*.conf`、`gate-paths.conf`、`gate*.sh`、`approvals.conf`、`risk-rules.conf`、`bin/tb`、`run-all.sh`、`test/run.sh`、`tests/run.sh`、gate のテスト |
+| 判定・承認の設定と実装、`tb` の入口、テスト基盤 | `.github`(どの階層でも)、`gate*.conf`、`gate-paths.conf`、`gate*.sh`、`approvals.conf`、`risk-rules.conf`、`bin/tb`、`run-all.sh`、`test/run.sh`、`tests/run.sh`、gate のテスト |
+| agent への指示・権限・拡張の設定(どの階層でも) | `.claude/`(hooks、commands、agents、skills、settings)、`CLAUDE.md`、`CLAUDE.local.md`、`AGENTS.md`、`GEMINI.md`、`copilot-instructions.md`、`.cursor/`、`.cursorrules`、`.windsurf/`、`.windsurfrules`、`.clinerules*`、`.roo/`、`.continue/`、`.codex/`、`.gemini/`、`mcp.json`、`.mcp.json`、`.vscode/tasks.json`、`.vscode/settings.json` |
 | レビュー必須の規則・レビューの設定 | `CODEOWNERS`(ルート・`docs/`・`.github/` のどこでも)、`.coderabbit.yaml` |
 | 実行の入口(git・起動・CI) | `.githooks`、`.husky`、`.gitattributes`、`.gitmodules`、`.pre-commit-config.yaml`、`.envrc`、`.mcp.json`、`.devcontainer/`、`.circleci/`、`Jenkinsfile` |
 | ビルド・実行の入口 | `Makefile`、`GNUmakefile`、`Dockerfile*`、`*.dockerfile`、`docker-compose*.yml`(`docs/` 配下でも) |

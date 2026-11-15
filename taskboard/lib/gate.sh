@@ -21,8 +21,12 @@ GATE_CAP_MERGE=1
 # 設定の有無にかかわらず効くパス規則(設定ファイルで外せない。判定・承認・ゲートの設定そのもの)
 # .github(末尾なし)はパスそのものの変更用。bin/tb(全コマンドの入口)とテスト基盤・gate のテストの変更も、判定を弱める経路なので常に人に回す
 # 基準: 「ガバナンス・権限・コードの取得や実行の入口」。どの階層でも効く(**/ は根直下にも当たる)。大文字小文字は区別しない
-GATE_BUILTIN_PATHS=('.github' '.github/**' '**/gate*.conf' '**/gate-paths.conf' '**/gate*.sh' '**/approvals.conf' '**/risk-rules.conf'
+GATE_BUILTIN_PATHS=('.github' '.github/**' '**/.github' '**/.github/**' '**/gate*.conf' '**/gate-paths.conf' '**/gate*.sh' '**/approvals.conf' '**/risk-rules.conf'
   '**/bin/tb' '**/run-all.sh' '**/test/run.sh' '**/tests/run.sh' '**/test/cases/*gate*' '**/tests/*gate*'
+  # agent への指示・権限・拡張を決めるファイル(振る舞いを変える設定)。どの階層でも
+  '**/.claude' '**/.claude/**' '**/CLAUDE.md' '**/CLAUDE.local.md' '**/AGENTS.md' '**/GEMINI.md' '**/copilot-instructions.md'
+  '**/.cursor' '**/.cursor/**' '**/.cursorrules' '**/.windsurf' '**/.windsurf/**' '**/.windsurfrules' '**/.clinerules*' '**/.roo' '**/.roo/**'
+  '**/.continue' '**/.continue/**' '**/.codex' '**/.codex/**' '**/.gemini' '**/.gemini/**' '**/mcp.json' '**/.vscode/tasks.json' '**/.vscode/settings.json'
   # レビュー必須の規則とレビューの設定(GitHub は CODEOWNERS をルート・docs/・.github/ のどこからも読む)
   '**/CODEOWNERS' '**/.coderabbit.yaml'
   # 実行の入口: git の hook・filter・submodule、コミット前検査、起動時に実行される設定、CI の設定
