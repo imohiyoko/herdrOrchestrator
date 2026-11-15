@@ -6,6 +6,8 @@
 # - 台帳は agents テーブル。herdr agent list と突き合わせて running / stopped を持つ(tb agents が毎回同期する)
 # - 停止 = その agent の pane を閉じる(herdr に agent 単体の停止は無い)。止める前に session と cwd を台帳に残す
 # - 復活 = 同じ名前で新しい workspace を作り、claude --resume <session> で同じ会話から再開する(--fresh なら新しい会話)
+# - kind(claude / codex / gemini)ごとの違い(起動の引数・モデル指定・再開)は lib/kinds.sh のアダプタだけが知っている。
+#   ここでは kind_* に聞き、対応していない項目は終了コード 12 で止める(黙って claude の引数を渡さない)
 #   役割は SessionStart hook(tb role-context)が渡す。--role で決めた役割は台帳に残り、復活後も同じものが渡る
 # - 判定フラグ killable = yes|no|unknown。付けるのは人か判定役(TB_SWEEPER_PATTERN、既定 sweeper*)だけ。
 #   yes を付けた後にその agent が新しい入力を受けたら stale(付け直すまで yes として扱わない)
@@ -32,14 +34,14 @@ load_live() {
 }
 live_row() { jq -c --arg n "$1" '[.[] | select(.name==$n)][0] // empty' <<<"$LIVE_AGENTS"; }
 
-# 台帳に登録する(新しい命のたびに判定フラグは付け直し)。$1=名前 $2=cwd $3=model $4=role $5=作った人 [$6=killable $7=理由]
+# 台帳に登録する(新しい命のたびに判定フラグは付け直し)。$1=名前 $2=cwd $3=model $4=role $5=作った人 [$6=killable $7=理由 $8=kind(既定 claude)]
 agent_register() {
-  local name=$1 cwd=$2 model=$3 role=$4 by=$5 kill=${6:-unknown} why=${7:-} ts; ts=$(now)
-  sql "INSERT INTO agents (name, herdr_session, cwd, model, role, state, killable, killable_reason, killable_by, killable_at, created_by, created_at, updated_at)
-    VALUES ($(q "$name"), $(q "$HSESS"), NULLIF($(q "$cwd"),''), NULLIF($(q "$model"),''), NULLIF($(q "$role"),''), 'running',
+  local name=$1 cwd=$2 model=$3 role=$4 by=$5 kill=${6:-unknown} why=${7:-} kind=${8:-$KIND_DEFAULT} ts; ts=$(now)
+  sql "INSERT INTO agents (name, kind, herdr_session, cwd, model, role, state, killable, killable_reason, killable_by, killable_at, created_by, created_at, updated_at)
+    VALUES ($(q "$name"), $(q "$kind"), $(q "$HSESS"), NULLIF($(q "$cwd"),''), NULLIF($(q "$model"),''), NULLIF($(q "$role"),''), 'running',
             $(q "$kill"), NULLIF($(q "$why"),''), CASE WHEN $(q "$kill")='unknown' THEN NULL ELSE $(q "$by") END,
             CASE WHEN $(q "$kill")='unknown' THEN NULL ELSE $(q "$ts") END, $(q "$by"), $(q "$ts"), $(q "$ts"))
-    ON CONFLICT(name) DO UPDATE SET state='running', stopped_at=NULL, pane_id=NULL, herdr_session=excluded.herdr_session,
+    ON CONFLICT(name) DO UPDATE SET state='running', stopped_at=NULL, pane_id=NULL, herdr_session=excluded.herdr_session, kind=excluded.kind,
       cwd=COALESCE(excluded.cwd, cwd), model=COALESCE(excluded.model, model), role=COALESCE(excluded.role, role),
       killable=excluded.killable, killable_reason=excluded.killable_reason, killable_by=excluded.killable_by,
       killable_at=excluded.killable_at, killable_session=NULL, updated_at=excluded.updated_at;"
@@ -49,14 +51,14 @@ agent_register() {
 agent_sync() {
   load_live || return 1
   local ts rows; ts=$(now)
-  rows=$(jq -r '.[] | select((.name // "") != "") | [.name, (.pane_id // ""), (.agent_session.value // ""), (.foreground_cwd // .cwd // "")]
+  rows=$(jq -r '.[] | select((.name // "") != "") | [.name, (.pane_id // ""), (.agent_session.value // ""), (.foreground_cwd // .cwd // ""), (.agent // "")]
     | map(tostring | gsub("[\u001f\n]"; " ")) | join("\u001f")' <<<"$LIVE_AGENTS")
-  local name pane sess cwd stmts="" names="''"
-  while IFS=$'\x1f' read -r name pane sess cwd; do
+  local name pane sess cwd akind stmts="" names="''"
+  while IFS=$'\x1f' read -r name pane sess cwd akind; do
     names+=",$(q "$name")"   # 台帳の規則に合わない名前(解析役 analyst-A<n> など)も「いる」ものとして扱い、勝手に stopped にしない
     [[ $name =~ $AGENT_NAME_RE ]] || continue
-    stmts+="INSERT INTO agents (name, herdr_session, pane_id, session_id, cwd, state, killable, created_by, created_at, updated_at)
-      VALUES ($(q "$name"), $(q "$HSESS"), NULLIF($(q "$pane"),''), NULLIF($(q "$sess"),''),
+    stmts+="INSERT INTO agents (name, kind, herdr_session, pane_id, session_id, cwd, state, killable, created_by, created_at, updated_at)
+      VALUES ($(q "$name"), $(q "${akind:-$KIND_DEFAULT}"), $(q "$HSESS"), NULLIF($(q "$pane"),''), NULLIF($(q "$sess"),''),
               COALESCE((SELECT cwd FROM agent_activity WHERE session_id=$(q "$sess") AND cwd IS NOT NULL), NULLIF($(q "$cwd"),'')),
               'running', 'unknown', 'herdr', $(q "$ts"), $(q "$ts"))
       ON CONFLICT(name) DO UPDATE SET state='running', stopped_at=NULL, pane_id=excluded.pane_id, herdr_session=excluded.herdr_session,
@@ -142,10 +144,24 @@ first_prompt() {  # $1=名前 $2=本文 $3=依頼者
   return 0
 }
 
-# ---------- 実体(引数は検査済み。結果を OP_OUT に入れて 0 / 1 / 11 を返す) ----------
+# kind が、要求された起動(モデル指定・会話の再開)に対応しているか。だめなら OP_OUT に理由を入れて 12
+kind_check_launch() {  # $1=kind $2=モデル(空なら無指定) $3=再開する session(空なら新しい会話)
+  kind_require "$1" launch || { OP_OUT=$KIND_ERR; return 12; }
+  if [[ -n $2 ]]; then
+    kind_require "$1" model "--model $2" || { OP_OUT=$KIND_ERR; return 12; }
+    kind_model_valid "$1" "$2" || { OP_OUT="kind=$1 のモデル名として使えません item=model: $2"; return 12; }
+  fi
+  if [[ -n $3 ]]; then
+    kind_require "$1" resume "session $3 で再開できない。新しい会話にするなら --fresh" || { OP_OUT=$KIND_ERR; return 12; }
+  fi
+  return 0
+}
+
+# ---------- 実体(引数は検査済み。結果を OP_OUT に入れて 0 / 1 / 11 / 12 を返す) ----------
 OP_OUT=""
-do_agent_new() {  # name cwd model role prompt killable by [spawned_by spawn_task](tb agent-spawn のときだけ)
-  local name=$1 cwd=$2 model=$3 role=$4 prompt=$5 kill=$6 by=$7 sby=${8:-} stask=${9:-}
+do_agent_new() {  # name cwd model role prompt killable by [spawned_by spawn_task](tb agent-spawn のときだけ) [kind]
+  local name=$1 cwd=$2 model=$3 role=$4 prompt=$5 kill=$6 by=$7 sby=${8:-} stask=${9:-} kind=${10:-$KIND_DEFAULT}
+  kind_check_launch "$kind" "$model" "" || return 12
   agent_sync || { OP_OUT="herdr agent list に失敗しました"; return 11; }
   [[ -z $(live_row "$name") ]] || { OP_OUT="$name はすでに動いています"; return 1; }
   ! other_session "$name" || return 1
@@ -155,9 +171,9 @@ do_agent_new() {  # name cwd model role prompt killable by [spawned_by spawn_tas
   cwd=$(cd "$cwd" && pwd)
   # 先に台帳へ載せる(SessionStart hook が --role の役割を引けるように)
   local why=""; [[ $kill == unknown ]] || why="作成時に指定"
-  agent_register "$name" "$cwd" "$model" "$role" "$by" "$kill" "$why"
-  local -a args=(); [[ -n $model ]] && args=(--model "$model")
-  if ! herdr_spawn "$name" "$cwd" ${args[@]+"${args[@]}"}; then
+  agent_register "$name" "$cwd" "$model" "$role" "$by" "$kill" "$why" "$kind"
+  local -a args=(); kind_launch_into args "$kind" "" "$model"
+  if ! herdr_spawn "$kind" "$name" "$cwd" ${args[@]+"${args[@]}"}; then
     sql "DELETE FROM agents WHERE name=$(q "$name");"
     OP_OUT="$name を起動できません: $SPAWN_ERR"; return 11
   fi
@@ -196,7 +212,7 @@ agent_close_pane() {  # name pane session
 }
 
 do_agent_revive() {  # name fresh model prompt by
-  local name=$1 fresh=$2 model=$3 prompt=$4 by=$5 row cwd sess
+  local name=$1 fresh=$2 model=$3 prompt=$4 by=$5 row cwd sess kind
   agent_sync || { OP_OUT="herdr agent list に失敗しました"; return 11; }
   [[ -z $(live_row "$name") ]] || { OP_OUT="$name はすでに動いています"; return 1; }
   row=$(agent_reg_row "$name")
@@ -204,16 +220,16 @@ do_agent_revive() {  # name fresh model prompt by
   ! other_session "$name" || return 1
   cwd=$(jq -r '.cwd // ""' <<<"$row"); [[ -n $model ]] || model=$(jq -r '.model // ""' <<<"$row")
   sess=""; [[ $fresh == 1 ]] || sess=$(jq -r '.session_id // ""' <<<"$row")
+  kind=$(jq -r --arg d "$KIND_DEFAULT" '.kind // $d' <<<"$row")
+  kind_check_launch "$kind" "$model" "$sess" || return 12
   if [[ -z $cwd || ! -d $cwd ]]; then
     # claude --resume は会話を作業ディレクトリごとに探すので、別の場所では同じ会話に戻れない
     [[ -z $sess ]] || { OP_OUT="$name の作業ディレクトリがありません(${cwd:-未記録})。--fresh なら $AGENT_CWD で新しい会話として起動します"; return 1; }
     cwd=$(cd "$AGENT_CWD" && pwd)
   fi
-  local -a args=()
-  [[ -n $sess ]] && args+=(--resume "$sess")
-  [[ -n $model ]] && args+=(--model "$model")
-  agent_register "$name" "$cwd" "$model" "" "$by"
-  if ! herdr_spawn "$name" "$cwd" ${args[@]+"${args[@]}"}; then
+  local -a args=(); kind_launch_into args "$kind" "$sess" "$model"
+  agent_register "$name" "$cwd" "$model" "" "$by" unknown "" "$kind"
+  if ! herdr_spawn "$kind" "$name" "$cwd" ${args[@]+"${args[@]}"}; then
     sql "UPDATE agents SET state='stopped', stopped_at=$(q "$(now)") WHERE name=$(q "$name");"
     OP_OUT="$name を起動できません: $SPAWN_ERR"; return 11
   fi
@@ -248,6 +264,7 @@ do_agent_restart() {  # name prompt by
   [[ -n $old_sess ]] || old_sess=$(sql "SELECT COALESCE(session_id,'') FROM agents WHERE name=$(q "$name");")
   cwd=$(sql "SELECT COALESCE(cwd,'') FROM agents WHERE name=$(q "$name");")
   # 閉じてから再開できないと困るので、再開できることを先に確かめる(だめなら何も止めない)
+  kind_require "$(sql "SELECT COALESCE(kind,'$KIND_DEFAULT') FROM agents WHERE name=$(q "$name");")" resume "同じ会話に戻れないので止めません" || { OP_OUT=$KIND_ERR; return 12; }
   [[ -n $old_sess ]] || { OP_OUT="$name の session id が台帳にありません。同じ会話に戻れないので止めません"; return 1; }
   [[ -n $cwd && -d $cwd ]] || { OP_OUT="$name の作業ディレクトリがありません(${cwd:-未記録})。同じ会話に戻れないので止めません"; return 1; }
   blank "$prompt" && prompt=$RESTART_DEFAULT_PROMPT
@@ -279,7 +296,7 @@ run_op() {  # $1=op $2=対象 $3=args $4=依頼者
   case $1 in
     new)    do_agent_new "$2" "$(jq -r '.cwd // ""' <<<"$a")" "$(jq -r '.model // ""' <<<"$a")" "$(jq -r '.role // ""' <<<"$a")" \
                          "$(jq -r '.prompt // ""' <<<"$a")" "$(jq -r '.killable // "unknown"' <<<"$a")" "$4" \
-                         "$(jq -r '.spawn.parent // ""' <<<"$a")" "$(jq -r '.spawn.task // ""' <<<"$a")";;
+                         "$(jq -r '.spawn.parent // ""' <<<"$a")" "$(jq -r '.spawn.task // ""' <<<"$a")" "$(jq -r --arg d "$KIND_DEFAULT" '.kind // $d' <<<"$a")";;
     stop)   do_agent_stop "$2" "$(jq -r '.force // 0' <<<"$a")" "$4";;
     revive) do_agent_revive "$2" "$(jq -r '.fresh // 0' <<<"$a")" "$(jq -r '.model // ""' <<<"$a")" "$(jq -r '.prompt // ""' <<<"$a")" "$4";;
     *) OP_OUT="不明な操作: $1"; return 1;;
@@ -298,12 +315,13 @@ op_entry() {  # $1=op $2=対象 $3=args
 
 # ---------- コマンド ----------
 cmd_agent-new() {
-  [[ $# -ge 1 && $1 != -* ]] || usage "agent-new <名前> [--cwd D] [--model M] [--role R] [--prompt P] [--killable yes|no]"
-  local name=$1 cwd="" model="" role="" prompt="" kill=unknown; shift
+  [[ $# -ge 1 && $1 != -* ]] || usage "agent-new <名前> [--cwd D] [--kind K] [--model M] [--role R] [--prompt P] [--killable yes|no]"
+  local name=$1 cwd="" model="" role="" prompt="" kill=unknown kind=$KIND_DEFAULT; shift
   valid_agent_name "$name"
   while [[ $# -gt 0 ]]; do
     case $1 in
       --cwd) need_arg "$@"; cwd=$2; shift 2;;
+      --kind) need_arg "$@"; kind=$2; shift 2;;
       --model) need_arg "$@"; model=$2; shift 2;;
       --role) need_arg "$@"; role=$2; shift 2;;
       --prompt) need_arg "$@"; prompt=$2; shift 2;;
@@ -311,7 +329,9 @@ cmd_agent-new() {
       *) usage "agent-new: 不明な引数 $1";;
     esac
   done
+  kind_valid "$kind" || usage "agent-new: --kind は $KIND_ALL のどれか: $kind"
   [[ -z $model || $model =~ $MODEL_RE ]] || usage "agent-new: --model に使えない文字があります: $model"
+  kind_check_launch "$kind" "$model" "" || { echo "tb: $OP_OUT" >&2; return 12; }   # 承認待ちに積む前に、その kind でできない依頼は止める
   if [[ -n $role ]]; then
     [[ $role =~ $ROLE_RE && $role != _* && $role != README && -f $ROLES_DIR/$role.md ]] || usage "agent-new: --role は roles/<名前>.md の名前: $role"
   fi
@@ -328,8 +348,8 @@ cmd_agent-new() {
   [[ $cwd == /* ]] || cwd=$PWD/$cwd
   [[ ! -d $cwd ]] || cwd=$(cd "$cwd" && pwd)
   limits_refuse_running 1 || return 4   # 動作中が上限なら、承認待ちにも積まず拒否(max_running_agents)
-  op_entry new "$name" "$(jq -nc --arg c "$cwd" --arg m "$model" --arg r "$role" --arg p "$prompt" --arg k "$kill" \
-    '{cwd:$c} + (if $m=="" then {} else {model:$m} end) + (if $r=="" then {} else {role:$r} end) + (if $p=="" then {} else {prompt:$p} end) + {killable:$k}')"
+  op_entry new "$name" "$(jq -nc --arg c "$cwd" --arg m "$model" --arg r "$role" --arg p "$prompt" --arg k "$kill" --arg kd "$kind" \
+    '{cwd:$c} + (if $kd=="claude" then {} else {kind:$kd} end) + (if $m=="" then {} else {model:$m} end) + (if $r=="" then {} else {role:$r} end) + (if $p=="" then {} else {prompt:$p} end) + {killable:$k}')"
 }
 
 cmd_agent-stop() {
@@ -360,6 +380,13 @@ cmd_agent-revive() {
   done
   [[ -z $model || $model =~ $MODEL_RE ]] || usage "agent-revive: --model に使えない文字があります: $model"
   [[ ${#prompt} -le 4000 ]] || usage "agent-revive: --prompt は 4000 字まで"
+  local row kd sess m
+  row=$(agent_reg_row "$name")   # 台帳にあれば、その kind でできない依頼(再開・モデル指定)は承認待ちに積む前に止める
+  if [[ -n $row ]]; then
+    kd=$(jq -r --arg d "$KIND_DEFAULT" '.kind // $d' <<<"$row"); m=$model; [[ -n $m ]] || m=$(jq -r '.model // ""' <<<"$row")
+    sess=""; ((fresh)) || sess=$(jq -r '.session_id // ""' <<<"$row")
+    kind_check_launch "$kd" "$m" "$sess" || { echo "tb: $OP_OUT" >&2; return 12; }
+  fi
   limits_refuse_running 1 || return 4   # 復活も動作中を 1 つ増やす
   op_entry revive "$name" "$(jq -nc --argjson f "$fresh" --arg m "$model" --arg p "$prompt" \
     '{fresh:$f} + (if $m=="" then {} else {model:$m} end) + (if $p=="" then {} else {prompt:$p} end)')"

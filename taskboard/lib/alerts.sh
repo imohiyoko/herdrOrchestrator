@@ -70,7 +70,7 @@ start_analyst() {  # $1=alerts.id
   local id=$1 name="analyst-A$1" cwd prompt i
   cwd=$(cd "$ANALYST_CWD" 2>/dev/null && pwd) || { sql "UPDATE alerts SET status='queued', note='TB_ANALYST_CWD が無い' WHERE id=$id;"; return 11; }
   local -a extra=(); [[ -n $ANALYST_MODEL ]] && extra=(--model "$ANALYST_MODEL")
-  if ! TB_SPAWN_RETRY_SEC=${TB_ANALYST_RETRY_SEC:-3} herdr_spawn "$name" "$cwd" ${extra[@]+"${extra[@]}"}; then
+  if ! TB_SPAWN_RETRY_SEC=${TB_ANALYST_RETRY_SEC:-3} herdr_spawn "$KIND_DEFAULT" "$name" "$cwd" ${extra[@]+"${extra[@]}"}; then
     sql "UPDATE alerts SET status='queued', note=$(q "$SPAWN_ERR") WHERE id=$id;"; return 11
   fi
   agent_register "$name" "$cwd" "$ANALYST_MODEL" "" tb >/dev/null 2>&1 || true
