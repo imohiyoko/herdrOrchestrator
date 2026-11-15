@@ -25,12 +25,15 @@ roles/**
 scheduler/**
 C
 : >"$GT/empty-paths.conf"
+# レビューの記録(tb review-submit が書く定型行)。rv <task> <送信者> <系統> <sha> <blocker> <should> <verdict> → 1 行
+rv() { printf 'ts=2026-11-15T00:00:00Z task=%s by=%s pr=- REVIEW %s %s blocker=%s should=%s verdict=%s evidence=-\n' "$@"; }
+# mkrv <名前> <行>... → $GT/<名前>.log を作ってパスを出す
+mkrv() { local n=$1; shift; printf '%s\n' "$@" >"$GT/$n.log"; printf '%s' "$GT/$n.log"; }
+mkrv reviews-good "$(rv T-1 rev-a self 3f9c2ab 0 0 pass)" "$(rv T-1 rev-b coderabbit 3f9c2ab 0 0 pass)" >/dev/null
 # 基準の事実(docs のみ・小さい・2 系統・全部そろう)。行を足す・差し替えるテストは gtf で作る
 BASE=(
   'HEAD 3f9c2ab'
   'PR example-owner/example-repo#123'
-  'REVIEW self 3f9c2ab blocker=0 should=0 verdict=pass'
-  'REVIEW external 3f9c2ab blocker=0 should=0 verdict=pass'
   'TEST exit=0 sha=3f9c2ab'
   'PUBLIC-CHECK clean'
   'FILE M docs/guide.md'
@@ -46,7 +49,7 @@ gt() {
   local act=$1 conf=$2 paths=$3 pr=${4:-} facts=()
   while IFS= read -r l || [[ -n $l ]]; do facts+=("$l"); done
   ( TB_ROOT=$HERE/..; source "$HERE/../lib/gate.sh"; usage() { echo "usage: $*"; exit 2; }
-    GATE_CONF=$conf; GATE_PATHS=$paths
+    GATE_CONF=$conf; GATE_PATHS=$paths; GATE_REVIEWS=${RVF:-$GT/reviews-good.log}
     gate_eval "$act" T-1 "$pr" "${facts[@]}"; gate_format; echo "rc=$GATE_EXIT" )
 }
 G1() { gt "$1" "$GT/gate.conf" "$GT/paths.conf"; }
@@ -58,8 +61,8 @@ rcof() { grep '^rc=' | sed 's/^rc=//'; }
 for a in approve merge; do
   eq "gate $a: clean docs-only PR → allow, exit 0" "$(gtf - | G1 $a | sed -n '1p;$p' | tr '\n' '|')" "gate: allow|rc=0|"
 done
-eq "gate: output has score/hard lines" "$(gtf - | G1 merge | sed -n '5,7p' | cut -d' ' -f1-3 | tr '\n' '|')" "score: 0 /|hard: none|reason: S-01 +0|"
-eq "gate: reasons list every contribution (one line each)" "$(gtf - | G1 merge | rsn | cut -d' ' -f1-2 | tr '\n' ',')" "S-01 +0,P-01 +0,K-01 +0,T-01 +0,R-01 +0,A-01 +0,"
+eq "gate: output has score/hard lines" "$(gtf - | G1 merge | sed -n '5,7p' | cut -d' ' -f1-3 | tr '\n' '|')" "score: 0 /|hard: none|reason: REC self|"
+eq "gate: reasons list every contribution (one line each)" "$(gtf - | G1 merge | rsn | cut -d' ' -f1-2 | tr '\n' ',')" "REC self,REC coderabbit,S-01 +0,P-01 +0,K-01 +0,T-01 +0,R-01 +0,A-01 +0,"
 # --- 決定論: 同じ入力は同じ出力
 eq "gate: deterministic (two runs identical)" "$(gtf - | G1 merge | cksum)" "$(gtf - | G1 merge | cksum)"
 eq "gate: mode disabled does not stop the evaluation" "$(gtf - | G1 merge | grep -c '^mode: disabled')" "1"
@@ -81,11 +84,10 @@ eq "gate P-01/K-01: docs + tests → mixed" "$(pk 'FILE M docs/a.md' 'FILE M tes
 eq "gate T-01: not run → +2" "$(gtf 'TEST' 'TEST none' | G1 approve | rsn | grep '^T-01')" "T-01 +2 テスト: 未実行"
 eq "gate T-01: not run → score 2 = threshold(approve) → allow" "$(gtf 'TEST' 'TEST none' | G1 approve | sed -n 1p)" "gate: allow"
 eq "gate T-01: not run → exceeds threshold(merge 1) → ask" "$(gtf 'TEST' 'TEST none' | G1 merge | sed -n '1p;$p' | tr '\n' '|')" "gate: ask|rc=20|"
-# R-01
-rr() { gtf 'REVIEW' "$@" | G1 approve | rsn | grep '^R-01'; }
-eq "gate R-01: should remains → +1" "$(rr 'REVIEW a 3f9c2ab blocker=0 should=2 verdict=pass' 'REVIEW b 3f9c2ab blocker=0 should=0 verdict=pass')" "R-01 +1 レビュー: should が残っている"
-eq "gate R-01: one lineage only → +2" "$(rr 'REVIEW a 3f9c2ab blocker=0 should=0 verdict=pass')" "R-01 +2 レビュー: 1 系統のみ"
-eq "gate R-01: same lineage twice counts once" "$(rr 'REVIEW a 3f9c2ab blocker=0 should=0 verdict=pass' 'REVIEW a 3f9c2ab blocker=0 should=0 verdict=pass')" "R-01 +2 レビュー: 1 系統のみ"
+# R-01(レビューは記録から読む)
+rr() { gtf - | RVF=$(mkrv rr "$@") G1 approve | rsn | grep '^R-01'; }
+eq "gate R-01: should remains → +1" "$(rr "$(rv T-1 rev-a self 3f9c2ab 0 2 pass)" "$(rv T-1 rev-b coderabbit 3f9c2ab 0 0 pass)")" "R-01 +1 レビュー: should が残っている"
+eq "gate R-01: two independent pass → +0" "$(rr "$(rv T-1 rev-a self 3f9c2ab 0 0 pass)" "$(rv T-1 rev-b coderabbit 3f9c2ab 0 0 pass)")" "R-01 +0 レビュー: 2 系統とも blocker=0 should=0 sha 一致"
 # A-01
 for t in low:0 mid:1 high:2 unknown:1; do
   eq "gate A-01: ${t%%:*} → +${t#*:}" "$(gtf 'AUTHOR-REJECT-RATE' "AUTHOR-REJECT-RATE ${t%%:*}" | G1 approve | rsn | grep '^A-01' | cut -d' ' -f1-2)" "A-01 +${t#*:}"
@@ -136,10 +138,44 @@ eq "gate threshold cap: approve = 9 is warned and capped at 2" "$(sed 's/^approv
 eq "gate H-06: type/mode change → ask" "$(gtf FILE 'FILE T docs/a.md' | G1 merge | hardl | cut -c1-5)" "H-06 "
 eq "gate H-02: public check dirty → ask" "$(gtf PUBLIC-CHECK 'PUBLIC-CHECK dirty' | G1 merge | hardl | cut -c1-5)" "H-02 "
 eq "gate H-02: public check unavailable → ask" "$(gtf PUBLIC-CHECK 'PUBLIC-CHECK unavailable' | G1 merge | hardl | cut -c1-5)" "H-02 "
-eq "gate H-03: review blocker → ask" "$(gtf REVIEW 'REVIEW a 3f9c2ab blocker=1 should=0 verdict=pass' 'REVIEW b 3f9c2ab blocker=0 should=0 verdict=pass' | G1 merge | hardl | cut -c1-5)" "H-03 "
-eq "gate H-03: review verdict=fail → ask" "$(gtf REVIEW 'REVIEW a 3f9c2ab blocker=0 should=0 verdict=fail' 'REVIEW b 3f9c2ab blocker=0 should=0 verdict=pass' | G1 merge | hardl | cut -c1-5)" "H-03 "
-eq "gate H-03: review sha mismatch → ask" "$(gtf REVIEW 'REVIEW a 1111111 blocker=0 should=0 verdict=pass' 'REVIEW b 3f9c2ab blocker=0 should=0 verdict=pass' | G1 merge | hardl | cut -c1-5)" "H-03 "
-eq "gate H-03: zero lineages → ask" "$(gtf REVIEW 'REVIEW none' | G1 merge | hardl | cut -c1-5)" "H-03 "
+h3() { gtf - | RVF=$(mkrv h3 "$@") G1 merge | hardl | grep '^H-03' | cut -c1-5 | sort -u | tr '\n' ','; }
+GOODR=("$(rv T-1 rev-a self 3f9c2ab 0 0 pass)" "$(rv T-1 rev-b coderabbit 3f9c2ab 0 0 pass)")
+eq "gate H-03: baseline reviews → no H-03" "$(h3 "${GOODR[@]}")" ""
+eq "gate H-03: review blocker → ask" "$(h3 "$(rv T-1 rev-a self 3f9c2ab 1 0 fail)" "${GOODR[1]}")" "H-03 ,"
+eq "gate H-03: review verdict=fail → ask" "$(h3 "$(rv T-1 rev-a self 3f9c2ab 0 0 fail)" "${GOODR[1]}")" "H-03 ,"
+eq "gate H-03: a later fail on the same sha beats an earlier pass" "$(h3 "${GOODR[@]}" "$(rv T-1 rev-a self 3f9c2ab 0 0 fail)")" "H-03 ,"
+eq "gate H-03: stale review (sha mismatch) is ignored → fewer than 2 lineages → ask" "$(h3 "$(rv T-1 rev-a self 1111111 0 0 pass)" "${GOODR[1]}")" "H-03 ,"
+eq "gate H-03: stale review is listed as invalid in the reasons" "$(gtf - | RVF=$(mkrv h3 "$(rv T-1 rev-a self 1111111 0 0 pass)" "${GOODR[1]}") G1 merge | rsn | grep -c '^REC self 1111111 .* → 無効: sha が head と一致しない')" "1"
+eq "gate H-03: only one lineage → ask" "$(h3 "${GOODR[0]}")" "H-03 ,"
+eq "gate H-03: two lineages by the same sender are not independent → ask" "$(h3 "$(rv T-1 rev-a self 3f9c2ab 0 0 pass)" "$(rv T-1 rev-a coderabbit 3f9c2ab 0 0 pass)")" "H-03 ,"
+eq "gate H-03: same lineage by two senders counts once → ask" "$(h3 "$(rv T-1 rev-a self 3f9c2ab 0 0 pass)" "$(rv T-1 rev-b self 3f9c2ab 0 0 pass)")" "H-03 ,"
+eq "gate H-03: records of another chain are not counted → ask" "$(h3 "$(rv T-2 rev-a self 3f9c2ab 0 0 pass)" "$(rv T-2 rev-b coderabbit 3f9c2ab 0 0 pass)")" "H-03 ,"
+eq "gate H-03: no record for this chain (file exists) → ask, reason says so" "$(gtf - | RVF=$(mkrv h3 "$(rv T-2 rev-a self 3f9c2ab 0 0 pass)") G1 merge | hardl | grep -c '有効なレビューの記録が無い')" "1"
+eq "gate H-03: a record whose PR differs from the target is invalid" "$(h3 "$(rv T-1 rev-a self 3f9c2ab 0 0 pass | sed 's| pr=- | pr=other/repo#9 |')" "${GOODR[1]}")" "H-03 ,"
+eq "gate H-03: a record with the same PR is valid" "$(h3 "$(rv T-1 rev-a self 3f9c2ab 0 0 pass | sed 's| pr=- | pr=example-owner/example-repo#123 |')" "${GOODR[1]}")" ""
+eq "gate R-01: which lineage recorded what is listed (REC lines)" "$(gtf - | G1 merge | rsn | grep '^REC' | cut -d' ' -f1-5 | tr '\n' '|')" "REC self 3f9c2ab blocker=0 should=0|REC coderabbit 3f9c2ab blocker=0 should=0|"
+eq "gate R-01: REC line names the sender and time" "$(gtf - | G1 merge | rsn | grep '^REC self' | grep -c 'by=rev-a at=2026-11-15T00:00:00Z → 有効')" "1"
+# human の記録は独立 2 系統の根拠に数えない(pane の無い実行は誰でも名乗れるため)
+eq "gate H-03: a human record does not count as the second lineage → ask" "$(h3 "${GOODR[0]}" "$(rv T-1 human coderabbit 3f9c2ab 0 0 pass)")" "H-03 ,"
+eq "gate H-03: two human records (even different lineages) → ask" "$(h3 "$(rv T-1 human self 3f9c2ab 0 0 pass)" "$(rv T-1 human coderabbit 3f9c2ab 0 0 pass)")" "H-03 ,"
+eq "gate H-03: the reason says human is not counted, with the counted number" "$(gtf - | RVF=$(mkrv h3 "${GOODR[0]}" "$(rv T-1 human coderabbit 3f9c2ab 0 0 pass)") G1 merge | hardl | grep -c '数えられた系統: 1。送信者 human は数えない')" "1"
+eq "gate H-03: a human record that FAILS still blocks (fail counts from anyone)" "$(h3 "${GOODR[@]}" "$(rv T-1 human lint 3f9c2ab 1 0 fail)")" "H-03 ,"
+eq "gate H-03: two different agent senders → allowed path (no H-03)" "$(h3 "$(rv T-1 rev-a self 3f9c2ab 0 0 pass)" "$(rv T-1 rev-b lint 3f9c2ab 0 0 pass)")" ""
+# failed の系統は数えない(この行を消すと、self の pass(rev-b)が数えられて 2 系統になり、理由の数が変わる)
+eq "gate H-03: a failed lineage is excluded from the count even if another sender passed it" "$(gtf - | RVF=$(mkrv h3 "$(rv T-1 rev-a self 3f9c2ab 0 0 fail)" "$(rv T-1 rev-b self 3f9c2ab 0 0 pass)" "$(rv T-1 rev-c lint 3f9c2ab 0 0 pass)") G1 merge | hardl | grep -c '数えられた系統: 1。')" "1"
+# 記録が無い・読めない・形式違反 → 21(fail-closed)
+eq "gate fail-closed: no review file → 21" "$(gtf - | RVF=$GT/none.log G1 merge | sed -n '1p;$p' | tr '\n' '|')" "gate: ask|rc=21|"
+eq "gate fail-closed: reason names the missing review record" "$(gtf - | RVF=$GT/none.log G1 merge | rsn | grep -c 'レビューの記録がありません')" "1"
+printf 'ts=bad\n' >"$GT/badrec.log"
+eq "gate fail-closed: malformed review line → 21" "$(gtf - | RVF=$GT/badrec.log G1 merge | rcof)" "21"
+for bad in 'REVIEW self 3f9c2ab blocker=0 should=0 verdict=pass' "$(rv T-1 a self 3f9c2ab 0 0 maybe)" "$(rv T-1 a self 3f9c2ab 0 0 pass) junk" "$(rv T-1 a SELF 3f9c2ab 0 0 pass)" "$(rv T-1 a self zzzzzzz 0 0 pass)" "# comment" "$(rv 'T 1' a self 3f9c2ab 0 0 pass)"; do
+  eq "gate fail-closed: malformed review line '${bad:0:40}' (even beside good ones) → 21" "$(gtf - | RVF=$(mkrv badrec "${GOODR[@]}" "$bad") G1 merge | rcof)" "21"
+done
+eq "gate fail-closed: blank lines in the record are ignored" "$(gtf - | RVF=$(mkrv blank "${GOODR[0]}" "" "${GOODR[1]}") G1 merge | rcof)" "0"
+ln -sf "$GT/reviews-good.log" "$GT/link.log"
+eq "gate fail-closed: a symlinked record file → 21" "$(gtf - | RVF=$GT/link.log G1 merge | rcof)" "21"
+eq "gate fail-closed: REVIEW lines in the input are rejected (the record is the only source)" "$(gtf - 'REVIEW self 3f9c2ab blocker=0 should=0 verdict=pass' | G1 merge | rcof)" "21"
+eq "gate fail-closed: REVIEW in the input is not counted even if it would make a pass" "$(gtf - 'REVIEW a 3f9c2ab blocker=0 should=0 verdict=pass' | RVF=$(mkrv one "${GOODR[0]}") G1 merge | rcof)" "21"
 eq "gate H-03: test failed → ask" "$(gtf TEST 'TEST exit=1 sha=3f9c2ab' | G1 merge | hardl | cut -c1-5)" "H-03 "
 eq "gate H-03: test sha mismatch → ask" "$(gtf TEST 'TEST exit=0 sha=1111111' | G1 merge | hardl | cut -c1-5)" "H-03 "
 eq "gate H-04: author == executor (case-insensitive) → ask" "$(gtf EXECUTOR 'EXECUTOR Author-A' | G1 merge | hardl | cut -c1-5)" "H-04 "
@@ -173,18 +209,16 @@ eq "gate fail-closed: bad paths file → 21" "$(gtf - | gt merge "$GT/gate.conf"
 printf '/etc/**\n' >"$GT/badpaths.conf"
 eq "gate fail-closed: absolute path pattern → 21" "$(gtf - | gt merge "$GT/gate.conf" "$GT/badpaths.conf" | rcof)" "21"
 # 入力欠損
-for k in 'HEAD ' 'PR ' REVIEW TEST PUBLIC-CHECK FILE SIZE 'AUTHOR ' EXECUTOR AUTHOR-REJECT-RATE; do
+for k in 'HEAD ' 'PR ' TEST PUBLIC-CHECK FILE SIZE 'AUTHOR ' EXECUTOR AUTHOR-REJECT-RATE; do
   eq "gate fail-closed: missing ${k% } → 21, reason names it" "$(gtf "$k" | G1 merge | sed -n '1p;$p' | tr '\n' '|')|$(gtf "$k" | G1 merge | rsn | grep -c "入力: ${k% } がありません")" "gate: ask|rc=21||1"
 done
 eq "gate fail-closed: empty stdin → 21" "$(printf '' | G1 merge | rcof)" "21"
-eq "gate fail-closed: all missing inputs are listed (not only the first)" "$(printf 'HEAD 3f9c2ab\n' | G1 merge | rsn | wc -l | tr -d ' ')" "9"
+eq "gate fail-closed: all missing inputs are listed (not only the first)" "$(printf 'HEAD 3f9c2ab\n' | G1 merge | rsn | wc -l | tr -d ' ')" "8"
 eq "gate fail-closed: 21 is never allow" "$(printf 'HEAD 3f9c2ab\n' | G1 merge | sed -n 1p)" "gate: ask"
 badin() { eq "gate fail-closed: bad input ($1) → 21" "$(gtf "$2" "$3" | G1 merge | rcof)" "21"; }
 badin 'HEAD not hex' HEAD 'HEAD zzzzzzz'
 badin 'HEAD too short' HEAD 'HEAD abc'
 badin 'PR form' PR 'PR example-owner/example-repo'
-badin 'REVIEW extra field' REVIEW 'REVIEW a 3f9c2ab blocker=0 should=0 verdict=pass junk'
-badin 'REVIEW verdict' REVIEW 'REVIEW a 3f9c2ab blocker=0 should=0 verdict=maybe'
 badin 'TEST form' TEST 'TEST ok'
 badin 'PUBLIC-CHECK value' PUBLIC-CHECK 'PUBLIC-CHECK fine'
 badin 'FILE path traversal' FILE 'FILE M ../x'
@@ -196,7 +230,6 @@ badin 'SIZE not numeric' SIZE 'SIZE a b'
 badin 'REJECT-RATE value' AUTHOR-REJECT-RATE 'AUTHOR-REJECT-RATE ?'
 badin 'unknown line' - 'WHATEVER x'
 eq "gate fail-closed: duplicate HEAD → 21" "$(gtf - 'HEAD 3f9c2ab' | G1 merge | rcof)" "21"
-eq "gate fail-closed: REVIEW none together with REVIEW lines → 21" "$(gtf - 'REVIEW none' | G1 merge | rcof)" "21"
 eq "gate fail-closed: --pr differing from the recorded PR → 21" "$(gtf - | gt merge "$GT/gate.conf" "$GT/paths.conf" 'example-owner/example-repo#999' | rcof)" "21"
 eq "gate: --pr equal to the recorded PR → evaluates normally" "$(gtf - | gt merge "$GT/gate.conf" "$GT/paths.conf" 'example-owner/example-repo#123' | rcof)" "0"
 
@@ -216,11 +249,11 @@ eq "gate cmd: no subcommand → 2" "$(rc "$TB" gate)" "2"
 eq "gate cmd: unknown subcommand → 2" "$(rc "$TB" gate run T-1 --action merge)" "2"
 eq "gate cmd: unknown flag → 2" "$(rc "$TB" gate evaluate T-1 --action merge --json)" "2"
 # 設定の無いツリーと、実設定のあるツリーを $TMP に作って tb を呼ぶ(実チェックアウトの config の有無に左右されない)
-mkiso() { mkdir -p "$1/taskboard" "$1/lib"; cp -R "$HERE/../bin" "$HERE/../lib" "$HERE/../schema" "$1/taskboard/"; cp "$HERE/../../lib/"*.sh "$1/lib/"; mkdir -p "$1/taskboard/config"; }
+mkiso() { mkdir -p "$1/taskboard" "$1/lib" "$1/roles"; cp -R "$HERE/../bin" "$HERE/../lib" "$HERE/../schema" "$1/taskboard/"; cp "$HERE/../../lib/"*.sh "$1/lib/"; mkdir -p "$1/taskboard/config"; }
 ISO0=$GT/iso-noconf; mkiso "$ISO0"
 ISO1=$GT/iso-realconf; mkiso "$ISO1"
 # 実設定: 許可リストに例のリポジトリが入っていない(= 基準の事実は H-05 で ask になる)
-sed 's#^allow = .*#allow = someone-else/other-repo#' "$GT/gate.conf" >"$ISO1/taskboard/config/gate.conf"; cp "$GT/paths.conf" "$ISO1/taskboard/config/gate-paths.conf"
+sed 's#^allow = .*#allow = someone-else/other-repo#' "$GT/gate.conf" >"$ISO1/taskboard/config/gate.conf"; cp "$GT/paths.conf" "$ISO1/taskboard/config/gate-paths.conf"; mkdir -p "$ISO1/taskboard/data"; cp "$GT/reviews-good.log" "$ISO1/taskboard/data/gate-reviews.log"
 tbi() { local iso=$1; shift; "$iso/taskboard/bin/tb" gate "$@"; }
 eq "gate cmd: no config in the tree → 21 (fail-closed)" "$(tbi "$ISO0" evaluate T-1 --action merge --facts-stdin </dev/null >/dev/null 2>&1; echo $?)" "21"
 eq "gate cmd: --fact lines are accepted (still 21 without config)" "$(tbi "$ISO0" evaluate T-1 --action merge --fact 'HEAD 3f9c2ab' >/dev/null 2>&1; echo $?)" "21"
@@ -301,6 +334,76 @@ for p in docs/.md docs/a. docs/a.md.js docs/.txt docs/dir.md/x; do
   eq "gate P-01 docs detail: $p is code (+1)" "$(pk "FILE M $p" | cut -d'|' -f1)" "P-01 +1: 一般のコード"
 done
 
+# --- tb review-submit(レビュー結果の記録の口)。隔離ツリー(自分の roles/ と data/ を持つ)で呼ぶ。pane は疑似 herdr の agent 一覧で決まる
+ISO2=$GT/iso-submit; mkiso "$ISO2"
+printf '# reviewer\n' >"$ISO2/roles/reviewer.md"; printf '# worker\n' >"$ISO2/roles/worker.md"
+printf 'rev-* = reviewer\nworker* = worker\n' >"$ISO2/roles/map.conf"
+RVLOG=$ISO2/taskboard/data/gate-reviews.log
+SUBT=$($TB add -p gt -t "gate submit target")
+$TB claim "$SUBT" --owner worker1 --session s-sub >/dev/null 2>&1
+NOOWN=$($TB add -p gt -t "gate no owner")
+AGENTS='[{"pane_id":"wW:p1","name":"worker1","agent_session":{"value":"s1"}},{"pane_id":"wR:p1","name":"rev-a","agent_session":{"value":"s2"}},{"pane_id":"wR:p2","name":"rev-b","agent_session":{"value":"s3"}},{"pane_id":"wW:p2","agent_session":{"value":"s4"}},{"pane_id":"wX:p1","name":"worker9","agent_session":{"value":"s5"}}]'
+# sub <pane|-(人)> <task> 引数... → 終了コード。pane の agent 一覧は AGENTS
+sub() { local pane=$1; shift; if [[ $pane == - ]]; then ( unset HERDR_PANE_ID; FAKE_AGENTS=$AGENTS "$ISO2/taskboard/bin/tb" review-submit "$@" ) >/dev/null 2>&1; else ( HERDR_PANE_ID=$pane FAKE_AGENTS=$AGENTS "$ISO2/taskboard/bin/tb" review-submit "$@" ) >/dev/null 2>&1; fi; echo $?; }
+subo() { local pane=$1; shift; ( HERDR_PANE_ID=$pane FAKE_AGENTS=$AGENTS "$ISO2/taskboard/bin/tb" review-submit "$@" ) 2>&1; }
+OKARGS=(--lineage self --sha 3f9c2ab --blocker 0 --should 1 --verdict pass)
+eq "review-submit: no log before the first record" "$([[ -e $RVLOG ]] && echo yes || echo no)" "no"
+eq "review-submit: reviewer role (rev-a) records → 0" "$(sub wR:p1 "$SUBT" "${OKARGS[@]}")" "0"
+eq "review-submit: the line has the fixed form (time, task, sender from the pane)" "$(grep -cE "^ts=[0-9T:Z-]+ task=$SUBT by=rev-a pr=- REVIEW self 3f9c2ab blocker=0 should=1 verdict=pass evidence=-$" "$RVLOG")" "1"
+eq "review-submit: the log is exactly one line" "$(wc -l <"$RVLOG" | tr -d ' ')" "1"
+FIRST=$(sed -n 1p "$RVLOG")
+eq "review-submit: sender comes from the pane, not an argument (an argument for it is a usage error)" "$(sub wR:p1 "$SUBT" "${OKARGS[@]}" --by someone)" "2"
+eq "review-submit: second record by another reviewer (rev-b) → 0, lineage other" "$(sub wR:p2 "$SUBT" --lineage lint --sha 3f9c2ab --blocker 0 --should 0 --verdict pass --pr example-owner/example-repo#123 --evidence reviews/r1.md)" "0"
+eq "review-submit: append-only (first line byte-identical, 2 lines)" "$(sed -n 1p "$RVLOG")|$(wc -l <"$RVLOG" | tr -d ' ')" "$FIRST|2"
+eq "review-submit: pr and evidence are recorded" "$(sed -n 2p "$RVLOG" | grep -c 'by=rev-b pr=example-owner/example-repo#123 .* evidence=reviews/r1.md$')" "1"
+SIZE1=$(wc -c <"$RVLOG" | tr -d ' ')
+# 職務分掌
+eq "review-submit: author (task owner worker1) is refused → 4" "$(sub wW:p1 "$SUBT" "${OKARGS[@]}")" "4"
+eq "review-submit: refused author wrote nothing" "$(wc -c <"$RVLOG" | tr -d ' ')" "$SIZE1"
+eq "review-submit: a non-reviewer agent (worker9) is refused → 5" "$(sub wX:p1 "$SUBT" "${OKARGS[@]}")" "5"
+eq "review-submit: refusal message names the role" "$(subo wX:p1 "$SUBT" "${OKARGS[@]}" | grep -c 'worker')" "1"
+eq "review-submit: an agent cannot claim the external lineage → 5" "$(sub wR:p1 "$SUBT" --lineage coderabbit --sha 3f9c2ab --blocker 0 --should 0 --verdict pass)" "5"
+eq "review-submit: task without owner: agent refused (author unknown) → 4" "$(sub wR:p1 "$NOOWN" "${OKARGS[@]}")" "4"
+eq "review-submit: unnamed agent pane → 3" "$(sub wW:p2 "$SUBT" "${OKARGS[@]}")" "3"
+eq "review-submit: pane not in the agent list → 3" "$(sub wZ:p9 "$SUBT" "${OKARGS[@]}")" "3"
+eq "review-submit: agent list fails → 3" "$(FAKE_LIST_FAIL=1 sub wR:p1 "$SUBT" "${OKARGS[@]}")" "3"
+eq "review-submit: nothing written by any refusal" "$(wc -c <"$RVLOG" | tr -d ' ')" "$SIZE1"
+eq "review-submit: human (no pane) may record the external lineage → 0, by=human" "$(sub - "$SUBT" --lineage coderabbit --sha 3f9c2ab --blocker 0 --should 0 --verdict pass)|$(tail -1 "$RVLOG" | grep -c ' by=human ')" "0|1"
+# 役割は env で変えられない: TB_ROLES で worker9 を reviewer にしようとしても効かない
+mkdir -p "$GT/fake-roles"; printf '# reviewer\n' >"$GT/fake-roles/reviewer.md"; printf 'worker* = reviewer\n' >"$GT/fake-roles/map.conf"
+eq "review-submit: TB_ROLES cannot make an agent a reviewer → 5" "$(TB_ROLES=$GT/fake-roles sub wX:p1 "$SUBT" "${OKARGS[@]}")" "5"
+eq "review-submit: an env var cannot move the log (no log elsewhere)" "$(TB_GATE_REVIEWS=$GT/elsewhere.log GATE_REVIEWS=$GT/elsewhere.log sub wR:p1 "$SUBT" --lineage extra --sha 3f9c2ab --blocker 0 --should 0 --verdict pass)|$([[ -e $GT/elsewhere.log ]] && echo moved || echo fixed)" "0|fixed"
+# 使い方・形式
+eq "review-submit: unknown task → 1" "$(sub - T-gt-999 "${OKARGS[@]}")" "1"
+eq "review-submit: bad task id → 2" "$(sub - 'x y' "${OKARGS[@]}")" "2"
+for bad in "--lineage Self" "--lineage a_b" "--sha XYZ" "--sha abc" "--blocker -1" "--blocker x" "--should 99999" "--verdict maybe" "--pr nope" "--evidence a\ b" "--evidence ../../etc/passwd;rm"; do
+  args=("${OKARGS[@]}"); read -r k v <<<"$bad"; args+=("$k" "$v")
+  # 後ろの指定が前を上書きする
+  eq "review-submit: bad value ($bad) → 2 and nothing written" "$(sub - "$SUBT" "${args[@]}")|$(wc -c <"$RVLOG" | tr -d ' ')" "2|$(wc -c <"$RVLOG" | tr -d ' ')"
+done
+eq "review-submit: a missing required option → 2" "$(sub - "$SUBT" --lineage self --sha 3f9c2ab --blocker 0 --should 0)" "2"
+eq "review-submit: verdict=pass with blockers is not recordable → 2" "$(sub - "$SUBT" --lineage self --sha 3f9c2ab --blocker 2 --should 0 --verdict pass)" "2"
+eq "review-submit: verdict=fail with blockers → 0" "$(sub - "$SUBT" --lineage self --sha 3f9c2ab --blocker 2 --should 0 --verdict fail)" "0"
+# 記録は gate evaluate が読める(往復)。記録を実ツリーに依存させない: 同じ記録ファイルを lib の評価に渡す
+ROUND=$GT/roundtrip.log; cp "$RVLOG" "$ROUND"
+eq "review-submit: every line written parses in the evaluator (no malformed line)" "$(gtf - | RVF=$ROUND G1 merge | rcof)" "20"
+eq "review-submit: records of another chain are not shown for chain T-1" "$(gtf - | RVF=$ROUND G1 merge | rsn | grep -c '^REC ')" "0"
+# 記録の置き場の symlink は書かない
+ISO3=$GT/iso-link; mkiso "$ISO3"; cp -R "$ISO2/roles" "$ISO3/"; mkdir -p "$ISO3/taskboard/data"; : >"$GT/linktarget.log"; ln -s "$GT/linktarget.log" "$ISO3/taskboard/data/gate-reviews.log"
+eq "review-submit: a symlinked log is refused and the target stays empty" "$( ( unset HERDR_PANE_ID; "$ISO3/taskboard/bin/tb" review-submit "$SUBT" "${OKARGS[@]}" ) >/dev/null 2>&1; echo $?)|$(wc -c <"$GT/linktarget.log" | tr -d ' ')" "1|0"
+# 実設定の有無に左右されない(評価側は固定の記録を読む。review-submit は gate の設定を読まない)
+eq "review-submit: does not depend on gate.conf (tree without config records fine)" "$([[ -e $ISO2/taskboard/config/gate.conf ]] && echo conf || echo noconf)" "noconf"
+cp "$GT/gate.conf" "$ISO2/taskboard/config/gate.conf"; cp "$GT/paths.conf" "$ISO2/taskboard/config/gate-paths.conf"
+eq "review-submit: same result with a real gate.conf in the tree" "$(sub wR:p1 "$SUBT" --lineage third --sha 3f9c2ab --blocker 0 --should 0 --verdict pass)|$(sub wX:p1 "$SUBT" "${OKARGS[@]}")|$(sub wW:p1 "$SUBT" "${OKARGS[@]}")" "0|5|4"
+# tb 経由の evaluate が、記録を読む(隔離ツリー + 実設定 + 記録)
+ISO4=$GT/iso-eval; mkiso "$ISO4"; cp "$GT/gate.conf" "$ISO4/taskboard/config/gate.conf"; cp "$GT/paths.conf" "$ISO4/taskboard/config/gate-paths.conf"; mkdir -p "$ISO4/taskboard/data"
+eq "gate cmd: tb evaluate without a review record file → 21" "$(gtf - | "$ISO4/taskboard/bin/tb" gate evaluate T-1 --action merge --facts-stdin >/dev/null 2>&1; echo $?)" "21"
+cp "$GT/reviews-good.log" "$ISO4/taskboard/data/gate-reviews.log"
+eq "gate cmd: tb evaluate reads the fixed record file → allow (0)" "$(gtf - | "$ISO4/taskboard/bin/tb" gate evaluate T-1 --action merge --facts-stdin 2>&1 | sed -n 1p)" "gate: allow"
+eq "gate cmd: env cannot point evaluate at another record file" "$(gtf - | GATE_REVIEWS=$GT/none.log TB_GATE_REVIEWS=$GT/none.log "$ISO4/taskboard/bin/tb" gate evaluate T-1 --action merge --facts-stdin 2>&1 | sed -n 1p)" "gate: allow"
+eq "gate cmd: execute is still 30 and writes nothing to the record" "$(S=$(wc -c <"$ISO4/taskboard/data/gate-reviews.log"); "$ISO4/taskboard/bin/tb" gate execute T-1 --action merge >/dev/null 2>&1; echo "$?|$([[ $S == $(wc -c <"$ISO4/taskboard/data/gate-reviews.log") ]] && echo same)")" "30|same"
+eq "gate cmd: help lists review-submit" "$("$TB" help | grep -c 'tb review-submit')" "1"
+eq "gate: the log is gitignored (data/)" "$(git -C "$HERE" check-ignore -q ../data/gate-reviews.log && echo ok)" "ok"
 # .github はどの階層でも hard(ルート直下だけではない)
 for p in sub/.github/x a/b/.github/workflows/ci.yml sub/.GITHUB/x .Github/workflows/ci.yml; do
   eq "gate builtin hard: $p → ask in approve and merge" "$(for a in approve merge; do gtf FILE "FILE M $p" | gt $a "$GT/gate.conf" "$GT/empty-paths.conf" | hardl | cut -c1-5; done | tr '\n' '|')" "H-01 |H-01 |"
