@@ -20,6 +20,7 @@ GATE_BUILTIN_PATHS=('.github' '.github/**' '**/.github' '**/.github/**' '**/gate
   # agent への指示・権限・拡張を決めるファイル(振る舞いを変える設定)。どの階層でも
   '**/.claude' '**/.claude/**' '**/CLAUDE.md' '**/CLAUDE.local.md' '**/AGENTS.md' '**/GEMINI.md' '**/copilot-instructions.md'
   '**/.cursor' '**/.cursor/**' '**/.cursorrules' '**/.windsurf' '**/.windsurf/**' '**/.windsurfrules' '**/.clinerules*' '**/.roo' '**/.roo/**'
+  '**/.claude.json' '**/.agents' '**/.agents/**' '**/AGENT.md' '**/.aider.conf.*'
   '**/.continue' '**/.continue/**' '**/.codex' '**/.codex/**' '**/.gemini' '**/.gemini/**' '**/mcp.json' '**/.vscode/tasks.json' '**/.vscode/settings.json'
   # レビュー必須の規則とレビューの設定(GitHub は CODEOWNERS をルート・docs/・.github/ のどこからも読む)
   '**/CODEOWNERS' '**/.coderabbit.yaml'
@@ -33,7 +34,22 @@ GATE_BUILTIN_PATHS=('.github' '.github/**' '**/.github' '**/.github/**' '**/gate
   '**/requirements*.txt' '**/Pipfile' '**/Pipfile.lock' '**/poetry.lock' '**/uv.lock' '**/pyproject.toml' '**/setup.py' '**/setup.cfg'
   '**/pip.conf' '**/pip.ini' '**/.pip/**' '**/.pypirc'
   '**/go.mod' '**/go.sum' '**/go.work' '**/go.work.sum' '**/Cargo.toml' '**/Cargo.lock'
-  '**/Gemfile' '**/Gemfile.lock' '**/composer.json' '**/composer.lock' '**/pom.xml' '**/build.gradle*')
+  '**/Gemfile' '**/Gemfile.lock' '**/composer.json' '**/composer.lock' '**/pom.xml' '**/build.gradle*'
+  '**/Podfile' '**/Podfile.lock' '**/Package.swift' '**/Package.resolved' '**/mix.exs' '**/mix.lock' '**/pubspec.yaml' '**/pubspec.lock'
+  '**/build.sbt' '**/deno.json' '**/deno.jsonc' '**/deno.lock' '**/environment.yml' '**/flake.nix' '**/flake.lock' '**/Brewfile*' '**/.terraform.lock.hcl'
+  # 取得先・ラッパー・ツール設定(取得先の差し替えや、取得したものの実行につながる)
+  '**/.cargo/config' '**/.cargo/config.*' '**/.bundle/config' '**/.gemrc' '**/bunfig.toml' '**/.yarn/**' '**/pnpm-workspace.yaml'
+  '**/gradlew' '**/gradlew.bat' '**/mvnw' '**/mvnw.cmd' '**/.mvn/**' '**/gradle.properties' '**/settings.gradle*'
+  # テスト・タスクの実行の入口(テスト実行時や task 実行時に読み込まれる)
+  '**/conftest.py' '**/tox.ini' '**/noxfile.py' '**/justfile' '**/.justfile' '**/Taskfile.yml' '**/Taskfile.yaml' '**/Procfile'
+  '**/lefthook.yml' '**/lefthook.yaml' '**/.lefthook.yml' '**/.lefthook.yaml' '**/.pre-commit-hooks.yaml'
+  # ツールのバージョン・タスク・hook の定義(mise の設定の別名を含む)
+  '**/.tool-versions' '**/mise.toml' '**/.mise.toml' '**/mise.*.toml' '**/.mise.*.toml' '**/.mise' '**/.mise/**' '**/mise/config.toml' '**/.config/mise/**'
+  '**/.bazelrc' '**/.bazelrc.*' '**/MODULE.bazel' '**/WORKSPACE' '**/WORKSPACE.bazel'
+  # github 以外の CI・依存の自動更新の設定
+  '**/.gitlab-ci.yml' '**/.gitlab/**' '**/.travis.yml' '**/azure-pipelines*.yml' '**/azure-pipelines*.yaml' '**/.azure-pipelines/**' '**/bitbucket-pipelines.yml'
+  '**/cloudbuild.yaml' '**/cloudbuild.yml' '**/appveyor.yml' '**/.appveyor.yml' '**/.drone.yml' '**/buildspec*.yml' '**/buildspec*.yaml'
+  '**/renovate.json' '**/renovate.json5' '**/.renovaterc' '**/.renovaterc.*' '**/.dependabot/**')
 
 _gate_trim() { local s=$1; s="${s#"${s%%[![:space:]]*}"}"; printf '%s' "${s%"${s##*[![:space:]]}"}"; }
 
