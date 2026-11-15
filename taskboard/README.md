@@ -197,7 +197,7 @@ tb alert-close A-<n>                # 人が閉じる
 
 ```bash
 tb agents [--json] [--all]          # 台帳と判定材料: 状態・killable・未完了タスク数・未対応の質問数・idle 分・役割ファイル
-tb agent-new <名前> [--cwd D] [--model M] [--role R] [--prompt P] [--killable yes|no]
+tb agent-new <名前> [--cwd D] [--kind K] [--model M] [--role R] [--prompt P] [--killable yes|no]
 tb agent-stop <名前> [--force]
 tb agent-revive <名前> [--fresh] [--model M] [--prompt P]
 tb agent-restart <名前> [--prompt P]   # MCP が切れたときの復旧: 停止 + 同じ会話での復活
@@ -206,12 +206,12 @@ tb agent-ops [--status pending|done|failed|rejected] [--json]
 tb agent-approve L-<n> [--always] / tb agent-reject L-<n>      # 人だけ
 ```
 
-- **新規作成**: 専用の workspace(label = 名前)を作り、その pane で `herdr agent start <名前> --kind claude [-- --model M]`。
+- **新規作成**: 専用の workspace(label = 名前)を作り、その pane で `herdr agent start <名前> --kind <kind> [-- ...]`(`--kind` 省略時は claude。claude は従来どおり `-- --model M`)。kind ごとの違いは `lib/kinds.sh` のアダプタだけが持ち、対応していない指定は終了コード 12 で止まる。表と設計は [docs/agent-kinds.md](docs/agent-kinds.md)(`tb agent-kinds` でも見える)。
   `--cwd` の既定は `TB_AGENT_CWD`(既定このリポジトリ)。`--role R` は `roles/R.md` を台帳に残し、SessionStart hook がそれを渡す(復活後も同じ)。
   `--prompt` は起動後に最初の指示として送る
 - **停止**: その agent の pane を `herdr pane close` で閉じる(herdr に agent 単体の停止は無い)。止める前に session と cwd(hook の記録を優先)を台帳に残す。
   止められるのは **killable=yes で、未完了(in_progress / review / blocked)のタスクを持っていない**ときだけ。人は `--force` で例外にできる。自分自身は止められない
-- **復活**: 台帳の cwd で新しい workspace を作り、`claude --resume <session>` で同じ会話から再開する。`--fresh` なら新しい会話。
+- **復活**: 台帳の cwd で新しい workspace を作り、`claude --resume <session>` で同じ会話から再開する(claude の場合。再開できない kind は終了コード 12 で止まり、`--fresh` なら新しい会話)。
   モデルは台帳の値か `--model`。復活したら判定フラグは `unknown` に戻る
 - **再起動**(`tb agent-restart <名前> [--prompt P]`): MCP の接続が切れた agent を、pane を閉じて `claude --resume` で同じ会話に戻して張り直す。killable の代わりに次の安全条件を全部見る
   (`--force` は無い): 現在の herdr セッションで動いている / herdr の状態が `idle` か `done`(`working`・`blocked` は拒否) / in_progress のタスクを持たない

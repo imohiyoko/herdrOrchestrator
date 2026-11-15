@@ -41,7 +41,7 @@ compact_tokens() {
 }
 
 cmd_compact-check() {
-  local apply=0 name st sid tok line self="" thr minint last ex enabled act excl conductors
+  local apply=0 name st sid tok line self="" thr minint last ex enabled act excl conductors ck
   while [[ $# -gt 0 ]]; do
     case $1 in
       --dry-run) apply=0; shift;;
@@ -64,6 +64,8 @@ cmd_compact-check() {
       echo "$name - skip(excluded)"; continue
     fi
     case $st in idle|done) ;; *) echo "$name - skip(${st:-unknown})"; continue;; esac
+    ck=$(sql "SELECT COALESCE(kind,'$KIND_DEFAULT') FROM agents WHERE name=$(q "$name");")
+    kind_supports "${ck:-$KIND_DEFAULT}" compact || { echo "$name - skip(kind=$ck: compact 非対応)"; continue; }
     [[ -n $sid ]] || sid=$(sql "SELECT COALESCE(session_id,'') FROM agents WHERE name=$(q "$name");")
     tok=$(compact_tokens "$sid")
     [[ $tok =~ ^[0-9]+$ ]] || { echo "$name - skip(no transcript usage)"; continue; }

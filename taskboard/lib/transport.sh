@@ -53,12 +53,12 @@ cmd_system-send() {
   herdr_send "$target" "$text" "job:$job" scheduler
 }
 
-# agent を 1 体起動する: 専用の workspace(label = 名前)を作り、その root pane で claude を起動する。
+# agent を 1 体起動する: 専用の workspace(label = 名前)を作り、その root pane で kind の agent(既定 claude)を起動する。
 # 成功時 SPAWN_PANE / SPAWN_WS を埋めて 0。失敗時 SPAWN_ERR に理由を入れて 11(作った workspace は閉じる)
 # 起動直後はシェル初期化(mise 等)が遅いと start が失敗するので数回やり直す(herdr-up.sh と同じ)
 SPAWN_PANE=""; SPAWN_WS=""; SPAWN_ERR=""
-herdr_spawn() {  # $1=名前 $2=cwd [$3...=claude に渡す引数]
-  local name=$1 cwd=$2 out i; shift 2
+herdr_spawn() {  # $1=kind $2=名前 $3=cwd [$4...=agent に渡す引数(kind_launch_args の出力)]
+  local kind=$1 name=$2 cwd=$3 out i; shift 3
   local -a extra=(); [[ $# -gt 0 ]] && extra=(-- "$@")
   SPAWN_PANE=""; SPAWN_WS=""; SPAWN_ERR=""
   if ! out=$(herdr_call workspace create --cwd "$cwd" --label "$name" --no-focus 2>&1) \
@@ -67,7 +67,7 @@ herdr_spawn() {  # $1=名前 $2=cwd [$3...=claude に渡す引数]
   fi
   SPAWN_WS=$(jq -r '.result.workspace.workspace_id // empty' <<<"$out" 2>/dev/null) || SPAWN_WS=""
   for i in 1 2 3; do
-    herdr_call agent start "$name" --kind claude --pane "$SPAWN_PANE" ${extra[@]+"${extra[@]}"} >/dev/null 2>&1 && return 0
+    herdr_call agent start "$name" --kind "$(kind_herdr_kind "$kind")" --pane "$SPAWN_PANE" ${extra[@]+"${extra[@]}"} >/dev/null 2>&1 && return 0
     sleep "${TB_SPAWN_RETRY_SEC:-3}"
   done
   SPAWN_ERR="agent を起動できない"
