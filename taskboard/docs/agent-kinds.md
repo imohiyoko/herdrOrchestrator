@@ -71,7 +71,7 @@ codex / gemini の「no」は「その CLI に無い」ではなく「herdr 経�
 変更しない(migration なし)。`agents.kind` は既にある。
 
 - `agent-new --kind K`: 登録時に `kind` を書く(claude 以外のときだけ `agent_ops.args` に `kind` が入る)
-- `agent_sync`: herdr が教える `agent` 欄を、**新しく台帳に載る行にだけ**書く。既存の行は上書きしない
+- `agent_sync`: herdr が教える `agent` 欄が既知の kind なら、新規行にも既存行にも反映する(同名で別の kind が外部から起動されたときに、古い kind のまま resume 検査を通さないため)。空・未知の値のときは、既存の行は保持し、新規の行は `claude`
 - 古い台帳(`kind` が既定の `claude`)は何も変えずに動く
 
 ## 6. 既知の制約(今回の変更の範囲外)

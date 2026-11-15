@@ -60,6 +60,19 @@ export FAKE_AGENTS="[$KD_C,$(kd_ag viaherdr wV:p1 sv ',"agent":"codex"'),$(kd_ag
 $TB agents >/dev/null
 eq "sync: kind comes from herdr, default claude" "$(kdsql "SELECT name||'='||kind FROM agents WHERE name IN ('viaherdr','plain') ORDER BY name;" | tr '\n' ' ')" "plain=claude viaherdr=codex "
 
+# ---- 同名の別個体(停止済み claude の行 + 外部で起動された codex)は kind を更新する。同一個体・未知の値は保持
+kdsql "INSERT INTO agents (name, kind, herdr_session, cwd, session_id, state, killable, created_by, created_at, updated_at)
+  VALUES ('swap1', 'claude', '$HS', '$TMP', 'old', 'stopped', 'unknown', 'human', 't', 't');"
+export FAKE_AGENTS="[$KD_C,$(kd_ag swap1 wS:p1 newcodex ',"agent":"codex"')]"
+$TB agents >/dev/null
+eq "sync: same name, different kind from herdr → kind updated" "$(kdsql "SELECT kind FROM agents WHERE name='swap1';")" "codex"
+: >"$FAKE_LOG"
+eq "sync→restart: swapped codex refused with 12 before pane close" "$(rc $TB agent-restart swap1) $(grep -c '^pane-close' "$FAKE_LOG")" "12 0"
+export FAKE_AGENTS="[$KD_C,$(kd_ag swap1 wS:p1 newcodex ',"agent":"codex"')]"; $TB agents >/dev/null
+eq "sync: same individual keeps kind" "$(kdsql "SELECT kind FROM agents WHERE name='swap1';")" "codex"
+export FAKE_AGENTS="[$KD_C,$(kd_ag swap1 wS:p1 newcodex ',"agent":"foo"'),$(kd_ag newfoo wF:p1 sf ',"agent":"foo"')]"; $TB agents >/dev/null
+eq "sync: unknown herdr kind keeps existing row, new row gets claude" "$(kdsql "SELECT name||'='||kind FROM agents WHERE name IN ('swap1','newfoo') ORDER BY name;" | tr '\n' ' ')" "newfoo=claude swap1=codex "
+
 # ---- agent-restart: 再開できない kind は、pane を閉じる前に 12 で止める(閉じてから失敗すると会話を失う)
 export FAKE_AGENTS="[$KD_C,$(kd_ag viaherdr wV:p1 sv ',"agent":"codex"')]"
 : >"$FAKE_LOG"; rm -f "$FAKE_LOG.closed"

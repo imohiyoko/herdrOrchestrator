@@ -57,11 +57,13 @@ agent_sync() {
   while IFS=$'\x1f' read -r name pane sess cwd akind; do
     names+=",$(q "$name")"   # 台帳の規則に合わない名前(解析役 analyst-A<n> など)も「いる」ものとして扱い、勝手に stopped にしない
     [[ $name =~ $AGENT_NAME_RE ]] || continue
+    kind_valid "$akind" || akind=""   # herdr が教える kind が既知のときだけ採用する。空・未知なら、既存の行は保持し、新規の行は既定にする
     stmts+="INSERT INTO agents (name, kind, herdr_session, pane_id, session_id, cwd, state, killable, created_by, created_at, updated_at)
       VALUES ($(q "$name"), $(q "${akind:-$KIND_DEFAULT}"), $(q "$HSESS"), NULLIF($(q "$pane"),''), NULLIF($(q "$sess"),''),
               COALESCE((SELECT cwd FROM agent_activity WHERE session_id=$(q "$sess") AND cwd IS NOT NULL), NULLIF($(q "$cwd"),'')),
               'running', 'unknown', 'herdr', $(q "$ts"), $(q "$ts"))
       ON CONFLICT(name) DO UPDATE SET state='running', stopped_at=NULL, pane_id=excluded.pane_id, herdr_session=excluded.herdr_session,
+        kind=CASE WHEN $(q "$akind")='' THEN kind ELSE $(q "$akind") END,
         session_id=COALESCE(excluded.session_id, session_id), cwd=COALESCE(excluded.cwd, cwd), updated_at=$(q "$ts");"
   done <<<"$rows"
   sql "BEGIN; $stmts
