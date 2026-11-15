@@ -32,12 +32,33 @@ require_human() {
   [[ -z $n ]] || die "$1 は人が自分の端末で実行します(agent '$n' の pane からは実行できません)"
 }
 
-# tb approval <操作>: 1 行目 ask|allow、2 行目 rule:。終了コード 0=allow / 20=ask
+# tb approval <操作> [--to 宛先 --text 本文 [--kind K] [--task T-..]]: 1 行目 ask|allow、2 行目 rule:。終了コード 0=allow / 20=ask
+# --to と --text があるときだけ、続けて risk: 行(リスク評価。第 1 段は参考値で、1 行目と終了コードには影響しない)を出す
 cmd_approval() {
-  [[ $# -eq 1 ]] || usage "approval <操作>(例: send:task:worker1, role:change)"
-  valid_action "$1"
-  approval_of "$1"
+  [[ $# -ge 1 ]] || usage "approval <操作>(例: send:task:worker1, role:change)[--to 宛先 --text 本文 [--kind K] [--task T-..]]"
+  local act=$1 to="" text="" kind=task have_text=0; shift
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --to) need_arg "$@"; to=$2; shift 2;;
+      --text) need_arg "$@"; text=$2; have_text=1; shift 2;;
+      --kind) need_arg "$@"; kind=$2; shift 2;;
+      --task) need_arg "$@"; shift 2;;   # 第 1 段では評価に使わない(将来用)
+      *) usage "approval: 不明な引数 $1";;
+    esac
+  done
+  valid_action "$act"
+  approval_of "$act"
   printf '%s\nrule: %s\n' "$APPROVAL_VALUE" "$APPROVAL_RULE"
+  if [[ -n $to ]] && ((have_text)); then
+    [[ $to =~ ^[A-Za-z0-9._-]{1,64}$ ]] || usage "approval: --to は agent 名(英数字と . _ -)"
+    [[ " $SEND_KINDS " == *" $kind "* ]] || usage "approval: --kind は $SEND_KINDS のどれか"
+    local sender=""   # 人の端末(pane なし)= 空。agent の pane は resolve_label で決める(引けなければ ? = 評価不能)
+    if [[ -n ${HERDR_PANE_ID:-} ]]; then resolve_label 2>/dev/null && sender=$LABEL_NAME || sender="?"; fi
+    risk_collect "$sender" "$to" "$kind" "$text"; risk_eval
+    risk_format
+  elif [[ -n $to ]] || ((have_text)); then
+    usage "approval: リスク評価には --to と --text の両方が要ります"
+  fi   # 引数なしは従来の出力のまま(評価なし)
   [[ $APPROVAL_VALUE == allow ]] || return 20
 }
 
