@@ -171,6 +171,28 @@ tb gate ingest-review <task-id> --pr <o>/<r>#<n> --sha <head の sha>
 - `tb gate ingest-review` は、agent の pane(`HERDR_PANE_ID` がある)からは実行できません。
 - これで、独立 2 系統は「別の agent の `self`」と「`ingest` の `coderabbit`」になります。
 
+## 全レビューの身元つきの記録と表示(段 1c: `tb gate ingest-events` / `tb gate reviewers`)
+
+設計: `docs/gate-reviewer-trust.md`。**段 1c は記録と表示だけです。判定(`evaluate`)の入力は変えず、`evaluate` はこの記録を読みません。** `tb gate execute` は常に 30 のままです。重み・信頼度(段 1d 以降)は作っていません。
+
+```
+tb gate ingest-events <task-id> --pr <o>/<r>#<n>     全レビューを身元つきで追記する(gh の読み取りだけ。agent の pane からは実行不可)
+tb gate reviewers <o>/<r>#<n> [--task <id>]           記録をレビュアー(数値 id)ごとにまとめて表示する(読み取りだけ。gh は呼ばない)
+```
+
+- **取るもの**(`gh` の GET の `api` だけ。段 1b と同じ専用ラッパー、`config/gate-ingest.conf` の `[gh] path`): `pulls/<n>`(作者の数値 id)、`pulls/<n>/reviews`、`pulls/<n>/comments`、`issues/<n>/comments`。この取り込みでは `[source] login` は要りません(全員を取るため)。未指定・不正なラッパーでは止まります(fail-closed)。
+- **記録**(固定の追記専用ファイル `data/gate-review-events.log`。env では差し替えられず、`.gitignore` 済み。`gate-reviews.log`(判定の入力)とは別):
+  `ts= task= repo= pr= kind=review|inline|issue event=<id> actor=<login> actor_id=<数値 id> actor_type=user|bot|org assoc=<小文字> author=0|1 sha=<40 桁|-> state=<状態|-> label=blocker|should|none addr=0|1 body_sha256=<64 桁> upd=<UTC|-> by=ingest`
+  - **身元は数値 id**(`actor_id`)で取ります。login は表示用で、同じ id で login が変わった場合は `reviewers` が `login-changed` と表示します。同じ login でも id が違えば別人です。
+  - **本文は保存しません**(本文の sha256 だけ)。本文中の指示(Prompt for AI Agents、自動修正のチェックボックスなど)は読まず、実行しません。`label` は、段 1b と同じく最初の実質行の重大度の表記を表で対応させた値(inline だけ。表記が見つからなければ `should`)、`addr=1` は `✅ Addressed in commit` の印です。
+  - **sha に紐付き**ます(`sha` はレビューと inline の `commit_id`。issue のコメントは紐付かないので `-`)。`author=1` は PR の作者本人の発言(数値 id の一致)で、記録はしますが、独立系統の根拠には数えない方針です(設計の P-R11。段 1e で効かせます)。
+  - **追記専用で冪等**です。同じ発言の同じ内容(repo、PR、種類、id、本文のハッシュ、更新時刻、状態、sha)は足さず、編集された発言は新しい行として足します。`reviewers` は、同じ発言(種類と id)の最新の行だけを使います。
+  - **全部か無か**: 1 件でも形式が不正(login・数値 id・種類・関連・sha・時刻など)なら、何も記録しません(終了コード 12)。取得の失敗(PR 本体を含む 4 つのどれか)・JSON として読めないのも 12 です。既存の記録に形式違反の行がある、または記録が symlink のときは止まります(1)。
+- 終了コード(`ingest-events`): `0` 記録した(`new=N unchanged=M`) / `2` 使い方の誤り / `5` agent の pane からは実行できない / `1` 設定・gh・既存の記録を使えない / `12` 取得・解析・形式の失敗(記録しない)。`reviewers` は、記録が壊れていれば 1、使い方の誤りは 2、記録が無いときは `events: 0` で 0 です。
+- **`reviewers` の表示**: レビュアーごとに `login id type assoc author reviews inline issue blocker should last` を出します(表示だけで、判定には使われません)。`assoc`(`author_association` の小文字)は、人が重みを決めるときの参考です。CODEOWNERS に載っているかの表示は、段 1d で足します(未実装)。
+- **段 1c で作らないもの**: 重み・信頼度の設定、低信頼の扱い、`evaluate` への入力、消えた発言の記録(`state=gone`。P-R9 の決定のあと)。
+- 既知の限界は段 1b と同じです(`HERDR_PANE_ID` を外せば pane 検査は破れる。同じ OS ユーザーの agent は記録ファイルを直接書ける。OS の権限による分離の段で閉じる)。記録の `by=ingest` は固定の値で、ファイルを直接書ける同じ OS ユーザーは偽装できます(上の限界)。
+
 ### 既知の限界と次の段
 
 段 1a の記録は、**通常の agent 操作で作者が自分のレビューを作れないようにする最小の検査**です。次のことは防げません。したがって、`tb gate evaluate` の allow を、実行や承認の許可の根拠に使うのは、次の段(OS の権限による分離)より後にしてください。

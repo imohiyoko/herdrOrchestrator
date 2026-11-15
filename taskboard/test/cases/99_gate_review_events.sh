@@ -86,6 +86,11 @@ eq "events: Minor → should" "$(lab '_🟡 Minor_' 43)" "label=should addr=0"
 eq "events: unknown label → should (conservative)" "$(lab '_🟣 Weird_' 44)" "label=should addr=0"
 eq "events: the label is decided by the first line only" "$(lab $'_🟡 Minor_\ncritical and major here' 45)" "label=should addr=0"
 eq "events: an addressed inline comment gets addr=1" "$(lab $'_🔴 Critical_\n\n✅ Addressed in commit abc1234' 46)" "label=blocker addr=1"
+# 実物の形の本文(1 行目が HTML コメント、重大度は 3 行目で picture タグ入り)。段 1b と同じ最初の実質行から読む
+eq "events (real shape): Critical on line 3 behind an HTML comment → blocker" "$(lab "$(rbody Critical)" 47)" "label=blocker addr=0"
+eq "events (real shape): Major → blocker" "$(lab "$(rbody Major)" 48)" "label=blocker addr=0"
+eq "events (real shape): Minor → should (prose mentioning critical later does not count)" "$(lab "$(rbody Minor)" 49)" "label=should addr=0"
+eq "events (real shape): no known label in the first substantive line → should" "$(lab $'<!-- x -->\n\nplain text' 50)" "label=should addr=0"
 # 全部か無か: 1 件でも不正なら何も記録しない
 NB=$(evlines)
 BADFX() { evfx "$1" "[$RV]" "[$CM]" "[$2]"; }

@@ -704,14 +704,13 @@ _gate_cmd_ingest_events() {
   local table i; table="{}"
   for ((i = 0; i < ${#GATE_SEV_KEYS[@]}; i++)); do table=$(jq -c --arg k "${GATE_SEV_KEYS[i]}" --arg v "${GATE_SEV_VALS[i]}" '. + {($k): $v}' <<<"$table"); done
   # 判定ではなく取り出しだけ。jq の固定のプログラムが、機械的に数えられる項目を TSV にする。本文は 1 行目の重大度の表記と、決まった印の有無、base64 だけに使う(解釈しない)
-  jq -rn --argjson table "$table" --slurpfile pr "$tmp/pr.json" --slurpfile rv "$tmp/reviews.json" --slurpfile cm "$tmp/comments.json" --slurpfile is "$tmp/issues.json" '
-    def sev: ((. // "") | split("\n")[0] | ascii_downcase) as $l
-      | [$table | to_entries[] | . as $e | select($l | contains($e.key)) | $e.value] | if index("blocker") then "blocker" else "should" end;
-    def addressed: ((. // "") | test("(^|\n)\\s*✅ Addressed in commit")) | if . then "1" else "0" end;
+  jq -rn --argjson table "$table" --slurpfile pr "$tmp/pr.json" --slurpfile rv "$tmp/reviews.json" --slurpfile cm "$tmp/comments.json" --slurpfile is "$tmp/issues.json" "$GATE_JQ_DEFS"'
+    def sev3: sev | if . == "unknown" then "should" else . end;   # 表記が見つからない指摘は should(段 1b と同じ)
+    def addr01: (. // "") | addressed | if . then "1" else "0" end;
     def who: [(.user.login // ""), ((.user.id // "") | tostring), (.user.type // ""), ((.author_association // "") | ascii_downcase)];
     ($pr[0].user.id // "") as $aid
     | ( ($rv[0][] | ["review", (.id | tostring)] + who + [((.user.id // "") == $aid | tostring), (.commit_id // "-"), ((.state // "-") | ascii_downcase), "none", "0", (.submitted_at // "-"), ((.body // "") | @base64)]),
-        ($cm[0][] | ["inline", (.id | tostring)] + who + [((.user.id // "") == $aid | tostring), (.commit_id // "-"), "-", (.body | sev), (.body | addressed), (.updated_at // "-"), ((.body // "") | @base64)]),
+        ($cm[0][] | ["inline", (.id | tostring)] + who + [((.user.id // "") == $aid | tostring), (.commit_id // "-"), "-", (.body | sev3), (.body | addr01), (.updated_at // "-"), ((.body // "") | @base64)]),
         ($is[0][] | ["issue", (.id | tostring)] + who + [((.user.id // "") == $aid | tostring), "-", "-", "none", "0", (.updated_at // "-"), ((.body // "") | @base64)]) )
     | map("x" + tostring) | @tsv' >"$tmp/events.tsv" 2>/dev/null || { echo "tb: gate ingest-events: 解析に失敗したため記録しません" >&2; exit 12; }
   # 1 件でも形式が不正なら、何も記録しない(全部か無か)
