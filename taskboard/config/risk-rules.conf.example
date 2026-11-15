@@ -1,0 +1,41 @@
+# リスク評価の規則(人が編集する。実ファイル config/risk-rules.conf は gitignore。このファイルをコピーして使う)
+# 設計: docs/risk-based-approvals.md。第 1 段は評価を表示するだけで、allow / ask の最終判定には使われない。
+#
+# 実ファイルが無い・読めない・構文エラーのときは、組み込みの既定で動く(構文エラーは「評価不能」= ask と表示)。
+# 場所は固定で、環境変数では差し替えられない。tb に編集コマンドは無い(人が手で編集する)。
+#
+# 組み込み(ファイルが無くても有効):
+#   R-07  入力が取れない/設定が壊れている → ask(外せない)
+#   R-02  本文に破壊的・公開系の語(push / merge / --force / --approve / reset --hard / rm -rf) → ask
+#   R-06  宛先が停止中(state = stopped) → risk:2
+#   [unknown] の既定: sender.role / target.role / target.state = ask、sender.model = risk:1
+#   しきい値の既定: ask-at = 2(合計点がこの値以上なら ask)
+#
+# 「厳しくする」設定だけが効く。既定より緩い設定(しきい値を上げる、[unknown] を既定より弱くする)は
+# 第 3 段まで効かず、読み込んで警告(risk-warn)を出すだけ。
+
+[threshold]
+# ask-at = 2
+
+[unknown]
+# 属性が不明のときの値: ask(必ず ask)| allow(0 点)| risk:<整数>(点を足す)
+# sender.role  = ask
+# target.role  = ask
+# target.state = ask
+# sender.model = risk:1
+
+[patterns]
+# 名前付き 正規表現(ERE。語境界つき・大文字小文字を区別しない。空文字列に一致する式は構文エラー)
+# 既存の名前(destructive)に書くと「語を足す」(減らすことはできない)
+# destructive = drop table|truncate
+# external = slack|curl|https?://
+
+[rules]
+# 候補の規則(既定は無効。必要なものだけ # を外す)。形式: <ID> | <条件> | <ask または risk:N> | <理由>
+# 条件: body.matches(<パターン名>) / body.secret / sender.role in (a,b) / target.role in (a,b) / target.state in (a,b) / kind in (a,b)
+#       and でつなげる。不明な属性を参照する条件は「一致しない」(不明は [unknown] が 1 回だけ数える)
+# R-02 / R-06 / R-07 は組み込みなので、ここでは定義できない。点は 0 からしきい値まで。
+#
+# R-04 | body.matches(external) and target.role in (worker) | risk:1 | 外部送信・外部 URL を含む依頼
+# R-05 | sender.role in (worker) and target.role in (worker) | risk:1 | 想定外の経路(横の連絡)
+# R-03 | body.secret | ask | 秘密らしき文字列(種類名だけ表示。秘密検査の主な担保は別の仕組み)

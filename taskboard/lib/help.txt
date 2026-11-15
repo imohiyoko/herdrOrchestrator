@@ -46,6 +46,7 @@ tb roles [--json]                  agent ごとの役割ファイルと、渡し
 
 人の承認(config/approvals.conf。<操作のパターン> = ask|allow、最初に一致した行、無一致は ask):
 tb approval <操作>        1 行目 ask|allow、2 行目 rule:。終了コード 0=allow 20=ask(例: send:task:worker1, role:change, setup:hooks)
+  [--to 宛先 --text 本文 [--kind K]]  付けると risk:(リスク評価。第 1 段は参考値で判定は変えない)を併記。設計: docs/risk-based-approvals.md
 tb allow <パターン>       今後は承認なしにする(人の端末からだけ)
 tb ask <パターン>         承認制に戻す(人の端末からだけ)
 tb approve O-<n> [--always]   承認待ちの送信を届ける。--always なら send:<kind>:<宛先> を allow にする
