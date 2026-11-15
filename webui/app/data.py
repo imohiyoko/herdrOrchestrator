@@ -298,7 +298,7 @@ def ledger_rows(target, d_from, d_to, kind, result, include_failed=False):
     out = []
     for r in q("SELECT id, kind, ref, target, body, result, created_at FROM messages" + where + " ORDER BY id DESC LIMIT ?",
                a + [LEDGER_MAX]):
-        first = clean(r["body"] or "").strip().split("\n", 1)[0]
+        first = clean(r["body"] or "").split("\n", 1)[0].strip()
         out.append({"id": r["id"], "kind": clean(r["kind"]), "ref": clean(r.get("ref") or ""), "target": clean(r["target"]),
                     "result": clean(r["result"]), "created_at": clean(r["created_at"]),
                     "first": first[:200] + ("…" if len(first) > 200 else "")})

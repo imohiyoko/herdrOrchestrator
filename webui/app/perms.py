@@ -17,14 +17,19 @@ SAMPLE_OPS = ["send:task:worker1", "send:info:worker1", "send:answer:worker1", "
               "setup:launchctl", "agent:new:worker1", "agent:stop:worker1", "agent:revive:worker1"]
 
 
+MAX_BYTES = 262144
+
+
 def load_rules():
     """[{no, pattern, value, note, line}]。読めなければ ([], エラー文)。"""
     path = APPROVALS()
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
-            text = f.read(262144)
+            text = f.read(MAX_BYTES + 1)
     except OSError:
         return [], "approvals.conf を読めません(無ければ、すべての操作が ask として扱われます)"
+    if len(text.encode("utf-8", "replace")) > MAX_BYTES:
+        return [], f"approvals.conf が大きすぎて({MAX_BYTES // 1024} KiB 超)全部は読めません。一覧と判定は出しません(tb は全体を読むので、手元で tb approval を使ってください)"
     rules = []
     for ln in text.splitlines():
         body, _, note = ln.partition("#")
@@ -39,9 +44,16 @@ def load_rules():
     return rules, ""
 
 
+def has_bracket(r):
+    return "[" in r["raw"]
+
+
 def decide(rules, op):
-    """(値, 決めた行 or None)。どれにも一致しなければ ask。"""
+    """(値, 決めた行 or None)。どれにも一致しなければ ask。
+    [ を含む行に行き当たったら ("unknown", その行): bash の glob と fnmatch で結果が変わりうるので、それより下へは進まない。"""
     for r in rules:
+        if has_bracket(r):
+            return "unknown", r
         if fnmatchcase(op, r["raw"]):
             return r["value"], r
     return "ask", None
@@ -54,6 +66,8 @@ def wildcard(pat):
 def warning(r):
     """行ごとの警告文(無ければ空)。"""
     pat, v = r["raw"], r["value"]
+    if "[" in pat:
+        return "[ を含むパターン: bash と照合規則が違いうるので、この画面ではこの行から下の判定をしません(手元で tb approval を使ってください)"
     if pat == "*" and v == "ask":
         return "全体の既定(どれにも一致しない操作は ask)。この行を allow にしたり消したりしないこと"
     if v != "allow" or not wildcard(pat):
@@ -69,12 +83,16 @@ def shadowed_by(rules, r):
     if wildcard(r["raw"]):
         return None
     for o in rules[: r["no"] - 1]:
+        if has_bracket(o):
+            return None   # 判定できないので「隠れる」とは言わない
         if fnmatchcase(r["raw"], o["raw"]):
             return o
     return None
 
 
 def examples(rules, r):
+    if has_bracket(r):
+        return []
     ex = [op for op in SAMPLE_OPS if decide(rules, op)[1] is r]
     if not wildcard(r["raw"]) and decide(rules, r["raw"])[1] is r:
         ex.insert(0, r["raw"])

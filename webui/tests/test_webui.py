@@ -296,6 +296,7 @@ for i in range(150):
 for i in range(110):
     _c.execute("INSERT INTO messages (kind,ref,target,body,result,created_at) VALUES ('report','T-1','gamma',?,'sent','2026-11-06T01:00:00Z')", (f"reportbody-{i}",))
 _c.execute("INSERT INTO messages (kind,ref,target,body,result,created_at) VALUES ('scheduler','j1','alpha','sched-busy','busy','2026-11-03T01:00:00Z')")
+_c.execute("INSERT INTO messages (kind,ref,target,body,result,created_at) VALUES ('send','O-99','alpha',?,'sent','2026-11-05T02:00:00Z')", ("\nSECOND-LINE-SECRET-LEAD",))
 _c.commit()
 _c.close()
 # 旧方式の run/token が残っていても無視される
@@ -505,7 +506,7 @@ if subprocess.run(["which", "node"], capture_output=True).returncode == 0:
 L = cl.get("/ledger")
 check("送信履歴: 200 で、旧 dispatch.jsonl の記述が無い", L[0] == 200 and "dispatch.jsonl" not in L[2].lower() and "<h1>送信履歴</h1>" in L[2])
 check("送信履歴: 種別ごとの件数サマリ(failed 150 / report 110)", "<h2>種別ごとの件数</h2>" in L[2] and ">150<" in L[2] and ">110<" in L[2])
-check("送信履歴: 既定は最大 100 件で failed を畳む", L[2].count("reportbody-") == 99 and "failbody-" not in L[2] and "畳んでいます" in L[2])
+check("送信履歴: 既定は最大 100 件で failed を畳む", L[2].count("reportbody-") == 98 and "failbody-" not in L[2] and "畳んでいます" in L[2])
 K = cl.get("/ledger?kind=send")
 check("送信履歴: send は O-n を /outbox へリンクし、本文は 1 行目だけ",
       '<a href="/outbox">O-7</a>' in K[2] and "SECOND-LINE-SECRET" not in K[2] and "一行目" in K[2])
@@ -563,6 +564,23 @@ for _pth in ["/ledger", "/perms", "/perms?op=send:task:x", "/ledger?result=all"]
     _r = _un.get(_pth)
     check(f"未ログインの {_pth} は /login へ(本文なし)", _r[0] == 302 and _r[1].get("Location", "").startswith("/login") and "send:" not in _r[2] and "approvals" not in _r[2])
 check("定期実行が出る", "job1" in cl.get("/jobs")[2])
+
+# conf を一時的に差し替えて境界を確かめる(読み取りだけの画面なので、戻せば元の表示に戻る)
+_orig = open(_AP, encoding="utf-8").read()
+open(_AP, "w", encoding="utf-8").write("send:task:[[:alpha:]]* = ask\nsend:task:* = allow\nrole:change = ask\n* = ask\n")
+_B = cl.get("/perms")[2]
+check("権限: [ を含む行に警告を出す", "[ を含むパターン" in _B)
+_R = cl.get("/perms?op=send:task:w1")[2]
+check("権限: [ の行に当たる操作は判定不能(下の allow へ進まない)", "判定不能" in _R and "<b class=\"warn\">allow</b>" not in _R and "→ <b>ask</b>" not in _R)
+check("権限: [ の行より下の行の一致の例は出さない(決めつけない)", "<code>send:task:worker1</code>" not in _B)
+check("権限: [ の行が先頭にあれば、どの操作もそこで止まる(下の行を使わない)", "判定不能" in cl.get("/perms?op=role:change")[2])
+open(_AP, "w", encoding="utf-8").write("# " + "x" * 262144 + "\nsend:task:* = allow\n* = ask\n")
+_Big = cl.get("/perms?op=send:task:w1")
+check("権限: 256 KiB 超の conf は全部読めないと出し、ask とも allow とも断定しない",
+      _Big[0] == 200 and "全部は読めません" in _Big[2] and "全部は読めていない" in _Big[2] and "→ <b" not in _Big[2] and "<td>1</td>" not in _Big[2])
+open(_AP, "w", encoding="utf-8").write(_orig)
+check("権限: conf を戻すと元の表示に戻る", "<td>1</td>" in cl.get("/perms")[2])
+
 
 # ---- 定期実行の設定(Web UI から変更できる唯一の操作)
 SET = os.path.join(env["WEBUI_SCHED_SETTINGS"], "job1.settings")

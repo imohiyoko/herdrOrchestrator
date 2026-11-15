@@ -576,9 +576,14 @@ def page_perms(qs, ctx=None):
     if op:
         if not perms.ACTION_RE.fullmatch(op):
             res = err_html("操作名に使えない文字があります(英数字と . _ : * ? - だけ、128 文字まで)")
+        elif err:
+            res = err_html("approvals.conf を全部は読めていないので、ask とも allow とも判定しません")
         else:
             val, hit = perms.decide(rules, op)
-            if hit:
+            if val == "unknown":
+                res = (f'<p><code>{e(op)}</code> → <b class=warn>判定不能</b>({hit["no"]} 行目 <code>{e(hit["pattern"])}</code> に <code>[</code> があり、'
+                       'bash と照合規則が違いうるため、この画面ではここから下を判定しません。手元で <code>tb approval</code> を使ってください)</p>')
+            elif hit:
                 res = (f'<p><code>{e(op)}</code> → <b class="{"warn" if val == "allow" else ""}">{e(val)}</b>'
                        f'(<b>{hit["no"]} 行目</b>: <code>{e(hit["pattern"])} = {e(hit["value"])}</code> で決まる)</p>')
             else:
