@@ -4,13 +4,17 @@
 #   approve 人が承認(本文が置いたときから変わっていないことも確かめる)          → approved
 #   run     scheduler の COMMAND ジョブ。approved だけをガードに通し gh pr create --draft  → created / rejected / failed
 # できないこと(実装しない): マージ・approve・ready・close・コメント。gh は create(--draft 固定)と pr list(重複確認)だけ。
-# gh は PR_QUEUE_GH で差し替える(既定 gh)。書き込み用の認証は gh のラッパー(人が用意する)に持たせる。
+# gh は PR_QUEUE_GH(環境変数)か config/pr-queue.conf の gh で指定する(絶対パス。既定は無い)。未指定・不正のままでは run / scan しない(fail-closed):
+# PATH 上の gh には落とさない(ghtkn を通らない gh で黙って進まないため)。書き込み用の認証は gh のラッパー(人が用意する。docs/pr-queue-gh-wrapper.md)に持たせる。
+# ラッパーが終了コード 75(= ghtkn が token を返せない。auth-locked)を返したときは attempts を使わず、通知を 1 回だけ出して止まる(人が unlock したあと次の run が拾う)。
+# 差分のガードは必須: PR_QUEUE_REPO_DIR(ローカルの clone)が空・不正なら承認も run もしない。failed は人が tb pr-queue retry で approved に戻す。
 # 環境ごとの決まりは config/pr-queue.conf(人だけが編集): branch_prefix(既定 agent/)・body_root(本文の置き場)・
 # body_first_line(本文 1 行目が合うべき正規表現。空なら見ない。# は書けない)・auto_approve・max_create_per_run。
 # 値は読まない・出さない: 秘密らしい値が見つかっても、出すのは種類の名前だけ。
 PQ_BASE=main
 PQ_MAX_BODY=102400
 PQ_MAX_ATTEMPTS=3
+PQ_AUTH_RC=75   # gh ラッパーが「認証で止まった(auth-locked)」を伝える終了コード(ghtkn の 111 をラッパーが読み替える)
 PQ_MAX_CREATE=3   # 1 回の run で作る PR の上限(config/pr-queue.conf の max_create_per_run で変える)
 PQ_REASON=""
 
@@ -30,6 +34,23 @@ pq_repos() {
     [[ $line =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*/[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]] && printf '%s\n' "$line"
   done <"$f"
   return 0
+}
+
+# 使う gh を決める。PR_QUEUE_GH(環境変数) > conf の gh。絶対パスの実行ファイルだけ(PATH 上の gh には落とさない)。
+# 通れば 0 で PQ_GH に入れる。通らなければ警告を stderr に出して 1
+PQ_GH=""
+pq_gh() {
+  local g=${PR_QUEUE_GH:-$(pq_conf gh "")} where=
+  PQ_GH=""
+  if [[ -z $g ]]; then
+    echo "pr-queue: gh が指定されていないため止めます(fail-closed)。PR_QUEUE_GH か config/pr-queue.conf の gh に、専用の gh ラッパーの絶対パスを指定してください。PATH 上の gh には落としません" >&2
+    return 1
+  fi
+  if [[ $g != /* || ! -f $g || ! -x $g ]]; then
+    echo "pr-queue: 指定された gh を使えないため止めます(fail-closed)。絶対パスの実行ファイルを指定してください: $g" >&2
+    return 1
+  fi
+  PQ_GH=$g
 }
 
 pq_ref() {  # "PQ-12" か "12" → 数字
@@ -96,11 +117,19 @@ pq_guard() {
   return 0
 }
 
-# PR_QUEUE_REPO_DIR(ローカルの clone)があるときだけ、差分を見る。clone を変更しない(読み取りだけ)
+# PR_QUEUE_REPO_DIR が使えるか。使えなければ理由を PQ_REASON に入れて 1(差分を見られないので、承認も run もしない)
+pq_repo_dir_ok() {
+  local d=${PR_QUEUE_REPO_DIR:-}
+  [[ -n $d ]] || { PQ_REASON="PR_QUEUE_REPO_DIR が空(差分のガードは必須。clone のパスを指定する)"; return 1; }
+  [[ $d == /* ]] || { PQ_REASON="PR_QUEUE_REPO_DIR が絶対パスではない"; return 1; }
+  [[ -d $d ]] || { PQ_REASON="PR_QUEUE_REPO_DIR が見つからない"; return 1; }
+  git -C "$d" rev-parse -q --git-dir >/dev/null 2>&1 || { PQ_REASON="PR_QUEUE_REPO_DIR が git のリポジトリではない"; return 1; }
+}
+
+# 差分を見る(必須)。PR_QUEUE_REPO_DIR(ローカルの clone)が空・存在しない・git の作業ツリーでないときは、見られないので通さない(fail-closed)。clone を変更しない(読み取りだけ)
 pq_diff_guard() {
   local b=$1 d=${PR_QUEUE_REPO_DIR:-} ref files added
-  [[ -n $d ]] || return 0
-  [[ -d $d ]] || { PQ_REASON="PR_QUEUE_REPO_DIR が見つからない"; return 1; }
+  pq_repo_dir_ok || return 1
   if git -C "$d" rev-parse -q --verify "refs/heads/$b^{commit}" >/dev/null 2>&1; then ref=refs/heads/$b
   elif git -C "$d" rev-parse -q --verify "refs/remotes/origin/$b^{commit}" >/dev/null 2>&1; then ref=refs/remotes/origin/$b
   else PQ_REASON="差分を取得できない(ブランチが clone に無い)"; return 1; fi
@@ -124,7 +153,8 @@ cmd_pr-queue() {
     reject) pq_reject "$@";;
     run) pq_run "$@";;
     scan) pq_scan "$@";;
-    *) usage "pr-queue add|list|show|approve|reject|run|scan";;
+    retry) pq_retry "$@";;
+    *) usage "pr-queue add|list|show|approve|reject|retry|run|scan";;
   esac
 }
 
@@ -205,11 +235,33 @@ pq_reject() {
   echo "PQ-$id rejected"
 }
 
+# failed を人が approved に戻す(attempts を 0 に)。ガードは run のたびにかけ直すので、ここでは通さない
+pq_retry() {
+  [[ $# -eq 1 ]] || usage "pr-queue retry <PQ-n>"
+  require_human "tb pr-queue retry"
+  local id row st; id=$(pq_ref "$1"); row=$(pq_row "$id"); [[ -n $row ]] || die "見つかりません: PQ-$id"
+  st=$(jq -r .status <<<"$row"); [[ $st == failed ]] || die "PQ-$id は $st です(戻せるのは failed だけ)"
+  sql "UPDATE pr_queue SET status='approved', attempts=0, last_error=NULL, executed_at=NULL WHERE id=$id AND status='failed';"
+  echo "PQ-$id approved(failed から戻しました。次の tb pr-queue run が、ガードを通して draft PR を作ります)"
+}
+
+# 認証で止まった(auth-locked)ときの記録と通知。approved の行すべてに印を付け、印の付いた行がまだ無かったとき(= 状態が変わったとき)だけ 1 回通知する。attempts は使わない
+pq_auth_locked() {  # $1=dry
+  echo "pr-queue: 認証で止まっています(auth-locked)。残りの行は処理せず、次の回に自動で再開します" >&2
+  [[ $1 == 1 ]] && return 0
+  local was; was=$(sql "SELECT COUNT(*) FROM pr_queue WHERE status='approved' AND last_error='auth-locked';")
+  sql "UPDATE pr_queue SET last_error='auth-locked' WHERE status='approved';"
+  ((was == 0)) && notify_emit warning "pr-queue-auth-locked" "" "pr-queue: 公開待ちがあるが、ghtkn が token を返せず止まっています。人の対話端末で ghtkn agent unlock --enable-refresh(ロック中)か ghtkn auth <app>(期限切れ)。再開は次の run が自動で拾います"
+  return 0
+}
+
 # scheduler の COMMAND から。approved だけを処理する。--dry-run は gh pr create も DB 更新もしない
 pq_run() {
-  local dry=0 gh=${PR_QUEUE_GH:-gh} id row repo branch title file out rc n url made=0 maxc
+  local dry=0 gh id row repo branch title file out rc n url made=0 maxc lrc locked=0
   case ${1:-} in "") ;; --dry-run) dry=1;; *) usage "pr-queue run [--dry-run]";; esac
-  command -v "$gh" >/dev/null 2>&1 || { echo "pr-queue: gh が見つかりません($gh)" >&2; return 0; }
+  pq_gh || return 1; gh=$PQ_GH
+  # 環境の不備(clone が無い)で承認済みの行を却下しない。行には触らず、警告して止まる(直せば次の回に進む)
+  pq_repo_dir_ok || { echo "pr-queue: $PQ_REASON。止めます(fail-closed。承認済みの行はそのまま残します)" >&2; return 1; }
   maxc=$(pq_conf max_create_per_run "$PQ_MAX_CREATE"); [[ $maxc =~ ^[0-9]+$ ]] || maxc=$PQ_MAX_CREATE
   while IFS= read -r id; do
     [[ -n $id ]] || continue
@@ -222,7 +274,9 @@ pq_run() {
       continue
     fi
     # 重複確認(読み取り)。取れないときは作らない(次の回に回す)
-    if ! out=$("$gh" pr list --repo "$repo" --head "$branch" --state open --json number 2>/dev/null) || ! jq -e 'type=="array"' <<<"$out" >/dev/null 2>&1; then
+    out=$("$gh" pr list --repo "$repo" --head "$branch" --state open --json number 2>/dev/null) && lrc=0 || lrc=$?
+    if ((lrc == PQ_AUTH_RC)); then pq_auth_locked "$dry"; locked=1; break; fi
+    if ((lrc != 0)) || ! jq -e 'type=="array"' <<<"$out" >/dev/null 2>&1; then
       echo "PQ-$id skipped: 重複確認の gh pr list に失敗(作らない)"
       ((dry)) || sql "UPDATE pr_queue SET attempts=attempts+1, last_error='重複確認に失敗' WHERE id=$id;"
       pq_cap_attempts "$id" "$dry"; continue
@@ -239,12 +293,15 @@ pq_run() {
       url=$(grep -Eo 'https://[^[:space:]]+/pull/[0-9]+' <<<"$out" | head -n 1 || true)
       sql "UPDATE pr_queue SET status='created', pr_url=NULLIF($(q "$url"),''), last_error=NULL, executed_at=$(q "$(now)") WHERE id=$id AND status='approved';"
       echo "PQ-$id created${url:+: $url}"; made=$((made+1))
+    elif ((rc == PQ_AUTH_RC)); then pq_auth_locked 0; locked=1; break
     else
       sql "UPDATE pr_queue SET attempts=attempts+1, last_error=$(q "gh pr create が失敗(exit $rc)") WHERE id=$id;"
       echo "PQ-$id error: gh pr create が失敗(exit $rc)"
       pq_cap_attempts "$id" 0
     fi
   done < <(sql "SELECT id FROM pr_queue WHERE status='approved' ORDER BY id;")
+  # 印を消すのは、この run が認証で止まらずに最後まで進んだときだけ(list が通って create が 75 のときに毎回消えて、毎回通知されるのを防ぐ)
+  ((locked || dry)) || sql "UPDATE pr_queue SET last_error=NULL WHERE last_error='auth-locked';"
   return 0
 }
 
@@ -265,7 +322,7 @@ pq_conf() {
 # (d) 秘密らしい値が無い (e) 最新コミットの題が空でない。auto_approve=1(conf。既定 0)のときだけ approved で積む。それ以外は pending
 # 読み取りだけ: git は fetch と ls-remote、gh は pr list だけ。PR_QUEUE_REPO_DIR(clone)が要る。PR_QUEUE_GIT で git を差し替える
 pq_scan() {
-  local dry=0 repo="" gh=${PR_QUEUE_GH:-gh} git=${PR_QUEUE_GIT:-git} d=${PR_QUEUE_REPO_DIR:-} repos n auto st root
+  local dry=0 repo="" gh git=${PR_QUEUE_GIT:-git} d=${PR_QUEUE_REPO_DIR:-} repos n auto st root
   local b slug file title out cnt row sha by id
   while [[ $# -gt 0 ]]; do
     case $1 in --dry-run) dry=1; shift;; --repo) need_arg "$@"; repo=$2; shift 2;; *) usage "pr-queue scan [--dry-run] [--repo <org/repo>]";; esac
@@ -273,8 +330,8 @@ pq_scan() {
   repos=$(pq_repos); [[ -n $repos ]] || { echo "pr-queue scan: 許可リスト(config/repos.md)が空" >&2; return 0; }
   if [[ -z $repo ]]; then n=$(grep -c . <<<"$repos"); ((n == 1)) || { echo "pr-queue scan: 許可リストが複数。--repo を付ける" >&2; return 0; }; repo=$repos; fi
   grep -qxF -- "$repo" <<<"$repos" || { echo "pr-queue scan: リポジトリが許可リストに無い" >&2; return 0; }
-  [[ -n $d && -d $d ]] || { echo "pr-queue scan: PR_QUEUE_REPO_DIR(clone)が必要" >&2; return 0; }
-  command -v "$gh" >/dev/null 2>&1 || { echo "pr-queue scan: gh が見つかりません($gh)" >&2; return 0; }
+  pq_repo_dir_ok || { echo "pr-queue scan: $PQ_REASON。止めます(fail-closed)" >&2; return 1; }
+  pq_gh || return 1; gh=$PQ_GH
   root=$(pq_body_root) || { echo "pr-queue scan: 本文のルートが無い" >&2; return 0; }
   auto=$(pq_conf auto_approve 0); [[ $auto == 1 ]] && st=approved || st=pending
   local heads pfx; pfx=$(pq_prefix)
