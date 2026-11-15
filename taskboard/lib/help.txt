@@ -132,12 +132,13 @@ tb pr-queue add --branch <接頭辞>/<名> --body-file <本文> --title <題> [-
 tb pr-queue list [--status S] [--json] / show <PQ-n>   キューを見る
 tb pr-queue approve <PQ-n> / reject <PQ-n> [-m 理由]   人だけ。approve は本文・題・差分のガードも通ったときだけ
 tb pr-queue retry <PQ-n>   人だけ。failed を approved に戻す(attempts を 0 に)
-tb pr-queue run [--dry-run]   approved だけを処理(scheduler の COMMAND ジョブ)。ガード: ブランチが branch_prefix で始まる・base は main 固定・
+tb pr-queue run [--dry-run]   approved だけを処理(scheduler の COMMAND ジョブ)。ガード: ブランチが branch_prefixes(無ければ branch_prefix)のどれかで始まる・base は main 固定・
                               draft のみ・本文が body_root の中の実ファイルで承認後に変わっていない・1 行目が body_first_line に合う(設定時)・
                               秘密らしい値なし・同じ head の PR なし・許可リスト(config/repos.md)のリポジトリ。
-                              PR_QUEUE_REPO_DIR(clone)で差分も見る(必須。空・不正なら通さない。CI 設定・AdministratorAccess の追加・秘密らしい値は人に回す)。
+                              公開前検査(conf の deny_patterns。必須。環境変数では決めない。題・本文・コミットメッセージ(author / committer を含む)・ブランチ名・差分に掛け、ヒットは却下して規則名と位置だけ通知)。
+                              検査の直前に origin と同期し(追跡参照が origin の SHA と一致しなければ止める)、PR_QUEUE_REPO_DIR(clone)の追跡参照で差分も見る(必須。バイナリの変更も人に回す。空・不正なら通さない。CI 設定・AdministratorAccess の追加・秘密らしい値は人に回す)。
                               gh は PR_QUEUE_GH か conf の gh(絶対パス。必須。未指定なら止まる)。ラッパーが 75 を返したら attempts を使わず止まる。マージ・approve・ready はできない。設定は config/pr-queue.conf
-tb pr-queue scan [--dry-run] [--repo <org/repo>]   origin の <branch_prefix>* を走査し、<body_root>/pr-body-<名>.md があるものを積む(run の前に呼ぶ)
+tb pr-queue scan [--dry-run] [--repo <org/repo>]   origin の先頭の接頭辞(branch_prefixes の先頭)のブランチを走査し、<body_root>/pr-body-<名>.md があるものを積む(run の前に呼ぶ)
 tb pr-watch                   許可リスト(config/repos.md、TB_REPOS_FILE)の PR を gh の読み取りだけで見て、新規・approve・変更依頼・マージを積む
                               (scheduler の COMMAND ジョブ。許可リストが空・notify が off なら何もせず 0。初回は基準線の記録だけ)
          外へ出るのは tb が整形した 1 行の本文だけ(タスク ID・重大度・要約・成果物のパス)。秘密らしい値を含むものは slack / webhook に出さない。
