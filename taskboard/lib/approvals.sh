@@ -47,17 +47,21 @@ cmd_approval() {
     esac
   done
   valid_action "$act"
-  approval_of "$act"
-  printf '%s\nrule: %s\n' "$APPROVAL_VALUE" "$APPROVAL_RULE"
+  # 引数の検査は出力の前に済ませる(エラーのとき 1〜2 行目を先に出さない)
   if [[ -n $to ]] && ((have_text)); then
     [[ $to =~ ^[A-Za-z0-9._-]{1,64}$ ]] || usage "approval: --to は agent 名(英数字と . _ -)"
     [[ " $SEND_KINDS " == *" $kind "* ]] || usage "approval: --kind は $SEND_KINDS のどれか"
+  elif [[ -n $to ]] || ((have_text)); then
+    usage "approval: リスク評価には --to と --text の両方が要ります"
+  fi
+  approval_of "$act"
+  printf '%s\nrule: %s\n' "$APPROVAL_VALUE" "$APPROVAL_RULE"
+  if [[ -n $to ]] && ((have_text)); then
+    # 送信者の判定(pane なし = 人)は既存の require_human と同じ前提
     local sender=""   # 人の端末(pane なし)= 空。agent の pane は resolve_label で決める(引けなければ ? = 評価不能)
     if [[ -n ${HERDR_PANE_ID:-} ]]; then resolve_label 2>/dev/null && sender=$LABEL_NAME || sender="?"; fi
     risk_collect "$sender" "$to" "$kind" "$text"; risk_eval
     risk_format
-  elif [[ -n $to ]] || ((have_text)); then
-    usage "approval: リスク評価には --to と --text の両方が要ります"
   fi   # 引数なしは従来の出力のまま(評価なし)
   [[ $APPROVAL_VALUE == allow ]] || return 20
 }

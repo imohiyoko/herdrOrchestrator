@@ -2,11 +2,12 @@
 # run.sh から番号順に source される。リスク評価(lib/risk.sh。第 1 段: 評価を出すだけ)
 # lib/risk.sh を別のシェルで source して直接評価する。規則ファイルの差し替えはテストの中(RISK_RULES の代入)だけで行う。tb 本体は env で差し替えられない
 RK=$TMP/risk; mkdir -p "$RK"
-# rk <規則ファイル|-(なし)> <送信者の役割> <宛先の役割> <宛先の状態> <送信者のモデル> <本文> → 評価の全出力
+# rk <規則ファイル|-(なし)> <送信者の役割> <宛先の役割> <宛先の状態> <送信者のモデル> <本文> → 評価の全出力(環境変数 K があれば kind)
 rk() {
   ( TB_ROOT=$HERE/..; source "$HERE/../lib/risk.sh"; source "$HERE/../lib/notify.sh" 2>/dev/null
     if [[ $1 == - ]]; then RISK_RULES=$RK/none.conf; else RISK_RULES=$1; fi
     RISK_IN_SENDER_ROLE=$2 RISK_IN_TARGET_ROLE=$3 RISK_IN_TARGET_STATE=$4 RISK_IN_SENDER_MODEL=$5 RISK_IN_TEXT=$6
+    [[ -z ${K:-} ]] || RISK_IN_KIND=$K
     risk_eval; risk_format )
 }
 head1() { sed -n 1p | cut -d' ' -f1-2; }
@@ -30,7 +31,7 @@ eq "risk unknown: sender.role → ask" "$(rk - '' worker running opus 'hi' | rea
 eq "risk unknown: target.role → ask" "$(rk - conductor '' running opus 'hi' | head1)" "risk: ask"
 eq "risk unknown: target.state → ask" "$(rk - conductor worker '' opus 'hi' | reasons)" "unknown:target.state +ask target.state が不明(設定 ask)"
 eq "risk unknown: model alone = 1 point, still allow" "$(rk - conductor worker running '' 'hi' | head1)|$(rk - conductor worker running '' hi | reasons)" "risk: allow|unknown:sender.model +1 sender.model が不明(設定 risk:1)"
-eq "risk unknown: model(1) + R-06... model unknown + stopped → 3 points → ask" "$(rk - conductor worker stopped '' 'hi' | sed -n 2p)" "risk-score: 3 / threshold 2"
+eq "risk unknown: model unknown (1) + stopped target (2) → score 3 ≥ threshold" "$(rk - conductor worker stopped '' 'hi' | sed -n 2p)" "risk-score: 3 / threshold 2"
 eq "risk: unknown model + body word counted separately" "$(rk - conductor worker running '' 'git push' | reasons | cut -d' ' -f1-2 | tr '\n' '|')" "unknown:sender.model +1|R-02 +ask|"
 # R-07: 入力欠損(未設定。空とは別)
 miss() { ( TB_ROOT=$HERE/..; source "$HERE/../lib/risk.sh"; RISK_RULES=$RK/none.conf
@@ -59,7 +60,16 @@ eq "risk rules: R-05 alone" "$(rk "$RK/good.conf" worker worker running opus 'he
 eq "risk rules: extended pattern adds words to destructive" "$(rk "$RK/good.conf" "${OK[@]}" 'DROP TABLE users' | reasons)" "R-02 +ask 本文に破壊的・公開系の操作語(語: DROP TABLE)"
 FAKEKEY=AK"IA"$(printf '%s' ABCDEFGHIJKLMNOP)   # 実行時に組み立てる偽の値(ソースに鍵の形を置かない)
 eq "risk rules: R-03 secret scan (kind name only, never the value)" "$(rk "$RK/good.conf" "${OK[@]}" "key $FAKEKEY end" | reasons | grep -cF "$FAKEKEY")|$(rk "$RK/good.conf" "${OK[@]}" "key $FAKEKEY end" | reasons | cut -c1-6)" "0|R-03 +"
-eq "risk rules: kind condition" "$(rk "$RK/good.conf" "${OK[@]}" hi | reasons | wc -l | tr -d ' ')" "0"   # kind が未設定の評価では kind 条件は一致しない
+eq "risk rules: kind condition matches kind=info (+1)" "$(K=info rk "$RK/good.conf" "${OK[@]}" hi | reasons)" "R-08 +1 info 種別"
+eq "risk rules: kind condition does not match kind=task" "$(K=task rk "$RK/good.conf" "${OK[@]}" hi | reasons | wc -l | tr -d ' ')" "0"
+eq "risk rules: kind condition does not match when kind is unset" "$(rk "$RK/good.conf" "${OK[@]}" hi | reasons | wc -l | tr -d ' ')" "0"
+# 語境界は ASCII 限定: 日本語に隣接した語も検出する。どの locale でも同じ結果
+for txt in 'mainにpushして' 'それをmergeして' 'pushしてください'; do
+  r1=$(LC_ALL=C rk - "${OK[@]}" "$txt" | head1); r2=$(LC_ALL=en_US.UTF-8 rk - "${OK[@]}" "$txt" | head1); r3=$(LC_ALL=C.UTF-8 rk - "${OK[@]}" "$txt" | head1); r4=$(rk - "${OK[@]}" "$txt" | head1)
+  eq "risk R-02: '$txt' → ask in every locale (C / en_US.UTF-8 / C.UTF-8 / inherited)" "$r1|$r2|$r3|$r4" "risk: ask|risk: ask|risk: ask|risk: ask"
+done
+eq "risk R-02: identical full output across locales" "$(LC_ALL=C rk - "${OK[@]}" 'mainにpushして' | md5)" "$(LC_ALL=en_US.UTF-8 rk - "${OK[@]}" 'mainにpushして' | md5)"
+eq "risk R-02: ASCII neighbour still blocks the match (pushed)" "$(LC_ALL=en_US.UTF-8 rk - "${OK[@]}" 'pushedして' | head1)" "risk: allow"
 # 決定論
 a=$(rk "$RK/good.conf" worker worker stopped '' 'git push; curl http://x'); b=$(rk "$RK/good.conf" worker worker stopped '' 'git push; curl http://x')
 eq "risk: same input twice → identical output" "$([[ $a == "$b" ]] && echo same)" "same"
@@ -128,7 +138,8 @@ sqlite3 "$TB_DB" "INSERT INTO agents (name,state,created_by,created_at,updated_a
 HERDR_PANE_ID=wC:p1 $TB send worker1 --kind info --text 'stopped target' >/dev/null 2>&1
 eq "send: stopped target → R-06 in the reason, delivery unaffected by risk" "$(sqlite3 "$TB_DB" "SELECT reason FROM outbox ORDER BY id DESC LIMIT 1;" | grep -c 'R-06 +2 宛先が停止中')" "1"
 # 人の端末から(pane なし)の approval 評価: 送信者は human
-eq "approval: human terminal (no pane) is evaluated as sender=human" "$(HERDR_PANE_ID= $TB approval send:info:worker1 --to worker1 --text hi | grep -c 'unknown:sender')" "0"
+eq "approval: human terminal (no pane) is evaluated as sender=human (no R-07, no unknown:sender)" "$(HERDR_PANE_ID= $TB approval send:info:worker1 --to worker1 --text hi | grep -cE 'unknown:sender|R-07')" "0"
+eq "approval: arg error prints nothing on stdout" "$($TB approval send:info:worker1 --to worker1 2>/dev/null | wc -l | tr -d ' ')|$($TB approval send:info:worker1 --to 'a b' --text x 2>/dev/null | wc -l | tr -d ' ')|$($TB approval send:info:worker1 --to w --text x --kind zzz 2>/dev/null | wc -l | tr -d ' ')" "0|0|0"
 eq "approval: --to without --text is a usage error" "$(rc $TB approval send:info:worker1 --to worker1)" "2"
 # tb 本体は規則ファイルの場所を env で差し替えられない
 eq "risk: TB_RISK_RULES has no effect (fixed path)" "$(printf '[nope]\n' >"$RK/env.conf"; TB_RISK_RULES=$RK/env.conf RISK_RULES=$RK/env.conf $TB approval send:info:worker1 --to worker1 --text hi | grep -c 'R-07')" "0"

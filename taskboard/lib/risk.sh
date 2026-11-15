@@ -144,7 +144,9 @@ _risk_cond_ok() {
 
 # 条件 1 つ(複数は and)の評価。0=一致。RISK_HIT に補足(語・種類名)
 _risk_cond_match() {
+  local LC_ALL=C   # 語境界は ASCII 限定。locale に依存させない(日本語などに隣接した語も検出する)
   local cond=$1 t name attr list v w re had=0 hit=""
+  local wc=_0123456789abcdefghijklm"nopqrstuvwxyz"ABCDEFGHIJKLM"NOPQRSTUVWXYZ"   # 範囲指定(a-z)は locale で変わりうるので列挙する
   local -a terms
   RISK_HIT=""
   IFS=$'\x01' read -r -a terms <<<"${cond// and /$'\x01'}"
@@ -152,7 +154,7 @@ _risk_cond_match() {
     t=$(_risk_trim "$t")
     if [[ $t =~ ^body\.matches\(([a-z][a-z0-9-]*)\)$ ]]; then
       name=${BASH_REMATCH[1]}; v=RISK_PAT_${name//-/_}
-      re="(^|[^[:alnum:]_])(${!v})([^[:alnum:]_]|\$)"
+      re="(^|[^$wc])(${!v})([^$wc]|\$)"
       shopt -q nocasematch && had=1
       shopt -s nocasematch
       if [[ $RISK_IN_TEXT =~ $re ]]; then w=${BASH_REMATCH[2]}; else w=""; fi
