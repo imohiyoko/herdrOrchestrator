@@ -53,7 +53,7 @@ allow になるのは、**hard に 1 件も当たらない** かつ **点の合�
 
 | ID | 内容 |
 |---|---|
-| H-01 | 変更したパスがガバナンスのパス規則に当たる(改名は旧パスと新パスの両方を見る) |
+| H-01 | 変更したパスがガバナンスのパス規則に当たる(改名は旧パスと新パスの両方を見る)。組み込みの対象は下の「組み込みの hard のパス」 |
 | H-02 | 公開前検査が clean でない(検査を実行できなかった場合も) |
 | H-03 | レビューに blocker または fail がある / 有効な系統が無い / テストが失敗 / レビューやテストの sha が head と違う |
 | H-04 | 作者と実行の主体が同じ |
@@ -97,6 +97,21 @@ AUTHOR-REJECT-RATE low|mid|high|unknown           作者の過去の差し戻し
 段 0 は記録の置き場が無いため、これらの値は呼び出し側が渡します。**渡された値の真正性は、この段では確かめません。**
 実際に自動化へ進む段では、記録済みの事実だけを入力にする作りへ変える前提です。
 
+## 組み込みの hard のパス
+
+基準は「**ガバナンス・権限・コードの取得や実行の入口**」です。判定を弱める変更と、別の経路でコードを取得・実行させる変更は、点数だけでは通しません。どの階層のパスにも効き(`**/`)、設定ファイルで外せません。
+
+| 分類 | パス |
+|---|---|
+| 判定・承認の設定と実装、`tb` の入口、テスト基盤 | `.github`、`gate*.conf`、`gate-paths.conf`、`gate*.sh`、`approvals.conf`、`risk-rules.conf`、`bin/tb`、`run-all.sh`、`test/run.sh`、`tests/run.sh`、gate のテスト |
+| レビュー必須の規則・レビューの設定 | `CODEOWNERS`(ルート・`docs/`・`.github/` のどこでも)、`.coderabbit.yaml` |
+| 実行の入口(git・起動・CI) | `.githooks`、`.husky`、`.gitattributes`、`.gitmodules`、`.pre-commit-config.yaml`、`.envrc`、`.mcp.json`、`.devcontainer/`、`.circleci/`、`Jenkinsfile` |
+| ビルド・実行の入口 | `Makefile`、`GNUmakefile`、`Dockerfile*`、`*.dockerfile`、`docker-compose*.yml`(`docs/` 配下でも) |
+| 依存定義と lockfile、取得先の設定 | `package.json`、`package-lock.json`、`yarn.lock`、`pnpm-lock.yaml`、`bun.lockb`、`.npmrc`、`.yarnrc*`、`requirements*.txt`、`Pipfile`、`Pipfile.lock`、`poetry.lock`、`uv.lock`、`pyproject.toml`、`setup.py`、`setup.cfg`、`pip.conf`、`pip.ini`、`.pip/`、`.pypirc`、`go.mod`、`go.sum`、`go.work`、`go.work.sum`、`Cargo.toml`、`Cargo.lock`、`Gemfile`、`Gemfile.lock`、`composer.json`、`composer.lock`、`pom.xml`、`build.gradle*` |
+
+人が足したいパスは `config/gate-paths.conf` に書きます(組み込みは外せません)。
+glob は広めに当たります(`*` が `/` も越える)ので、`Dockerfile` で始まる名前(`docs/dockerfile-notes.md` など)も hard になります。人に回る側へ倒す作りです。
+
 ## 設定
 
 次の 2 つを人が書きます。置き場は固定で、環境変数で差し替えることはできません(テストの内部だけ例外)。`tb` に編集コマンドはありません。
@@ -110,6 +125,7 @@ AUTHOR-REJECT-RATE low|mid|high|unknown           作者の過去の差し戻し
 - どちらかが無い・読めない・構文エラー・未知のキー・範囲外の値は、**評価不能(21)**です(fail-closed)。設定で緩めることはできません。
 - パスの glob は、`*` が `/` も越えて一致し、大文字小文字を区別しません(広めに当たる = 人に回る側へ倒す)。`**/` で始めると根直下にも当たります。
 - 判定・承認の設定そのもの(`.github`、gate の設定とその実装、承認とリスク評価の設定)と、`tb` の入口(`bin/tb`)、テスト基盤(`run-all.sh`、`test/run.sh`、`tests/run.sh`)、gate のテストは、パス規則ファイルに書かなくても常に hard です。判定を弱める変更を点数だけで通さないためです。
+- 点数の分類(P-01)も、hard と同じく大文字小文字を区別しません(`Lib/db.sh` は `lib/db.sh` と同じ重さです)。
 - `docs/` 配下で docs として数えるのは、拡張子が `.md` `.txt` `.rst` `.png` `.svg` `.jpg` `.jpeg` `.gif` のものだけです(大文字小文字は区別しません)。それ以外(拡張子なし、`.js` `.yml` `.sh` など)は一般のコードとして数えます。
 - パスは入力の正規形に頼りません。空・`.`・`..` の階層、先頭の `/`、末尾の `/` を含むパスは不正で、評価不能(21)です(`./x`、`a//b`、`a/../b` など)。
 - シンボリックリンクは文字列からは分かりません。新規のシンボリックリンクは、記録する側が `FILE T` で渡す前提です。
