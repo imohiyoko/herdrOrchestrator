@@ -27,13 +27,14 @@ PRREF=example-owner/example-repo#123
 # --- フィクスチャ(JSON)
 evrv() { jq -nc --arg l "$1" --argjson i "$2" --arg t "$3" --arg a "$4" --arg c "$5" --arg st "$6" --arg b "$7" --arg u "$8" --argjson rid "${9:-11}" \
   '{id:$rid,user:{login:$l,id:$i,type:$t},author_association:($a|ascii_upcase),commit_id:$c,state:($st|ascii_upcase),body:$b,submitted_at:$u}'; }
-evcm() { jq -nc --arg l "$1" --argjson i "$2" --arg t "$3" --arg a "$4" --arg c "$5" --arg b "$6" --arg u "$7" --argjson cid "${8:-21}" \
-  '{id:$cid,user:{login:$l,id:$i,type:$t},author_association:($a|ascii_upcase),commit_id:$c,position:5,body:$b,updated_at:$u}'; }
+# evcm <login> <id> <type> <assoc> <commit> <body> <updated> [comment id] [review id] [original commit] [position(JSON)] [subject_type]
+evcm() { jq -nc --arg l "$1" --argjson i "$2" --arg t "$3" --arg a "$4" --arg c "$5" --arg b "$6" --arg u "$7" --argjson cid "${8:-21}" --argjson rid "${9:-11}" --arg o "${10:-$5}" --argjson pos "${11:-5}" --arg st "${12:-line}" \
+  '{id:$cid,pull_request_review_id:$rid,user:{login:$l,id:$i,type:$t},author_association:($a|ascii_upcase),commit_id:$c,original_commit_id:$o,position:$pos,subject_type:$st,body:$b,updated_at:$u}'; }
 evis() { jq -nc --arg l "$1" --argjson i "$2" --arg t "$3" --arg a "$4" --arg b "$5" --arg u "$6" --argjson iid "${7:-31}" \
   '{id:$iid,user:{login:$l,id:$i,type:$t},author_association:($a|ascii_upcase),body:$b,updated_at:$u}'; }
 # evfx <名前> <reviews> <comments> <issues> [PR の JSON] → ディレクトリ
 evfx() { mkdir -p "$GT/efx-$1"; printf '%s' "$2" >"$GT/efx-$1/reviews.json"; printf '%s' "$3" >"$GT/efx-$1/comments.json"; printf '%s' "$4" >"$GT/efx-$1/issues.json"
-  printf '%s' "${5:-$(jq -nc '{user:{login:"author-x",id:1001,type:"User"},head:{sha:"x"}}')}" >"$GT/efx-$1/pr.json"; printf '%s' "$GT/efx-$1"; }
+  printf '%s' "${5:-$(jq -nc --arg h "$H40" '{user:{login:"author-x",id:1001,type:"User"},head:{sha:$h}}')}" >"$GT/efx-$1/pr.json"; printf '%s' "$GT/efx-$1"; }
 evsum() { printf '%s' "$1" | { if command -v sha256sum >/dev/null; then sha256sum; else shasum -a 256; fi; } | cut -c1-64; }
 evlines() { if [[ -f $EVLOG ]]; then wc -l <"$EVLOG" | tr -d ' '; else echo 0; fi; }
 ev_run() { env -u HERDR_PANE_ID FAKE_GH_DIR=$1 FAKE_GH_LOG=$EVGH "$ISO6/taskboard/bin/tb" gate ingest-events "$EV_T" --pr "$PRREF" >"$GT/ev.out" 2>"$GT/ev.err"; echo $?; }
@@ -51,8 +52,8 @@ FXA=$(evfx a "[$RV]" "[$CM]" "[$IS1,$IS2]")
 eq "events: first ingest records 4 events (review, inline, 2 issue comments) → rc 0" "$(evres "$FXA")" "0|4"
 eq "events: the summary line says new=4 unchanged=0" "$(grep -c 'events: new=4 unchanged=0' "$GT/ev.out")" "1"
 sed -E 's/^ts=[^ ]+ //' "$EVLOG" >"$GT/ev-norm.txt"
-eq "events: review line (kind, event, numeric id, type, assoc lowercased, sha, state lowercased, label none, body hash)" "$(sed -n 1p "$GT/ev-norm.txt")" "task=$EV_T repo=example-owner/example-repo pr=123 kind=review event=11 actor=rev-one actor_id=2001 actor_type=user assoc=member author=0 sha=$H40 state=commented label=none addr=0 body_sha256=$(evsum "$RB1") upd=2026-11-16T01:00:00Z by=ingest"
-eq "events: inline line (bot type, label blocker from 'Critical', sha-bound)" "$(sed -n 2p "$GT/ev-norm.txt")" "task=$EV_T repo=example-owner/example-repo pr=123 kind=inline event=21 actor=review-bot[bot] actor_id=2002 actor_type=bot assoc=none author=0 sha=$H40 state=- label=blocker addr=0 body_sha256=$(evsum "$CB1") upd=2026-11-16T01:05:00Z by=ingest"
+eq "events: review line (kind, event, numeric id, type, assoc lowercased, sha, state lowercased, label none, body hash)" "$(sed -n 1p "$GT/ev-norm.txt")" "task=$EV_T repo=example-owner/example-repo pr=123 kind=review event=11 actor=rev-one actor_id=2001 actor_type=user assoc=member author=0 sha=$H40 state=commented label=none addr=0 body_sha256=$(evsum "$RB1") upd=2026-11-16T01:00:00Z review=11 orig_sha=- outdated=0 head=$H40 by=ingest"
+eq "events: inline line (bot type, label blocker from 'Critical', sha-bound)" "$(sed -n 2p "$GT/ev-norm.txt")" "task=$EV_T repo=example-owner/example-repo pr=123 kind=inline event=21 actor=review-bot[bot] actor_id=2002 actor_type=bot assoc=none author=0 sha=$H40 state=- label=blocker addr=0 body_sha256=$(evsum "$CB1") upd=2026-11-16T01:05:00Z review=11 orig_sha=$H40 outdated=0 head=$H40 by=ingest"
 eq "events: issue comment has no sha (-) and no label" "$(sed -n 3p "$GT/ev-norm.txt" | grep -o 'kind=issue.*sha=-.*label=none')" "$(sed -n 3p "$GT/ev-norm.txt" | grep -o 'kind=issue.*sha=-.*label=none')"
 eq "events: issue comment line (assoc collaborator, sha -)" "$(sed -n 3p "$GT/ev-norm.txt" | grep -o 'kind=issue event=31 actor=issue-one actor_id=2003 actor_type=user assoc=collaborator author=0 sha=- state=-')" "kind=issue event=31 actor=issue-one actor_id=2003 actor_type=user assoc=collaborator author=0 sha=- state=-"
 eq "events: the PR author's own comment is flagged author=1 (matched by numeric id)" "$(sed -n 4p "$GT/ev-norm.txt" | grep -o 'actor=author-x actor_id=1001 actor_type=user assoc=owner author=1')" "actor=author-x actor_id=1001 actor_type=user assoc=owner author=1"
@@ -91,6 +92,28 @@ eq "events (real shape): Critical on line 3 behind an HTML comment → blocker" 
 eq "events (real shape): Major → blocker" "$(lab "$(rbody Major)" 48)" "label=blocker addr=0"
 eq "events (real shape): Minor → should (prose mentioning critical later does not count)" "$(lab "$(rbody Minor)" 49)" "label=should addr=0"
 eq "events (real shape): no known label in the first substantive line → should" "$(lab $'<!-- x -->\n\nplain text' 50)" "label=should addr=0"
+# inline の sha(commit_id)は付け替わる。元のコミット(orig_sha)・位置が消えたか(outdated)・属するレビュー(review)・取り込み時点の head を併せて記録する
+inl() { evres "$(evfx inl '[]' "[$1]" '[]')" >/dev/null; tail -1 "$EVLOG" | grep -o 'sha=[0-9a-f-]* .* review=[0-9-]* orig_sha=[0-9a-f-]* outdated=[01] head=[0-9a-f]*' | sed -E 's/ state=.* review=/ review=/'; }
+eq "events: a re-anchored inline comment keeps its original commit (sha differs from orig_sha) and its review id" "$(inl "$(evcm anchor-user 6001 User none "$H40" "x" 2026-11-16T10:00:00Z 71 5555 "$OLD40" 5)")" "sha=$H40 review=5555 orig_sha=$OLD40 outdated=0 head=$H40"
+eq "events: an outdated inline comment (position null, not file-level) → outdated=1" "$(inl "$(evcm anchor-user 6002 User none "$H40" "x" 2026-11-16T10:01:00Z 72 5555 "$OLD40" null line)" | grep -o 'outdated=[01]')" "outdated=1"
+eq "events: a file-level comment (position null, subject_type file) is not outdated → outdated=0" "$(inl "$(evcm anchor-user 6003 User none "$H40" "x" 2026-11-16T10:02:00Z 73 5555 "$OLD40" null file)" | grep -o 'outdated=[01]')" "outdated=0"
+eq "events: an inline comment without a review id gets review=-" "$(inl "$(evcm anchor-user 6004 User none "$H40" "x" 2026-11-16T10:03:00Z 74 5555 "$OLD40" 5 | jq -c 'del(.pull_request_review_id)')" | grep -o 'review=[0-9-]*')" "review=-"
+eq "events: an inline comment without an original commit gets orig_sha=-" "$(inl "$(evcm anchor-user 6005 User none "$H40" "x" 2026-11-16T10:04:00Z 75 5555 "$OLD40" 5 | jq -c 'del(.original_commit_id)')" | grep -o 'orig_sha=[0-9a-f-]*')" "orig_sha=-"
+eq "events: a review records its own id as review=<id>, orig_sha=-, outdated=0" "$(evres "$(evfx rvw "[$(evrv rvw-user 6101 User none "$H40" commented x 2026-11-16T10:10:00Z 81)]" '[]' '[]')" >/dev/null; tail -1 "$EVLOG" | grep -o 'review=[0-9-]* orig_sha=[0-9a-f-]* outdated=[01]')" "review=81 orig_sha=- outdated=0"
+eq "events: the PR head at ingest time is recorded on every line (head=<40 hex>)" "$(grep -vc ' head=[0-9a-f]\{40\} by=ingest$' "$EVLOG")" "0"
+# 位置が消えた(outdated)ことは、新しい行として記録される(同じ発言の状態の変化)
+NO=$(evlines)
+evres "$(evfx ot1 '[]' "[$(evcm trans-user 6201 User none "$H40" "plain" 2026-11-16T10:20:00Z 91 5556 "$H40" 5)]" '[]')" >/dev/null
+eq "events: the same comment turning outdated is recorded as a new line (state change)" "$(evres "$(evfx ot2 '[]' "[$(evcm trans-user 6201 User none "$H40" "plain" 2026-11-16T10:20:00Z 91 5556 "$H40" null line)]" '[]')")" "0|1"
+# 別のタスクで取り込めば、そのタスクの記録になる(重複排除は task ごと)
+EV_T2=$($TB add -p ge -t "events target 2")
+ev_run2() { env -u HERDR_PANE_ID FAKE_GH_DIR=$1 FAKE_GH_LOG=$EVGH "$ISO6/taskboard/bin/tb" gate ingest-events "$EV_T2" --pr "$PRREF" >/dev/null 2>&1; echo $?; }
+B2=$(evlines); R2=$(ev_run2 "$FXA"); A2=$(evlines)
+eq "events: the same events ingested for another task are recorded for that task (dedupe is per task)" "$R2|$((A2 - B2))" "0|4"
+eq "events: reviewers --task shows only that task's events" "$(env -u HERDR_PANE_ID "$ISO6/taskboard/bin/tb" gate reviewers "$PRREF" --task "$EV_T2" 2>&1 | sed -n 3p)" "events: 4   reviewers: 4"
+# 不正な head は何も記録しない
+eq "events: a PR object without a valid head sha → 12, nothing recorded" "$(evres "$(evfx hd1 "[$(evrv ok-user 7101 User none "$H40" commented x 2026-11-16T11:00:00Z 91)]" '[]' '[]' "$(jq -nc '{user:{login:"author-x",id:1001,type:"User"},head:{sha:"nothex"}}')")")" "12|0"
+eq "events: a PR object without a head → 12" "$(evres "$(evfx hd2 "[$(evrv ok-user 7102 User none "$H40" commented x 2026-11-16T11:00:00Z 92)]" '[]' '[]' "$(jq -nc '{user:{login:"author-x",id:1001,type:"User"}}')")")" "12|0"
 # 全部か無か: 1 件でも不正なら何も記録しない
 NB=$(evlines)
 BADFX() { evfx "$1" "[$RV]" "[$CM]" "[$2]"; }
@@ -147,17 +170,19 @@ eq "events: unknown task → 1" "$(ue T-ge-999 --pr "$PRREF")" "1"
 rvw() { env -u HERDR_PANE_ID "$ISO6/taskboard/bin/tb" gate reviewers "$@" 2>&1; }
 eq "reviewers: header names the PR and says it is display-only" "$(rvw "$PRREF" | sed -n 1p)" "reviewers: example-owner/example-repo#123   # 表示だけ。判定には使われません(段 1c)"
 eq "reviewers: one line per numeric id, sorted by id; the author flagged" "$(rvw "$PRREF" | grep -E '^reviewer: .* id=(1001|2001|2002|2003) ' | cut -d' ' -f2-5 | tr '\n' '|')" "author-x id=1001 type=user assoc=owner|rev-one id=2001 type=user assoc=member|review-bot[bot] id=2002 type=bot assoc=none|issue-one id=2003 type=user assoc=collaborator|"
-eq "reviewers: the author line says author=1, others 0" "$(rvw "$PRREF" | grep '^reviewer:' | grep -o 'author=[01]' | tr '\n' ',')" "author=1,author=0,author=0,author=0,author=0,author=0,author=0,author=0,"
+eq "reviewers: exactly one line says author=1 (the PR author, by numeric id); every other line says author=0" "$(rvw "$PRREF" | grep '^reviewer:' | grep -c 'author=1')|$(rvw "$PRREF" | grep '^reviewer: author-x ' | grep -c 'author=1')|$(rvw "$PRREF" | grep '^reviewer:' | grep -vc 'author=[01] ')" "1|1|0"
 RVT=$(rvw "$PRREF")
-eq "reviewers: counts per kind and blockers (the bot's comment was recorded twice with different shas but is one event → inline=1)" "$(grep '^reviewer: review-bot' <<<"$RVT" | grep -o 'reviews=[0-9]* inline=[0-9]* issue=[0-9]* blocker=[0-9]* should=[0-9]*')" "reviews=0 inline=1 issue=0 blocker=1 should=0"
-eq "reviewers: an edited review uses the latest line only (id 2001: events 11 and 12 = 2 reviews, though 3 lines were recorded)" "$(grep -c 'actor_id=2001 ' "$EVLOG")|$(grep '^reviewer: .* id=2001 ' <<<"$RVT" | grep -o 'reviews=[0-9]*')" "3|reviews=2"
+eq "reviewers: counts per kind and blockers (the bot's comment was recorded twice with different shas but is one event → inline=1)" "$(grep '^reviewer: review-bot' <<<"$RVT" | grep -o 'reviews=[0-9]* inline=[0-9]* issue=[0-9]* label-blocker=[0-9]* label-should=[0-9]*')" "reviews=0 inline=1 issue=0 label-blocker=1 label-should=0"
+eq "reviewers: an edited review uses the latest line only (id 2001: events 11 and 12 = 2 reviews, though 3 lines were recorded)" "$(grep "task=$EV_T " "$EVLOG" | grep -c 'actor_id=2001 ')|$(grep '^reviewer: .* id=2001 ' <<<"$RVT" | grep -o 'reviews=[0-9]*')" "3|reviews=2"
 eq "reviewers: a renamed login under the same id is shown with login-changed" "$(grep -c 'id=2001 .* login-changed' <<<"$RVT")" "1"
 eq "reviewers: the same login with another id is a separate line" "$(grep -c '^reviewer: rev-one id=9999' <<<"$RVT")" "1"
-eq "reviewers: --task filters (another task → 0 events)" "$(rvw "$PRREF" --task T-other-001 | sed -n 2p)" "events: 0   reviewers: 0"
-eq "reviewers: another PR has no events" "$(rvw example-owner/example-repo#999 | sed -n 2p)" "events: 0   reviewers: 0"
+eq "reviewers: the display says the label columns are unverified text-derived values and are not used for decisions" "$(rvw "$PRREF" | sed -n 2p | grep -c 'label-blocker / label-should.*検証された重大度ではありません.*判定には使われません')" "1"
+eq "reviewers: the columns are named label-blocker / label-should (not blocker / should)" "$(rvw "$PRREF" | grep '^reviewer:' | grep -c ' blocker=\| should=')" "0"
+eq "reviewers: --task filters (another task → 0 events)" "$(rvw "$PRREF" --task T-other-001 | sed -n 3p)" "events: 0   reviewers: 0"
+eq "reviewers: another PR has no events" "$(rvw example-owner/example-repo#999 | sed -n 3p)" "events: 0   reviewers: 0"
 eq "reviewers: output contains no body text" "$(rvw "$PRREF" | grep -c 'MARKER\|Prompt for AI\|ignore previous')" "0"
 eq "reviewers: works without a gh config (reads the record only, never calls gh)" "$(rm -f "$EVCONF"; G=$(wc -l <"$EVGH"); rvw "$PRREF" >/dev/null; [[ $G == "$(wc -l <"$EVGH")" ]] && echo nocall; printf '%s\n' "[gh]" "path = $DGH2" >"$EVCONF")" "nocall"
-eq "reviewers: no record file → 'events: 0' and exit 0" "$(env -u HERDR_PANE_ID "$ISO4/taskboard/bin/tb" gate reviewers "$PRREF" 2>&1 | sed -n 2p)" "events: 0 (記録がありません)"
+eq "reviewers: no record file → 'events: 0' and exit 0" "$(env -u HERDR_PANE_ID "$ISO4/taskboard/bin/tb" gate reviewers "$PRREF" 2>&1 | sed -n 3p)" "events: 0 (記録がありません)"
 eq "reviewers: usable from an agent pane too (read-only)" "$(HERDR_PANE_ID=wR:p1 "$ISO6/taskboard/bin/tb" gate reviewers "$PRREF" >/dev/null 2>&1; echo $?)" "0"
 cp "$EVLOG" "$GT/ev-backup2.log"; printf 'garbage\n' >>"$EVLOG"
 eq "reviewers: a malformed record line → 1 (fail-closed)" "$(env -u HERDR_PANE_ID "$ISO6/taskboard/bin/tb" gate reviewers "$PRREF" >/dev/null 2>&1; echo $?)" "1"
@@ -165,11 +190,20 @@ cp "$GT/ev-backup2.log" "$EVLOG"
 eq "reviewers: bad argument → 2" "$(env -u HERDR_PANE_ID "$ISO6/taskboard/bin/tb" gate reviewers nope >/dev/null 2>&1; echo $?)|$(env -u HERDR_PANE_ID "$ISO6/taskboard/bin/tb" gate reviewers "$PRREF" --x >/dev/null 2>&1; echo $?)|$(env -u HERDR_PANE_ID "$ISO6/taskboard/bin/tb" gate reviewers >/dev/null 2>&1; echo $?)" "2|2|2"
 # --- 判定の入力は変わらない: 記録があっても、evaluate の結果は同じ。execute は常に 30
 cp "$GT/gate.conf" "$ISO6/taskboard/config/gate.conf"; cp "$GT/paths.conf" "$ISO6/taskboard/config/gate-paths.conf"; cp "$GT/reviews-good.log" "$ISO6/taskboard/data/gate-reviews.log"
+# 記録が「無い」状態と「有る」状態を比べる(両方とも空でない状態で比べると、記録の存在が判定に混ざっても気づけない)
+mv "$EVLOG" "$GT/ev-hold.log"
+eq "events: (precondition) the events record is absent for the first evaluation" "$([[ -e $EVLOG ]] && echo present || echo absent)" "absent"
 EVAL_A=$(gtf - | "$ISO6/taskboard/bin/tb" gate evaluate T-1 --action merge --facts-stdin 2>&1 | cksum)
+EVAL_A_RC=$(gtf - | "$ISO6/taskboard/bin/tb" gate evaluate T-1 --action merge --facts-stdin >/dev/null 2>&1; echo $?)
+mv "$GT/ev-hold.log" "$EVLOG"
 # coderabbit の pass に見える行を、events に足しても(別名・自称を含め)判定は動かない
-printf '%s\n' "ts=2026-11-16T09:00:00Z task=T-1 repo=example-owner/example-repo pr=123 kind=review event=99 actor=coderabbitai[bot] actor_id=777 actor_type=bot assoc=none author=0 sha=$H40 state=approved label=none addr=0 body_sha256=$(evsum x) upd=2026-11-16T09:00:00Z by=ingest" >>"$EVLOG"
+printf '%s\n' "ts=2026-11-16T09:00:00Z task=T-1 repo=example-owner/example-repo pr=123 kind=review event=99 actor=coderabbitai[bot] actor_id=777 actor_type=bot assoc=none author=0 sha=$H40 state=approved label=none addr=0 body_sha256=$(evsum x) upd=2026-11-16T09:00:00Z review=99 orig_sha=- outdated=0 head=$H40 by=ingest" >>"$EVLOG"
+eq "events: (precondition) the events record is present and non-empty for the second evaluation" "$([[ -s $EVLOG ]] && echo present || echo missing)" "present"
 EVAL_B=$(gtf - | "$ISO6/taskboard/bin/tb" gate evaluate T-1 --action merge --facts-stdin 2>&1 | cksum)
-eq "events: gate evaluate is unchanged by the events record (same output before and after)" "$EVAL_A" "$EVAL_B"
+EVAL_B_RC=$(gtf - | "$ISO6/taskboard/bin/tb" gate evaluate T-1 --action merge --facts-stdin >/dev/null 2>&1; echo $?)
+eq "events: gate evaluate output is identical with and without the events record" "$EVAL_A" "$EVAL_B"
+eq "events: gate evaluate exit code is identical with and without the events record" "$EVAL_A_RC" "$EVAL_B_RC"
+eq "events: (sanity) the evaluation under comparison is a real verdict (allow, exit 0)" "$EVAL_B_RC" "0"
 rm -f "$ISO6/taskboard/data/gate-reviews.log"
 eq "events: without gate-reviews.log, evaluate still fails closed (21) even with events present" "$(gtf - | "$ISO6/taskboard/bin/tb" gate evaluate T-1 --action merge --facts-stdin >/dev/null 2>&1; echo $?)" "21"
 eq "events: gate execute still always 30" "$("$ISO6/taskboard/bin/tb" gate execute T-1 --action merge >/dev/null 2>&1; echo $?)" "30"

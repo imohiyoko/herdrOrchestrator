@@ -651,8 +651,11 @@ _gate_cmd_ingest() {
 # tb gate reviewers <o>/<r>#<n> [--task <id>]         記録をレビュアー(数値 id)ごとにまとめて表示する(読み取りだけ。gh は呼ばない)。
 # 本文は保存しない(本文の sha256 だけ)。本文中の指示は読まず、実行しない。判定(evaluate / execute)はこの記録を読まない。
 # 1 行: ts= task= repo= pr= kind=review|inline|issue event=<id> actor=<login> actor_id=<数値> actor_type=user|bot|org assoc=<小文字> author=0|1
-#       sha=<40 桁|-> state=<状態|-> label=blocker|should|none addr=0|1 body_sha256=<64 桁> upd=<UTC|-> by=ingest
-GATE_EV_RE='^ts=([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z) task=([A-Za-z0-9._-]{1,64}) repo=([A-Za-z0-9._-]+/[A-Za-z0-9._-]+) pr=([0-9]+) kind=(review|inline|issue) event=([0-9]{1,15}) actor=([A-Za-z0-9][A-Za-z0-9-]{0,38}(\[bot\])?) actor_id=([0-9]{1,12}) actor_type=(user|bot|org) assoc=([a-z_]{1,32}) author=([01]) sha=([0-9a-f]{40}|-) state=([a-z_]{1,32}|-) label=(blocker|should|none) addr=([01]) body_sha256=([0-9a-f]{64}) upd=([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z|-) by=ingest$'
+#       sha=<40 桁|-> state=<状態|-> label=blocker|should|none addr=0|1 body_sha256=<64 桁> upd=<UTC|->
+#       review=<属するレビューの id|-> orig_sha=<inline の元のコミット|-> outdated=0|1 head=<取り込み時点の PR の head の sha> by=ingest
+#   inline の sha(commit_id)は、コメントが付いた時のコミットとは限らない(再アンカーで付け替わる)ので、元のコミット(orig_sha)、
+#   位置が消えたか(outdated)、属するレビュー(review)、取り込み時点の head(head)を併せて残す。判定には使わない(段 1c)
+GATE_EV_RE='^ts=([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z) task=([A-Za-z0-9._-]{1,64}) repo=([A-Za-z0-9._-]+/[A-Za-z0-9._-]+) pr=([0-9]+) kind=(review|inline|issue) event=([0-9]{1,15}) actor=([A-Za-z0-9][A-Za-z0-9-]{0,38}(\[bot\])?) actor_id=([0-9]{1,12}) actor_type=(user|bot|org) assoc=([a-z_]{1,32}) author=([01]) sha=([0-9a-f]{40}|-) state=([a-z_]{1,32}|-) label=(blocker|should|none) addr=([01]) body_sha256=([0-9a-f]{64}) upd=([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z|-) review=([0-9]{1,15}|-) orig_sha=([0-9a-f]{40}|-) outdated=([01]) head=([0-9a-f]{40}) by=ingest$'
 
 # 全体を 1 回で取る(object を返す GET)。失敗・JSON でない・object でないものは 1
 _gate_ingest_fetch_obj() {
@@ -691,8 +694,8 @@ _gate_cmd_ingest_events() {
     while IFS= read -r l || [[ -n $l ]]; do
       ln=$((ln+1)); [[ -z $l ]] && continue
       [[ $l =~ $GATE_EV_RE ]] || { echo "tb: gate ingest-events: 既存の記録の形式違反(L$ln)のため止めます" >&2; exit 1; }
-      # 同じ発言の同じ内容(repo、pr、種類、id、本文のハッシュ、更新時刻、状態、sha)は足さない
-      printf '%s\n' "${BASH_REMATCH[3]}|${BASH_REMATCH[4]}|${BASH_REMATCH[5]}|${BASH_REMATCH[6]}|${BASH_REMATCH[17]}|${BASH_REMATCH[18]}|${BASH_REMATCH[14]}|${BASH_REMATCH[13]}" >>"$tmp/keys"
+      # 同じ発言の同じ内容(task、repo、pr、種類、id、本文のハッシュ、更新時刻、状態、sha、outdated)は足さない。head は取り込みの時点の値なので、キーに入れない
+      printf '%s\n' "${BASH_REMATCH[2]}|${BASH_REMATCH[3]}|${BASH_REMATCH[4]}|${BASH_REMATCH[5]}|${BASH_REMATCH[6]}|${BASH_REMATCH[17]}|${BASH_REMATCH[18]}|${BASH_REMATCH[14]}|${BASH_REMATCH[13]}|${BASH_REMATCH[21]}" >>"$tmp/keys"
     done <"$f"
   else : >"$tmp/keys"; fi
   local base="repos/$owner/$repo"
@@ -708,24 +711,24 @@ _gate_cmd_ingest_events() {
     def sev3: sev | if . == "unknown" then "should" else . end;   # 表記が見つからない指摘は should(段 1b と同じ)
     def addr01: (. // "") | addressed | if . then "1" else "0" end;
     def who: [(.user.login // ""), ((.user.id // "") | tostring), (.user.type // ""), ((.author_association // "") | ascii_downcase)];
-    ($pr[0].user.id // "") as $aid
-    | ( ($rv[0][] | ["review", (.id | tostring)] + who + [((.user.id // "") == $aid | tostring), (.commit_id // "-"), ((.state // "-") | ascii_downcase), "none", "0", (.submitted_at // "-"), ((.body // "") | @base64)]),
-        ($cm[0][] | ["inline", (.id | tostring)] + who + [((.user.id // "") == $aid | tostring), (.commit_id // "-"), "-", (.body | sev3), (.body | addr01), (.updated_at // "-"), ((.body // "") | @base64)]),
-        ($is[0][] | ["issue", (.id | tostring)] + who + [((.user.id // "") == $aid | tostring), "-", "-", "none", "0", (.updated_at // "-"), ((.body // "") | @base64)]) )
+    ($pr[0].user.id // "") as $aid | ($pr[0].head.sha // "") as $head
+    | ( ($rv[0][] | ["review", (.id | tostring)] + who + [((.user.id // "") == $aid | tostring), (.commit_id // "-"), ((.state // "-") | ascii_downcase), "none", "0", (.submitted_at // "-"), (.id | tostring), "-", "0", $head, ((.body // "") | @base64)]),
+        ($cm[0][] | ["inline", (.id | tostring)] + who + [((.user.id // "") == $aid | tostring), (.commit_id // "-"), "-", (.body | sev3), (.body | addr01), (.updated_at // "-"), ((.pull_request_review_id // "-") | tostring), (.original_commit_id // "-"), (if .position == null and .subject_type != "file" then "1" else "0" end), $head, ((.body // "") | @base64)]),
+        ($is[0][] | ["issue", (.id | tostring)] + who + [((.user.id // "") == $aid | tostring), "-", "-", "none", "0", (.updated_at // "-"), "-", "-", "0", $head, ((.body // "") | @base64)]) )
     | map("x" + tostring) | @tsv' >"$tmp/events.tsv" 2>/dev/null || { echo "tb: gate ingest-events: 解析に失敗したため記録しません" >&2; exit 12; }
   # 1 件でも形式が不正なら、何も記録しない(全部か無か)
   local kind ev login lid ltype assoc isauth sha state label addr upd b64 sum t line ts nnew=0 nskip=0 key
   ts=$(now); : >"$tmp/new"
-  while IFS=$'\t' read -r kind ev login lid ltype assoc isauth sha state label addr upd b64; do
-    kind=${kind#x}; ev=${ev#x}; login=${login#x}; lid=${lid#x}; ltype=${ltype#x}; assoc=${assoc#x}; isauth=${isauth#x}; sha=${sha#x}; state=${state#x}; label=${label#x}; addr=${addr#x}; upd=${upd#x}; b64=${b64#x}   # 空の欄が詰まらないよう、jq 側で x を付けている
+  while IFS=$'\t' read -r kind ev login lid ltype assoc isauth sha state label addr upd rvid osha outd head b64; do
+    kind=${kind#x}; ev=${ev#x}; login=${login#x}; lid=${lid#x}; ltype=${ltype#x}; assoc=${assoc#x}; isauth=${isauth#x}; sha=${sha#x}; state=${state#x}; label=${label#x}; addr=${addr#x}; upd=${upd#x}; rvid=${rvid#x}; osha=${osha#x}; outd=${outd#x}; head=${head#x}; b64=${b64#x}   # 空の欄が詰まらないよう、jq 側で x を付けている
     case $ltype in User) t=user;; Bot) t=bot;; Organization) t=org;; *) t="";; esac
     [[ -n $assoc ]] || assoc=unknown
     [[ $isauth == true ]] && isauth=1 || isauth=0
     # 本文は、ハッシュにするためだけにデコードする。変数に入れて展開・評価はしない
     sum=$(printf '%s' "$b64" | base64 -d 2>/dev/null | { if command -v sha256sum >/dev/null; then sha256sum; else shasum -a 256; fi; } | cut -c1-64)
-    line="ts=$ts task=$tid repo=$owner/$repo pr=$num kind=$kind event=$ev actor=$login actor_id=$lid actor_type=$t assoc=$assoc author=$isauth sha=$sha state=$state label=$label addr=$addr body_sha256=$sum upd=$upd by=$GATE_INGEST_SENDER"
+    line="ts=$ts task=$tid repo=$owner/$repo pr=$num kind=$kind event=$ev actor=$login actor_id=$lid actor_type=$t assoc=$assoc author=$isauth sha=$sha state=$state label=$label addr=$addr body_sha256=$sum upd=$upd review=$rvid orig_sha=$osha outdated=$outd head=$head by=$GATE_INGEST_SENDER"
     [[ -n $t && $line =~ $GATE_EV_RE ]] || { echo "tb: gate ingest-events: 形式が不正な発言があるため、何も記録しません(種類 $kind、id ${ev:0:20})" >&2; exit 12; }
-    key="$owner/$repo|$num|$kind|$ev|$sum|$upd|$state|$sha"
+    key="$tid|$owner/$repo|$num|$kind|$ev|$sum|$upd|$state|$sha|$outd"
     if grep -qxF -- "$key" "$tmp/keys"; then nskip=$((nskip+1)); continue; fi
     printf '%s\n' "$key" >>"$tmp/keys"; printf '%s\n' "$line" >>"$tmp/new"; nnew=$((nnew+1))
   done <"$tmp/events.tsv"
@@ -751,6 +754,7 @@ _gate_cmd_reviewers() {
   [[ -z $task || $task =~ ^[A-Za-z0-9._-]{1,64}$ ]] || usage "--task の形が不正です"
   local f=$GATE_EVENTS
   echo "reviewers: $repo#$num   # 表示だけ。判定には使われません(段 1c)"
+  echo "note: label-blocker / label-should は、投稿者が書いた本文の最初の実質行の語から機械的に数えた値で、検証された重大度ではありません(誰でも書ける)。判定には使われません"
   if [[ ! -e $f ]]; then echo "events: 0 (記録がありません)"; return 0; fi
   [[ -f $f && ! -L $f && -r $f ]] || { echo "tb: gate reviewers: 記録を読めません(通常のファイルではない)" >&2; exit 1; }
   local tmp; tmp=$(mktemp -d) || die "一時ディレクトリを作れません"
@@ -779,7 +783,7 @@ _gate_cmd_reviewers() {
       }
       END { for (id in ids) {
         nl = split(lg[id], a, " ")
-        printf "reviewer: %s id=%s type=%s assoc=%s author=%d reviews=%d inline=%d issue=%d blocker=%d should=%d last=%s%s\n", a[1], id, ty[id], as[id], (id in au), n[id,"review"], n[id,"inline"], n[id,"issue"], bl[id], sh[id], (la[id] == "" ? "-" : la[id]), (nl > 1 ? " login-changed" : "")
+        printf "reviewer: %s id=%s type=%s assoc=%s author=%d reviews=%d inline=%d issue=%d label-blocker=%d label-should=%d last=%s%s\n", a[1], id, ty[id], as[id], (id in au), n[id,"review"], n[id,"inline"], n[id,"issue"], bl[id], sh[id], (la[id] == "" ? "-" : la[id]), (nl > 1 ? " login-changed" : "")
       } }' | sort -t= -k2,2n >"$tmp/out"
   echo "events: $(wc -l <"$tmp/latest" | tr -d ' ')   reviewers: $(wc -l <"$tmp/out" | tr -d ' ')"
   cat "$tmp/out"
