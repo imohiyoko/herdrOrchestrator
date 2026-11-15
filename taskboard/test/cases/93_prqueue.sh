@@ -2,7 +2,7 @@
 # run.sh から番号順に source される
 # --- PR 作成キュー(tb pr-queue)。本物の gh・ネットワーク・GitHub は呼ばない(疑似 gh)
 _saved_pane=${HERDR_PANE_ID-}; unset HERDR_PANE_ID
-_pq_saved=$(env | grep -E '^(TB_DB|TB_REPOS_FILE|PR_QUEUE_[A-Z_]+|FAKE_GH_[A-Z_]+|FAKE_AGENTS)=' || true)
+_pq_saved=$(env | grep -E '^(TB_DB|TB_REPOS_FILE|PR_QUEUE_[A-Z_]+|FAKE_GH_[A-Z_]+|FAKE_GIT_[A-Z_]+|FAKE_AGENTS)=' || true)
 export TB_DB=$TMP/pq.db TB_REPOS_FILE=$TMP/pq-repos.md PR_QUEUE_BODY_ROOT=$TMP/pq-reports PR_QUEUE_GH=$TMP/pq-gh FAKE_GH_LOG=$TMP/pq-gh.log
 export FAKE_AGENTS='[{"pane_id":"wW:p1","name":"worker1","agent_session":{"value":"sw"}}]'
 unset FAKE_GH_LIST FAKE_GH_LIST_FAIL FAKE_GH_CREATE_FAIL FAKE_GH_RC
@@ -30,6 +30,26 @@ R=$TMP/pq-clone; mkdir -p "$R"; git -C "$R" init -q -b main; git -C "$R" config 
 echo base >"$R/a.txt"; git -C "$R" add .; git -C "$R" commit -qm base; git -C "$R" update-ref refs/remotes/origin/main HEAD
 mkbranch() { git -C "$R" checkout -q -B "$1" main; mkdir -p "$R/$(dirname "$2")"; printf '%s\n' "$3" >"$R/$2"; git -C "$R" add .; git -C "$R" commit -qm c; git -C "$R" checkout -q main; }
 export PR_QUEUE_REPO_DIR=$R
+# 疑似 git(ls-remote / fetch / log だけ差し替え、残りは本物の git)。ls-remote は FAKE_GIT_HEADS があればそれ、無ければ clone のローカルブランチを「origin のブランチ」として返す
+PQ_FAKEGIT=$TMP/pq-git; mkdir -p "$TMP/pq-titles"
+cat >"$PQ_FAKEGIT" <<'G'
+#!/usr/bin/env bash
+args=("$@"); [[ ${args[0]} == -C ]] && args=("${args[@]:2}")
+case ${args[0]} in
+  ls-remote)
+    [[ -z ${FAKE_GIT_LSREMOTE_FAIL:-} ]] || exit 1
+    if [[ -n ${FAKE_GIT_HEADS+x} ]]; then for b in $FAKE_GIT_HEADS; do [[ refs/heads/$b == ${args[${#args[@]}-1]} ]] && printf 'deadbeef\trefs/heads/%s\n' "$b"; done
+    else git -C "$FAKE_GIT_CLONE" for-each-ref --format='deadbeef%09%(refname)' "${args[${#args[@]}-1]%\*}"; fi;;
+  fetch) exit 0;;
+  log) cat "$FAKE_GIT_TITLES/$(sed 's#.*origin/agent/##' <<<"${args[${#args[@]}-1]}")" 2>/dev/null;;
+  *) exec git "$@";;
+esac
+G
+chmod +x "$PQ_FAKEGIT"
+export PR_QUEUE_GIT=$PQ_FAKEGIT FAKE_GIT_TITLES=$TMP/pq-titles FAKE_GIT_CLONE=$R
+# 公開前検査の規則(ダミー。書式は deny-patterns.txt と同じ)。既存のテストは何にも掛からない規則で通す
+PQ_DENY=$TMP/pq-deny.txt; printf '%s\n' '# ダミー' 'never-match i  ZZZ_NEVER_MATCHES_ZZZ' >"$PQ_DENY"
+export PR_QUEUE_DENY_PATTERNS=$PQ_DENY
 pqadd() { git -C "$R" rev-parse -q --verify "refs/heads/$1" >/dev/null 2>&1 || mkbranch "$1" "terraform/${1//\//-}.tf" ok; $TB pr-queue add --branch "$1" --body-file "$PR_QUEUE_BODY_ROOT/$2.md" --title "題 $2" "${@:3}" 2>&1; }
 
 # ---- add: 置くだけ。pending。gh は呼ばれない
@@ -146,20 +166,8 @@ for _bad in "" "$TMP/no-such-dir" "$TMP"; do
 done
 eq "diff guard required: a relative PR_QUEUE_REPO_DIR is refused (run and scan stop, exit 1)" "$(cd "$TMP" && PR_QUEUE_REPO_DIR=pq-clone rc $TB pr-queue run) $(cd "$TMP" && PR_QUEUE_REPO_DIR=pq-clone rc $TB pr-queue scan) $(PR_QUEUE_REPO_DIR= rc $TB pr-queue scan)" "1 1 1"
 unset _bad; $TB pr-queue reject $rqid -m 'REPO_DIR テスト用' >/dev/null
-# ---- scan: origin の agent/* を走査してキューに積む(疑似 git: ls-remote / fetch / log だけ差し替え、残りは本物の git)
-PQ_FAKEGIT=$TMP/pq-git; mkdir -p "$TMP/pq-titles"
-cat >"$PQ_FAKEGIT" <<'G'
-#!/usr/bin/env bash
-args=("$@"); [[ ${args[0]} == -C ]] && args=("${args[@]:2}")
-case ${args[0]} in
-  ls-remote) for b in $FAKE_GIT_HEADS; do printf 'deadbeef\trefs/heads/%s\n' "$b"; done;;
-  fetch) exit 0;;
-  log) cat "$FAKE_GIT_TITLES/$(sed 's#.*origin/agent/##' <<<"${args[${#args[@]}-1]}")" 2>/dev/null;;
-  *) exec git "$@";;
-esac
-G
-chmod +x "$PQ_FAKEGIT"
-export PR_QUEUE_GIT=$PQ_FAKEGIT FAKE_GIT_TITLES=$TMP/pq-titles PR_QUEUE_CONF=$TMP/pq.conf PR_QUEUE_REPO_DIR=$R
+# ---- scan: origin の agent/* を走査してキューに積む(疑似 git は先頭で定義済み)
+export PR_QUEUE_CONF=$TMP/pq.conf
 unset FAKE_GH_DUP
 printf '%s\n' "$PQ_RULE" >"$PR_QUEUE_CONF"
 sc_title() { printf '%s\n' "$2" >"$FAKE_GIT_TITLES/$1"; }
@@ -201,7 +209,7 @@ export FAKE_GH_CREATE_FAIL=1; for i in 1 2 3 4; do $TB pr-queue run >/dev/null 2
 eq "retry cap: failing branch becomes failed after 3 attempts and is not re-queued by scan" \
   "$(pqsql "SELECT status||attempts FROM pr_queue WHERE branch='agent/fl';") $($TB pr-queue scan 2>&1 | grep -c 'fl: 既にキューにある') $(pqsql "SELECT COUNT(*) FROM pr_queue WHERE branch='agent/fl';")" "failed3 1 1"
 eq "scan: no merge/approve/ready in the code or the gh calls" "$(pqgh 'pr merge\|pr review\|pr ready\|pr close\|--approve')" "0"
-for _v in PR_QUEUE_GIT FAKE_GIT_TITLES PR_QUEUE_CONF FAKE_GIT_HEADS FAKE_GH_DUP; do unset "$_v"; done
+for _v in PR_QUEUE_CONF FAKE_GIT_HEADS FAKE_GH_DUP; do unset "$_v"; done
 
 # ---- gh の指定は必須(fail-closed): PR_QUEUE_GH も conf の gh も無ければ、PATH 上の gh に落ちず、警告して止まる
 pqbody gh1; pqadd agent/gh1 gh1 >/dev/null; ghid=$(pqsql 'SELECT MAX(id) FROM pr_queue;'); $TB pr-queue approve $ghid >/dev/null
@@ -271,6 +279,111 @@ eq "retry: human puts a failed row back to approved, attempts reset" "$($TB pr-q
 eq "retry: the guards still run, and the next run picks it up" "$(pqgh 'pr create') $(pqsql "SELECT status FROM pr_queue WHERE id=$fid;")" "1 created"
 eq "retry: no schema change (pr_queue columns unchanged)" "$(pqsql "SELECT group_concat(name) FROM pragma_table_info('pr_queue');")" "id,repo,branch,title,body_file,body_sha256,task_id,requested_by,status,last_error,attempts,pr_url,created_at,decided_at,executed_at"
 unset PR_QUEUE_CONF
+
+# ---- ブランチ登録の拡張: 接頭辞を conf で列挙(既定は agent/ のみ)。登録時に origin に実在するかを確かめる(fail-closed)
+pqbr() { git -C "$R" rev-parse -q --verify "refs/heads/$1" >/dev/null 2>&1 || mkbranch "$1" "terraform/${1//\//-}.tf" ok; }
+pqbody pf1
+pqbr feat/pf1; pqbr fix/pf2; pqbr docs/pf3
+pqraw() { $TB pr-queue add --branch "$1" --body-file "$PR_QUEUE_BODY_ROOT/pf1.md" --title "題 $1" 2>&1; }
+export PR_QUEUE_CONF=$TMP/pq-pfx.conf; printf '%s\n' "$PQ_RULE" >"$PR_QUEUE_CONF"
+eq "prefixes: default is agent/ only (feat/ fix/ refused)" "$(rc $TB pr-queue add --branch feat/pf1 --body-file "$PR_QUEUE_BODY_ROOT/pf1.md" --title t) $(rc $TB pr-queue add --branch fix/pf2 --body-file "$PR_QUEUE_BODY_ROOT/pf1.md" --title t)" "1 1"
+printf '%s\nbranch_prefixes = agent/, feat/ fix/ bad prefix\n' "$PQ_RULE" >"$PR_QUEUE_CONF"
+eq "prefixes: branch_prefixes (comma/space separated) allows feat/ and fix/ via add; docs/ stays refused; invalid entries are dropped" \
+  "$(pqraw feat/pf1 | cut -d' ' -f2) $(pqraw fix/pf2 | cut -d' ' -f2) $(rc $TB pr-queue add --branch docs/pf3 --body-file "$PR_QUEUE_BODY_ROOT/pf1.md" --title t) $(rc $TB pr-queue add --branch bad/x --body-file "$PR_QUEUE_BODY_ROOT/pf1.md" --title t)" "pending pending 1 1"
+pfid=$(pqsql "SELECT id FROM pr_queue WHERE branch='feat/pf1';")
+eq "prefixes: the guard (approve) accepts the extra prefix too" "$($TB pr-queue approve $pfid | cut -d'(' -f1)" "PQ-$pfid approved"
+printf '%s\nbranch_prefixes = ,,  bad\n' "$PQ_RULE" >"$PR_QUEUE_CONF"
+eq "prefixes: all-invalid branch_prefixes falls back to agent/ only" "$(rc $TB pr-queue add --branch fix/pf2 --body-file "$PR_QUEUE_BODY_ROOT/pf1.md" --title t) $(pqadd agent/pf4 pf1 | cut -d' ' -f2)" "1 pending"
+printf '%s\nbranch_prefixes = agent/ feat/\n' "$PQ_RULE" >"$PR_QUEUE_CONF"
+export FAKE_GIT_HEADS="feat/sx agent/sy"; pqbody pr-body-feat-sx; pqbody pr-body-agent-sy; mkbranch agent/sy terraform/sy.tf x; mkbranch feat/sx terraform/sx.tf x; sc_title() { printf '%s\n' "$2" >"$FAKE_GIT_TITLES/$1"; }; sc_title sy "対応 sy"
+out=$($TB pr-queue scan 2>&1)
+eq "prefixes: scan walks only the first prefix (agent/); feat/ branches are registered with add, not scanned" "$(grep -c 'feat/sx' <<<"$out") $(pqsql "SELECT COUNT(*) FROM pr_queue WHERE branch='feat/sx';") $(pqsql "SELECT COUNT(*) FROM pr_queue WHERE branch='agent/sy';")" "0 0 1"
+unset FAKE_GIT_HEADS
+printf '%s\n' "$PQ_RULE" >"$PR_QUEUE_CONF"
+# origin に実在するか(確認できなければ登録しない)
+eq "add: a branch that is not on origin is refused (says push first), nothing queued" \
+  "$(n0=$(pqsql 'SELECT COUNT(*) FROM pr_queue;'); out=$($TB pr-queue add --branch agent/not-pushed --body-file "$PR_QUEUE_BODY_ROOT/pf1.md" --title t 2>&1); echo "$? $(grep -c 'origin' <<<"$out") $(($(pqsql 'SELECT COUNT(*) FROM pr_queue;')-n0))")" "1 1 0"
+eq "add: ls-remote failure → refused (fail-closed)" "$(FAKE_GIT_LSREMOTE_FAIL=1 rc $TB pr-queue add --branch agent/pf1b --body-file "$PR_QUEUE_BODY_ROOT/pf1.md" --title t)" "1"
+pqbr agent/pf5
+eq "add: needs PR_QUEUE_REPO_DIR (empty → refused)" "$(PR_QUEUE_REPO_DIR= rc $TB pr-queue add --branch agent/pf5 --body-file "$PR_QUEUE_BODY_ROOT/pf1.md" --title t) $(rc $TB pr-queue add --branch agent/pf5 --body-file "$PR_QUEUE_BODY_ROOT/pf1.md" --title t)" "1 0"
+unset PR_QUEUE_CONF
+
+# ---- 公開前検査(deny-patterns): run が PR を作る前に、題・本文・コミットメッセージ・ブランチ名・差分に掛ける
+PQ_NR="noreply""@example.invalid"; PQ_OT="someone""@example.invalid"
+PQ_DENY=$TMP/pq-deny2.txt
+printf '%s\n' '# 規則(ダミー。deny-patterns.txt と同じ書式)' 'r-internal i  internal-corp' 'r-case     s  SECRETWORD' 'r-mail     s  [a-z.]+@[a-z]+\.invalid' '' >"$PQ_DENY"
+PQ_EX=$TMP/pq-deny-ex.txt; printf '%s\n' '# 例外' 'r-mail ^noreply@example\.invalid$' >"$PQ_EX"
+export PR_QUEUE_DENY_PATTERNS=$PQ_DENY
+mkb() { git -C "$R" checkout -q -B "$1" main; mkdir -p "$R/$(dirname "$2")"; printf '%s\n' "$3" >"$R/$2"; git -C "$R" add .; git -C "$R" commit -q -m "$4"; git -C "$R" checkout -q main; }
+# dn <名> <題> <本文の 3 行目> <ファイル> <内容> <コミットメッセージ> [ブランチ名の接尾辞]: 登録 → 承認までする。id は DQ_ID
+dn() {
+  local br=agent/dn-$1${7:-}
+  mkb "$br" "${4:-terraform/dn-$1.tf}" "${5:-x}" "${6:-c}"
+  printf '%s\n\n%s\n' "$PQ_L1" "${3:-ふつうの本文}" >"$PR_QUEUE_BODY_ROOT/dn-$1.md"
+  $TB pr-queue add --branch "$br" --body-file "$PR_QUEUE_BODY_ROOT/dn-$1.md" --title "${2:-ふつうの題}" >/dev/null 2>&1
+  DQ_ID=$(pqsql "SELECT MAX(id) FROM pr_queue;"); $TB pr-queue approve "$DQ_ID" >/dev/null 2>&1
+}
+dst() { pqsql "SELECT status||attempts FROM pr_queue WHERE id=$1;"; }
+derr() { pqsql "SELECT last_error FROM pr_queue WHERE id=$1;"; }
+export TB_NOTIFY_DEDUPE_SEC=0 TB_NOTIFY_ENABLED=on TB_NOTIFY_DIR=$TMP/pq-nout2 TB_NOTIFY_CONF=$TMP/pq-notify2.conf
+dwarn() { pqsql "SELECT COUNT(*) FROM notify_events WHERE type='warning' AND text LIKE '%公開前検査%';"; }
+dn ok; ok_id=$DQ_ID
+dn t1 '対応 internal-corp の件'; t_id=$DQ_ID
+dn b1 ふつうの題 'SECRETWORD を含む行'; b_id=$DQ_ID
+dn c1 ふつうの題 ふつうの本文 terraform/c1.tf x 'fix: INTERNAL-CORP 向け'; c_id=$DQ_ID
+dn n1 ふつうの題 ふつうの本文 terraform/n1.tf x c -internal-corp-x; n_id=$DQ_ID
+dn d1 ふつうの題 ふつうの本文 terraform/d1.tf $'a\nb SECRETWORD'; d_id=$DQ_ID
+dn p1 ふつうの題 ふつうの本文 terraform/internal-corp.tf x; p_id=$DQ_ID
+dn s1 ふつうの題 'secretword は小文字(s なので通る)' terraform/s1.tf 'lower secretword'; s_id=$DQ_ID
+dn i1 ふつうの題 ふつうの本文 terraform/i1.tf 'INTERNAL-CORP'; i_id=$DQ_ID
+: >"$FAKE_GH_LOG"; w0=$(dwarn); out=$($TB pr-queue run 2>&1)
+eq "deny: a clean PR passes (created)" "$(dst $ok_id)" "created0"
+eq "deny: title hit → rejected, attempts not consumed, position = title" "$(dst $t_id) $(derr $t_id | grep -c 'r-internal@title')" "rejected0 1"
+eq "deny: body hit reports the line (body:3)" "$(dst $b_id) $(derr $b_id | grep -c 'r-case@body:3')" "rejected0 1"
+eq "deny: commit message hit (flag i: INTERNAL-CORP matches internal-corp)" "$(dst $c_id) $(derr $c_id | grep -c 'r-internal@commit ')" "rejected0 1"
+eq "deny: branch name hit" "$(dst $n_id) $(derr $n_id | grep -c 'r-internal@branch')" "rejected0 1"
+eq "deny: added diff line hit reports file and line" "$(dst $d_id) $(derr $d_id | grep -c 'r-case@diff:terraform/d1.tf:2')" "rejected0 1"
+eq "deny: changed file path hit" "$(dst $p_id) $(derr $p_id | grep -c 'r-internal@path:terraform/internal-corp.tf')" "rejected0 1"
+eq "deny: flag s is case-sensitive (lowercase secretword passes), flag i is not" "$(dst $s_id) $(dst $i_id)" "created0 rejected0"
+eq "deny: only the clean/lowercase ones were created (gh pr create x2)" "$(pqgh 'pr create')" "2"
+eq "deny: output and DB never contain the matched values (a file path hit shows the path as the position)" "$(grep -v 'path:' <<<"$out" | grep -c 'SECRETWORD\|internal-corp') $(pqsql "SELECT COUNT(*) FROM pr_queue WHERE last_error LIKE '%SECRETWORD%' AND last_error NOT LIKE '%r-case%';")" "0 0"
+eq "deny: one notification per hit (6 hits: t b c n d p; i also hit → 7), rule names only" "$(($(dwarn)-w0)) $(pqsql "SELECT COUNT(*) FROM notify_events WHERE text LIKE '%SECRETWORD%' AND text NOT LIKE '%r-case%';")" "7 0"
+# 例外ファイル(任意): noreply の Co-Authored-By 行だけを通し、ほかのメールは止める
+dn e1 ふつうの題 ふつうの本文 terraform/e1.tf x "msg"$'\n\n'"Co-Authored-By: Claude <$PQ_NR>"; e1=$DQ_ID
+dn e2 ふつうの題 ふつうの本文 terraform/e2.tf x "msg"$'\n\n'"Co-Authored-By: Someone <$PQ_OT>"; e2=$DQ_ID
+$TB pr-queue run >/dev/null 2>&1
+eq "deny: without an exceptions file the noreply Co-Authored-By line is a hit (rule r-mail)" "$(dst $e1) $(derr $e1 | grep -c 'r-mail@commit ')" "rejected0 1"
+dn e3 ふつうの題 ふつうの本文 terraform/e3.tf x "msg"$'\n\n'"Co-Authored-By: Claude <$PQ_NR>"; e3=$DQ_ID
+dn e4 ふつうの題 ふつうの本文 terraform/e4.tf x "msg"$'\n\n'"Co-Authored-By: Someone <$PQ_OT>"; e4=$DQ_ID
+PR_QUEUE_DENY_EXCEPTIONS=$PQ_EX $TB pr-queue run >/dev/null 2>&1
+eq "deny: with the exceptions file the noreply line passes; another address is still a hit" "$(dst $e3) $(dst $e4)" "created0 rejected0"
+# dry-run: 報告するだけ。DB は変えない
+dn y1 '対応 internal-corp'; y1=$DQ_ID
+: >"$FAKE_GH_LOG"; w1=$(dwarn); out=$($TB pr-queue run --dry-run 2>&1)
+eq "deny: --dry-run reports the hit, changes nothing, notifies nothing" "$(grep -c "PQ-$y1 rejected" <<<"$out") $(dst $y1) $(($(dwarn)-w1)) $(pqgh 'pr create')" "1 approved0 0 0"
+$TB pr-queue reject $y1 >/dev/null
+# 設定の不備は fail-closed(run は何もせず終了コード 1。承認済みの行はそのまま)
+dn k1; k1=$DQ_ID
+: >"$FAKE_GH_LOG"
+printf '%s\n' 'bad-flag x  foo' >"$TMP/pq-deny-badflag.txt"; printf '%s\n' 'bad-re i  ([unclosed' >"$TMP/pq-deny-badre.txt"; printf '%s\n' '# 規則なし' >"$TMP/pq-deny-empty.txt"
+printf '%s\n' 'r-mail ([unclosed' >"$TMP/pq-deny-badex.txt"
+unset PR_QUEUE_DENY_PATTERNS
+eq "deny config: unset → run stops (exit 1, no gh call, row stays approved)" "$(rc $TB pr-queue run) $(wc -l <"$FAKE_GH_LOG" | tr -d ' ') $(dst $k1)" "1 0 approved0"
+eq "deny config: unset message names the setting" "$($TB pr-queue run 2>&1 | grep -c 'PR_QUEUE_DENY_PATTERNS')" "1"
+for _f in "$TMP/none.txt" "pq-deny2.txt" "$TMP/pq-deny-badflag.txt" "$TMP/pq-deny-badre.txt" "$TMP/pq-deny-empty.txt"; do
+  eq "deny config: bad rules file ($(basename "$_f")) → stops" "$(PR_QUEUE_DENY_PATTERNS=$_f rc $TB pr-queue run) $(wc -l <"$FAKE_GH_LOG" | tr -d ' ') $(dst $k1)" "1 0 approved0"
+done
+eq "deny config: bad exceptions file → stops; a missing one too" "$(PR_QUEUE_DENY_PATTERNS=$PQ_DENY PR_QUEUE_DENY_EXCEPTIONS=$TMP/pq-deny-badex.txt rc $TB pr-queue run) $(PR_QUEUE_DENY_PATTERNS=$PQ_DENY PR_QUEUE_DENY_EXCEPTIONS=$TMP/none.txt rc $TB pr-queue run) $(wc -l <"$FAKE_GH_LOG" | tr -d ' ') $(dst $k1)" "1 1 0 approved0"
+eq "deny config: --dry-run stops too" "$(rc $TB pr-queue run --dry-run)" "1"
+export PR_QUEUE_CONF=$TMP/pq-deny.conf; printf '%s\n' "$PQ_RULE" "deny_patterns = $PQ_DENY" >"$PR_QUEUE_CONF"
+$TB pr-queue run >/dev/null 2>&1
+eq "deny config: deny_patterns in config/pr-queue.conf works" "$(dst $k1)" "created0"
+dn k2; k2=$DQ_ID
+: >"$FAKE_GH_LOG"; PR_QUEUE_DENY_PATTERNS=$TMP/none.txt $TB pr-queue run >/dev/null 2>&1
+eq "deny config: the env wins over the config (a bad env stops)" "$(wc -l <"$FAKE_GH_LOG" | tr -d ' ') $(dst $k2)" "0 approved0"
+unset PR_QUEUE_CONF; export PR_QUEUE_DENY_PATTERNS=$PQ_DENY; $TB pr-queue run >/dev/null 2>&1
+export PQ_DENY=$TMP/pq-deny.txt; export PR_QUEUE_DENY_PATTERNS=$PQ_DENY
+unset TB_NOTIFY_DEDUPE_SEC TB_NOTIFY_ENABLED TB_NOTIFY_DIR TB_NOTIFY_CONF
 
 # ---- 設定: branch_prefix を変える / body_first_line が空なら 1 行目は見ない
 export PR_QUEUE_CONF=$TMP/pq2.conf; printf 'branch_prefix = bot/\n' >"$PR_QUEUE_CONF"

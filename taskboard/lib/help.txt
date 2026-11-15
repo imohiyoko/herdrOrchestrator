@@ -134,6 +134,7 @@ tb pr-queue retry <PQ-n>   人だけ。failed を approved に戻す(attempts �
 tb pr-queue run [--dry-run]   approved だけを処理(scheduler の COMMAND ジョブ)。ガード: ブランチが branch_prefix で始まる・base は main 固定・
                               draft のみ・本文が body_root の中の実ファイルで承認後に変わっていない・1 行目が body_first_line に合う(設定時)・
                               秘密らしい値なし・同じ head の PR なし・許可リスト(config/repos.md)のリポジトリ。
+                              公開前検査(PR_QUEUE_DENY_PATTERNS か conf の deny_patterns。必須。題・本文・コミットメッセージ・ブランチ名・差分に掛け、ヒットは却下して規則名と位置だけ通知)。
                               PR_QUEUE_REPO_DIR(clone)で差分も見る(必須。空・不正なら通さない。CI 設定・AdministratorAccess の追加・秘密らしい値は人に回す)。
                               gh は PR_QUEUE_GH か conf の gh(絶対パス。必須。未指定なら止まる)。ラッパーが 75 を返したら attempts を使わず止まる。マージ・approve・ready はできない。設定は config/pr-queue.conf
 tb pr-queue scan [--dry-run] [--repo <org/repo>]   origin の <branch_prefix>* を走査し、<body_root>/pr-body-<名>.md があるものを積む(run の前に呼ぶ)

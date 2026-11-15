@@ -59,16 +59,28 @@ pq_ref() {  # "PQ-12" か "12" → 数字
 
 pq_row() { sql -json "SELECT * FROM pr_queue WHERE id=$1;" | jq -c '.[0] // empty'; }
 
-# ブランチの接頭辞(conf の branch_prefix。英数字と . _ - の後に / 。既定 agent/)
-pq_prefix() {
-  local p; p=$(pq_conf branch_prefix agent/)
-  [[ $p =~ ^[A-Za-z0-9._-]{1,40}/$ ]] || p=agent/
-  printf '%s' "$p"
+# ブランチの接頭辞(英数字と . _ - の後に / )。config/pr-queue.conf の branch_prefixes(空白かカンマ区切り。例: agent/ feat/ fix/)。
+# 無ければ branch_prefix(1 つ。従来の書き方)、それも無ければ agent/ だけ。不正な要素は捨てる(狭める側に倒す)。全部不正なら agent/。広げるのは人が conf に書く
+pq_prefixes() {
+  local raw p out="" seen=" "
+  raw=$(pq_conf branch_prefixes ""); [[ -n $raw ]] || raw=$(pq_conf branch_prefix agent/)
+  for p in ${raw//,/ }; do
+    [[ $p =~ ^[A-Za-z0-9._-]{1,40}/$ ]] || continue
+    [[ $seen == *" $p "* ]] && continue
+    seen+="$p "; out+="$p"$'\n'
+  done
+  [[ -n $out ]] || out=$'agent/\n'
+  printf '%s' "$out"
 }
+pq_prefix() { pq_prefixes | head -n 1; }   # 先頭。scan が走査するのはこれだけ(広げた接頭辞のブランチは add で登録する)
+pq_prefix_list() { pq_prefixes | paste -sd' ' -; }
 
-pq_valid_branch() {  # 接頭辞で始まり、安全な文字だけ
-  local b=$1 p; p=$(pq_prefix)
-  [[ $b == "$p"* && ${b#"$p"} =~ ^[A-Za-z0-9._/-]{1,120}$ ]] || return 1
+pq_valid_branch() {  # どれかの接頭辞で始まり、安全な文字だけ
+  local b=$1 p ok=1
+  while IFS= read -r p; do
+    [[ -n $p && $b == "$p"* && ${b#"$p"} =~ ^[A-Za-z0-9._/-]{1,120}$ ]] && { ok=0; break; }
+  done < <(pq_prefixes)
+  ((ok == 0)) || return 1
   [[ $b != *..* && $b != */ && $b != *.lock && $b != *//* ]] || return 1
 }
 
@@ -94,7 +106,7 @@ pq_guard() {
   repo=$(jq -r .repo <<<"$row"); branch=$(jq -r .branch <<<"$row"); title=$(jq -r .title <<<"$row")
   file=$(jq -r .body_file <<<"$row"); sha=$(jq -r .body_sha256 <<<"$row")
   PQ_REASON=""
-  pq_valid_branch "$branch" || { PQ_REASON="ブランチ名が $(pq_prefix) で始まる安全な形ではない"; return 1; }
+  pq_valid_branch "$branch" || { PQ_REASON="ブランチ名が許可された接頭辞($(pq_prefix_list))で始まる安全な形ではない"; return 1; }
   pq_repos | grep -qxF -- "$repo" || { PQ_REASON="リポジトリが許可リストに無い"; return 1; }
   root=$(pq_body_root) || { PQ_REASON="本文のルートが見つからない"; return 1; }
   [[ ! -L $file && -f $file ]] || { PQ_REASON="本文ファイルが無い(か、シンボリックリンク)"; return 1; }
@@ -143,6 +155,107 @@ pq_diff_guard() {
   return 0
 }
 
+# ---------- 公開前検査(deny-patterns)。run が PR を作る前に、題・本文・コミットメッセージ・ブランチ名・差分(変更したファイルのパスと足した行)に掛ける ----------
+# 規則ファイル(PR_QUEUE_DENY_PATTERNS か conf の deny_patterns。絶対パス。必須)の書式: 1 行 = "<名前> <フラグ> <パターン(ERE)>"。# で始まる行と空行は無視。
+#   フラグ i = 大文字小文字を無視 / s = 区別する。(~/developer/herdr/publish/deny-patterns.txt と同じ書式。社内名を含むのでこのリポジトリには置かない)
+# 例外ファイル(PR_QUEUE_DENY_EXCEPTIONS か conf の deny_exceptions。任意): 1 行 = "<規則名> <ERE>"。その規則に合った「文字列(ヒットした部分)」が ERE に合えば無視
+#   (規則のフラグと同じ大小文字の扱い。厳密にしたいときは ^ と $ を書く)。例: email ^[A-Za-z0-9._-]*noreply@example\.com$
+# 未設定・読めない・書式が不正・規則が 0 件のときは、run は何もせず止まる(fail-closed)。ヒットした PR は作らず却下し(attempts は使わない)、規則名と位置だけを通知する(値は出さない)
+PQ_DENY_NAMES=(); PQ_DENY_FLAGS=(); PQ_DENY_PATS=(); PQ_DENY_EXN=(); PQ_DENY_EXP=()
+pq_abs_file() {  # $1=ラベル $2=パス。絶対パスの読めるファイルか。違えば理由を stderr に出して 1
+  [[ $2 == /* && -f $2 && -r $2 ]] || { echo "pr-queue: $1 が絶対パスの読めるファイルではないため止めます(fail-closed): $2" >&2; return 1; }
+}
+pq_deny_load() {
+  local f x line name flag pat n=0 bad=0 re
+  PQ_DENY_NAMES=(); PQ_DENY_FLAGS=(); PQ_DENY_PATS=(); PQ_DENY_EXN=(); PQ_DENY_EXP=()
+  f=${PR_QUEUE_DENY_PATTERNS:-$(pq_conf deny_patterns "")}
+  if [[ -z $f ]]; then
+    echo "pr-queue: 公開前検査の規則ファイルが指定されていないため止めます(fail-closed)。PR_QUEUE_DENY_PATTERNS か config/pr-queue.conf の deny_patterns に絶対パスを指定してください" >&2
+    return 1
+  fi
+  pq_abs_file "公開前検査の規則ファイル(deny_patterns)" "$f" || return 1
+  while IFS= read -r line || [[ -n $line ]]; do
+    line=${line%$'\r'}
+    [[ -n ${line//[[:space:]]/} && ! $line =~ ^[[:space:]]*# ]] || continue
+    read -r name flag pat <<<"$line"; n=$((n+1))
+    if [[ ! $name =~ ^[A-Za-z0-9._-]+$ || ! $flag =~ ^[is]$ || -z $pat ]]; then echo "pr-queue: 規則ファイルの $n 番目の規則の書式が不正です(<名前> <i|s> <パターン>)" >&2; bad=1; continue; fi
+    re=0; printf '' | grep -E -- "$pat" >/dev/null 2>&1 || re=$?
+    if ((re > 1)); then echo "pr-queue: 規則ファイルの規則 $name の正規表現が不正です" >&2; bad=1; continue; fi
+    PQ_DENY_NAMES+=("$name"); PQ_DENY_FLAGS+=("$flag"); PQ_DENY_PATS+=("$pat")
+  done <"$f"
+  if ((bad)) || ((${#PQ_DENY_NAMES[@]} == 0)); then
+    echo "pr-queue: 公開前検査の規則ファイルが不正か、規則が 0 件のため止めます(fail-closed)" >&2; return 1
+  fi
+  x=${PR_QUEUE_DENY_EXCEPTIONS:-$(pq_conf deny_exceptions "")}
+  if [[ -n $x ]]; then
+    pq_abs_file "公開前検査の例外ファイル(deny_exceptions)" "$x" || return 1
+    n=0
+    while IFS= read -r line || [[ -n $line ]]; do
+      line=${line%$'\r'}
+      [[ -n ${line//[[:space:]]/} && ! $line =~ ^[[:space:]]*# ]] || continue
+      read -r name pat <<<"$line"; n=$((n+1))
+      re=0; printf '' | grep -E -- "$pat" >/dev/null 2>&1 || re=$?
+      if [[ ! $name =~ ^[A-Za-z0-9._-]+$ || -z $pat ]] || ((re > 1)); then echo "pr-queue: 例外ファイルの $n 番目の書式が不正です(<規則名> <ERE>)" >&2; return 1; fi
+      PQ_DENY_EXN+=("$name"); PQ_DENY_EXP+=("$pat")
+    done <"$x"
+  fi
+  return 0
+}
+
+# 1 行 = 1 単位。位置(pos)と内容(txt)を同じ行番号で並べる。$1=位置の接頭辞(行番号を後ろに付ける) 標準入力=テキスト
+pq_deny_unit() { awk -v l="$1" -v pf="$PQ_DENY_POS" -v tf="$PQ_DENY_TXT" '{ print l ":" NR >> pf; print $0 >> tf }'; }
+
+# $1=行(JSON)。clone の読み取りだけ。ヒットなし 0 / ヒットあり 1(PQ_REASON に「規則名@位置」だけ。値は入れない)/ 検査できない 2(PQ_REASON に理由)
+pq_deny_check() {
+  local row=$1 d=${PR_QUEUE_REPO_DIR:-} branch title file ref td c f i name flag pat gf out n frag j ex hits="" nh=0 key pos
+  branch=$(jq -r .branch <<<"$row"); title=$(jq -r .title <<<"$row"); file=$(jq -r .body_file <<<"$row")
+  if git -C "$d" rev-parse -q --verify "refs/heads/$branch^{commit}" >/dev/null 2>&1; then ref=refs/heads/$branch
+  elif git -C "$d" rev-parse -q --verify "refs/remotes/origin/$branch^{commit}" >/dev/null 2>&1; then ref=refs/remotes/origin/$branch
+  else PQ_REASON="公開前検査ができない(ブランチが clone に無い)"; return 2; fi
+  td=$(mktemp -d) || { PQ_REASON="公開前検査ができない(作業領域)"; return 2; }
+  PQ_DENY_POS=$td/pos; PQ_DENY_TXT=$td/txt; : >"$PQ_DENY_POS"; : >"$PQ_DENY_TXT"
+  printf '%s\n' "title" >>"$PQ_DENY_POS"; printf '%s\n' "$title" >>"$PQ_DENY_TXT"
+  printf '%s\n' "branch" >>"$PQ_DENY_POS"; printf '%s\n' "$branch" >>"$PQ_DENY_TXT"
+  pq_deny_unit body <"$file"
+  if ! out=$(git -C "$d" rev-list "origin/$PQ_BASE..$ref" 2>/dev/null); then rm -rf "$td"; PQ_REASON="公開前検査ができない(コミットを取得できない)"; return 2; fi
+  while IFS= read -r c; do
+    [[ -n $c ]] || continue
+    git -C "$d" log -1 --format=%B "$c" 2>/dev/null | pq_deny_unit "commit ${c:0:7}"
+  done <<<"$out"
+  if ! out=$(git -C "$d" diff --name-only "origin/$PQ_BASE...$ref" 2>/dev/null); then rm -rf "$td"; PQ_REASON="公開前検査ができない(差分を取得できない)"; return 2; fi
+  while IFS= read -r f; do
+    [[ -n $f ]] || continue
+    printf 'path:%s\n' "$f" >>"$PQ_DENY_POS"; printf '%s\n' "$f" >>"$PQ_DENY_TXT"
+  done <<<"$out"
+  git -C "$d" diff -U0 --no-color "origin/$PQ_BASE...$ref" 2>/dev/null | awk -v pf="$PQ_DENY_POS" -v tf="$PQ_DENY_TXT" '
+    /^diff --git / { hdr=1; next }
+    hdr && /^\+\+\+ / { f=substr($0,7); if (f=="/dev/null") f=""; next }
+    /^@@/ { hdr=0; match($0, /\+[0-9]+/); n=substr($0,RSTART+1,RLENGTH-1)+0; next }
+    !hdr && /^\+/ { print "diff:" f ":" n >> pf; print substr($0,2) >> tf; n++ }'
+  for i in "${!PQ_DENY_NAMES[@]}"; do
+    name=${PQ_DENY_NAMES[$i]}; flag=${PQ_DENY_FLAGS[$i]}; pat=${PQ_DENY_PATS[$i]}
+    gf=-noE; [[ $flag == i ]] && gf=-noEi
+    out=$(grep $gf -- "$pat" "$PQ_DENY_TXT" 2>/dev/null || true)
+    [[ -n $out ]] || continue
+    while IFS= read -r line; do
+      [[ -n $line ]] || continue
+      n=${line%%:*}; frag=${line#*:}; ex=0
+      for j in "${!PQ_DENY_EXN[@]}"; do
+        [[ ${PQ_DENY_EXN[$j]} == "$name" ]] || continue
+        if printf '%s' "$frag" | grep -qE${flag/s/} -- "${PQ_DENY_EXP[$j]}" 2>/dev/null; then ex=1; break; fi
+      done
+      ((ex == 0)) || continue
+      pos=$(sed -n "${n}p" "$PQ_DENY_POS"); key="$name@$pos"
+      [[ $hits == *"$key"* ]] && continue
+      nh=$((nh+1)); ((nh > 5)) || hits+="${hits:+, }$key"
+    done <<<"$out"
+  done
+  rm -rf "$td"
+  ((nh == 0)) && return 0
+  PQ_REASON="公開前検査にかかった($nh 件): $hits$( ((nh > 5)) && echo ' ほか')"
+  return 1
+}
+
 cmd_pr-queue() {
   local sub=${1:-}; shift || true
   case $sub in
@@ -158,6 +271,13 @@ cmd_pr-queue() {
   esac
 }
 
+# ブランチが origin に実在するか(PR_QUEUE_REPO_DIR の clone で git ls-remote。確認できなければ 1 = fail-closed)。PR_QUEUE_GIT で git を差し替える
+pq_origin_has() {
+  local b=$1 git=${PR_QUEUE_GIT:-git} d=${PR_QUEUE_REPO_DIR:-} out
+  out=$("$git" -C "$d" ls-remote --heads origin "refs/heads/$b" 2>/dev/null) || return 1
+  awk -v t="refs/heads/$b" '$2==t{f=1} END{exit !f}' <<<"$out"
+}
+
 pq_add() {
   local branch="" file="" title="" repo="" task="" by id root dir abs n repos
   while [[ $# -gt 0 ]]; do
@@ -171,7 +291,7 @@ pq_add() {
     esac
   done
   [[ -n $branch && -n $file && -n $title ]] || usage "pr-queue add --branch <接頭辞/…> --body-file <body_root の中のファイル> --title <題> [--repo <org/repo>] [--task T-…]"
-  pq_valid_branch "$branch" || die "pr-queue: ブランチは $(pq_prefix) で始め、英数字と . _ - / だけにします: $branch"
+  pq_valid_branch "$branch" || die "pr-queue: ブランチは $(pq_prefix_list) のどれかで始め、英数字と . _ - / だけにします: $branch"
   [[ $title != *$'\n'* && $title != *$'\r'* ]] && ! blank "$title" && ((${#title} <= 200)) || die "pr-queue: 題は 1 行・200 字まで"
   [[ -z $task ]] || valid_id "$task"
   repos=$(pq_repos)
@@ -181,6 +301,8 @@ pq_add() {
     repo=$repos
   fi
   grep -qxF -- "$repo" <<<"$repos" || die "pr-queue: リポジトリが許可リストにありません: $repo"
+  pq_repo_dir_ok || die "pr-queue: $PQ_REASON"
+  pq_origin_has "$branch" || die "pr-queue: ブランチが origin に見つからない(か、確認できない)。先に push してください: $branch"
   root=$(pq_body_root) || die "pr-queue: 本文のルート(body_root)が見つかりません"
   [[ ! -L $file && -f $file ]] || die "pr-queue: 本文ファイルが無い(かシンボリックリンク): $file"
   dir=$(cd "$(dirname "$file")" && pwd -P); abs=$dir/$(basename "$file")
@@ -262,6 +384,7 @@ pq_run() {
   pq_gh || return 1; gh=$PQ_GH
   # 環境の不備(clone が無い)で承認済みの行を却下しない。行には触らず、警告して止まる(直せば次の回に進む)
   pq_repo_dir_ok || { echo "pr-queue: $PQ_REASON。止めます(fail-closed。承認済みの行はそのまま残します)" >&2; return 1; }
+  pq_deny_load || return 1
   maxc=$(pq_conf max_create_per_run "$PQ_MAX_CREATE"); [[ $maxc =~ ^[0-9]+$ ]] || maxc=$PQ_MAX_CREATE
   while IFS= read -r id; do
     [[ -n $id ]] || continue
@@ -271,6 +394,16 @@ pq_run() {
     if ! pq_guard "$row"; then
       echo "PQ-$id rejected: $PQ_REASON"
       ((dry)) || sql "UPDATE pr_queue SET status='rejected', last_error=$(q "ガード: $PQ_REASON"), executed_at=$(q "$(now)") WHERE id=$id AND status='approved';"
+      continue
+    fi
+    # 公開前検査(題・本文・コミットメッセージ・ブランチ名・差分)。ヒットしたら作らず却下(attempts は使わない)。規則名と位置だけを通知する
+    pq_deny_check "$row" && rc=0 || rc=$?
+    if ((rc != 0)); then
+      echo "PQ-$id rejected: $PQ_REASON"
+      if ((!dry)); then
+        sql "UPDATE pr_queue SET status='rejected', last_error=$(q "公開前検査: $PQ_REASON"), executed_at=$(q "$(now)") WHERE id=$id AND status='approved';"
+        notify_emit warning "pq-deny-$id" "" "PQ-$id は公開前検査で止めました(PR は作っていません): $PQ_REASON"
+      fi
       continue
     fi
     # 重複確認(読み取り)。取れないときは作らない(次の回に回す)
