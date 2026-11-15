@@ -578,6 +578,10 @@ check("カタログ: agent:new:*(high)が agent:* = allow で allow なら警告
 check("カタログ: mid の操作が allow でも警告しない", "リスク mid" not in _crow(P[2], "agent:compact:*") and "<b class=warn>allow</b>" in _crow(P[2], "agent:compact:*"))
 _pr = _crow(P[2], "proxy:read-only")
 check("カタログ: 規則が無い操作は既定の ask に落ちる", "既定に落ちる" in _pr and ">ask<" in _pr and "* = ask" in _pr, _pr[:300])
+check("カタログ: unwired(proxy:*)は薄く表示し、承認判定に渡らないと警告", "<span class=note><code>proxy:read-only</code>" in _pr and "承認判定に渡らない" in _pr and "unwired" in _pr, _pr[:300])
+_U = cl.get("/perms?state=unwired")[2].split("ルール一覧")[0]
+check("カタログ: 状態 unwired で絞る", all(x in _U for x in ("proxy:read-only", "proxy:write", "proxy:external")) and "agent:new:*" not in _U)
+check("カタログ: role:change は conditional ではなく no", "<code>role:change</code>" in P[2] and "conditional" not in _crow(P[2], "role:change"))
 _g = _crow(P[2], "gate:merge")
 check("カタログ: reserved は薄く表示し、リスク階層・副作用・allow 候補・状態を出す",
       "<span class=note><code>gate:merge</code>" in _g and "human-only" in _g and "external-write" in _g and "reserved" in _g, _g[:300])
@@ -596,6 +600,31 @@ check("カタログ: 不正な絞り込み値は無視して 200", cl.get("/perm
 check("カタログ: 場所は固定で env で差し替える口が無い", "WEBUI_CATALOG" not in open(os.path.join(os.path.dirname(SERVER), "app", "config.py"), encoding="utf-8").read())
 check("カタログ: GET だけ(絞り込みも検索も method=post を増やさない)", cl.get("/perms?kind=gate")[2].count("method=post") == 1)
 
+# カタログの読み込みと表示の単体テスト(perms.CATALOG を差し替える)。説明にタグ・制御文字・| を入れても壊れない
+sys.path.insert(0, os.path.dirname(HERE))
+import app.perms as _perms  # noqa: E402
+import app.views as _views  # noqa: E402
+_cf = os.path.join(TMP, "unit-catalog.conf")
+open(_cf, "w", encoding="utf-8").write(
+    "# 注釈\n"
+    "send:task:*   | send | local-write | high | conditional | active | 説明 <script>alert(1)</script> \x01制御 | 縦線を含む説明\n"
+    "send:info:*   | send | local-write | mid | yes | active | 正常な行\n"
+    "agent:new:x   | role | local-write | mid | yes | active | 種別がパターンの先頭と違う\n"
+    "setup:hooks   | setup | local-write | human-only | yes | active | human-only なのに allow 候補が yes\n"
+    "role:change   | role | local-write | high | conditional | active | 対象の無い操作名が conditional\n"
+    "send:info:*   | send | local-write | mid | yes | active | 重複\n"
+    "gate:merge    | gate | external-write | human-only | no | bogus | 状態が不正\n"
+    "gate:x | gate | none | low | no\n")
+_perms.CATALOG = _cf
+_cat, _cerr, _cbad = _perms.load_catalog()
+check("カタログ単体: 正しい 2 行だけ読み、不正な行(種別・human-only・conditional・重複・状態・項目不足)を数える",
+      [c["pattern"] for c in _cat] == ["send:task:*", "send:info:*"] and _cbad == 6 and not _cerr, str((len(_cat), _cbad)))
+check("カタログ単体: 説明の | は残り、制御文字は除かれる", "縦線を含む説明" in _cat[0]["desc"] and "\x01" not in _cat[0]["desc"])
+_html = _views._catalog_section({}, [], "", _cat, "", _cbad)
+check("カタログ単体: 説明のタグはエスケープされ、不正な行のスキップ件数が出る", "<script>" not in _html and "&lt;script&gt;" in _html and "6 件" in _html)
+_perms.CATALOG = os.path.join(TMP, "no-such-catalog.conf")
+check("カタログ単体: ファイルが無ければエラー文を返す", _perms.load_catalog()[1] != "" and "読めません" in _views._catalog_section({}, [], "", *_perms.load_catalog()[:2], 0))
+
 # conf を一時的に差し替えて境界を確かめる(読み取りだけの画面なので、戻せば元の表示に戻る)
 _orig = open(_AP, encoding="utf-8").read()
 open(_AP, "w", encoding="utf-8").write("send:task:[[:alpha:]]* = ask\nsend:task:* = allow\nrole:change = ask\n* = ask\n")
@@ -606,8 +635,9 @@ check("カタログ: [ を含む行が先頭なら、現在の値も判定不能
 check("権限: [ の行に当たる操作は判定不能(下の allow へ進まない)", "判定不能" in _R and "<b class=\"warn\">allow</b>" not in _R and "→ <b>ask</b>" not in _R)
 check("権限: [ の行より下の行の一致の例は出さない(決めつけない)", "<code>send:task:worker1</code>" not in _B)
 check("権限: [ の行が先頭にあれば、どの操作もそこで止まる(下の行を使わない)", "判定不能" in cl.get("/perms?op=role:change")[2])
-open(_AP, "w", encoding="utf-8").write("gate:merge = allow\nsend:task:* = ask\nsend:task:dd-* = allow\nproxy:write = allow\n* = ask\n")
+open(_AP, "w", encoding="utf-8").write("gate:merge = allow\nsend:task:* = ask\nsend:task:dd-* = allow\nproxy:write = allow\nproxy:read-only = allow\n* = ask\n")
 _G = cl.get("/perms")[2]
+check("カタログ: unwired の操作に当たる規則は「何も効かない」と警告", "何も効きません" in _G and _G.count("何も効きません") == 2)
 check("カタログ: human-only の操作(gate:merge)が allow なら警告", "リスク human-only" in _crow(_G, "gate:merge"))
 check("カタログ: allow にしない操作(proxy:write)が allow なら警告", "リスク high / allow 候補 no" in _crow(_G, "proxy:write"))
 check("カタログ: 宛先を絞った allow(high / conditional)の例外は警告しない", "例外があります" not in _crow(_G, "send:task:*"))
