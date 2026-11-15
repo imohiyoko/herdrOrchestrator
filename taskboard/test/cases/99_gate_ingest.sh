@@ -31,7 +31,7 @@ arr() { jq -sc '.'; }
 fx() { mkdir -p "$GT/fx-$1"; printf '%s' "$2" >"$GT/fx-$1/reviews.json"; printf '%s' "$3" >"$GT/fx-$1/comments.json"; printf '%s' "${4:-[]}" >"$GT/fx-$1/issues.json"; printf '%s' "$GT/fx-$1"; }
 HEADREV=$(rvobj "$BOT" "$H40" COMMENTED 'Actionable comments posted: 1' 2026-11-16T01:00:00Z)
 nlines() { if [[ -f $1 ]]; then wc -l <"$1" | tr -d ' '; else echo 0; fi; }
-run_ing() { env -u HERDR_PANE_ID FAKE_GH_DIR=$1 FAKE_GH_LOG=$GHLOG "$ISO5/taskboard/bin/tb" gate ingest-review "$ING_T" --pr example-owner/example-repo#123 --sha 3f9c2ab >/dev/null 2>"$GT/ing.err"; echo $?; }
+run_ing() { env -u HERDR_PANE_ID FAKE_GH_DIR=$1 FAKE_GH_LOG=$GHLOG "$ISO5/taskboard/bin/tb" gate ingest-review "$ING_T" --pr example-owner/example-repo#123 --sha 3f9c2ab >"$GT/ing.out" 2>"$GT/ing.err"; echo $?; }
 # res <fxdir> → "<rc>|<blocker=.. should=.. verdict=..>" または "<rc>|none"(記録なし)
 res() { local b a rc; b=$(nlines "$ING_LOG"); rc=$(run_ing "$1"); a=$(nlines "$ING_LOG")
   if ((a > b)); then echo "$rc|$(tail -1 "$ING_LOG" | grep -o 'blocker=[0-9]* should=[0-9]* verdict=[a-z]*')"; else echo "$rc|none"; fi; }
@@ -55,6 +55,27 @@ eq "ingest: only the first line decides the label (a later 'critical' does not)"
 eq "ingest: an addressed comment is not counted" "$(res "$(fx m "[$HEADREV]" "[$(c1 "$CR"$'\n\nbody\n\n✅ Addressed in commit abc1234')]")")" "0|blocker=0 should=0 verdict=pass"
 eq "ingest: an outdated comment (position null) is not counted" "$(res "$(fx n "[$HEADREV]" "[$(c1 "$CR" null)]")")" "0|blocker=0 should=0 verdict=pass"
 eq "ingest: comments by another login are not counted" "$(res "$(fx o "[$HEADREV]" "[$(cmobj someone-else "$CR" 5)]")")" "0|blocker=0 should=0 verdict=pass"
+# --- 実物の形の本文(1 行目が HTML コメント、2 行目が空、重大度は 3 行目で picture タグ入り。URL などは架空)
+rbody() { printf '<!-- coderabbit-ai-generated:v1 -->\n\n**<picture><source media="(prefers-color-scheme: dark)" srcset="https://example.invalid/sev-dark.svg"><img alt="icon" src="https://example.invalid/sev.svg" height="16" align="absmiddle"></picture> %s** · **Functional Correctness** · **Quick win**\n\n**Example finding title.**\n\nProse that mentions critical and major issues in passing.\n' "$1"; }
+eq "ingest (real shape): Critical on line 3 behind an HTML comment → blocker" "$(res "$(fx r1 "[$HEADREV]" "[$(c1 "$(rbody Critical)")]")")" "0|blocker=1 should=0 verdict=fail"
+eq "ingest (real shape): Major → blocker" "$(res "$(fx r2 "[$HEADREV]" "[$(c1 "$(rbody Major)")]")")" "0|blocker=1 should=0 verdict=fail"
+eq "ingest (real shape): Minor → should, not blocker (prose mentioning critical/major later does not count)" "$(res "$(fx r3 "[$HEADREV]" "[$(c1 "$(rbody Minor)")]")")" "0|blocker=0 should=1 verdict=pass"
+eq "ingest (real shape): Potential issue style header → should" "$(res "$(fx r4 "[$HEADREV]" "[$(c1 "$(rbody 'Potential issue')")]")")" "0|blocker=0 should=1 verdict=pass"
+eq "ingest (real shape): the three severities together → blocker=2 should=1" "$(res "$(fx r5 "[$HEADREV]" "[$(c1 "$(rbody Critical)"),$(c1 "$(rbody Major)"),$(c1 "$(rbody Minor)")]")")" "0|blocker=2 should=1 verdict=fail"
+eq "ingest (real shape): the old one-line shape still works (label on line 1)" "$(res "$(fx r6 "[$HEADREV]" "[$(c1 "$CR")]")")" "0|blocker=1 should=0 verdict=fail"
+eq "ingest (real shape): HTML tags inside the label line are removed (label split by tags is still found)" "$(res "$(fx r7 "[$HEADREV]" "[$(c1 $'<!-- x -->\n\n<b>Crit</b><b>ical</b> issue')]")")" "0|blocker=1 should=0 verdict=fail"
+eq "ingest (real shape): only the first substantive line decides (a label on a later line is not used)" "$(res "$(fx r8 "[$HEADREV]" "[$(c1 $'<!-- x -->\n\nplain header\n\n**Critical**')]")")" "0|blocker=0 should=1 verdict=pass"
+# 表記が見つからない指摘は should のまま数え、件数を警告に出す(blocker には倒さない。倒すかは人の判断)
+eq "ingest: a finding without any known label is counted as should and warned (unknown count)" "$(res "$(fx u1 "[$HEADREV]" "[$(c1 '<!-- x -->'$'\n\n''plain text only')]")")|$(grep -c '重大度の表記が見つからない指摘が 1 件' "$GT/ing.err")|$(grep -c 'unknown-label=1' "$GT/ing.out")" "0|blocker=0 should=1 verdict=pass|1|1"
+eq "ingest: no warning when every finding has a label" "$(res "$(fx u2 "[$HEADREV]" "[$(c1 "$(rbody Minor)")]")" >/dev/null; grep -c '表記が見つからない' "$GT/ing.err")" "0"
+eq "ingest: a body that is only HTML comments/tags counts as unknown → should + warning" "$(res "$(fx u3 "[$HEADREV]" "[$(c1 '<!-- a --><br/><!-- b -->')]")")|$(grep -c '見つからない指摘が 1 件' "$GT/ing.err")" "0|blocker=0 should=1 verdict=pass|1"
+# file-level の指摘(position が null で subject_type が file)は数える。outdated(position null で file ではない)と区別する
+cmf() { jq -nc --arg l "$1" --arg b "$2" --arg st "$3" --argjson p "$4" '{user:{login:$l},position:$p,subject_type:$st,body:$b}'; }
+eq "ingest: a file-level Critical (position null, subject_type file) is counted → blocker" "$(res "$(fx fl1 "[$HEADREV]" "[$(cmf "$BOT" "$(rbody Critical)" file null)]")")" "0|blocker=1 should=0 verdict=fail"
+eq "ingest: an outdated Critical (position null, subject_type line) is not counted" "$(res "$(fx fl2 "[$HEADREV]" "[$(cmf "$BOT" "$(rbody Critical)" line null)]")")" "0|blocker=0 should=0 verdict=pass"
+eq "ingest: an outdated Critical without subject_type is not counted" "$(res "$(fx fl3 "[$HEADREV]" "[$(c1 "$(rbody Critical)" null)]")")" "0|blocker=0 should=0 verdict=pass"
+eq "ingest: an addressed file-level comment is not counted" "$(res "$(fx fl4 "[$HEADREV]" "[$(cmf "$BOT" "$(rbody Critical)"$'\n\n✅ Addressed in commit abc1234' file null)]")")" "0|blocker=0 should=0 verdict=pass"
+eq "ingest: a file-level comment by another login is not counted" "$(res "$(fx fl5 "[$HEADREV]" "[$(cmf someone-else "$(rbody Critical)" file null)]")")" "0|blocker=0 should=0 verdict=pass"
 # --- スキップ・無い・不一致・取得失敗は記録しない(fail-closed)。skip や 0 件を pass と記録しない
 eq "ingest: no review at all → 10, nothing recorded" "$(res "$(fx p '[]' '[]')")" "10|none"
 eq "ingest: free-tier limit in an issue comment, no review (the real case) → 10, nothing recorded" "$(res "$(fx q '[]' '[]' "[$(isobj "$BOT" '> [!WARNING]'$'\n''> ## Rate limit exceeded'$'\n''> free tier limit' 2026-11-16T02:00:00Z)]")")" "10|none"

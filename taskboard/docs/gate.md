@@ -147,14 +147,18 @@ tb gate ingest-review <task-id> --pr <o>/<r>#<n> --sha <head の sha>
 - **記録する条件**: 設定した投稿者(既定は `coderabbitai[bot]`)のレビューが、`--sha` の head に対して存在し(コミット ID の前方一致)、状態が COMMENTED / APPROVED / CHANGES_REQUESTED で、スキップの印が無いときだけです。
 - **記録しない(fail-closed。「記録が無い」= レビューの条件を満たさない)**:
   - head に対するレビューが無い・sha が違う・PENDING / DISMISSED(終了コード 10)
-  - レビューがスキップされている(10 行目までの見出しに `rate limit`、`review skipped`、`reviews paused`、`usage limit`、`quota` のいずれかがある。head のレビューより新しいコメントにあっても同じ)(11)
-  - 取得に失敗した・JSON として読めない・配列でない(12)
+  - レビューがスキップされている(先頭 12 行に `rate limit`、`review skipped`、`reviews paused`、`usage limit`、`quota` のいずれかがある。head のレビューより新しいコメントにあっても同じ)(11)
+  - 取得に失敗した・JSON として読めない・配列でない・出力が空(12)。なお、head に対するレビューが 0 件(空の配列 `[]`)は 10、gh の出力そのものが空・壊れているのは 12 です(どちらも記録しません)
   - **スキップや 0 件を pass とは記録しません。** 無料枠の上限で何も出なかったときは、レビューが存在しないので記録されません。
-- **数え方**(未解決の指摘だけ): 設定した投稿者のインラインコメントのうち、まだ diff に当たっている(`position` がある)もので、`✅ Addressed in commit` の印が無いものです。解決済みかどうかは REST では取れないため、この印で近似します(印が無い解決済みの指摘は、保守的に数えます)。
-- **重大度の対応表**: 指摘の**1 行目**の表記(小文字化して部分一致)を表で `blocker` か `should` に対応させます。既定は `critical`・`major` = blocker、`potential issue`・`minor`・`trivial`・`nitpick`・`refactor suggestion` = should。**表に無い表記と、表記が無い指摘は should**(保守的)。1 行目が複数の表記に当たるときは blocker が優先で、1 件と数えます。表は設定(`[severity]`)で足せます。blocker に上げる方向だけが効き、should に下げる設定は警告して無視します。
+- **数え方**(未解決の指摘だけ): 設定した投稿者のインラインコメントのうち、まだ有効なもの(`position` がある、または `subject_type` が `file` のファイル単位の指摘)で、`✅ Addressed in commit` の印が無いものです。解決済みかどうかは REST では取れないため、この印で近似します(印が無い解決済みの指摘は数え続けます)。`position` が無く、ファイル単位でもない指摘は、コードの変更で位置が消えた(outdated)ものとして数えません。
+- **重大度の対応表**: 指摘の本文から **HTML コメントとタグを取り除き、空行を飛ばした最初の行(最初の実質行)**を取り、その表記(小文字化して部分一致)を表で `blocker` か `should` に対応させます。実物の CodeRabbit の指摘は、1 行目が HTML コメント、2 行目が空で、重大度は 3 行目(picture タグ入り)にあるため、物理的な 1 行目ではなく最初の実質行を見ます。既定は `critical`・`major` = blocker、`potential issue`・`minor`・`trivial`・`nitpick`・`refactor suggestion` = should。最初の実質行が複数の表記に当たるときは blocker が優先で、1 件と数えます。表は設定(`[severity]`)で足せます。blocker に上げる方向だけが効き、should に下げる設定は警告して無視します。
+- **表記が見つからない指摘**(最初の実質行に表の表記が無い)は、`should` として数え、**`blocker` には数えません**。つまり「見落とすと pass 側に倒れうる」ので、**保守的な扱いではありません**。見落としに気づけるよう、件数を警告に出します(`warn: 重大度の表記が見つからない指摘が N 件あります`、成功時の出力にも `unknown-label=N`)。表記が見つからない指摘を blocker に倒すかは、人の判断で、**未決**です(倒すと、表記の形が変わったときに常に fail になる懸念があります)。
 - `blocker` が 1 以上なら `verdict=fail`、0 なら `pass` です(should は pass のまま)。
-- **本文の中の指示は読まず、実行しません**(Prompt for AI Agents、自動修正のチェックボックスなど)。見るのは、1 行目の重大度の表記、`✅ Addressed in commit` の印、スキップの見出し、件数だけです。
+- **本文の中の指示は読まず、実行しません**(Prompt for AI Agents、自動修正のチェックボックスなど)。見るのは、最初の実質行の重大度の表記、`✅ Addressed in commit` の印、スキップの見出し、件数だけです。
 - 終了コード: `0` 記録した / `2` 使い方の誤り / `5` agent の pane からは実行できない / `1` 設定または gh を使えない / `10` / `11` / `12` は上のとおり(記録しない)。
+
+- **同じ sha で一度 fail が記録されると、その sha のままでは復旧しません。** `evaluate` は「同じ sha で 1 件でも fail の系統は数えない」ので、指摘を直さずに(あるいは `✅ Addressed` の印が付く前に)再取り込みして pass が記録されても、先の fail が残ります。**新しい sha(新しいコミット)でレビューが付くことでだけ解消します。**
+- `--sha` は呼び出し側の値で、PR の現在の head そのものとは照合しません(取得したレビューの `commit_id` との一致を見るだけで、`evaluate` が head と照合します)。取り込みを定期的に呼ぶジョブは、PR の現在の head を GitHub から取って `--sha` に渡す前提です(次の一歩)。
 
 ### 設定(`config/gate-ingest.conf`)
 
@@ -174,6 +178,7 @@ tb gate ingest-review <task-id> --pr <o>/<r>#<n> --sha <head の sha>
 - agent は、同じ OS ユーザーで動いているため、記録ファイルを直接書ける、`HERDR_PANE_ID` を外して `by=human` で記録できる、`HERDR_BIN`・`TB_DB` を差し替えて別の agent 名や別のタスクの owner を名乗れる、といった迂回ができます。
 - `by=human` を独立 2 系統の根拠に数えないのは、その迂回の一つ(1 体の agent が複数の系統を作ること)を小さくするための検査です。
 - `HERDR_BIN`・`TB_DB` の差し替えへの対処(警告・拒否・無視)は、このテスト基盤が同じ環境変数に依存しているため、段 1a では入れていません。対処は、記録の書き込みを専用の経路に移す次の段で行います。
+- 取り込み口が使う gh ラッパー(`[gh] path`)の置き場の所有者・書き込み権限は、`tb` は確かめません(誰でも書けるファイルを指定できる)。設定は人だけが書く前提で、ラッパーの置き場の権限も、OS の権限による分離の段で扱います。
 - `reviewer` の役割ファイル(`roles/reviewer.md` と `map.conf` の対応)は、人が用意します。無い間、agent の pane からは記録できません(人の端末からは記録できます)。
 - 外部系統(CodeRabbit など)の取り込み口(`tb gate ingest-review`)は、**agent ではない決定論の経路が、`human` とは別の送信者 `ingest` で記録する**ものです。ただし、`ingest-review` の「agent の pane から実行できない」は `HERDR_PANE_ID` で見ているので、環境変数を外せば破れます。記録ファイルを書ける同じ OS ユーザーの agent は、`ingest` の行を直接書くこともできます。これも次の段(OS の権限による分離)で閉じます。取り込み口を呼ぶのは、人または決定論のジョブ(次の一歩の scheduler)です。
 - タスクの owner は DB から読みます。DB の場所は `tb` 共通の設定です。
