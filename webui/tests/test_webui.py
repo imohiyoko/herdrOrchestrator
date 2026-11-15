@@ -774,7 +774,7 @@ b = V(f"A-{_aid}")[2]
 check("アラートの解析レポートは DB の本文を出す", "DB の本文" in b and "<h3 class=md>原因</h3>" in b and "&lt;script&gt;" in b)
 check("登録されていない参照は 404", all(V(x)[0] == 404 for x in (f"C-{_cid}/99", "C-99999/0", "task:nope/0", "T-1/0", "A-99999", "/etc/passwd", "")))
 # パスを指定して開く(agent の作業ディレクトリ配下だけ)
-check("/docs に開ける範囲(agent の作業ディレクトリ)が出る", f"<code>{DOCS}</code>" in cl.get("/docs")[2])
+check("/docs に開ける範囲(agent の作業ディレクトリ)が出る", f"<code>{os.path.realpath(DOCS)}</code>" in cl.get("/docs")[2])
 b = V("", path=os.path.join(DOCS, "summary.md"))[2]
 check("作業ディレクトリ配下のパスは開ける(Markdown 整形)", "<div class=doc>" in b and "<strong>太字</strong>" in b)
 check("パス指定でもフォルダの中を開ける", "内側のファイル" in V("", path=os.path.join(DOCS, "out"), sub="sub/note.txt")[2])
