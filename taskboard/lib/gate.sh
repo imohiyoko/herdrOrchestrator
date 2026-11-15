@@ -518,6 +518,15 @@ cmd_review-submit() {
 GATE_SEV_KEYS=(critical major "potential issue" minor trivial nitpick "refactor suggestion")
 GATE_SEV_VALS=(blocker blocker should should should should should)
 GATE_ING_GH=""; GATE_ING_LOGIN=""; GATE_ING_ERR=""
+# 本文から重大度の表記を探す jq の定義(固定。本文は解釈せず、最初の実質行だけを見る)。
+# 実物の CodeRabbit の指摘は、1 行目が HTML コメント、2 行目が空、重大度は 3 行目(picture タグ入り)。
+# そのため HTML コメントとタグを除いて、空行を飛ばした最初の行(最初の実質行)から表記を探す。表の対応先がなければ "unknown"
+GATE_JQ_DEFS='
+    def firstline: ((. // "") | gsub("<!--.*?-->"; ""; "s") | gsub("<[^>]*>"; "") | split("\n") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)) | (.[0] // "") | ascii_downcase);
+    def sev: firstline as $l
+      | [$table | to_entries[] | . as $e | select($l | contains($e.key)) | $e.value] | if length == 0 then "unknown" elif index("blocker") then "blocker" else "should" end;
+    def addressed: test("(^|\n)\\s*✅ Addressed in commit");
+'
 
 _gate_load_ingest_conf() {
   local LC_ALL=C f=$GATE_INGEST_CONF sec="" line n=0 k v i found
@@ -599,12 +608,9 @@ _gate_cmd_ingest() {
   # 判定は jq の固定のプログラム。本文は、1 行目の重大度の表記と、決まった印の有無を見るだけ
   local res
   res=$(jq -nc --arg login "$GATE_ING_LOGIN" --arg sha "$sha" --argjson table "$table" \
-      --slurpfile rv "$tmp/reviews.json" --slurpfile cm "$tmp/comments.json" --slurpfile is "$tmp/issues.json" '
+      --slurpfile rv "$tmp/reviews.json" --slurpfile cm "$tmp/comments.json" --slurpfile is "$tmp/issues.json" "$GATE_JQ_DEFS"'
     def lines($n): ((. // "") | split("\n")[:$n] | join("\n"));
     def skipmark: lines(12) | test("rate limit|review skipped|reviews paused|usage limit|quota"; "i");
-    def sev: ((. // "") | split("\n")[0] | ascii_downcase) as $l
-      | [$table | to_entries[] | . as $e | select($l | contains($e.key)) | $e.value] | if index("blocker") then "blocker" else "should" end;
-    def addressed: test("(^|\n)\\s*✅ Addressed in commit");
     ($rv[0]) as $R | ($cm[0]) as $C | ($is[0]) as $I
     | [$R[] | select(.user.login == $login and ((.commit_id // "") | test("^[0-9a-f]{40}$")) and ((.commit_id) | startswith($sha))
         and (.state | IN("COMMENTED", "APPROVED", "CHANGES_REQUESTED")))] | sort_by(.submitted_at // "") as $heads
@@ -613,8 +619,9 @@ _gate_cmd_ingest() {
       | if ($h.body | skipmark) then {status: "skipped"}
         elif ([$I[] | select(.user.login == $login and ((.updated_at // "") > ($h.submitted_at // "")) and (.body | skipmark))] | length) > 0 then {status: "skipped"}
         else
-          [$C[] | select(.user.login == $login and .position != null and ((.body // "") | addressed | not)) | (.body | sev)] as $sevs
-          | {status: "ok", blocker: ([$sevs[] | select(. == "blocker")] | length), should: ([$sevs[] | select(. == "should")] | length)}
+          [$C[] | select(.user.login == $login and (.position != null or .subject_type == "file") and ((.body // "") | addressed | not)) | (.body | sev)] as $sevs
+          | {status: "ok", blocker: ([$sevs[] | select(. == "blocker")] | length), unknown: ([$sevs[] | select(. == "unknown")] | length),
+             should: ([$sevs[] | select(. == "should" or . == "unknown")] | length)}
         end
       end' 2>/dev/null) || { echo "tb: gate ingest-review: 解析に失敗したため記録しません" >&2; exit 12; }
   local st blk shd ver
@@ -625,9 +632,12 @@ _gate_cmd_ingest() {
     ok) ;;
     *) echo "tb: gate ingest-review: 解析結果が不正なため記録しません" >&2; exit 12;;
   esac
-  blk=$(jq -r '.blocker' <<<"$res"); shd=$(jq -r '.should' <<<"$res")
-  [[ $blk =~ ^[0-9]{1,4}$ && $shd =~ ^[0-9]{1,4}$ ]] || { echo "tb: gate ingest-review: 件数が範囲外のため記録しません" >&2; exit 12; }
+  local unk
+  blk=$(jq -r '.blocker' <<<"$res"); shd=$(jq -r '.should' <<<"$res"); unk=$(jq -r '.unknown' <<<"$res")
+  [[ $blk =~ ^[0-9]{1,4}$ && $shd =~ ^[0-9]{1,4}$ && $unk =~ ^[0-9]{1,4}$ ]] || { echo "tb: gate ingest-review: 件数が範囲外のため記録しません" >&2; exit 12; }
+  # 重大度の表記が見つからなかった指摘は should として数える(blocker には数えない)。見落としに気づけるよう、件数を警告に出す
+  ((unk == 0)) || echo "warn: 重大度の表記が見つからない指摘が ${unk} 件あります(should として数えました。blocker には数えていません)" >&2
   ver=pass; ((blk == 0)) || ver=fail
   _gate_append_record "$tid" "$GATE_INGEST_SENDER" "$pr" coderabbit "$sha" "$blk" "$shd" "$ver" -
-  echo "recorded: $tid REVIEW coderabbit ${sha:0:7} blocker=$blk should=$shd verdict=$ver by=$GATE_INGEST_SENDER"
+  echo "recorded: $tid REVIEW coderabbit ${sha:0:7} blocker=$blk should=$shd verdict=$ver by=$GATE_INGEST_SENDER unknown-label=$unk"
 }
