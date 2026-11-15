@@ -17,6 +17,7 @@ PQ_MAX_ATTEMPTS=3
 PQ_AUTH_RC=75   # gh ラッパーが「認証で止まった(auth-locked)」を伝える終了コード(ghtkn の 111 をラッパーが読み替える)
 PQ_MAX_CREATE=3   # 1 回の run で作る PR の上限(config/pr-queue.conf の max_create_per_run で変える)
 PQ_REASON=""
+PQ_SYNC_SHA=""
 
 pq_body_root() {
   local d=${PR_QUEUE_BODY_ROOT:-$(pq_conf body_root "$TB_ROOT/data/pr-bodies")}
@@ -143,7 +144,16 @@ pq_sync_origin() {
   fi
   tsha=$(git -C "$d" rev-parse -q --verify "refs/remotes/origin/$b^{commit}" 2>/dev/null) || { PQ_REASON="追跡参照が無い"; return 2; }
   [[ $tsha == "$osha" ]] || { PQ_REASON="追跡参照が origin の SHA と一致しない(取り込み後に origin が変わった)"; return 2; }
+  PQ_SYNC_SHA=$osha
   return 0
+}
+
+# origin のブランチの今の SHA を出す(PR を作る直前の再確認用)。取れなければ 1
+pq_origin_sha() {
+  local git=${PR_QUEUE_GIT:-git} d=${PR_QUEUE_REPO_DIR:-} out sha
+  out=$("$git" -C "$d" ls-remote --heads origin "refs/heads/$1" 2>/dev/null) || return 1
+  sha=$(awk -v t="refs/heads/$1" '$2==t{print $1; exit}' <<<"$out"); [[ -n $sha ]] || return 1
+  printf '%s' "$sha"
 }
 
 # PR_QUEUE_REPO_DIR が使えるか。使えなければ理由を PQ_REASON に入れて 1(差分を見られないので、承認も run もしない)
@@ -157,18 +167,20 @@ pq_repo_dir_ok() {
 
 # 差分を見る(必須)。PR_QUEUE_REPO_DIR(ローカルの clone)が空・存在しない・git の作業ツリーでないときは、見られないので通さない(fail-closed)。clone を変更しない(読み取りだけ)
 pq_diff_guard() {
-  local b=$1 d=${PR_QUEUE_REPO_DIR:-} ref files added
+  local b=$1 d=${PR_QUEUE_REPO_DIR:-} ref files added nums
   pq_repo_dir_ok || return 1
   ref=refs/remotes/origin/$b   # 検査は追跡参照だけ(ローカルブランチは使わない)
   git -C "$d" rev-parse -q --verify "$ref^{commit}" >/dev/null 2>&1 || { PQ_REASON="差分を取得できない(ブランチの追跡参照が clone に無い)"; return 1; }
   git -C "$d" rev-parse -q --verify "refs/remotes/origin/$PQ_BASE^{commit}" >/dev/null 2>&1 \
     || { PQ_REASON="差分を取得できない(origin/$PQ_BASE が clone に無い)"; return 1; }
-  files=$(git -C "$d" -c core.quotePath=false diff -z --name-only "origin/$PQ_BASE...$ref" 2>/dev/null | tr '\0' '\n') || { PQ_REASON="差分を取得できない"; return 1; }
+  files=$(set -o pipefail; git -C "$d" -c core.quotePath=false diff -z --name-only "origin/$PQ_BASE...$ref" 2>/dev/null | tr '\0' '\n') || { PQ_REASON="差分を取得できない"; return 1; }
   if grep -qE '^\.github/(workflows|actions)/' <<<"$files"; then PQ_REASON="CI 設定(.github/workflows)を含む。人が作る"; return 1; fi
-  if git -C "$d" diff --numstat "origin/$PQ_BASE...$ref" 2>/dev/null | awk -F'\t' '$1=="-" && $2=="-"{f=1} END{exit !f}'; then
+  nums=$(git -C "$d" diff --numstat "origin/$PQ_BASE...$ref" 2>/dev/null) || { PQ_REASON="差分を取得できない"; return 1; }
+  if awk -F'\t' '$1=="-" && $2=="-"{f=1} END{exit !f}' <<<"$nums"; then
     PQ_REASON="バイナリの変更を含む(内容を検査できない)。人が作る"; return 1
   fi
-  added=$(git -C "$d" -c core.quotePath=false diff -U0 "origin/$PQ_BASE...$ref" 2>/dev/null | grep -E '^\+[^+]' || true)
+  added=$(git -C "$d" -c core.quotePath=false diff -U0 "origin/$PQ_BASE...$ref" 2>/dev/null) || { PQ_REASON="差分を取得できない"; return 1; }
+  added=$(grep -E '^\+[^+]' <<<"$added" || true)
   if grep -qE 'AdministratorAccess' <<<"$added"; then PQ_REASON="AdministratorAccess を足す差分を含む。人が作る"; return 1; fi
   if pq_patterns_only "$added"; then PQ_REASON="差分に秘密らしい値がある(種類: $PQ_REASON)"; return 1; fi
   return 0
@@ -245,7 +257,7 @@ pq_deny_check() {
   printf '%s\n' "title" >>"$PQ_DENY_POS"; printf '%s\n' "$title" >>"$PQ_DENY_TXT"
   printf '%s\n' "branch" >>"$PQ_DENY_POS"; printf '%s\n' "$branch" >>"$PQ_DENY_TXT"
   pq_deny_unit body <"$file"
-  if ! out=$(git -C "$d" rev-list "origin/$PQ_BASE..$ref" 2>/dev/null); then rm -rf "$td"; PQ_REASON="公開前検査ができない(コミットを取得できない)"; return 2; fi
+  if ! out=$("${PR_QUEUE_GIT:-git}" -C "$d" rev-list "origin/$PQ_BASE..$ref" 2>/dev/null); then rm -rf "$td"; PQ_REASON="公開前検査ができない(コミットを取得できない)"; return 2; fi
   while IFS= read -r c; do
     [[ -n $c ]] || continue
     git -C "$d" log -1 --format=%B "$c" 2>/dev/null | pq_deny_unit "commit ${c:0:7}"
@@ -412,7 +424,7 @@ pq_auth_locked() {  # $1=dry
 
 # scheduler の COMMAND から。approved だけを処理する。--dry-run は gh pr create も DB 更新もしない
 pq_run() {
-  local dry=0 gh id row repo branch title file out rc n url made=0 maxc lrc locked=0
+  local dry=0 gh id row repo branch title file out rc n url made=0 maxc lrc locked=0 checked cur
   case ${1:-} in "") ;; --dry-run) dry=1;; *) usage "pr-queue run [--dry-run]";; esac
   pq_gh || return 1; gh=$PQ_GH
   # 環境の不備(clone が無い)で承認済みの行を却下しない。行には触らず、警告して止まる(直せば次の回に進む)
@@ -426,6 +438,7 @@ pq_run() {
     repo=$(jq -r .repo <<<"$row"); branch=$(jq -r .branch <<<"$row"); title=$(jq -r .title <<<"$row"); file=$(jq -r .body_file <<<"$row")
     # 検査の直前に origin と同期する(承認後に別の clone から push し直された内容を、検査しないまま PR にしない)
     pq_sync_origin "$branch" "$dry" && rc=0 || rc=$?
+    checked=$PQ_SYNC_SHA
     if ((rc == 2)); then echo "PQ-$id skipped: $PQ_REASON(検査できないので作らない。次の回に回す)"; continue; fi
     if ((rc == 1)) || ! pq_guard "$row"; then
       echo "PQ-$id rejected: $PQ_REASON"
@@ -458,6 +471,10 @@ pq_run() {
       continue
     fi
     if ((dry)); then echo "PQ-$id would-create: $repo $branch → $PQ_BASE (draft)"; made=$((made+1)); continue; fi
+    # 作る直前にもう一度 origin の SHA を見る。検査した SHA と違えば(重複確認のあいだに push し直された等)作らず、行は触らず次回に回す
+    if ! cur=$(pq_origin_sha "$branch") || [[ $cur != "$checked" ]]; then
+      echo "PQ-$id skipped: 検査したあとに origin のブランチが変わった(か、確認できない)。作らない(次の回に回す)"; continue
+    fi
     out=$("$gh" pr create --repo "$repo" --base "$PQ_BASE" --head "$branch" --title "$title" --body-file "$file" --draft 2>/dev/null) && rc=0 || rc=$?
     if ((rc == 0)); then
       url=$(grep -Eo 'https://[^[:space:]]+/pull/[0-9]+' <<<"$out" | head -n 1 || true)

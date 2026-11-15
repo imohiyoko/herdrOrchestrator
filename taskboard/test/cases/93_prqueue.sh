@@ -47,9 +47,11 @@ args=("$@"); [[ ${args[0]} == -C ]] && args=("${args[@]:2}")
 case ${args[0]} in
   ls-remote)
     [[ -z ${FAKE_GIT_LSREMOTE_FAIL:-} ]] || exit 1
+    n=0; if [[ -n ${FAKE_GIT_COUNT:-} ]]; then n=$(( $(cat "$FAKE_GIT_COUNT" 2>/dev/null || echo 0) + 1 )); echo $n >"$FAKE_GIT_COUNT"; fi
     if [[ -n ${FAKE_GIT_HEADS+x} ]]; then for b in $FAKE_GIT_HEADS; do [[ refs/heads/$b == ${args[${#args[@]}-1]} ]] && printf '%s\trefs/heads/%s\n' "$(git -C "$FAKE_GIT_CLONE" rev-parse "refs/remotes/origin/$b")" "$b"; done; exit 0
-    elif [[ -n ${FAKE_GIT_SHA_OVERRIDE:-} ]]; then git "$@" | sed "s/^[0-9a-f]*/$FAKE_GIT_SHA_OVERRIDE/"
+    elif [[ -n ${FAKE_GIT_SHA_OVERRIDE:-} ]] && ((n >= ${FAKE_GIT_OVERRIDE_FROM:-0})); then git "$@" | sed "s/^[0-9a-f]*/$FAKE_GIT_SHA_OVERRIDE/"
     else exec git "$@"; fi;;
+  rev-list) [[ -z ${FAKE_GIT_REVLIST_FAIL:-} ]] || exit 1; exec git "$@";;
   fetch) [[ -z ${FAKE_GIT_FETCH_FAIL:-} ]] || exit 1; [[ -z ${FAKE_GIT_HEADS+x} ]] || exit 0; exec git "$@";;
   log) cat "$FAKE_GIT_TITLES/$(sed 's#.*origin/agent/##' <<<"${args[${#args[@]}-1]}")" 2>/dev/null;;
   *) exec git "$@";;
@@ -394,13 +396,13 @@ rm -f "$PQ_FIXEDCONF"; eq "deny config: --dry-run with no setting stops (exit 1)
 # 環境変数と PR_QUEUE_CONF では決められない(差し替えの口を作らない)
 : >"$FAKE_GH_LOG"
 out=$(PR_QUEUE_DENY_PATTERNS=$PQ_DENY PR_QUEUE_DENY_EXCEPTIONS=$PQ_EX $TB pr-queue run 2>&1); r=$?
-eq "deny config: env values are ignored with a warning (no conf → still stops)" "$r $(grep -c '無視' <<<"$out") $(wc -l <"$FAKE_GH_LOG" | tr -d ' ') $(dst $k1)" "1 1 0 approved0"
+eq "deny config: env values are ignored with a warning (no conf → still stops)" "$r $(grep -c 'PR_QUEUE_DENY_PATTERNS / PR_QUEUE_DENY_EXCEPTIONS は無視します' <<<"$out") $(wc -l <"$FAKE_GH_LOG" | tr -d ' ') $(dst $k1)" "1 1 0 approved0"
 export PR_QUEUE_CONF=$TMP/pq-deny.conf; printf '%s\n' "$PQ_RULE" "deny_patterns = $PQ_DENY" >"$PR_QUEUE_CONF"
 eq "deny config: deny_patterns in a PR_QUEUE_CONF file is ignored (only the fixed config/pr-queue.conf counts)" "$(rc $TB pr-queue run) $(dst $k1)" "1 approved0"
 unset PR_QUEUE_CONF
 pqdeny "$PQ_DENY"
 : >"$FAKE_GH_LOG"; out=$(PR_QUEUE_DENY_PATTERNS=$TMP/none.txt PR_QUEUE_DENY_EXCEPTIONS=$TMP/none.txt $TB pr-queue run 2>&1)
-eq "deny config: with the conf set, a bad env value changes nothing (warned and ignored; the run goes through)" "$(grep -c '無視' <<<"$out") $(dst $k1)" "1 created0"
+eq "deny config: with the conf set, a bad env value changes nothing (warned and ignored; the run goes through)" "$(grep -c 'PR_QUEUE_DENY_PATTERNS / PR_QUEUE_DENY_EXCEPTIONS は無視します' <<<"$out") $(dst $k1)" "1 created0"
 
 # ---- 検査した内容と PR になる内容を同じにする(origin と同期し、追跡参照だけを検査する)
 pq2=$TMP/pq-clone2; git clone -q "$PQ_O" "$pq2" 2>/dev/null; git -C "$pq2" config user.email "t""@example.invalid"; git -C "$pq2" config user.name t2
@@ -459,6 +461,34 @@ pqdeny "$PQ_DENY" "$PQ_EX"; $TB pr-queue run >/dev/null 2>&1; pqdeny "$PQ_DENY"
 eq "author/committer: an author address that matches a rule is a hit (position author <hash>); the noreply address passes via the exceptions file" "$(dst $au1) $(derr $au1 | grep -c 'r-mail@author ') $(dst $au2)" "rejected0 1 created0"
 
 unset TB_NOTIFY_DEDUPE_SEC TB_NOTIFY_ENABLED TB_NOTIFY_DIR TB_NOTIFY_CONF
+
+# ---- 検査した SHA と PR になる内容のあいだの隙: 作る直前にもう一度 origin の SHA を見る
+dn r1; r1=$DQ_ID; : >"$FAKE_GH_LOG"; rm -f "$TMP/pq-lscount"
+FAKE_GIT_COUNT=$TMP/pq-lscount FAKE_GIT_OVERRIDE_FROM=2 FAKE_GIT_SHA_OVERRIDE=$(printf '2%.0s' {1..20})$(printf '2%.0s' {1..20}) $TB pr-queue run >/dev/null 2>&1
+eq "race: origin changes between the check and the create (2nd ls-remote differs) → not created, row untouched" "$(dst $r1) $(pqgh 'pr create') $(pqgh 'pr list')" "approved0 0 1"
+rm -f "$TMP/pq-lscount"; FAKE_GIT_COUNT=$TMP/pq-lscount $TB pr-queue run >/dev/null 2>&1
+eq "race: without the change the same row is created (checks ls-remote twice)" "$(dst $r1) $(cat "$TMP/pq-lscount")" "created0 2"
+
+# ---- 変異で落ちるテスト: approve の同期(pending の行で)、committer だけ、例外は規則名で絞る、deny_check 自身の rc 2
+pqbody ap1; pqadd agent/ap1 ap1 >/dev/null; ap1=$(pqsql 'SELECT MAX(id) FROM pr_queue;')
+git --git-dir="$PQ_O" branch -q -D agent/ap1
+eq "approve (pending row) syncs: the branch is gone on origin but the clone still has its tracking ref → refused, stays pending" "$(rc $TB pr-queue approve $ap1) $(dst $ap1)" "1 pending0"
+pqbody ap2; pqadd agent/ap2 ap2 >/dev/null; ap2=$(pqsql 'SELECT MAX(id) FROM pr_queue;')
+push2 agent/ap2 terraform/ap2.tf 'policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"'
+eq "approve (pending row) syncs: origin has a worse change than the stale tracking ref → refused by the guard, stays pending" "$(rc $TB pr-queue approve $ap2) $(dst $ap2)" "1 pending0"
+mkc() { git -C "$R" checkout -q -B "$1" main; mkdir -p "$R/terraform"; printf '%s\n' "$1" >"$R/terraform/$(basename "$1").tf"; git -C "$R" add .; env "GIT_COMM""ITTER_EMAIL=someone""@mail-corp.invalid" git -C "$R" commit -q -m c; git -C "$R" push -q --force origin "$1" 2>/dev/null; git -C "$R" checkout -q main; }
+pqbody cm1; mkc agent/cm1; $TB pr-queue add --branch agent/cm1 --body-file "$PR_QUEUE_BODY_ROOT/cm1.md" --title t >/dev/null 2>&1
+cm1=$(pqsql "SELECT id FROM pr_queue WHERE branch='agent/cm1';"); $TB pr-queue approve $cm1 >/dev/null 2>&1; $TB pr-queue run >/dev/null 2>&1
+eq "committer only: a rule hit in the committer (author is clean) is caught, position committer <hash>" "$(dst $cm1) $(derr $cm1 | grep -c 'r-mail@committer ') $(derr $cm1 | grep -c 'r-mail@author ')" "rejected0 1 0"
+printf '%s\n' '# 規則名が違う例外' 'r-mail internal-corp' >"$TMP/pq-ex-other.txt"
+dn x1 '対応 internal-corp の件'; x1=$DQ_ID
+pqdeny "$PQ_DENY" "$TMP/pq-ex-other.txt"; $TB pr-queue run >/dev/null 2>&1; pqdeny "$PQ_DENY"
+eq "exception is scoped by rule name: an r-mail exception does not excuse an r-internal hit (even if its pattern matches the fragment)" "$(dst $x1) $(derr $x1 | grep -c 'r-internal@title')" "rejected0 1"
+dn z1; z1=$DQ_ID; : >"$FAKE_GH_LOG"
+FAKE_GIT_REVLIST_FAIL=1 $TB pr-queue run >/dev/null 2>&1
+eq "deny check cannot run itself (rc 2: cannot list commits) → row untouched (not rejected), nothing created" "$(dst $z1) $(pqgh 'pr create')" "approved0 0"
+$TB pr-queue run >/dev/null 2>&1
+eq "deny check rc 2: the next normal run creates it" "$(dst $z1)" "created0"
 
 # ---- 設定: branch_prefix を変える / body_first_line が空なら 1 行目は見ない
 export PR_QUEUE_CONF=$TMP/pq2.conf; printf 'branch_prefix = bot/\n' >"$PR_QUEUE_CONF"
