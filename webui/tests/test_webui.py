@@ -79,7 +79,7 @@ def make_env(name, **extra):
     env.update(
         WEBUI_FAIL_DELAY="0", TB_PROMPT_VERIFY_SEC="0", HERDR_BIN=os.path.join(HERE, "fake", "herdr"), FAKE_HERDR_DIR=os.path.join(TMP, "fake"),
         WEBUI_RUN_DIR=os.path.join(d, "run"), WEBUI_TB_DB=os.path.join(d, "tasks.db"),
-        WEBUI_SCHED_LOGS=os.path.join(d, "logs"), WEBUI_DISPATCH=os.path.join(d, "dispatch.jsonl"),
+        WEBUI_SCHED_LOGS=os.path.join(d, "logs"), WEBUI_APPROVALS=os.path.join(d, "approvals.conf"),
         WEBUI_SCHED_JOBS=os.path.join(d, "jobs"), WEBUI_SCHED_SETTINGS=os.path.join(d, "settings"))
     env.update(extra)
     return env, d
@@ -271,9 +271,11 @@ open(os.path.join(env["WEBUI_SCHED_JOBS"], "job1.conf"), "w").write(
     "COMMAND='echo hi'\nWINDOW=09:00-21:00\nINTERVAL_MIN=10\nTZ=Asia/Tokyo\n")
 open(os.path.join(env["WEBUI_SCHED_LOGS"], "job1.log"), "w").write(
     json.dumps({"ts": "2026-11-06T12:00:00+0900", "job": "job1", "action": "ran", "reason": "exit 0", "exit": 0}) + "\n")
-with open(env["WEBUI_DISPATCH"], "w") as f:
-    for i in range(40):
-        f.write(json.dumps({"ts": f"t{i:02d}", "action": "prompt", "target": "alpha", "prompt": "p" + XSS}) + "\n")
+# 権限(approvals.conf)の fixture。順位・警告・届かない行・エスケープの確認用
+with open(env["WEBUI_APPROVALS"], "w") as f:
+    f.write("# 先頭の注釈\nsend:info:* = allow   # 2026-11-01T00:00:00Z に人が変更\nsend:task:dd-* = allow\nsend:task:* = ask\n"
+            "agent:* = allow   # 2026-11-02T00:00:00Z に人が追加\nrole:* = ask\nrole:change = allow\n"
+            "x<b>bold</b>y = allow\n* = ask\n")
 open(os.path.join(env["WEBUI_SCHED_LOGS"], "job2.log"), "w").write(
     json.dumps({"ts": "2026-11-06T11:00:00+0900", "job": "job2", "action": "ran", "reason": "exit 0"}) + "\n" +
     json.dumps({"ts": "2026-11-06T11:10:00+0900", "job": "job2", "action": "skipped", "reason": "busy"}) + "\n" +
@@ -284,6 +286,17 @@ _c.execute("INSERT INTO proxy_requests (task_id,cmd,why,effect,status,created_at
            "('T-1','git push " + XSS + "','push したい','external','pending-human','2026-11-06T00:00:00Z','2026-11-06T00:00:00Z')")
 _c.execute("INSERT INTO proxy_requests (task_id,cmd,why,effect,status,created_at,updated_at) VALUES "
            "('T-1','ls','見る','read-only','done','2026-11-06T00:00:00Z','2026-11-06T00:00:00Z')")
+_c.execute("INSERT INTO approval_changes (pattern,value,created_at) VALUES ('agent:*','allow','2026-11-02T00:00:00Z')")
+# 送信履歴(messages)の fixture: send 5 件(O-7 付き、本文 2 行)、failed の proposal 150 件、report 110 件、scheduler / busy も
+for i in range(5):
+    _c.execute("INSERT INTO messages (kind,ref,target,body,result,created_at) VALUES ('send',?,'alpha',?,'sent','2026-11-05T01:00:00Z')",
+               (f"O-{7 + i}", "一行目 " + XSS + f" s{i}\nSECOND-LINE-SECRET-{i}"))
+for i in range(150):
+    _c.execute("INSERT INTO messages (kind,ref,target,body,result,created_at) VALUES ('proposal','P-1','beta',?,'failed','2026-11-04T01:00:00Z')", (f"failbody-{i}",))
+for i in range(110):
+    _c.execute("INSERT INTO messages (kind,ref,target,body,result,created_at) VALUES ('report','T-1','gamma',?,'sent','2026-11-06T01:00:00Z')", (f"reportbody-{i}",))
+_c.execute("INSERT INTO messages (kind,ref,target,body,result,created_at) VALUES ('scheduler','j1','alpha','sched-busy','busy','2026-11-03T01:00:00Z')")
+_c.execute("INSERT INTO messages (kind,ref,target,body,result,created_at) VALUES ('send','O-99','alpha',?,'sent','2026-11-05T02:00:00Z')", ("\nSECOND-LINE-SECRET-LEAD",))
 _c.commit()
 _c.close()
 # 旧方式の run/token が残っていても無視される
@@ -293,7 +306,7 @@ p = start(env)
 port = wait_port(env, p)
 check("起動して port が分かる", port is not None)
 cl = Client(port)
-PAGES = ["/", "/notifications", "/agents", "/agents/alpha", "/tasks", "/tasks/T-1", "/inbox", "/outbox", "/jobs", "/ledger"]
+PAGES = ["/", "/notifications", "/agents", "/agents/alpha", "/tasks", "/tasks/T-1", "/inbox", "/outbox", "/jobs", "/ledger", "/perms"]
 
 # ---- 初回設定
 for path in PAGES:
@@ -389,7 +402,7 @@ for path in PAGES:
     check(f"GET {path} が 200", s_ == 200, str(s_))
     # 入力欄(対応済みにする)があるページは自動更新しない
     check(f"{path}: 共通ナビ・meta refresh・バッジ",
-          (('http-equiv="refresh"' in b) != ('action="/resolve"' in b)) and 'href="/ledger"' in b and 'class="badge"' in b, path)
+          (('http-equiv="refresh"' in b) != ('action="/resolve"' in b or path in ("/ledger", "/perms"))) and 'href="/ledger"' in b and 'class="badge"' in b, path)
     check(f"{path}: スクリプトは同一オリジンの notify.js だけ",
           re.findall(r"<script[^>]*>", b, re.I) == [NOTIFY_TAG[:-9]] and "<script" not in no_js(b).lower()
           and "<img" not in b.lower(), str(re.findall(r"<script[^>]*>", b, re.I)))
@@ -488,8 +501,86 @@ if subprocess.run(["which", "node"], capture_output=True).returncode == 0:
     jsf = os.path.join(TMP, "notify.js")
     open(jsf, "w").write(r[2])
     check("notify.js の構文(node --check)", subprocess.run(["node", "--check", jsf], capture_output=True).returncode == 0)
-check("台帳は直近 30 件", cl.get("/ledger")[2].count("<tr>") == 31)
+
+# ---- 送信履歴(/ledger)と権限(/perms): 読み取りだけ
+L = cl.get("/ledger")
+check("送信履歴: 200 で、旧 dispatch.jsonl の記述が無い", L[0] == 200 and "dispatch.jsonl" not in L[2].lower() and "<h1>送信履歴</h1>" in L[2])
+check("送信履歴: 種別ごとの件数サマリ(failed 150 / report 110)", "<h2>種別ごとの件数</h2>" in L[2] and ">150<" in L[2] and ">110<" in L[2])
+check("送信履歴: 既定は最大 100 件で failed を畳む", L[2].count("reportbody-") == 98 and "failbody-" not in L[2] and "畳んでいます" in L[2])
+K = cl.get("/ledger?kind=send")
+check("送信履歴: send は O-n を /outbox へリンクし、本文は 1 行目だけ",
+      '<a href="/outbox">O-7</a>' in K[2] and "SECOND-LINE-SECRET" not in K[2] and "一行目" in K[2])
+check("送信履歴: 本文の HTML はエスケープ", XSS not in K[2] and "&lt;script&gt;" in K[2])
+F = cl.get("/ledger?result=failed")
+check("送信履歴: result=failed で failed だけ(最大 100 件)", F[2].count("failbody-") == 100 and "reportbody-" not in F[2])
+A = cl.get("/ledger?result=all&kind=proposal")
+check("送信履歴: result=all で failed も出る", "failbody-" in A[2] and "畳んでいます" not in A[2] and "failbody-" not in cl.get("/ledger?kind=proposal")[2])
+check("送信履歴: kind=send では他種別の failed を畳み件数に数えない", "畳んでいます" not in K[2])
+_KP = cl.get("/ledger?kind=proposal")[2]
+check("送信履歴: kind=proposal は failed 150 件を畳み件数に出す", "failed 150 件は畳んでいます" in _KP)
+check("送信履歴: 全角数字の日付は不正", "YYYY-MM-DD" in cl.get("/ledger?from=%EF%BC%92%EF%BC%90%EF%BC%92%EF%BC%96-%EF%BC%90%EF%BC%91-%EF%BC%90%EF%BC%91")[2])
+check("送信履歴: kind で絞る", K[2].count("SECOND") == 0 and "一行目" in K[2] and "reportbody-" not in K[2])
+T = cl.get("/ledger?target=alpha")
+check("送信履歴: 宛先で絞る(busy も出る)", "sched-busy" in T[2] and "reportbody-" not in T[2])
+D = cl.get("/ledger?from=2026-11-05&to=2026-11-05&result=all")
+check("送信履歴: 期間で絞る", "一行目" in D[2] and "reportbody-" not in D[2] and "failbody-" not in D[2])
+for bad in ["kind=zzz", "target=a%20b%3Cx", "from=bad", "to=2026-13-xx%27", "result=%27%3B--"]:
+    r = cl.get("/ledger?" + bad)
+    check(f"送信履歴: 不正な絞り込み {bad} でも 200(エラー表示。SQL に渡さない)", r[0] == 200 and "<b" in r[2] and "'--" not in r[2], str(r[0]))
+check("送信履歴: POST は 405", cl.raw("POST", "/ledger", {"a": "b"})[0] == 405)
+check("送信履歴: 自動更新しない(入力欄あり)", 'http-equiv="refresh"' not in L[2])
+
+_AP = env["WEBUI_APPROVALS"]
+_m0 = os.stat(_AP).st_mtime_ns
+P = cl.get("/perms")
+check("権限: 200", P[0] == 200 and "approvals.conf" in P[2])
+rows = re.findall(r"<tr><td>(\d+)</td><td><code[^>]*>([^<]*)</code></td><td>(?:<b[^>]*>)?(allow|ask)", P[2])
+check("権限: 上から順に順位・パターン・値", [(a, b, c) for a, b, c in rows][:4] == [("1", "send:info:*", "allow"), ("2", "send:task:dd-*", "allow"), ("3", "send:task:*", "ask"), ("4", "agent:*", "allow")], str(rows[:5]))
+check("権限: 行末の注記と変更履歴を併記", "2026-11-01T00:00:00Z に人が変更" in P[2] and "履歴: 2026-11-02T00:00:00Z に allow" in P[2])
+check("権限: 一致の例", "<code>send:info:worker1</code>" in P[2] and "<code>agent:new:worker1</code>" in P[2])
+check("権限: * = ask に警告", "全体の既定" in P[2])
+check("権限: 広い allow(agent:*)に警告", "広い allow" in P[2])
+check("権限: 宛先を絞った allow はワイルドカード注意だけ", "ワイルドカードの allow" in P[2])
+check("権限: 上の行で隠れる行を指摘", "先に一致するため" in P[2] and "上の 5 行目" in P[2])
+check("権限: 変更履歴の節", "変更履歴(直近 50 件)" in P[2] and "誰が" in P[2])
+check("権限: 行のパターンの HTML はエスケープ", "<b>bold</b>" not in P[2] and "&lt;b&gt;bold" in P[2])
+check("権限: 変更ボタンも POST フォームも無い(ログアウトだけ)", P[2].count("method=post") == 1 and 'action="/logout"' in P[2] and "<button" in P[2])
+S1 = cl.get("/perms?op=send:task:dd-x")[2]
+check("権限: 検索 send:task:dd-x は 2 行目で allow", "2 行目" in S1 and "<b class=\"warn\">allow</b>" in S1)
+check("権限: 検索 send:task:w1 は 3 行目で ask", "3 行目" in cl.get("/perms?op=send:task:w1")[2])
+check("権限: 検索 zzz:q は * = ask(8 行目)", "8 行目" in cl.get("/perms?op=zzz:q")[2])
+check("権限: 不正な操作名は拒否", "使えない文字" in cl.get("/perms?op=a%20b%3Bc")[2] and cl.get("/perms?op=a%20b")[0] == 200)
+C = cl.get("/perms?pat=send:task:w1&val=allow")[2]
+check("権限: tb allow のコマンド行を表示するだけ", "<pre>tb allow send:task:w1</pre>" in C and "自分の端末" in C and "先頭" in C)
+check("権限: * への allow に強い警告", "全体を allow にします" in cl.get("/perms?pat=*&val=allow")[2])
+check("権限: 値・パターンが不正ならコマンドを出さない", "<pre>tb" not in cl.get("/perms?pat=a%3Bb&val=allow")[2] and "<pre>tb" not in cl.get("/perms?pat=ab&val=rm")[2])
+check("権限: シェルの特殊文字を含むパターンは出さない", "<pre>tb" not in cl.get("/perms?pat=%24%28id%29&val=ask")[2])
+check("権限: approvals.conf は GET の前後で変わらない(mtime)", os.stat(_AP).st_mtime_ns == _m0)
+check("権限: 先頭が - の操作名・パターンは不正", "使えない文字" in cl.get("/perms?op=-x")[2] and "<pre>tb" not in cl.get("/perms?pat=-x&val=allow")[2])
+check("権限: POST は 405", cl.raw("POST", "/perms", {"a": "b"})[0] == 405)
+check("権限: 自動更新しない", 'http-equiv="refresh"' not in P[2])
+_un = Client(port)
+for _pth in ["/ledger", "/perms", "/perms?op=send:task:x", "/ledger?result=all"]:
+    _r = _un.get(_pth)
+    check(f"未ログインの {_pth} は /login へ(本文なし)", _r[0] == 302 and _r[1].get("Location", "").startswith("/login") and "send:" not in _r[2] and "approvals" not in _r[2])
 check("定期実行が出る", "job1" in cl.get("/jobs")[2])
+
+# conf を一時的に差し替えて境界を確かめる(読み取りだけの画面なので、戻せば元の表示に戻る)
+_orig = open(_AP, encoding="utf-8").read()
+open(_AP, "w", encoding="utf-8").write("send:task:[[:alpha:]]* = ask\nsend:task:* = allow\nrole:change = ask\n* = ask\n")
+_B = cl.get("/perms")[2]
+check("権限: [ を含む行に警告を出す", "[ を含むパターン" in _B)
+_R = cl.get("/perms?op=send:task:w1")[2]
+check("権限: [ の行に当たる操作は判定不能(下の allow へ進まない)", "判定不能" in _R and "<b class=\"warn\">allow</b>" not in _R and "→ <b>ask</b>" not in _R)
+check("権限: [ の行より下の行の一致の例は出さない(決めつけない)", "<code>send:task:worker1</code>" not in _B)
+check("権限: [ の行が先頭にあれば、どの操作もそこで止まる(下の行を使わない)", "判定不能" in cl.get("/perms?op=role:change")[2])
+open(_AP, "w", encoding="utf-8").write("# " + "x" * 262144 + "\nsend:task:* = allow\n* = ask\n")
+_Big = cl.get("/perms?op=send:task:w1")
+check("権限: 256 KiB 超の conf は全部読めないと出し、ask とも allow とも断定しない",
+      _Big[0] == 200 and "全部は読めません" in _Big[2] and "全部は読めていない" in _Big[2] and "→ <b" not in _Big[2] and "<td>1</td>" not in _Big[2])
+open(_AP, "w", encoding="utf-8").write(_orig)
+check("権限: conf を戻すと元の表示に戻る", "<td>1</td>" in cl.get("/perms")[2])
+
 
 # ---- 定期実行の設定(Web UI から変更できる唯一の操作)
 SET = os.path.join(env["WEBUI_SCHED_SETTINGS"], "job1.settings")
@@ -709,7 +800,7 @@ b = V(f"A-{_aid}")[2]
 check("アラートの解析レポートは DB の本文を出す", "DB の本文" in b and "<h3 class=md>原因</h3>" in b and "&lt;script&gt;" in b)
 check("登録されていない参照は 404", all(V(x)[0] == 404 for x in (f"C-{_cid}/99", "C-99999/0", "task:nope/0", "T-1/0", "A-99999", "/etc/passwd", "")))
 # パスを指定して開く(agent の作業ディレクトリ配下だけ)
-check("/docs に開ける範囲(agent の作業ディレクトリ)が出る", f"<code>{DOCS}</code>" in cl.get("/docs")[2])
+check("/docs に開ける範囲(agent の作業ディレクトリ)が出る", f"<code>{os.path.realpath(DOCS)}</code>" in cl.get("/docs")[2])
 b = V("", path=os.path.join(DOCS, "summary.md"))[2]
 check("作業ディレクトリ配下のパスは開ける(Markdown 整形)", "<div class=doc>" in b and "<strong>太字</strong>" in b)
 check("パス指定でもフォルダの中を開ける", "内側のファイル" in V("", path=os.path.join(DOCS, "out"), sub="sub/note.txt")[2])
@@ -867,6 +958,11 @@ out2 = stop_out(p)
 check("ログに再設定の成功と拒否(期限切れ・不正)が残る", "reset: ok" in out2 and "reset: denied (expired)" in out2 and "reset: denied (invalid)" in out2 and "reset: denied (missing)" in out2, out2[-600:])
 leak = [x for x in (PW, NEWPW, WRONG, cookie_val, old.split("=", 1)[1], "legacy-token") if x in out1 + out2]
 check("ログ(stdout/stderr)にパスワード・セッション値を出さない", not leak, f"{len(leak)} 件")
+leak2 = [x for x in ("failbody-", "reportbody-", "SECOND-LINE-SECRET", "send:task:dd-x", "send:task:w1", "approvals.conf") if x in out1 + out2]
+check("ログに送信履歴の本文・権限の検索語(URL のクエリ)を出さない", not leak2, str(leak2))
+_src = open(os.path.join(os.path.dirname(SERVER), "app", "perms.py"), encoding="utf-8").read()
+check("権限の画面は tb も他のコマンドも呼ばない(agent の pane から効く経路を作らない)",
+      "subprocess" not in _src and "os.system" not in _src and "open(path, encoding" in _src and '"w"' not in _src)
 
 # ================= DB 不在・ログ不在・壊れた DB
 for name, prep in (("nodb", None), ("baddb", lambda e_: open(e_["WEBUI_TB_DB"], "w").write("not a sqlite file"))):
@@ -882,7 +978,7 @@ for name, prep in (("nodb", None), ("baddb", lambda e_: open(e_["WEBUI_TB_DB"], 
         c.raw("POST", "/setup", {"csrf": c.csrf("/setup"), "username": USER, "password": PW, "confirm": PW})
         c.cookie = None
         c.login()
-        for path in ["/", "/notifications", "/api/notifications", "/agents", "/tasks", "/tasks/T-1", "/inbox", "/jobs", "/ledger"]:
+        for path in ["/", "/notifications", "/api/notifications", "/agents", "/tasks", "/tasks/T-1", "/inbox", "/jobs", "/ledger", "/perms"]:
             s_ = c.get(path)[0]
             check(f"{name}: GET {path}", s_ in (200, 404), str(s_))
         check(f"{name}: サーバー生存", p.poll() is None)
