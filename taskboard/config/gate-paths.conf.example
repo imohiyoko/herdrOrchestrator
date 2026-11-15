@@ -5,7 +5,8 @@
 # 書き方: パスは作業ツリーの根からの相対。* は / も越えて一致する(広めに当たる = 人に回る側)。
 #         **/ で始めると根直下にも当たる。大文字小文字は区別しない。改名は旧パスと新パスの両方を見る。
 #
-# 次は設定がなくても常に効く(外せない): .github/**  **/gate*.conf  **/gate-paths.conf  **/gate*.sh  **/approvals.conf  **/risk-rules.conf
+# 次は設定がなくても常に効く(外せない): .github  .github/**  **/gate*.conf  **/gate-paths.conf  **/gate*.sh  **/approvals.conf  **/risk-rules.conf
+#   **/bin/tb  **/run-all.sh  **/test/run.sh  **/tests/run.sh  **/test/cases/*gate*  **/tests/*gate*
 
 .github/**
 **/routes.conf
@@ -15,7 +16,8 @@ roles/**
 **/.claude/settings*.json
 **/CLAUDE.md
 scheduler/**
-publish/**
-bin/gh
+**/repos.md
+**/ghtkn*.yaml
+# 認証のラッパー、公開前検査の規則や同期の仕組みなど、環境固有のパスは人が足す
 **/lib/approvals.sh
 **/lib/risk.sh

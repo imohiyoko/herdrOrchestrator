@@ -50,7 +50,6 @@ gt() {
     gate_eval "$act" T-1 "$pr" "${facts[@]}"; gate_format; echo "rc=$GATE_EXIT" )
 }
 G1() { gt "$1" "$GT/gate.conf" "$GT/paths.conf"; }
-v1() { sed -n 1p | head -c 200; }
 hardl() { grep '^hard:' | sed 's/^hard: //'; }
 rsn() { grep '^reason:' | sed 's/^reason: //'; }
 rcof() { grep '^rc=' | sed 's/^rc=//'; }
@@ -111,6 +110,14 @@ eq "gate H-01: unrelated docs path does not hit" "$(gtf FILE 'FILE M docs/roles-
 for p in '.github/workflows/ci.yml' 'taskboard/config/gate.conf' 'taskboard/config/gate-paths.conf' 'taskboard/lib/gate.sh' 'taskboard/config/approvals.conf' 'x/config/risk-rules.conf' 'gate.conf'; do
   eq "gate H-01 builtin: $p hits with an empty paths file" "$(gtf FILE "FILE M $p" | gt merge "$GT/gate.conf" "$GT/empty-paths.conf" | hardl | cut -c1-5)" "H-01 "
 done
+for p in 'taskboard/bin/tb' 'bin/tb' 'tests/run-all.sh' 'taskboard/test/run.sh' 'webui/tests/run.sh' 'taskboard/test/cases/98_gate.sh' 'tests/test_gate.sh' '.github'; do
+  eq "gate H-01 builtin: $p hits (merge and approve)" "$(gtf FILE "FILE M $p" | gt approve "$GT/gate.conf" "$GT/empty-paths.conf" | hardl | cut -c1-5)|$(gtf FILE "FILE M $p" | gt merge "$GT/gate.conf" "$GT/empty-paths.conf" | hardl | cut -c1-5)" "H-01 |H-01 "
+done
+eq "gate H-01: an ordinary test file does not hit" "$(gtf FILE 'FILE M taskboard/test/cases/10_tasks.sh' | G1 merge | hardl)" "none"
+eq "gate P-01: executable under docs/ is code, not docs (+1)" "$(pk 'FILE M docs/run.sh' | cut -d'|' -f1)" "P-01 +1: 一般のコード"
+eq "gate P-01: bin/ is important (+2)" "$(pk 'FILE M tool/bin/x' | cut -d'|' -f1)" "P-01 +2: lib・config・scheduler 配下(重要度 高)"
+eq "gate N-2: control characters in an unknown line are not echoed" "$(gtf - $'\033[31mBAD\001x' | G1 merge | grep -c $'[\001\033]')" "0"
+eq "gate threshold cap: approve = 9 is warned and capped at 2" "$(sed 's/^approve = 2/approve = 9/' "$GT/gate.conf" >"$GT/loose2.conf"; gtf - | gt approve "$GT/loose2.conf" "$GT/paths.conf" | grep -E '^(score|warn)' | tr '\n' '|')" "score: 0 / threshold(approve) 2|warn: 緩め設定は無効: [threshold] approve = 9(上限 2 のまま)|"
 eq "gate H-06: type/mode change → ask" "$(gtf FILE 'FILE T docs/a.md' | G1 merge | hardl | cut -c1-5)" "H-06 "
 eq "gate H-02: public check dirty → ask" "$(gtf PUBLIC-CHECK 'PUBLIC-CHECK dirty' | G1 merge | hardl | cut -c1-5)" "H-02 "
 eq "gate H-02: public check unavailable → ask" "$(gtf PUBLIC-CHECK 'PUBLIC-CHECK unavailable' | G1 merge | hardl | cut -c1-5)" "H-02 "
@@ -186,8 +193,6 @@ eq "gate: same output under LC_ALL=C and ja_JP.UTF-8" "$(gtf - | LC_ALL=C G1 mer
 
 # --- tb 経由(コマンド登録・引数・実行の口)
 tbg() { "$TB" gate "$@"; }
-eq "gate cmd: evaluate with no config in this checkout is 21 (fail-closed)" "$([[ -e $HERE/../config/gate.conf ]] && echo 21 || { tbg evaluate T-1 --action merge --facts-stdin </dev/null >/dev/null 2>&1; echo $?; })" "21"
-eq "gate cmd: evaluate --fact accepts lines (still 21 without config)" "$([[ -e $HERE/../config/gate.conf ]] && echo 21 || { tbg evaluate T-1 --action merge --fact 'HEAD 3f9c2ab' >/dev/null 2>&1; echo $?; })" "21"
 eq "gate cmd: evaluate without --action → 2" "$(rc "$TB" gate evaluate T-1)" "2"
 eq "gate cmd: evaluate bad action → 2" "$(rc "$TB" gate evaluate T-1 --action delete)" "2"
 eq "gate cmd: evaluate bad chain-id → 2" "$(rc "$TB" gate evaluate 'a b' --action merge)" "2"
@@ -195,6 +200,23 @@ eq "gate cmd: evaluate without chain-id → 2" "$(rc "$TB" gate evaluate --actio
 eq "gate cmd: no subcommand → 2" "$(rc "$TB" gate)" "2"
 eq "gate cmd: unknown subcommand → 2" "$(rc "$TB" gate run T-1 --action merge)" "2"
 eq "gate cmd: unknown flag → 2" "$(rc "$TB" gate evaluate T-1 --action merge --json)" "2"
+# 設定の無いツリーと、実設定のあるツリーを $TMP に作って tb を呼ぶ(実チェックアウトの config の有無に左右されない)
+mkiso() { mkdir -p "$1/taskboard" "$1/lib"; cp -R "$HERE/../bin" "$HERE/../lib" "$HERE/../schema" "$1/taskboard/"; cp "$HERE/../../lib/"*.sh "$1/lib/"; mkdir -p "$1/taskboard/config"; }
+ISO0=$GT/iso-noconf; mkiso "$ISO0"
+ISO1=$GT/iso-realconf; mkiso "$ISO1"
+# 実設定: 許可リストに例のリポジトリが入っていない(= 基準の事実は H-05 で ask になる)
+sed 's#^allow = .*#allow = someone-else/other-repo#' "$GT/gate.conf" >"$ISO1/taskboard/config/gate.conf"; cp "$GT/paths.conf" "$ISO1/taskboard/config/gate-paths.conf"
+tbi() { local iso=$1; shift; "$iso/taskboard/bin/tb" gate "$@"; }
+eq "gate cmd: no config in the tree → 21 (fail-closed)" "$(tbi "$ISO0" evaluate T-1 --action merge --facts-stdin </dev/null >/dev/null 2>&1; echo $?)" "21"
+eq "gate cmd: --fact lines are accepted (still 21 without config)" "$(tbi "$ISO0" evaluate T-1 --action merge --fact 'HEAD 3f9c2ab' >/dev/null 2>&1; echo $?)" "21"
+# env で有効な設定を渡しても読まない: 設定の無いツリーは 21 のまま
+eq "gate cmd: env cannot supply a config (tree without config stays 21)" "$(GATE_CONF=$GT/gate.conf GATE_PATHS=$GT/paths.conf TB_GATE_CONF=$GT/gate.conf TB_GATE_PATHS=$GT/paths.conf TB_CONFIG=$GT/gate.conf; gtf - | GATE_CONF=$GT/gate.conf GATE_PATHS=$GT/paths.conf TB_GATE_CONF=$GT/gate.conf TB_GATE_PATHS=$GT/paths.conf tbi "$ISO0" evaluate T-1 --action merge --facts-stdin >/dev/null 2>&1; echo $?)" "21"
+# 実設定のあるツリー: 実設定を読む(許可リスト外 → hard で 20)。env で緩い設定を渡しても結果は変わらない
+eq "gate cmd: real config in the tree is read (repo not allowed → 20)" "$(gtf - | tbi "$ISO1" evaluate T-1 --action merge --facts-stdin >/dev/null 2>&1; echo $?)" "20"
+eq "gate cmd: env cannot override a real config (same 20, same output)" "$(gtf - | GATE_CONF=$GT/gate.conf GATE_PATHS=$GT/paths.conf TB_GATE_CONF=$GT/gate.conf TB_GATE_PATHS=$GT/paths.conf tbi "$ISO1" evaluate T-1 --action merge --facts-stdin 2>&1 | cksum)" "$(gtf - | tbi "$ISO1" evaluate T-1 --action merge --facts-stdin 2>&1 | cksum)"
+eq "gate cmd: the permissive config would have allowed (so the 20 above is the real config)" "$(gtf - | gt merge "$GT/gate.conf" "$GT/paths.conf" | rcof)" "0"
+eq "gate cmd: execute stays 30 in a tree with a real config" "$(tbi "$ISO1" execute T-1 --action merge >/dev/null 2>&1; echo $?)" "30"
+eq "gate cmd: execute stays 30 in a tree without config" "$(tbi "$ISO0" execute T-1 --action approve >/dev/null 2>&1; echo $?)" "30"
 # execute: 常に 30(無効)。何も記録せず、何も実行しない
 for a in merge approve; do
   eq "gate execute $a: always 30 (disabled)" "$(rc "$TB" gate execute T-1 --action $a)" "30"
@@ -206,7 +228,6 @@ eq "gate execute: evaluate-only flags are rejected → 2" "$(rc "$TB" gate execu
 eq "gate execute: records nothing (db tables unchanged, no gate table)" "$(sqlite3 "$TB_DB" "SELECT count(*) FROM sqlite_master WHERE name LIKE '%gate%';")" "0"
 eq "gate execute: message says disabled, on stderr" "$("$TB" gate execute T-1 --action merge 2>&1 >/dev/null | grep -c '^gate: execute は無効です')" "1"
 # env で設定の場所を差し替えられない: 実ファイルが無いチェックアウトでは、env を足しても 21 のまま
-eq "gate cmd: env cannot supply the config location (still 21)" "$([[ -e $HERE/../config/gate.conf ]] && echo 21 || { GATE_CONF=$GT/gate.conf GATE_PATHS=$GT/paths.conf TB_GATE_CONF=$GT/gate.conf TB_GATE_PATHS=$GT/paths.conf gtf - | "$TB" gate evaluate T-1 --action merge --facts-stdin >/dev/null 2>&1; echo $?; })" "21"
 eq "gate cmd: help lists gate" "$("$TB" help | grep -c 'tb gate evaluate')" "1"
 eq "gate: config examples are in the repo and gitignored when real" "$(for f in gate.conf gate-paths.conf; do [[ -f $HERE/../config/$f.example ]] && git -C "$HERE" check-ignore -q "../config/$f" && echo ok; done | tr '\n' ',')" "ok,ok,"
 # 例の設定は、そのままコピーして評価できる(構文が正しい)

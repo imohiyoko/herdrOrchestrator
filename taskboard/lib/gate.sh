@@ -13,7 +13,9 @@ GATE_CAP_APPROVE=2
 GATE_CAP_MERGE=1
 
 # 設定の有無にかかわらず効くパス規則(設定ファイルで外せない。判定・承認・ゲートの設定そのもの)
-GATE_BUILTIN_PATHS=('.github/**' '**/gate*.conf' '**/gate-paths.conf' '**/gate*.sh' '**/approvals.conf' '**/risk-rules.conf')
+# .github(末尾なし)はパスそのものの変更用。bin/tb(全コマンドの入口)とテスト基盤・gate のテストの変更も、判定を弱める経路なので常に人に回す
+GATE_BUILTIN_PATHS=('.github' '.github/**' '**/gate*.conf' '**/gate-paths.conf' '**/gate*.sh' '**/approvals.conf' '**/risk-rules.conf'
+  '**/bin/tb' '**/run-all.sh' '**/test/run.sh' '**/tests/run.sh' '**/test/cases/*gate*' '**/tests/*gate*')
 
 _gate_trim() { local s=$1; s="${s#"${s%%[![:space:]]*}"}"; printf '%s' "${s%"${s##*[![:space:]]}"}"; }
 
@@ -27,7 +29,7 @@ _gate_load_conf() {
   local f=$GATE_CONF
   [[ -e $f ]] || { GATE_ERR="設定ファイルがありません(config/gate.conf)"; return 1; }
   [[ -f $f && -r $f ]] || { GATE_ERR="設定ファイルを読めません"; return 1; }
-  local sec="" line n=0 k v item kinds
+  local sec="" line n=0 k v item items
   while IFS= read -r line || [[ -n $line ]]; do
     n=$((n+1)); line=$(_gate_trim "${line%%#*}")
     [[ -z $line ]] && continue
@@ -179,7 +181,7 @@ _gate_parse() {
       AUTHOR) [[ $rest =~ ^[A-Za-z0-9._-]{1,64}$ ]] && G_AUTHOR=$rest || GATE_INERRS+=("AUTHOR の形が不正です");;
       EXECUTOR) [[ $rest =~ ^[A-Za-z0-9._-]{1,64}$ ]] && G_EXECUTOR=$rest || GATE_INERRS+=("EXECUTOR の形が不正です");;
       AUTHOR-REJECT-RATE) [[ $rest == low || $rest == mid || $rest == high || $rest == unknown ]] && G_REJECT=$rest || GATE_INERRS+=("AUTHOR-REJECT-RATE は low | mid | high | unknown です");;
-      *) GATE_INERRS+=("未知の行: ${key:0:32}");;
+      *) GATE_INERRS+=("未知の行: $(printf %s "${key:0:32}" | tr -cd 'A-Za-z0-9._#/=-')");;
     esac
   done
   # 欠けている入力(取れなかった = 評価不能)
@@ -257,7 +259,8 @@ gate_eval() {
     for p in "$op" ${np:+"$np"}; do
       p=${p#./}
       case $p in
-        lib/*|*/lib/*|config/*|*/config/*|scheduler/*|*/scheduler/*|.github/*) has_imp=1; has_code=1;;
+        lib/*|*/lib/*|config/*|*/config/*|scheduler/*|*/scheduler/*|.github/*|bin/*|*/bin/*) has_imp=1; has_code=1;;
+        docs/*.sh|*/docs/*.sh|docs/*.py|*/docs/*.py|docs/*.bash|*/docs/*.bash) has_code=1;;   # docs 配下でも実行できるファイルは docs 扱いにしない
         test/*|tests/*|*/test/*|*/tests/*) has_tests=1;;
         docs/*|*/docs/*|*.md) has_docs=1;;
         *) has_code=1;;
@@ -348,7 +351,7 @@ _gate_cmd_evaluate() {
   return "$GATE_EXIT"
 }
 
-# 実行の口(段 0: 常に無効)。何も読まず、何も記録せず、何も実行しない。設定・入力・環境によらず終了コード 30
+# 実行の口(段 0: 常に無効)。gate の設定や入力は読まず、何も記録せず、何も実行しない。設定・入力・環境によらず終了コード 30(tb 共通の起動処理は走るので、DB を開けないときは 30 でなく 1)
 _gate_cmd_execute() {
   _gate_args 0 "$@"
   echo "gate: execute は無効です(段 0。何も実行せず、何も記録しません)" >&2
