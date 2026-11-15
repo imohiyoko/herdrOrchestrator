@@ -26,11 +26,20 @@ pqbody() { printf '%s\n\n## 原因\nテスト\n' "${2:-$PQ_L1}" >"$PR_QUEUE_BODY
 pqsql() { sqlite3 "$TB_DB" "$@"; }
 pqgh() { grep -c "$1" "$FAKE_GH_LOG"; }
 # 差分のガードは必須(PR_QUEUE_REPO_DIR が空なら run しない)。clone を先に作り、pqadd がブランチも用意する
+# 公開前検査の設定は固定の conf(<tb>/config/pr-queue.conf)だけで決まり、環境変数では差し替えられない。テストでは tb をコピーした木の conf を書く(リポジトリの config は触らない)
+_tb_saved=$TB; PQ_TBROOT=$TMP/pq-tbtree; mkdir -p "$PQ_TBROOT/taskboard/config"
+cp -R "$HERE/../bin" "$HERE/../lib" "$HERE/../schema" "$PQ_TBROOT/taskboard/"; cp -R "$HERE/../../lib" "$PQ_TBROOT/lib"
+TB=$PQ_TBROOT/taskboard/bin/tb; PQ_FIXEDCONF=$PQ_TBROOT/taskboard/config/pr-queue.conf
+pqdeny() { { [[ -z ${1:-} ]] || printf 'deny_patterns = %s\n' "$1"; [[ -z ${2:-} ]] || printf 'deny_exceptions = %s\n' "$2"; } >"$PQ_FIXEDCONF"; }
+# 本物の bare origin と clone。mkb は clone で枝を作って origin へ force push する(追跡参照も更新される)
+PQ_O=$TMP/pq-origin.git; git init -q --bare -b main "$PQ_O"
 R=$TMP/pq-clone; mkdir -p "$R"; git -C "$R" init -q -b main; git -C "$R" config user.email "t""@example.invalid"; git -C "$R" config user.name t
-echo base >"$R/a.txt"; git -C "$R" add .; git -C "$R" commit -qm base; git -C "$R" update-ref refs/remotes/origin/main HEAD
-mkbranch() { git -C "$R" checkout -q -B "$1" main; mkdir -p "$R/$(dirname "$2")"; printf '%s\n' "$3" >"$R/$2"; git -C "$R" add .; git -C "$R" commit -qm c; git -C "$R" checkout -q main; }
+git -C "$R" remote add origin "$PQ_O"
+echo base >"$R/a.txt"; git -C "$R" add .; git -C "$R" commit -qm base; git -C "$R" push -q origin main 2>/dev/null
+mkb() { git -C "$R" checkout -q -B "$1" main; mkdir -p "$R/$(dirname "$2")"; printf '%s\n' "$3" >"$R/$2"; git -C "$R" add .; git -C "$R" commit -q -m "$4"; git -C "$R" push -q --force origin "$1" 2>/dev/null; git -C "$R" checkout -q main; }
+mkbranch() { mkb "$1" "$2" "$3" c; }
 export PR_QUEUE_REPO_DIR=$R
-# 疑似 git(ls-remote / fetch / log だけ差し替え、残りは本物の git)。ls-remote は FAKE_GIT_HEADS があればそれ、無ければ clone のローカルブランチを「origin のブランチ」として返す
+# 疑似 git(scan 用に ls-remote / fetch / log を差し替え、残りは本物の git)。FAKE_GIT_HEADS が無いときは本物の bare origin に対して動く
 PQ_FAKEGIT=$TMP/pq-git; mkdir -p "$TMP/pq-titles"
 cat >"$PQ_FAKEGIT" <<'G'
 #!/usr/bin/env bash
@@ -38,9 +47,10 @@ args=("$@"); [[ ${args[0]} == -C ]] && args=("${args[@]:2}")
 case ${args[0]} in
   ls-remote)
     [[ -z ${FAKE_GIT_LSREMOTE_FAIL:-} ]] || exit 1
-    if [[ -n ${FAKE_GIT_HEADS+x} ]]; then for b in $FAKE_GIT_HEADS; do [[ refs/heads/$b == ${args[${#args[@]}-1]} ]] && printf 'deadbeef\trefs/heads/%s\n' "$b"; done
-    else git -C "$FAKE_GIT_CLONE" for-each-ref --format='deadbeef%09%(refname)' "${args[${#args[@]}-1]%\*}"; fi;;
-  fetch) exit 0;;
+    if [[ -n ${FAKE_GIT_HEADS+x} ]]; then for b in $FAKE_GIT_HEADS; do [[ refs/heads/$b == ${args[${#args[@]}-1]} ]] && printf '%s\trefs/heads/%s\n' "$(git -C "$FAKE_GIT_CLONE" rev-parse "refs/remotes/origin/$b")" "$b"; done; exit 0
+    elif [[ -n ${FAKE_GIT_SHA_OVERRIDE:-} ]]; then git "$@" | sed "s/^[0-9a-f]*/$FAKE_GIT_SHA_OVERRIDE/"
+    else exec git "$@"; fi;;
+  fetch) [[ -z ${FAKE_GIT_FETCH_FAIL:-} ]] || exit 1; [[ -z ${FAKE_GIT_HEADS+x} ]] || exit 0; exec git "$@";;
   log) cat "$FAKE_GIT_TITLES/$(sed 's#.*origin/agent/##' <<<"${args[${#args[@]}-1]}")" 2>/dev/null;;
   *) exec git "$@";;
 esac
@@ -49,8 +59,8 @@ chmod +x "$PQ_FAKEGIT"
 export PR_QUEUE_GIT=$PQ_FAKEGIT FAKE_GIT_TITLES=$TMP/pq-titles FAKE_GIT_CLONE=$R
 # 公開前検査の規則(ダミー。書式は deny-patterns.txt と同じ)。既存のテストは何にも掛からない規則で通す
 PQ_DENY=$TMP/pq-deny.txt; printf '%s\n' '# ダミー' 'never-match i  ZZZ_NEVER_MATCHES_ZZZ' >"$PQ_DENY"
-export PR_QUEUE_DENY_PATTERNS=$PQ_DENY
-pqadd() { git -C "$R" rev-parse -q --verify "refs/heads/$1" >/dev/null 2>&1 || mkbranch "$1" "terraform/${1//\//-}.tf" ok; $TB pr-queue add --branch "$1" --body-file "$PR_QUEUE_BODY_ROOT/$2.md" --title "題 $2" "${@:3}" 2>&1; }
+pqdeny "$PQ_DENY"
+pqadd() { git -C "$R" rev-parse -q --verify "refs/remotes/origin/$1" >/dev/null 2>&1 || mkbranch "$1" "terraform/${1//\//-}.tf" ok; $TB pr-queue add --branch "$1" --body-file "$PR_QUEUE_BODY_ROOT/$2.md" --title "題 $2" "${@:3}" 2>&1; }
 
 # ---- add: 置くだけ。pending。gh は呼ばれない
 pqbody b1
@@ -151,7 +161,7 @@ mkbranch agent/df-admin terraform/c.tf 'policy_arn = "arn:aws:iam::aws:policy/Ad
 eq "diff guard: clean change created; CI config / secret-looking / AdministratorAccess rejected" \
   "$(pqsql "SELECT group_concat(status) FROM pr_queue WHERE id IN (15,16,17,18);") $(pqgh 'pr create') $(grep -c "$SEC_AWS" <<<"$out")" "created,rejected,rejected,rejected 1 0"
 pqbody dfx; pqadd agent/df-missing dfx >/dev/null; $TB pr-queue approve 19 >/dev/null 2>&1
-git -C "$R" branch -q -D agent/df-missing
+git -C "$R" push -q origin --delete agent/df-missing 2>/dev/null; git -C "$R" update-ref -d refs/remotes/origin/agent/df-missing
 : >"$FAKE_GH_LOG"; $TB pr-queue run >/dev/null 2>&1
 eq "diff guard: branch missing in the clone → rejected (fail closed)" "$(pqgh 'pr create') $(pqsql 'SELECT status FROM pr_queue WHERE id=19;')" "0 rejected"
 
@@ -281,7 +291,7 @@ eq "retry: no schema change (pr_queue columns unchanged)" "$(pqsql "SELECT group
 unset PR_QUEUE_CONF
 
 # ---- ブランチ登録の拡張: 接頭辞を conf で列挙(既定は agent/ のみ)。登録時に origin に実在するかを確かめる(fail-closed)
-pqbr() { git -C "$R" rev-parse -q --verify "refs/heads/$1" >/dev/null 2>&1 || mkbranch "$1" "terraform/${1//\//-}.tf" ok; }
+pqbr() { git -C "$R" rev-parse -q --verify "refs/remotes/origin/$1" >/dev/null 2>&1 || mkbranch "$1" "terraform/${1//\//-}.tf" ok; }
 pqbody pf1
 pqbr feat/pf1; pqbr fix/pf2; pqbr docs/pf3
 pqraw() { $TB pr-queue add --branch "$1" --body-file "$PR_QUEUE_BODY_ROOT/pf1.md" --title "題 $1" 2>&1; }
@@ -309,12 +319,11 @@ eq "add: needs PR_QUEUE_REPO_DIR (empty → refused)" "$(PR_QUEUE_REPO_DIR= rc $
 unset PR_QUEUE_CONF
 
 # ---- 公開前検査(deny-patterns): run が PR を作る前に、題・本文・コミットメッセージ・ブランチ名・差分に掛ける
-PQ_NR="noreply""@example.invalid"; PQ_OT="someone""@example.invalid"
+PQ_NR="noreply""@mail-corp.invalid"; PQ_OT="someone""@mail-corp.invalid"
 PQ_DENY=$TMP/pq-deny2.txt
-printf '%s\n' '# 規則(ダミー。deny-patterns.txt と同じ書式)' 'r-internal i  internal-corp' 'r-case     s  SECRETWORD' 'r-mail     s  [a-z.]+@[a-z]+\.invalid' '' >"$PQ_DENY"
-PQ_EX=$TMP/pq-deny-ex.txt; printf '%s\n' '# 例外' 'r-mail ^noreply@example\.invalid$' >"$PQ_EX"
-export PR_QUEUE_DENY_PATTERNS=$PQ_DENY
-mkb() { git -C "$R" checkout -q -B "$1" main; mkdir -p "$R/$(dirname "$2")"; printf '%s\n' "$3" >"$R/$2"; git -C "$R" add .; git -C "$R" commit -q -m "$4"; git -C "$R" checkout -q main; }
+printf '%s\n' '# 規則(ダミー。deny-patterns.txt と同じ書式)' 'r-internal i  internal-corp' 'r-case     s  SECRETWORD' 'r-mail     s  [a-z.]+@mail-corp\.invalid' 'r-jp       i  社外秘' '' >"$PQ_DENY"
+PQ_EX=$TMP/pq-deny-ex.txt; printf '%s\n' '# 例外' 'r-mail ^noreply@mail-corp\.invalid$' >"$PQ_EX"
+pqdeny "$PQ_DENY"
 # dn <名> <題> <本文の 3 行目> <ファイル> <内容> <コミットメッセージ> [ブランチ名の接尾辞]: 登録 → 承認までする。id は DQ_ID
 dn() {
   local br=agent/dn-$1${7:-}
@@ -342,11 +351,11 @@ eq "deny: title hit → rejected, attempts not consumed, position = title" "$(ds
 eq "deny: body hit reports the line (body:3)" "$(dst $b_id) $(derr $b_id | grep -c 'r-case@body:3')" "rejected0 1"
 eq "deny: commit message hit (flag i: INTERNAL-CORP matches internal-corp)" "$(dst $c_id) $(derr $c_id | grep -c 'r-internal@commit ')" "rejected0 1"
 eq "deny: branch name hit" "$(dst $n_id) $(derr $n_id | grep -c 'r-internal@branch')" "rejected0 1"
-eq "deny: added diff line hit reports file and line" "$(dst $d_id) $(derr $d_id | grep -c 'r-case@diff:terraform/d1.tf:2')" "rejected0 1"
-eq "deny: changed file path hit" "$(dst $p_id) $(derr $p_id | grep -c 'r-internal@path:terraform/internal-corp.tf')" "rejected0 1"
+eq "deny: added diff line hit reports file and line" "$(dst $d_id) $(derr $d_id | grep -c 'r-case@diff#1:2')" "rejected0 1"
+eq "deny: changed file path hit" "$(dst $p_id) $(derr $p_id | grep -c 'r-internal@path#1')" "rejected0 1"
 eq "deny: flag s is case-sensitive (lowercase secretword passes), flag i is not" "$(dst $s_id) $(dst $i_id)" "created0 rejected0"
 eq "deny: only the clean/lowercase ones were created (gh pr create x2)" "$(pqgh 'pr create')" "2"
-eq "deny: output and DB never contain the matched values (a file path hit shows the path as the position)" "$(grep -v 'path:' <<<"$out" | grep -c 'SECRETWORD\|internal-corp') $(pqsql "SELECT COUNT(*) FROM pr_queue WHERE last_error LIKE '%SECRETWORD%' AND last_error NOT LIKE '%r-case%';")" "0 0"
+eq "deny: output and DB never contain the matched values (positions are numbers: path#N / diff#N:line)" "$(grep -c 'SECRETWORD\|internal-corp' <<<"$out") $(pqsql "SELECT COUNT(*) FROM pr_queue WHERE last_error LIKE '%SECRETWORD%' AND last_error NOT LIKE '%r-case%';")" "0 0"
 eq "deny: one notification per hit (6 hits: t b c n d p; i also hit → 7), rule names only" "$(($(dwarn)-w0)) $(pqsql "SELECT COUNT(*) FROM notify_events WHERE text LIKE '%SECRETWORD%' AND text NOT LIKE '%r-case%';")" "7 0"
 # 例外ファイル(任意): noreply の Co-Authored-By 行だけを通し、ほかのメールは止める
 dn e1 ふつうの題 ふつうの本文 terraform/e1.tf x "msg"$'\n\n'"Co-Authored-By: Claude <$PQ_NR>"; e1=$DQ_ID
@@ -355,7 +364,7 @@ $TB pr-queue run >/dev/null 2>&1
 eq "deny: without an exceptions file the noreply Co-Authored-By line is a hit (rule r-mail)" "$(dst $e1) $(derr $e1 | grep -c 'r-mail@commit ')" "rejected0 1"
 dn e3 ふつうの題 ふつうの本文 terraform/e3.tf x "msg"$'\n\n'"Co-Authored-By: Claude <$PQ_NR>"; e3=$DQ_ID
 dn e4 ふつうの題 ふつうの本文 terraform/e4.tf x "msg"$'\n\n'"Co-Authored-By: Someone <$PQ_OT>"; e4=$DQ_ID
-PR_QUEUE_DENY_EXCEPTIONS=$PQ_EX $TB pr-queue run >/dev/null 2>&1
+pqdeny "$PQ_DENY" "$PQ_EX"; $TB pr-queue run >/dev/null 2>&1; pqdeny "$PQ_DENY"
 eq "deny: with the exceptions file the noreply line passes; another address is still a hit" "$(dst $e3) $(dst $e4)" "created0 rejected0"
 # dry-run: 報告するだけ。DB は変えない
 dn y1 '対応 internal-corp'; y1=$DQ_ID
@@ -367,22 +376,88 @@ dn k1; k1=$DQ_ID
 : >"$FAKE_GH_LOG"
 printf '%s\n' 'bad-flag x  foo' >"$TMP/pq-deny-badflag.txt"; printf '%s\n' 'bad-re i  ([unclosed' >"$TMP/pq-deny-badre.txt"; printf '%s\n' '# 規則なし' >"$TMP/pq-deny-empty.txt"
 printf '%s\n' 'r-mail ([unclosed' >"$TMP/pq-deny-badex.txt"
-unset PR_QUEUE_DENY_PATTERNS
+rm -f "$PQ_FIXEDCONF"
 eq "deny config: unset → run stops (exit 1, no gh call, row stays approved)" "$(rc $TB pr-queue run) $(wc -l <"$FAKE_GH_LOG" | tr -d ' ') $(dst $k1)" "1 0 approved0"
-eq "deny config: unset message names the setting" "$($TB pr-queue run 2>&1 | grep -c 'PR_QUEUE_DENY_PATTERNS')" "1"
+eq "deny config: unset message names the conf key" "$($TB pr-queue run 2>&1 | grep -c 'deny_patterns')" "1"
 for _f in "$TMP/none.txt" "pq-deny2.txt" "$TMP/pq-deny-badflag.txt" "$TMP/pq-deny-badre.txt" "$TMP/pq-deny-empty.txt"; do
-  eq "deny config: bad rules file ($(basename "$_f")) → stops" "$(PR_QUEUE_DENY_PATTERNS=$_f rc $TB pr-queue run) $(wc -l <"$FAKE_GH_LOG" | tr -d ' ') $(dst $k1)" "1 0 approved0"
+  pqdeny "$_f"
+  eq "deny config: bad rules file ($(basename "$_f")) → stops" "$(rc $TB pr-queue run) $(wc -l <"$FAKE_GH_LOG" | tr -d ' ') $(dst $k1)" "1 0 approved0"
 done
-eq "deny config: bad exceptions file → stops; a missing one too" "$(PR_QUEUE_DENY_PATTERNS=$PQ_DENY PR_QUEUE_DENY_EXCEPTIONS=$TMP/pq-deny-badex.txt rc $TB pr-queue run) $(PR_QUEUE_DENY_PATTERNS=$PQ_DENY PR_QUEUE_DENY_EXCEPTIONS=$TMP/none.txt rc $TB pr-queue run) $(wc -l <"$FAKE_GH_LOG" | tr -d ' ') $(dst $k1)" "1 1 0 approved0"
-eq "deny config: --dry-run stops too" "$(rc $TB pr-queue run --dry-run)" "1"
+printf '%s\n' 'r-mail .*' >"$TMP/pq-deny-anyex.txt"
+pqdeny "$PQ_DENY" "$TMP/pq-deny-badex.txt"; _r1=$(rc $TB pr-queue run)
+pqdeny "$PQ_DENY" "$TMP/none.txt"; _r2=$(rc $TB pr-queue run)
+pqdeny "$PQ_DENY" "$TMP/pq-deny-anyex.txt"; _r3=$(rc $TB pr-queue run)
+eq "deny config: bad / missing / match-everything exceptions file → stops" "$_r1 $_r2 $_r3 $(wc -l <"$FAKE_GH_LOG" | tr -d ' ') $(dst $k1)" "1 1 1 0 approved0"
+pqdeny "$PQ_DENY"
+eq "deny config: --dry-run stops too" "$(rc $TB pr-queue run --dry-run)" "0"
+rm -f "$PQ_FIXEDCONF"; eq "deny config: --dry-run with no setting stops (exit 1)" "$(rc $TB pr-queue run --dry-run)" "1"
+# 環境変数と PR_QUEUE_CONF では決められない(差し替えの口を作らない)
+: >"$FAKE_GH_LOG"
+out=$(PR_QUEUE_DENY_PATTERNS=$PQ_DENY PR_QUEUE_DENY_EXCEPTIONS=$PQ_EX $TB pr-queue run 2>&1); r=$?
+eq "deny config: env values are ignored with a warning (no conf → still stops)" "$r $(grep -c '無視' <<<"$out") $(wc -l <"$FAKE_GH_LOG" | tr -d ' ') $(dst $k1)" "1 1 0 approved0"
 export PR_QUEUE_CONF=$TMP/pq-deny.conf; printf '%s\n' "$PQ_RULE" "deny_patterns = $PQ_DENY" >"$PR_QUEUE_CONF"
+eq "deny config: deny_patterns in a PR_QUEUE_CONF file is ignored (only the fixed config/pr-queue.conf counts)" "$(rc $TB pr-queue run) $(dst $k1)" "1 approved0"
+unset PR_QUEUE_CONF
+pqdeny "$PQ_DENY"
+: >"$FAKE_GH_LOG"; out=$(PR_QUEUE_DENY_PATTERNS=$TMP/none.txt PR_QUEUE_DENY_EXCEPTIONS=$TMP/none.txt $TB pr-queue run 2>&1)
+eq "deny config: with the conf set, a bad env value changes nothing (warned and ignored; the run goes through)" "$(grep -c '無視' <<<"$out") $(dst $k1)" "1 created0"
+
+# ---- 検査した内容と PR になる内容を同じにする(origin と同期し、追跡参照だけを検査する)
+pq2=$TMP/pq-clone2; git clone -q "$PQ_O" "$pq2" 2>/dev/null; git -C "$pq2" config user.email "t""@example.invalid"; git -C "$pq2" config user.name t2
+push2() { git -C "$pq2" fetch -q origin 2>/dev/null; git -C "$pq2" checkout -q -B "$1" origin/main; mkdir -p "$pq2/$(dirname "$2")"; printf '%s\n' "$3" >"$pq2/$2"; git -C "$pq2" add .; git -C "$pq2" commit -q -m "${4:-c}"; git -C "$pq2" push -q --force origin "$1" 2>/dev/null; }
+dn o1; o1=$DQ_ID
+push2 agent/dn-o1 terraform/dn-o1.tf 'internal-corp を足した(承認後に別の clone から force push)'
+: >"$FAKE_GH_LOG"; $TB pr-queue run >/dev/null 2>&1
+eq "sync: content force-pushed to origin after approval is what gets checked (rejected, not created); the stale local branch is not used" "$(dst $o1) $(derr $o1 | grep -c 'r-internal') $(pqgh 'pr create')" "rejected0 1 0"
+dn o2; o2=$DQ_ID
+push2 agent/dn-o2 terraform/dn-o2.tf 'clean change'
+: >"$FAKE_GH_LOG"; $TB pr-queue run >/dev/null 2>&1
+eq "sync: a clean change pushed after approval is fetched and created" "$(dst $o2) $(pqgh 'pr create')" "created0 1"
+dn o3; o3=$DQ_ID
+: >"$FAKE_GH_LOG"
+FAKE_GIT_FETCH_FAIL=1 $TB pr-queue run >/dev/null 2>&1
+eq "sync: fetch failure → not created, row untouched (no attempts), retried next run" "$(dst $o3) $(pqgh 'pr create')" "approved0 0"
+FAKE_GIT_LSREMOTE_FAIL=1 $TB pr-queue run >/dev/null 2>&1
+eq "sync: ls-remote failure → not created, row untouched" "$(dst $o3) $(pqgh 'pr create')" "approved0 0"
+FAKE_GIT_SHA_OVERRIDE="$(printf '1%.0s' {1..20})""$(printf '1%.0s' {1..20})" $TB pr-queue run >/dev/null 2>&1
+eq "sync: tracking ref differs from origin's SHA (origin moved after the fetch) → not created, row untouched" "$(dst $o3) $(pqgh 'pr create')" "approved0 0"
 $TB pr-queue run >/dev/null 2>&1
-eq "deny config: deny_patterns in config/pr-queue.conf works" "$(dst $k1)" "created0"
-dn k2; k2=$DQ_ID
-: >"$FAKE_GH_LOG"; PR_QUEUE_DENY_PATTERNS=$TMP/none.txt $TB pr-queue run >/dev/null 2>&1
-eq "deny config: the env wins over the config (a bad env stops)" "$(wc -l <"$FAKE_GH_LOG" | tr -d ' ') $(dst $k2)" "0 approved0"
-unset PR_QUEUE_CONF; export PR_QUEUE_DENY_PATTERNS=$PQ_DENY; $TB pr-queue run >/dev/null 2>&1
-export PQ_DENY=$TMP/pq-deny.txt; export PR_QUEUE_DENY_PATTERNS=$PQ_DENY
+eq "sync: next normal run creates it" "$(dst $o3)" "created0"
+dn o4; o4=$DQ_ID; : >"$FAKE_GH_LOG"
+git -C "$R" push -q origin --delete agent/dn-o4 2>/dev/null
+$TB pr-queue run >/dev/null 2>&1
+eq "sync: branch deleted on origin → rejected (clone's tracking ref is not trusted)" "$(dst $o4) $(pqgh 'pr create')" "rejected0 0"
+dn o5 ふつうの題 ふつうの本文 terraform/o5.tf x c; o5=$DQ_ID
+git -C "$R" update-ref -d refs/remotes/origin/agent/dn-o5
+git -C "$R" branch -q -f agent/dn-o5 "$(git -C "$pq2" rev-parse origin/agent/dn-o5 2>/dev/null || git -C "$R" rev-parse origin/main)" 2>/dev/null
+eq "sync: approve also syncs (a human approval checks what is on origin)" "$(rc $TB pr-queue approve $o5) $(dst $o5)" "1 approved0"
+$TB pr-queue run >/dev/null 2>&1; $TB pr-queue reject $o5 >/dev/null 2>&1
+
+# ---- 非 ASCII のパス名(引用符つきで返らない)
+dn j1 ふつうの題 ふつうの本文 'docs/社外秘メモ.txt' x c; j1=$DQ_ID
+dn j2; j2=$DQ_ID; push2 agent/dn-j2 '.github/workflows/変.yml' 'on: push'
+: >"$FAKE_GH_LOG"; $TB pr-queue run >/dev/null 2>&1
+eq "non-ASCII: a rule word only in the (non-ASCII) path name is caught, position is a number" "$(dst $j1) $(derr $j1 | grep -c 'r-jp@path#1')" "rejected0 1"
+eq "non-ASCII: a non-ASCII file under .github/workflows is still seen as CI config" "$(dst $j2) $(derr $j2 | grep -c 'CI 設定')" "rejected0 1"
+
+# ---- バイナリの変更は内容を検査できないので人に回す
+mkbin() { git -C "$R" checkout -q -B "$1" main; printf 'a\0b\001\002 internal-corp' >"$R/b.bin"; git -C "$R" add .; git -C "$R" commit -q -m c; git -C "$R" push -q --force origin "$1" 2>/dev/null; git -C "$R" checkout -q main; }
+pqbody bin1; mkbin agent/bin1
+eq "binary: a branch with a binary change cannot be approved (needs a human)" "$(rc $TB pr-queue add --branch agent/bin1 --body-file "$PR_QUEUE_BODY_ROOT/bin1.md" --title t; $TB pr-queue approve "$(pqsql 'SELECT MAX(id) FROM pr_queue;')" 2>&1 | grep -c 'バイナリ')" "0
+1"
+dn bb1; bb1=$DQ_ID; mkbin agent/dn-bb1
+: >"$FAKE_GH_LOG"; $TB pr-queue run >/dev/null 2>&1
+eq "binary: a binary change pushed after approval is rejected at run, not created" "$(dst $bb1) $(derr $bb1 | grep -c 'バイナリ') $(pqgh 'pr create')" "rejected0 1 0"
+
+# ---- コミットの author / committer も検査に含める
+mka() { git -C "$R" checkout -q -B "$1" main; mkdir -p "$R/terraform"; printf '%s\n' "$1" >"$R/terraform/$(basename "$1").tf"; git -C "$R" add .; git -C "$R" -c user.name=a -c user.email="$2" commit -q -m c; git -C "$R" push -q --force origin "$1" 2>/dev/null; git -C "$R" checkout -q main; }
+pqbody au1; pqbody au2; mka agent/au1 "someone""@mail-corp.invalid"; mka agent/au2 "noreply""@mail-corp.invalid"
+for n in au1 au2; do $TB pr-queue add --branch agent/$n --body-file "$PR_QUEUE_BODY_ROOT/$n.md" --title "題 $n" >/dev/null 2>&1; done
+au1=$(pqsql "SELECT id FROM pr_queue WHERE branch='agent/au1';"); au2=$(pqsql "SELECT id FROM pr_queue WHERE branch='agent/au2';")
+$TB pr-queue approve $au1 >/dev/null 2>&1; $TB pr-queue approve $au2 >/dev/null 2>&1
+pqdeny "$PQ_DENY" "$PQ_EX"; $TB pr-queue run >/dev/null 2>&1; pqdeny "$PQ_DENY"
+eq "author/committer: an author address that matches a rule is a hit (position author <hash>); the noreply address passes via the exceptions file" "$(dst $au1) $(derr $au1 | grep -c 'r-mail@author ') $(dst $au2)" "rejected0 1 created0"
+
 unset TB_NOTIFY_DEDUPE_SEC TB_NOTIFY_ENABLED TB_NOTIFY_DIR TB_NOTIFY_CONF
 
 # ---- 設定: branch_prefix を変える / body_first_line が空なら 1 行目は見ない
@@ -397,6 +472,7 @@ eq "config: an invalid branch_prefix falls back to agent/" "$(pqadd agent/nf3 nf
 unset PR_QUEUE_CONF
 
 # 後片付け: 触った変数を元に戻す
+TB=$_tb_saved
 for _v in TB_DB TB_REPOS_FILE PR_QUEUE_BODY_ROOT PR_QUEUE_GH FAKE_GH_LOG FAKE_AGENTS; do unset "$_v"; done
 while IFS= read -r _l; do [[ -n $_l ]] && export "$_l"; done <<<"$_pq_saved"
 [[ -z $_saved_pane ]] || export HERDR_PANE_ID=$_saved_pane

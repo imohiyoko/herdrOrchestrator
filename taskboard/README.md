@@ -368,7 +368,7 @@ tb pr-queue scan [--dry-run] [--repo <org/repo>]                                
 - マージ・approve・ready・close は実装していない。draft を ready にするのは人。
 - 書き込み用の認証は、gh のラッパー(人が用意する)に持たせる。`PR_QUEUE_GH`(環境変数)か `config/pr-queue.conf` の `gh`(絶対パス)で指定する。**未指定・不正なら run / scan は警告して止まる**(PATH 上の gh には落ちない。fail-closed)。ラッパーの形と置き場は [`docs/pr-queue-gh-wrapper.md`](docs/pr-queue-gh-wrapper.md)。
 - 認証で止まったとき(ラッパーが終了コード 75 を返す。ghtkn が token を返せない)は、attempts を使わず `auth-locked` として残りの行を止め、通知を状態が変わったときだけ 1 回出す。`failed` になったものは `tb pr-queue retry`(人だけ)で戻す。
-- 公開前検査(`PR_QUEUE_DENY_PATTERNS` か conf の `deny_patterns`。**必須**。未設定・不正なら run は止まる): run が PR を作る前に、題・本文・コミットメッセージ・ブランチ名・差分(変更ファイルのパスと足した行)に規則ファイルを掛ける。ヒットした PR は作らず却下し(attempts は使わない)、規則名と位置だけを通知する(値は出さない)。書式と例外ファイルは [`docs/pr-queue-deny-patterns.md`](docs/pr-queue-deny-patterns.md)。
+- 公開前検査(conf の `deny_patterns`。**必須**。未設定・不正なら run は止まる。環境変数では決められない): run が PR を作る前に、origin と同期した上で(追跡参照の SHA が origin と一致しなければ止める)、題・本文・コミットメッセージ(author / committer を含む)・ブランチ名・差分(変更ファイルのパスと足した行)に規則ファイルを掛ける。バイナリの変更は人に回す。ヒットした PR は作らず却下し(attempts は使わない)、規則名と位置だけを通知する(値は出さない)。書式と例外ファイルは [`docs/pr-queue-deny-patterns.md`](docs/pr-queue-deny-patterns.md)。
 - `add` は、ブランチが origin に実在すること(`PR_QUEUE_REPO_DIR` の clone で `git ls-remote`)を確かめ、確認できなければ登録しない。登録できる接頭辞は conf の `branch_prefixes`(既定は `agent/` だけ。広げるのは人。例: `agent/ feat/ fix/`)。`scan` が走査するのは先頭の接頭辞だけ。
 - 設定は `config/pr-queue.conf`(人だけ。`pr-queue.conf.example` を写して使う): `gh`、`deny_patterns`、`deny_exceptions`、`branch_prefixes`、`branch_prefix`(既定 `agent/`)、`body_root`(既定 `taskboard/data/pr-bodies`)、`body_first_line`、`auto_approve`(既定 0。1 なら scan で積んだものを承認済みにする)、`max_create_per_run`(既定 3)。
 

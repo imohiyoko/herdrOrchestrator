@@ -3,8 +3,8 @@
 # 値の中に # は書けない(# から後ろはコメントとして捨てる)。
 
 gh =                          # 実行者専用の gh ラッパーの絶対パス(必須。環境変数 PR_QUEUE_GH が優先)。空・不正なら run / scan は止まる。docs/pr-queue-gh-wrapper.md
-deny_patterns =               # 公開前検査の規則ファイルの絶対パス(必須。PR_QUEUE_DENY_PATTERNS が優先)。未設定なら run は止まる。docs/pr-queue-deny-patterns.md
-deny_exceptions =             # 例外ファイルの絶対パス(任意。PR_QUEUE_DENY_EXCEPTIONS が優先)
+deny_patterns =               # 公開前検査の規則ファイルの絶対パス(必須。環境変数では決められない)。未設定なら run は止まる。docs/pr-queue-deny-patterns.md
+deny_exceptions =             # 例外ファイルの絶対パス(任意。環境変数では決められない)
 branch_prefixes =             # add で登録できる接頭辞(空白かカンマ区切り。例: agent/ feat/ fix/)。空なら下の branch_prefix。scan が走査するのは先頭の 1 つだけ
 branch_prefix = agent/        # キューに積めるブランチの接頭辞(英数字と . _ - の後に /)
 body_root =                   # 本文ファイルの置き場(空なら taskboard/data/pr-bodies)。この中の実ファイルだけを本文にできる
