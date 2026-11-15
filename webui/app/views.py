@@ -560,6 +560,76 @@ def page_ledger(qs, ctx=None):
     return "送信履歴", body
 
 
+def _catalog_section(qs, rules, err, catalog, cerr, cbad):
+    """権限カタログ(操作の定義)と approvals.conf を突き合わせた一覧。読み取りのみ。"""
+    if cerr:
+        return "<h2>操作ごとの現在の権限</h2>" + err_html(cerr)
+    if err:
+        return "<h2>操作ごとの現在の権限</h2>" + err_html("approvals.conf を全部は読めていないので、現在の値は出しません")
+    f_kind, f_state = _one(qs, "kind"), _one(qs, "state")
+    f_fb, f_al = _one(qs, "fallback") == "1", _one(qs, "allowed") == "1"
+    if f_kind not in perms.KINDS:
+        f_kind = ""
+    if f_state not in perms.STATES:
+        f_state = ""
+    rows_all = perms.catalog_rows(rules, catalog)
+    rows = []
+    for r in rows_all:
+        c = r["entry"]
+        if f_kind and c["kind"] != f_kind or f_state and c["state"] != f_state:
+            continue
+        if f_fb and r["explicit"] or f_al and r["value"] != "allow":
+            continue
+        rows.append(r)
+    kopts = '<option value="">(すべて)</option>' + "".join(
+        f'<option value="{k}"{" selected" if k == f_kind else ""}>{k}</option>' for k in perms.KINDS)
+    sopts = '<option value="">(すべて)</option>' + "".join(
+        f'<option value="{k}"{" selected" if k == f_state else ""}>{k}</option>' for k in perms.STATES)
+    form = ('<form method=get action="/perms"><p>'
+            f'<label>種別 <select name=kind>{kopts}</select></label> <label>状態 <select name=state>{sopts}</select></label> '
+            f'<label><input type=checkbox name=fallback value=1{" checked" if f_fb else ""}> 既定に落ちているものだけ</label> '
+            f'<label><input type=checkbox name=allowed value=1{" checked" if f_al else ""}> allow になっているものだけ</label> '
+            '<button type=submit>絞り込む</button> <a href="/perms">解除</a></p></form>')
+    out = []
+    for r in rows:
+        c = r["entry"]
+        dim = c["state"] in ("reserved", "unwired")
+        cell = (lambda x: f'<span class=note>{x}</span>' if dim else x)
+        if r["value"] == "unknown":
+            val = f'<b class=warn>判定不能</b>'
+            via = f'{r["rule"]["no"]} 行目(<code>[</code> を含む)'
+            how = "-"
+        else:
+            val = f'<b class=warn>allow</b>' if r["value"] == "allow" else "ask"
+            if r["rule"] is None:
+                via, how = "なし(既定の ask)", "既定に落ちる"
+            elif r["explicit"]:
+                via, how = f'{r["rule"]["no"]} 行目 <code>{e(r["rule"]["pattern"])}</code>', "明示"
+            else:
+                via, how = f'{r["rule"]["no"]} 行目 <code>* = ask</code>(既定)', "既定に落ちる"
+        warns = []
+        if c["state"] == "unwired":
+            warns.append("承認判定に渡らない操作です。approvals.conf の行は効きません(代行依頼は別の仕組み)")
+        if r["risky"]:
+            warns.append(f'リスク {e(c["risk"])} / allow 候補 {e(c["allow_ok"])} の操作が allow になっています')
+        if r["risky_exc"]:
+            warns.append("allow にしない操作に、宛先を絞った allow の例外があります")
+        exc = " ".join(f'<code>{e(x["pattern"])} = {e(x["value"])}</code>' for x in r["exceptions"][:4])
+        risk = f'<b class=warn>{e(c["risk"])}</b>' if c["risk"] in ("high", "human-only") else e(c["risk"])
+        out.append([cell(f'<code>{e(c["pattern"])}</code>'), cell(e(c["kind"])), cell(e(c["desc"])), val, cell(how), cell(via),
+                    cell(risk), cell(e(c["side"])), cell(e(c["allow_ok"])), cell(e(c["state"])),
+                    (exc or "") + ("<br>" if exc and warns else "") + "".join(f'<span class=warn>{w}</span>' for w in warns)])
+    note = (f"<p class=note>権限カタログ(<code>taskboard/config/approvals-catalog.conf</code>)の {len(catalog)} 件のうち {len(rows)} 件。"
+            "現在の値は、パターンの <code>*</code> を例の名前に置いて approvals.conf を上から当てた結果です"
+            "(宛先を絞った規則は「例外」の欄に出ます)。reserved(将来用で未実装)と unwired(操作名はあるが承認判定には渡らない)は薄く表示。"
+            "カタログは操作の説明で、判定には使いません。")
+    if cbad:
+        note += f" 形式が不正でスキップした行が {cbad} 件あります。"
+    note += "</p>"
+    return ("<h2>操作ごとの現在の権限(カタログ × approvals.conf)</h2>" + form +
+            table(["操作", "種別", "説明", "現在の値", "規則の有無", "決まる行", "リスク", "副作用", "allow 候補", "状態", "例外・警告"], out) + note)
+
+
 def page_perms(qs, ctx=None):
     """権限(approvals.conf の読み取り)。変更操作は置かない。コマンド行を組み立てて表示するだけ。"""
     if ctx is not None:
@@ -592,6 +662,9 @@ def page_perms(qs, ctx=None):
         '<p class=note>tb の <code>tb approval &lt;操作&gt;</code> と同じ規則(上から見て最初に一致した行)をここで再現した結果です。'
         '実際に tb を呼んだり、何かを書き換えたりはしません。リスク評価(<code>tb approval &lt;操作&gt; --to 宛先 --text 本文</code>)は'
         '本文が要るので、ここでは出しません。</p>')
+    # 権限カタログ × approvals.conf(操作ごとの現在の値)
+    catalog, cerr, cbad = perms.load_catalog()
+    body += _catalog_section(qs, rules, err, catalog, cerr, cbad)
     # 一覧
     rows = []
     last_chg = {}
@@ -602,6 +675,8 @@ def page_perms(qs, ctx=None):
         w = perms.warning(r)
         if w:
             notes.append(f'<span class=warn>{e(w)}</span>')
+        if catalog and not err and perms.rule_inert(r, catalog):
+            notes.append('<span class=warn>この規則は何も効きません(当たる操作はカタログで「承認判定に渡らない」とされています)</span>')
         sh = perms.shadowed_by(rules, r)
         if sh:
             notes.append(f'<span class=warn>上の {sh["no"]} 行目(<code>{e(sh["pattern"])}</code>)が先に一致するため、この行は使われません</span>')
@@ -617,6 +692,13 @@ def page_perms(qs, ctx=None):
     body += "<h2>ルール一覧(上から順に評価)</h2>" + table(["順位", "パターン", "値", "最後の変更", "この行で決まる操作の例", "警告"], rows)
     body += (f'<p class=note>元ファイル: <code>{e(perms.conf_path_label())}</code>。「最後の変更」は行末の注記と、tb が残した変更履歴(approval_changes)です。'
              'どの行にも一致しなければ ask。ワイルドカードは <code>*</code> と <code>?</code>。</p>')
+    if catalog and not err:
+        unk = perms.unknown_rules(rules, catalog)
+        body += "<h2>未知の規則(カタログに無い)</h2>" + (table(
+            ["順位", "パターン", "値"], [[str(r["no"]), f'<code>{e(r["pattern"])}</code>', e(r["value"])] for r in unk]) if unk else
+            "<p class=note>(なし)カタログに無い規則は見つかりませんでした。</p>")
+        body += ("<p class=note>approvals.conf にあるが、権限カタログのどの操作とも重ならない規則です。"
+                 "操作名の書き間違いか、カタログへの追記漏れの可能性があります。</p>")
     # 変更履歴
     hist = approval_history(50)
     body += "<h2>変更履歴(直近 50 件)</h2>" + table(

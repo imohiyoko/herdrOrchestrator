@@ -159,11 +159,13 @@ tb approve O-<n> [--always]     # 承認待ちの送信を届ける。--always �
 tb reject O-<n>
 ```
 
-- 操作の名前: `send:<kind>:<宛先>`(tb send)、`role:change`(人事の roles/ 変更)、`proxy:<effect>`、`setup:<step>` など。既定では `send:task:*` が `ask`、`send:info:*` / `send:answer:*` が `allow`
+- 操作の名前: `send:<kind>:<宛先>`(tb send)、`role:change`(人事の roles/ 変更)、`setup:<step>` など。`proxy:<effect>` は操作名としては定義があるが、**承認判定(`approval_of`)には渡らない**(代行依頼は `proxy_requests` の別の仕組み)ので、approvals.conf の `proxy:*` の行は何も効かない。既定では `send:task:*` が `ask`、`send:info:*` / `send:answer:*` が `allow`
 - `tb send` は `ask` の送信を届けず、`outbox` に `pending`(人の承認待ち)で置く(終了コード 20)。Web UI の緊急通知に出る
 - `tb allow` / `tb ask` / `tb approve` / `tb reject` は**人の端末から**だけ実行できる(agent の pane からは拒否)。履歴は `approval_changes`
 - agent には `approvals.conf` を編集させない(Claude Code の `permissions.deny` で `Edit(//<ORCH_DIR>/taskboard/config/approvals.conf)` などを拒否し、
-  `Bash(tb allow:*)` なども拒否しておくとより確実)
+  `Bash(tb allow:*)` なども拒否しておくとより確実。権限カタログ `approvals-catalog.conf` も同じ扱いにする: 書き換えられると `/perms` の警告が消える)
+- 操作の候補と性質(種別・副作用・リスク階層・allow の候補・状態)は `config/approvals-catalog.conf` に定義している(判定には使わない。Web UI の `/perms` が approvals.conf と突き合わせて見せる)。状態は active(承認判定に渡す箇所がある)・unwired(操作名はあるが承認判定には渡らない)・reserved(将来用)。
+  tb が承認判定に渡す操作名を増やしたら、カタログにも足す(`test/cases/82_catalog.sh` が、コード中の操作名の載り漏れと、既定の approvals.conf の未知の規則を検出する)
 - tb が強制するのは `tb send` だけ。ほかの操作(役割の変更・セットアップの書き込みなど)は、agent が `tb approval <操作>` を見て、`ask` なら人に聞く
 
 ## アラート(見張り役 → 解析役)

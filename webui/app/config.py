@@ -25,6 +25,7 @@ HERDR_BIN = herdr_env.herdr_bin
 TB_DB = lambda: cfg("WEBUI_TB_DB", herdr_env.tb_db())  # noqa: E731  WEBUI_TB_DB → TB_DB → 既定
 SCHED_LOGS = lambda: cfg("WEBUI_SCHED_LOGS", os.path.join(HERDR_ROOT, "scheduler", "logs"))  # noqa: E731
 APPROVALS = lambda: cfg("WEBUI_APPROVALS", os.environ.get("TB_APPROVALS") or os.path.join(HERDR_ROOT, "taskboard", "config", "approvals.conf"))  # noqa: E731  tb と同じ解決順(TB_APPROVALS)
+CATALOG = os.path.join(HERDR_ROOT, "taskboard", "config", "approvals-catalog.conf")  # 固定(env で差し替えない)
 RUN_DIR = lambda: cfg("WEBUI_RUN_DIR", os.path.join(ROOT, "run"))  # noqa: E731
 SCHED_ROOT = os.path.join(HERDR_ROOT, "scheduler")
 SCHED_JOBS = lambda: cfg("WEBUI_SCHED_JOBS", os.path.join(SCHED_ROOT, "jobs"))  # noqa: E731
