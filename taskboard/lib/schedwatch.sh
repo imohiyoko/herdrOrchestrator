@@ -86,6 +86,22 @@ sw_hms() {
   echo $((10#${BASH_REMATCH[1]} * 3600 + 10#${BASH_REMATCH[2]} * 60 + s))
 }
 
+# conf の COMMAND= の値だけを出す(1 行 1 値)。引用符で始まれば閉じ引用符までの内側、無ければ最初の " #" の前まで。
+# 行末の コメント(COMMAND=x # watchx)の語は含めない。bash の while read だけで書く(awk・sed の方言に依存しない)
+sw_command_value() {
+  local line v q
+  while IFS= read -r line || [[ -n $line ]]; do
+    [[ $line =~ ^[[:space:]]*COMMAND=(.*)$ ]] || continue
+    v=${BASH_REMATCH[1]}; q=${v:0:1}
+    if [[ $q == "'" || $q == '"' ]]; then
+      v=${v:1}; v=${v%%"$q"*}
+    else
+      v=${v%% \#*}; v=${v%%$'\t'\#*}
+    fi
+    printf '%s\n' "$v"
+  done <"$1"
+}
+
 collect_sched_obs() {
   [[ $(sw_cfg enabled 1) == 1 ]] || return 0
   [[ -d $SW_DIR/jobs && -d $SW_DIR/logs && -f $SW_SHOW ]] || return 0
@@ -106,14 +122,14 @@ collect_sched_obs() {
     sum=$(sw_summarize "$log" "$now" $((fail_win * 60))) || continue
     [[ -n $sum ]] || continue
     # 見張り系か: conf の WATCHER=1 / 0 の明示が最優先。無ければ、TARGET が watchers に入っている、または
-    # conf の COMMAND= の行が watchers の名前を含む。PROMPT のパスやコメントに入った語には一致させない
+    # conf の COMMAND= の値(行末コメントは除く)が watchers の名前を含む。PROMPT のパスやコメントに入った語には一致させない
     is_watch=0
     case $(jq -r '.watcher // empty' <<<"$cfg") in
       1) is_watch=1 ;;
       0) ;;
       *) for w in $watchers; do
            [[ $(jq -r .target <<<"$cfg") == "$w" ]] && is_watch=1
-           grep -E '^[[:space:]]*COMMAND=' "$conf" 2>/dev/null | grep -qwF -- "$w" && is_watch=1
+           sw_command_value "$conf" | grep -qwF -- "$w" && is_watch=1
          done ;;
     esac
     if [[ $enabled == false ]]; then

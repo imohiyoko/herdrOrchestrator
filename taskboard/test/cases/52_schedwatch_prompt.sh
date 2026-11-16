@@ -41,16 +41,21 @@ lg bytarget 45 sent; lg bytarget 5 skipped_state
 # 従来どおり: WATCHER 未設定でも COMMAND の値が watchers の語を含めば見張り系
 { printf "COMMAND='bin/watchx check'\nWINDOW=00:00-23:59\nINTERVAL_MIN=5\nDAYS=daily\nTZ=Asia/Tokyo\n"; } >"$TB_SCHED_DIR/jobs/bycommand.conf"
 lg bycommand 45 ran; lg bycommand 5 failed
+# COMMAND= の行末コメントの語は見ない(引用符あり・なし)。値の中の語は見る
+printf "COMMAND='bin/other check'   # watchx\nWINDOW=00:00-23:59\nINTERVAL_MIN=5\nDAYS=daily\nTZ=Asia/Tokyo\n" >"$TB_SCHED_DIR/jobs/cmtq.conf"; lg cmtq 45 ran; lg cmtq 5 skipped_state
+printf 'COMMAND=bin/other\\ check # watchx\nWINDOW=00:00-23:59\nINTERVAL_MIN=5\nDAYS=daily\nTZ=Asia/Tokyo\n' >"$TB_SCHED_DIR/jobs/cmtu.conf"; lg cmtu 45 ran; lg cmtu 5 skipped_state
+printf 'COMMAND="bin/watchx check" # note\nWINDOW=00:00-23:59\nINTERVAL_MIN=5\nDAYS=daily\nTZ=Asia/Tokyo\n' >"$TB_SCHED_DIR/jobs/cmvq.conf"; lg cmvq 45 ran; lg cmvq 5 skipped_state
+printf 'COMMAND=bin/watchx # note\nWINDOW=00:00-23:59\nINTERVAL_MIN=5\nDAYS=daily\nTZ=Asia/Tokyo\n' >"$TB_SCHED_DIR/jobs/cmvu.conf"; lg cmvu 45 ran; lg cmvu 5 skipped_state
 # 見張り系でない COMMAND は、ran が無くても出ない
 { printf "COMMAND='bin/other check'\nWINDOW=00:00-23:59\nINTERVAL_MIN=5\nDAYS=daily\nTZ=Asia/Tokyo\n"; } >"$TB_SCHED_DIR/jobs/plaincmd.conf"
 lg plaincmd 45 ran; lg plaincmd 5 skipped_state
 
 dry=$($TB digest --dry-run)
 for want in "見張り系ジョブ sentstale の ran が 45 分無い" "見張り系ジョブ failonly の ran が 45 分無い" \
-            "見張り系ジョブ explicit1 の ran が 45 分無い" "見張り系ジョブ bycommand の ran が 45 分無い"; do
+            "見張り系ジョブ explicit1 の ran が 45 分無い" "見張り系ジョブ bycommand の ran が 45 分無い" "見張り系ジョブ cmvq の ran が 45 分無い" "見張り系ジョブ cmvu の ran が 45 分無い"; do
   [[ $dry == *"$want"* ]] && ok "schedwatch2: dry-run has '$want'" || { ng "schedwatch2: dry-run has '$want'"; echo "   actual: $dry"; }
 done
-for not in "見張り系ジョブ falsepos" "見張り系ジョブ falsepos2" "見張り系ジョブ sentok" "見張り系ジョブ explicit0" "見張り系ジョブ plaincmd"; do
+for not in "見張り系ジョブ falsepos" "見張り系ジョブ falsepos2" "見張り系ジョブ sentok" "見張り系ジョブ explicit0" "見張り系ジョブ plaincmd" "見張り系ジョブ cmtq" "見張り系ジョブ cmtu"; do
   [[ $dry != *"$not"* ]] && ok "schedwatch2: dry-run lacks '$not'" || { ng "schedwatch2: dry-run lacks '$not'"; echo "   actual: $dry"; }
 done
 # bytarget は最後の sent が 45 分前で止まっているので、従来どおり出る
