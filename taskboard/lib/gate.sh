@@ -694,8 +694,8 @@ _gate_cmd_ingest_events() {
     while IFS= read -r l || [[ -n $l ]]; do
       ln=$((ln+1)); [[ -z $l ]] && continue
       [[ $l =~ $GATE_EV_RE ]] || { echo "tb: gate ingest-events: 既存の記録の形式違反(L$ln)のため止めます" >&2; exit 1; }
-      # 同じ発言の同じ内容(task、repo、pr、種類、id、本文のハッシュ、更新時刻、状態、sha、outdated)は足さない。head は取り込みの時点の値なので、キーに入れない
-      printf '%s\n' "${BASH_REMATCH[2]}|${BASH_REMATCH[3]}|${BASH_REMATCH[4]}|${BASH_REMATCH[5]}|${BASH_REMATCH[6]}|${BASH_REMATCH[17]}|${BASH_REMATCH[18]}|${BASH_REMATCH[14]}|${BASH_REMATCH[13]}|${BASH_REMATCH[21]}" >>"$tmp/keys"
+      # 同じ発言の同じ内容(task、repo、pr、種類、id、本文のハッシュ、更新時刻、状態、sha、outdated、login、actor_type、assoc)は足さない。head は取り込みの時点の値なので、キーに入れない
+      printf '%s\n' "${BASH_REMATCH[2]}|${BASH_REMATCH[3]}|${BASH_REMATCH[4]}|${BASH_REMATCH[5]}|${BASH_REMATCH[6]}|${BASH_REMATCH[17]}|${BASH_REMATCH[18]}|${BASH_REMATCH[14]}|${BASH_REMATCH[13]}|${BASH_REMATCH[21]}|${BASH_REMATCH[7]}|${BASH_REMATCH[10]}|${BASH_REMATCH[11]}" >>"$tmp/keys"
     done <"$f"
   else : >"$tmp/keys"; fi
   local base="repos/$owner/$repo"
@@ -704,6 +704,9 @@ _gate_cmd_ingest_events() {
     && _gate_ingest_fetch "$GATE_ING_GH" "$base/pulls/$num/comments" "$tmp/comments.json" \
     && _gate_ingest_fetch "$GATE_ING_GH" "$base/issues/$num/comments" "$tmp/issues.json" \
     || { echo "tb: gate ingest-events: 取得または解析に失敗したため記録しません" >&2; exit 12; }
+  # PR 本体の必須項目(作者の数値 id と head の sha)は、発言の有無に関係なく検証する。欠けていれば何も記録しない
+  jq -e '(.user.id | type == "number") and (.head.sha | type == "string" and test("^[0-9a-f]{40}$"))' "$tmp/pr.json" >/dev/null 2>&1 \
+    || { echo "tb: gate ingest-events: PR 本体の作者 id または head の sha が不正なため、何も記録しません" >&2; exit 12; }
   local table i; table="{}"
   for ((i = 0; i < ${#GATE_SEV_KEYS[@]}; i++)); do table=$(jq -c --arg k "${GATE_SEV_KEYS[i]}" --arg v "${GATE_SEV_VALS[i]}" '. + {($k): $v}' <<<"$table"); done
   # 判定ではなく取り出しだけ。jq の固定のプログラムが、機械的に数えられる項目を TSV にする。本文は 1 行目の重大度の表記と、決まった印の有無、base64 だけに使う(解釈しない)
@@ -728,7 +731,7 @@ _gate_cmd_ingest_events() {
     sum=$(printf '%s' "$b64" | base64 -d 2>/dev/null | { if command -v sha256sum >/dev/null; then sha256sum; else shasum -a 256; fi; } | cut -c1-64)
     line="ts=$ts task=$tid repo=$owner/$repo pr=$num kind=$kind event=$ev actor=$login actor_id=$lid actor_type=$t assoc=$assoc author=$isauth sha=$sha state=$state label=$label addr=$addr body_sha256=$sum upd=$upd review=$rvid orig_sha=$osha outdated=$outd head=$head by=$GATE_INGEST_SENDER"
     [[ -n $t && $line =~ $GATE_EV_RE ]] || { echo "tb: gate ingest-events: 形式が不正な発言があるため、何も記録しません(種類 $kind、id ${ev:0:20})" >&2; exit 12; }
-    key="$tid|$owner/$repo|$num|$kind|$ev|$sum|$upd|$state|$sha|$outd"
+    key="$tid|$owner/$repo|$num|$kind|$ev|$sum|$upd|$state|$sha|$outd|$login|$t|$assoc"
     if grep -qxF -- "$key" "$tmp/keys"; then nskip=$((nskip+1)); continue; fi
     printf '%s\n' "$key" >>"$tmp/keys"; printf '%s\n' "$line" >>"$tmp/new"; nnew=$((nnew+1))
   done <"$tmp/events.tsv"
@@ -797,7 +800,7 @@ _gate_cmd_reviewers() {
         chg = ""; if (nl > 1) { chg = " login-changed" }
         print id "\treviewer: " first " id=" id " type=" ty[id] " assoc=" as[id] " author=" isau " reviews=" nr " inline=" ni " issue=" ns " label-blocker=" nb " label-should=" nh " last=" lastv chg
       } }' | sort -n -k1,1 | cut -f2- >"$tmp/out"
-  echo "events: $(wc -l <"$tmp/latest" | tr -d ' ')   reviewers: $(wc -l <"$tmp/out" | tr -d ' ')"
+  echo "events: $(cut -f1 "$tmp/latest" | sort -u | wc -l | tr -d ' ')   reviewers: $(wc -l <"$tmp/out" | tr -d ' ')"
   cat "$tmp/out"
   return 0
 }

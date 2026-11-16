@@ -188,6 +188,28 @@ cp "$EVLOG" "$GT/ev-backup2.log"; printf 'garbage\n' >>"$EVLOG"
 eq "reviewers: a malformed record line → 1 (fail-closed)" "$(env -u HERDR_PANE_ID "$ISO6/taskboard/bin/tb" gate reviewers "$PRREF" >/dev/null 2>&1; echo $?)" "1"
 cp "$GT/ev-backup2.log" "$EVLOG"
 eq "reviewers: bad argument → 2" "$(env -u HERDR_PANE_ID "$ISO6/taskboard/bin/tb" gate reviewers nope >/dev/null 2>&1; echo $?)|$(env -u HERDR_PANE_ID "$ISO6/taskboard/bin/tb" gate reviewers "$PRREF" --x >/dev/null 2>&1; echo $?)|$(env -u HERDR_PANE_ID "$ISO6/taskboard/bin/tb" gate reviewers >/dev/null 2>&1; echo $?)" "2|2|2"
+# --- review-pr49 の nit: PR 本体の検証、身元だけが変わった観測、events の数
+cp "$EVLOG" "$GT/ev-nits-hold.log"; rm -f "$EVLOG"
+PRBAD1=$(jq -nc '{user:{},head:{sha:"'"$H40"'"}}'); PRBAD2=$(jq -nc '{user:{login:"author-x",id:1001,type:"User"},head:{sha:"zzz"}}'); PRBAD3='{}'
+NRV=$(evrv nit-one 3001 User contributor "$H40" commented "NIT-BODY" 2026-11-16T02:00:00Z 41)
+eq "nits: PR body without a user id + a review → 12, nothing recorded" "$(evres "$(evfx n1 "[$NRV]" "[]" "[]" "$PRBAD1")")" "12|0"
+eq "nits: PR body without a user id and NO comments at all → still 12 (validated regardless)" "$(evres "$(evfx n2 "[]" "[]" "[]" "$PRBAD1")")" "12|0"
+eq "nits: PR body with an invalid head sha and NO comments → 12" "$(evres "$(evfx n3 "[]" "[]" "[]" "$PRBAD2")")" "12|0"
+eq "nits: empty PR body object and NO comments → 12" "$(evres "$(evfx n4 "[]" "[]" "[]" "$PRBAD3")")" "12|0"
+eq "nits: the failure says what is wrong" "$(grep -c 'PR 本体の作者 id または head の sha が不正' "$GT/ev.err")" "1"
+eq "nits: a valid PR body with no comments → 0, new=0" "$(evres "$(evfx n5 "[]" "[]" "[]")")|$(grep -c 'new=0 unchanged=0' "$GT/ev.out")" "0|0|1"
+eq "nits: baseline review is recorded (rc 0, 1 line)" "$(evres "$(evfx n6 "[$NRV]" "[]" "[]")")" "0|1"
+NRV2=$(evrv nit-renamed 3001 User contributor "$H40" commented "NIT-BODY" 2026-11-16T02:00:00Z 41)
+eq "nits: only the login changed (same id, body, time) → recorded as new" "$(evres "$(evfx n7 "[$NRV2]" "[]" "[]")")" "0|1"
+NRV3=$(evrv nit-renamed 3001 User member "$H40" commented "NIT-BODY" 2026-11-16T02:00:00Z 41)
+eq "nits: only the association changed → recorded as new" "$(evres "$(evfx n8 "[$NRV3]" "[]" "[]")")" "0|1"
+NRV4=$(evrv nit-renamed 3001 Bot member "$H40" commented "NIT-BODY" 2026-11-16T02:00:00Z 41)
+eq "nits: only the actor type changed → recorded as new" "$(evres "$(evfx n9 "[$NRV4]" "[]" "[]")")" "0|1"
+eq "nits: the same observation again is not duplicated" "$(evres "$(evfx n10 "[$NRV4]" "[]" "[]")")" "0|0"
+NRVT=$(env -u HERDR_PANE_ID "$ISO6/taskboard/bin/tb" gate reviewers "$PRREF" 2>&1)
+eq "nits: 4 lines for one review → 'events: 1' (counted per statement), one reviewer" "$(sed -n 3p <<<"$NRVT")" "events: 1   reviewers: 1"
+eq "nits: the reviewer line shows the latest login, type and assoc (one statement, so no login change marker)" "$(grep -c '^reviewer: nit-renamed id=3001 type=bot assoc=member .*last=2026-11-16T02:00:00Z$' <<<"$NRVT")" "1"
+rm -f "$EVLOG"; mv "$GT/ev-nits-hold.log" "$EVLOG"
 # --- 判定の入力は変わらない: 記録があっても、evaluate の結果は同じ。execute は常に 30
 cp "$GT/gate.conf" "$ISO6/taskboard/config/gate.conf"; cp "$GT/paths.conf" "$ISO6/taskboard/config/gate-paths.conf"; cp "$GT/reviews-good.log" "$ISO6/taskboard/data/gate-reviews.log"
 # 記録が「無い」状態と「有る」状態を比べる(両方とも空でない状態で比べると、記録の存在が判定に混ざっても気づけない)
