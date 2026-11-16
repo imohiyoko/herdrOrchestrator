@@ -23,7 +23,7 @@
 - 実装は 7 段階(10 章)。まず `tb whoami`(台帳なし・挙動変更なし)から。
 - **webui はセッションごとに別ポート・別プロセス**(人の決定。13 章)。
 - **分離の単位**(物理 / 論理 / 1 つの DB)の比較と推奨は 14 章。
-- 人が決める点は 11 章(P1〜P23)。
+- 人が決める点は 11 章(P1〜P24)。
 
 ## 2. 現状
 
@@ -39,33 +39,27 @@
 
 既に分かっている穴(別の調査で確認済み):
 
-- 普段使う `herdr-up.sh`(`hd` から呼ばれる側)が checkout と別の場所のコピーだと、上の `TB_INSTANCE` の行が入っていない。
+- 普段の起動に使う `herdr-up.sh` が checkout と別の場所のコピーだと、上の `TB_INSTANCE` の行が入っていない。
   その場合 staging のペインでも `TB_INSTANCE` は空で、PATH の `tb` は**開発 checkout の DB を開く**(推測: ペインの PATH が人のシェルと同じ前提)。
 - hook(`tb-hook`)の DB は「呼ばれたスクリプトがある checkout」で決まる。herdr の設定は全セッション共有なので、どのセッションの hook も同じ checkout を向きうる。
 
-### 2.1 実機の配置(確認済み。読み取りのみで調べた。公開版なので件数は伏せる)
+### 2.1 実機の配置(確認済み。読み取りのみで調べた。公開版では一般化し、件数・パス・名前は書かない)
 
 cwd や checkout に関係なく、**PATH 上の `tb`(symlink)が指す checkout の DB** が使われる。
-人のシェルで、別 checkout(研修 / hardening 用)の `scheduler` ディレクトリに cd して `tb list` を打っても、普段の開発 checkout のタスク一覧が出た(再現済み)。`tb` は cwd を見ない。
+別の checkout のディレクトリに cd して `tb list` を打っても、PATH の `tb` の checkout のタスク一覧が出た(再現済み)。`tb` は cwd を見ない。
 
-| 場所(呼び名) | 実体 | origin / 関係 | DB | launchd |
-|---|---|---|---|---|
-| 開発 checkout | git clone。ブランチ `main`、origin は公開リポジトリ | PATH の `tb` の symlink 先(`which -a tb` は 1 本だけ) | 自分の `taskboard/data/tasks.db`(**普段の運用の DB**) | webui と scheduler の一部 |
-| hardening 用 checkout | 別の git clone。remote は開発 checkout のローカルパス(`upstream`)で、上流より先行し、worktree 多数・変更あり | 開発 checkout の派生 | **自分の DB(別。開発 checkout の DB とはタスク ID の体系も違う)** | **scheduler の job の大半**(plist が自分の `tick.sh` を指す) |
-| 旧 `herdr` ディレクトリ | git リポジトリ。remote なし。`taskboard/bin/tb` は旧版(1 本の大きなスクリプト) | `hd` が呼ぶ `herdr-up.sh` の置き場。`lib/` は無い | **`taskboard/data` が開発 checkout の `taskboard/data` への symlink = 開発 checkout と同じ DB**(別名の入口) | なし |
-| staging clone | 別の git clone(origin は公開リポジトリ)。開発 checkout と同じコミット | 検証用 | **未作成**(初回の `tb` 実行時に作られる。確認時点では無い) | なし(install 系は実行させない運用) |
+運用では checkout が複数ある(呼び名は A〜D。役割は一般化した):
 
-- **フルパスで `tb list` を呼んだときの DB**(DB ファイルの存在と、各 `tb` の DB 既定値の読み取りで確認。`tb` 自体は実行していない。`init_db` が書く可能性があるため):
-  開発 checkout → 自分の DB / hardening 用 → 自分の別 DB / 旧 `herdr` → symlink 経由で**開発 checkout と同じ DB** / staging → 初回に自分の新しい DB。
-- **DB の共有と分離**:
+| 呼び名 | 実体 | DB | launchd |
+|---|---|---|---|
+| A(普段の checkout) | git clone。PATH の `tb` の symlink 先 | 自分の DB(普段の運用) | 一部の job |
+| B(派生の checkout) | 別の git clone。A より先行した派生 | **自分の別の DB** | **残りの job** |
+| C(旧配置のディレクトリ) | 旧版の `tb` を持つ。`taskboard/data` が A の `data` への symlink | **A と同じ DB**(別名の入口) | なし |
+| D(検証用 clone) | 別の git clone。A と同じコミット | 未作成(初回の `tb` 実行時に作られる) | なし |
 
-| 組 | DB | 備考 |
-|---|---|---|
-| 開発 checkout と旧 `herdr` | **共有**(symlink。パスは別、実体は 1 つ) | `tb sessions --check` の「DB の重複」は**パスの文字列でなく realpath で比べる**こと |
-| 開発 checkout と hardening 用 | **別** | PATH の `tb` では hardening 用の DB は見えない。見るにはフルパスの `tb` か `TB_DB` |
-| 開発 checkout と staging | **別**(staging の DB はこれから) | |
-
-- **launchd が 1 つの名前空間に複数 checkout を混ぜている**(確認済み): ラベルは全部 `local.herdr-…`(`TB_INSTANCE` 無し)で、plist の指す checkout が job ごとに違う。大半の scheduler job は hardening 用 checkout、webui と残りの job は開発 checkout を指す。plist に `TB_DB` は無く、各 job は**自分の checkout の DB** を開く。つまり、同じラベルの規則の下に、2 つの DB を触る job が同居している。`install.sh` は「後勝ち」なので、どの checkout で最後に install したかで job ごとに行き先が決まった結果、と読める(推測。履歴は未確認)。
+- フルパスで `tb list` を呼ぶと、各 checkout は自分の DB を見る(C だけは symlink 経由で A と同じ)。`tb` 自体は実行せず、DB の存在と `tb` の既定値の読み取りで確認した。
+- DB の共有と分離: A と C は共有(realpath が同じ)/ A と B は別 / A と D は別。`tb sessions --check` の DB の重複は、**パスの文字列でなく realpath で比べる**。
+- **launchd が 1 つの名前空間に複数 checkout を混ぜている**(確認済み): ラベルは全部従来の `local.herdr-…`(`TB_INSTANCE` 無し)で、plist の指す checkout が job ごとに違う(A と B)。plist に `TB_DB` は無く、各 job は**自分の checkout の DB** を開く。同じ規則の下に、2 つの DB を触る job が同居している。`install.sh` は「後勝ち」なので、最後にどの checkout で install したかで決まった結果、と読める(推測。履歴は未確認)。
 
 ### 2.2 設計書の前提との照合(前の版の前提。今回の方針で 9.2 章に移した点がある)
 
@@ -74,12 +68,12 @@ cwd や checkout に関係なく、**PATH 上の `tb`(symlink)が指す checkout
 | 「PATH 上の `tb` が指す checkout の DB が事実上のインスタンス」 | **人のシェルの `tb` については合っている**(cwd を見ない、まで確認) | 1 章の文に「cwd は関係ない」を足した |
 | 「1 インスタンス = 1 checkout = 1 DB = 1 launchd 名前空間」(案 A+ の前提) | **実機は満たしていない**。launchd ラベルの名前空間が 1 つで、そこに 2 checkout の job が混在する。また 2 つのパスが同じ DB を指す(symlink) | 台帳の DB 検査を realpath にする。`tb sessions --check` に「同じラベル規則の下で plist の向き先が複数 checkout」を足す。**案 A+ のラベル分離(`TB_INSTANCE`)を先に実機へ適用しないと、台帳の「launchd ラベル」の列は意味を持たない** |
 | 「`TB_INSTANCE` を `herdr-up.sh` が設定する」 | 実機の launchd には効いていない(plist は従来のラベル) | 台帳からの導出は、plist の再生成後にだけ成り立つ(9.2 章) |
-| 台帳の「checkout」の列は 1 つの DB を持つ | 旧 `herdr` は DB を共有する別名なので、台帳には**登録しない**(別名として `tb sessions --check` が検出して警告) | 3 章に 1 行足す |
+| 台帳の「checkout」の列は 1 つの DB を持つ | 旧配置(C) は DB を共有する別名なので、台帳には**登録しない**(別名として `tb sessions --check` が検出して警告) | 3 章に 1 行足す |
 
 **P1 の推奨は変わらない**(案 (a): `tb` 本体の冒頭で、解決した checkout の `tb` に振り分ける)。理由は、cwd でも PATH でも選べない実機の挙動と、「フルパスで呼ぶ以外に別 DB を見る手段が無い」ことが、案 (a) の動機そのものだから。ただし次を足す。
 
-- 振り分け先の `tb` が**旧版**(旧 `herdr` のような別スクリプト)だと、`TB_FORWARDED` などの合図を解釈しない。台帳に登録できるのは、新しい `tb`(`lib/herdr-env.sh` を持つ checkout)だけにし、`tb sessions --check` で確認する。
-- 当面は、**hardening 用 checkout を台帳の別セッションとして登録**し、`tb --session <名前> list` でその DB を見られるようにするのが、最初の実用的な利益になる。
+- 振り分け先の `tb` が**旧版**(旧配置(C) のような別スクリプト)だと、`TB_FORWARDED` などの合図を解釈しない。台帳に登録できるのは、新しい `tb`(`lib/herdr-env.sh` を持つ checkout)だけにし、`tb sessions --check` で確認する。
+- 当面は、**派生の checkout B を台帳の別セッションとして登録**し、`tb --session <名前> list` でその DB を見られるようにするのが、最初の実用的な利益になる。
 
 ## 3. 台帳
 
@@ -142,7 +136,7 @@ PATH の `tb` は 1 本の checkout の実体なので、**別セッションの
 ### herdr 側への指定(P14)
 
 - **herdr の `agent` / `workspace` / `pane` の各サブコマンドは `--session` を持たない**(確認済み: `herdr agent list --help` に options が無い)。セッションを選ぶ手段は、**環境(`HERDR_SESSION` / `HERDR_SOCKET_PATH`)**。トップレベルの `herdr --session <名> [options]` は「セッションを使う・作る」ためのもので、`herdr --session <名> agent list` が通るかは**未確認**(12 章)。
-- 推奨: `herdr_call` を、**解決済みのセッションを環境で明示する**形にする(`env -u HERDR_SOCKET_PATH HERDR_SESSION=<セッション> herdr …`。`default` は両方を unset)。`herdr_call` は tb の herdr 呼び出しの唯一の入口(`taskboard/lib/transport.sh:7`)なので、1 か所で足りる。**フラグ形が使えるとわかっても、環境形を主にする**(`herdr-up.sh` が使っている実績のある形。差し替える利益が薄い)。
+- 推奨: `herdr_call` を、**解決済みのセッションを環境で明示する**形にする(`env -u HERDR_SOCKET_PATH HERDR_SESSION=<セッション> herdr …`。`default` は両方を unset)。`herdr_call` は tb の herdr 呼び出しの唯一の入口(`taskboard/lib/transport.sh:7`)なので、1 か所で足りる。**ただし明示するのは、tb が別のセッションを選んだ場合(台帳があり、`--session` などで振り分けたとき)だけ**。台帳なし・振り分けなしでは `HERDR_SOCKET_PATH` を**そのまま継承**する(`herdr_session_name` は標準でない配置の socket のパスから名前を導けず、socket を捨てると herdr の向き先が変わるため)。シェルに残った別セッションの socket による事故は、台帳があるときの `tb sessions --check` と banner の `socket=` 表示で**気づく**形にとどめる。**フラグ形が使えるとわかっても、環境形を主にする**(`herdr-up.sh` が使っている実績のある形。差し替える利益が薄い)。
 - この明示は、振り分け済みの子プロセスだけでなく、振り分けが起きない経路(PATH の `tb` がそのセッションの checkout のとき)でも、**シェルに残った別セッションの `HERDR_SOCKET_PATH`** で意図しないセッションに向く事故を防ぐ。
 
 ### 振り分け先で確認する観点(テストの項目)
@@ -165,7 +159,7 @@ PATH の `tb` は 1 本の checkout の実体なので、**別セッションの
 
 1. `--session <名>`
 2. env `TB_SESSION`
-3. env `HERDR_SESSION` / `HERDR_SOCKET_PATH`(`herdr_session_name` の結果。**台帳があるときだけ**選択として扱う。既存の案内「`HERDR_SESSION=<名前> で指定`」の運用を壊さないため。`TB_SESSION` と食い違えば止まる)
+3. env `HERDR_SESSION` / `HERDR_SOCKET_PATH`(**台帳があるときだけ**効く。`herdr_session_name` の結果。既存の案内「`HERDR_SESSION=<名前> で指定`」の運用を壊さないため。`TB_SESSION` と食い違えば止まる)
 4. 現在の選択(`current` ファイル)
 5. 未選択
 
@@ -176,12 +170,14 @@ PATH の `tb` は 1 本の checkout の実体なので、**別セッションの
   - `TB_DB` が台帳のいずれかのセッションの DB と**一致する** → そのセッションが選ばれたものとして扱う(未選択ではない)。
   - 一致する DB が無い(**台帳外の DB**) → fail-closed の対象外とし、今と同じに動く。出力には「DB 明示(台帳外)」と出す。
   - この例外は、テスト・scheduler・webui が `TB_DB` で動くための互換。`TB_DB` を付けるだけで fail-closed を抜けられるが、これは 6 章の限界(同じ OS ユーザーが env で回避できる柵)と同じ性質で、新しい穴ではない。
+- **黙って無視しない**(P24): `tb use <名>` は保存した後、環境の `TB_SESSION` / `HERDR_SESSION` がそれより優先して効いているなら **stderr で警告**する(「現在の選択は X だが、環境 HERDR_SESSION=Y が優先されている」)。`tb whoami` と banner は決まり方を `(flag)` / `(env)` / `(use)` で出す。`--session` と env が食い違うときは flag が勝つが、**差があることを 1 行出す**。
+- 停止メッセージには逃げ道を出す(例: 古い `TB_INSTANCE` が残っているなら「`unset TB_INSTANCE`」)。
 - 5(未選択)の扱い:
 
 | 台帳の状態 | 読み取り系 | 書き込み系・送信系 |
 |---|---|---|
 | 台帳なし | 今と同じ | 今と同じ |
-| セッション 1 つ | そのセッション(選択済みと同じ扱い) | 同左 |
+| セッション 1 つ | そのセッション(未選択でも唯一を選ぶ。**決まった名前が台帳に無い、またはペインのセッションと違うときは対象外で、上の停止**) | 同左 |
 | **2 つ以上で未選択** | **実行する。対象は PATH の `tb` の checkout(今と同じ場所)とし、対象を出す**(「未選択。N 個ある。`tb use` か `--session` で選ぶ」) | **止まる(fail-closed)**(ただし `TB_DB` が設定されているときは上の `TB_DB` の規則) |
 
 - 読み取り / 書き込みの分類は、**コード側に読み取りコマンドの一覧**(許可リスト)を持つ。一覧に無いコマンドは書き込み扱い(新しいコマンドを足して分類を忘れても安全側に倒れる)。一覧に入れる候補: `list` / `show` / `comments` / `digest` / `agents` / `approval`(参照)/ `limits` / `roles` / `alerts` / `proposals` / `pending` / `outbox`(一覧)/ `whoami` / `sessions` など。`touch` と hook 系(`role-context`)は常に 0 で返す既存の決まりを守るので、この判定の外。
@@ -197,7 +193,7 @@ PATH の `tb` は 1 本の checkout の実体なので、**別セッションの
 
 ### 5.1 別セッション宛ての操作(P12・P13)
 
-例: default セッションの conductor が、staging セッションの agent に `send` する。
+例: 人が default のシェルから、staging セッションの agent に `send` する(agent の conductor からは、この形は成立しない。下記)。
 
 - 現状は、`send` / `report` の宛先は**名前だけ**で、herdr が見るセッションは実行プロセスの環境で決まる。宛先が別セッションにいれば `agent_not_found` で失敗し、**同名の agent が実行セッションにいると、意図しない相手に届く**(案 A+ の調査で確認済み)。
 - 方針:
@@ -211,7 +207,7 @@ PATH の `tb` は 1 本の checkout の実体なので、**別セッションの
 
 | 経路 | セッションの決まり方 |
 |---|---|
-| 人のシェル | `--session` > `TB_SESSION` > `HERDR_SESSION` > `use` > 未選択 |
+| 人のシェル | `--session` > `TB_SESSION` > `HERDR_SESSION`(台帳があるときだけ)> `use` > 未選択。flag は env より常に強く、**env 同士が食い違うときだけ停止**(P24) |
 | agent のペイン | ペインのセッション(固定) |
 | hook(`tb-hook` / `tb-role-hook`) | ペインのセッション。決まらなければ 9 章 |
 | scheduler(launchd) | plist の `HERDR_SESSION`(9.1 章) |
@@ -224,6 +220,9 @@ PATH の `tb` は 1 本の checkout の実体なので、**別セッションの
   - `HERDR_PANE_ID` は環境変数なので、同じ OS ユーザーで動く agent は `env -u HERDR_PANE_ID tb use …` で外せる。**これは防御ではなく、うっかりを防ぐ柵**。
   - 親プロセスをたどる・tty を見る判定を足しても、同じユーザーの agent には回避できる(別シェルを起動する等)。足すかどうかは費用対効果で P4。
   - 人が herdr のペインの中のシェルで `tb` を打つと、`HERDR_PANE_ID` があるので agent と同じ扱いになり、`tb use` が拒否される(切り替えは `--session` か、ペインの外のシェルで)。
+  - **台帳(`sessions.conf`)も同じユーザーが書ける**。台帳の checkout 列は振り分けで `exec` する `tb` のパスなので、書き換えられると別のコードを人の権限で実行させうる(`current` より影響が大きい)。防御ではなく気づく側で対処する: 振り分け時の banner に checkout の**実パス全体**を出す(短縮しない)、`tb sessions --check` が checkout の remote を確認する。
+  - `TB_FORWARDED` が人のシェルに残ると振り分けが無効になる。`tb whoami` に `forwarded=1` を出して気づけるようにする。
+  - `tb use --shell` が出す `export TB_SESSION=<名>` は `eval` されるので、**台帳に載り名前の規則に合う名前だけ**を出す(実装の条件)。
   - 選択を保存するファイル(7 章)も同じユーザーが書ける。つまり、**agent が `current` を書き換えて、人の次の `tb`(未選択のはずが選択済みになる)の対象を変える**ことは防げない。
 - 効く対策は「防ぐ」より「**気づく**」:
   1. 8 章の出力(全コマンドが対象を出す)。人が見れば、書き換えられていても対象が出る。
@@ -274,7 +273,7 @@ RPROMPT='$(_tb_inst)'"${RPROMPT:-}"
 ```
 
 - 表示は**選択の写し**であって、決まり方の正本ではない(agent のペインでは ペインから決まる。人のシェルでのみ意味がある)。
-- 未選択のときは何も出さないので、「未選択で複数ある」状態は prompt では分からない。気になるなら `[tb:?]` を出す変種を 4 段目に載せる(P6 と同じ検討)。
+- 未選択のときは何も出さないので、「未選択で複数ある」状態は prompt では分からない。気になるなら `[tb:?]` を出す変種を S7 の仕上げに載せる(P6 と同じ検討)。
 
 ## 9. 既存との関係(互換)
 
@@ -298,7 +297,7 @@ RPROMPT='$(_tb_inst)'"${RPROMPT:-}"
 | `transport.sh` の `herdr_call` | `"$HERDR_BIN" "$@"` | 実行プロセスの環境 | **ここ 1 か所で、解決済みセッションを環境で明示**(4 章 P14) |
 | 同 `herdr_send`(`agent get` / `agent prompt`) | `herdr_call` 経由 | 同上 | 上で足りる。エラー文の `HERDR_SESSION` の案内を `--session` に直す |
 | 同 spawn / close(`workspace create` / `agent start` / `workspace close` / `pane close`) | `herdr_call` 経由 | 同上 | 上で足りる |
-| `agents.sh` の `agent_sync` / `HSESS` | `herdr_call agent list` + `herdr_session_name` | 環境(socket 優先) | 上で足りる。`HSESS` は明示した環境から導かれるので一致する |
+| `agents.sh` の `agent_sync` / `HSESS` | `herdr_call agent list` + `herdr_session_name` | 環境(socket 優先) | 上で足りる。`HSESS` は source 時に 1 度だけ決まる。振り分けで新しいプロセスを起こす場合は一致する。**同一プロセスの中で環境を差し替えない設計にする**(差し替えると `HSESS` とずれる)。`send.sh` にも別の `HSESS` の計算がある |
 | `roles.sh`(`pane_owner_name` ほか)・`comments.sh`・`digest.sh`・`send.sh`・`limits.sh`・`approvals.sh`・`gate.sh`・`compact.sh` | 全部 `herdr_call` 経由(`agent list` / `workspace list`) | 同上 | 上で足りる |
 | `send.sh` の `OUTBOX_SESSION` | `HERDR_SESSION` 未指定時の既定の宛先セッション | 設定ファイル | 台帳があれば、台帳のセッションを使う(別の入口を作らない)。台帳なしは今のまま |
 | `scheduler/bin/tick.sh`(`agent list`)と `system-send` | `"$HERDR" …` を直接実行。`system-send` は tb を呼ぶ | launchd の環境(`HERDR_SESSION` 無し = default 固定)。**plist に `HERDR_SESSION` を渡す口は案 A+ で追加済み**(`herdr_plist_value_ok`)。使うかは設定次第 | **`tick.sh` の直接呼び出しは `herdr_call` と同じ環境の明示に揃える**。plist は `gen-plist` が台帳のセッションを `HERDR_SESSION` に入れる(default は入れない) |
@@ -335,11 +334,11 @@ RPROMPT='$(_tb_inst)'"${RPROMPT:-}"
 
 ## 10. 段階案
 
-各段階は、前の段階が無くても壊れない。実装は「テスト先行」。staging(1 つの OS 上の複数セッションの模擬)が、各段階の動作確認の場所になる。
+実装は「テスト先行」。順序の依存: **S4 は S3 の後(または同時)、S5 は S4 の後**(止まったときの逃げ道が `--session`)。S5 の前に、全 agent のセッションが台帳に載っていることを `tb sessions --check` で確かめる(載っていないと書き込みが止まる)。**テストは台帳の場所を差し替えられる前提**: `XDG_CONFIG_HOME` を一時領域に向け、台帳なしを既定とし、台帳ありの試験は専用のケースだけが台帳を置く。実台帳のある開発機でも、実台帳の有無の両方で既存のテストが同じ結果になることを S2 の受け入れ条件にする。staging(1 つの OS 上の複数セッションの模擬)が、各段階の動作確認の場所になる。
 
 1. **S1: `tb whoami`**(台帳なし)。checkout・DB・herdr セッション(`herdr_session_name`)・`TB_INSTANCE`・ラベルの接頭辞・決まり方を出す。DB を開かない。何も変えない。
 2. **S2: 台帳と `tb sessions`**(読み取りのみ)。書式の検査、`--check`(**9.2 章の launchd 混在の検出を含む**。plist を読むだけ)。
-3. **S3: `herdr_call` のセッション明示**。`herdr_call` 1 か所で、解決済みセッション(台帳なしでは今の `herdr_session_name`)を環境で明示する。挙動は変えない(台帳なしは同じ値)。擬似 herdr のテストで固定する。
+3. **S3: `herdr_call` のセッション明示**(S4 と同時か、S4 の前)。`herdr_call` 1 か所で、tb が別のセッションを選んだとき(台帳あり・振り分けあり)だけ、解決済みセッションを環境で明示する。**台帳なし・振り分けなしは `HERDR_SOCKET_PATH` を継承したまま、挙動を変えない**(標準でない socket 配置でも同じ)。擬似 herdr のテストで、標準・非標準の両方の配置を固定する。
 4. **S4: `--session` と振り分け**(P1 の案 (a))。`TB_SESSION`、ペインの固定、別セッションの `--session` の拒否(agent)、`TB_FORWARDED`、4 章の観点のテスト。**scheduler の `tick.sh` と webui に同じ環境の明示**を入れ、`gen-plist` が `HERDR_SESSION` を入れ、`install.sh` が向き先の食い違いで止まるようにする。
 5. **S5: `tb use` と fail-closed**。`current` の保存、`use.log`、ペインでの拒否、書き込み系の fail-closed(複数・未選択)、読み取り許可リスト、専用の終了コード。
 6. **S6: 別セッション宛ての送信**(P12 で許す場合のみ)。人の `tb --session <宛先> send` を確かめるテストから。agent からの送信者の引き継ぎは別の設計(5.1 章)。
@@ -366,12 +365,13 @@ S1 だけで「今どこを指しているか」が分かるので、S2 以降�
 - **P15. webui のポートの決め方**: 台帳の webui ポート列で固定し、使用中なら別ポートへ逃げずエラー(推奨)/ 台帳のポートを起点に +1 探索。範囲の自動探索は台帳に無いセッションの既定だけ(13 章)。
 - **P16. 取り違え防止の画面表示**: タイトルとヘッダにセッション名を常時表示し、default 以外は色の帯を付ける(推奨)/ 名前だけ / 表示なし。
 - **P17. 目次ページ**: 置かない(推奨。目次自体が全セッションの一覧を持つ別の入口になる。`tb sessions` で足りる)/ 台帳を読むだけの静的な 1 ページを置く(認証は各セッション側)。
-- **P18. 台帳導入前の webui の扱い**: worker-webui の `TB_INSTANCE` 方式をそのまま使い、台帳導入後に移行(推奨)/ 台帳を先に作ってから webui を実装。
+- **P18. 台帳導入前の webui の扱い**: 別の実装担当の `TB_INSTANCE` 方式をそのまま使い、台帳導入後に移行(推奨)/ 台帳を先に作ってから webui を実装。
 - **P19. 既存の webui の Cookie 名**: セッション名入りの名前に変える。default だけは従来の `herdr_webui_session` のまま(推奨。互換)/ default も新しい名前にする(既存のログインが 1 回切れる)。
 - **P20. 分離の単位**(14 章): 混成 = 既定は案 2(1 checkout・セッション別ディレクトリ)、コードの版を分けたいセッションだけ台帳の checkout 列で別 clone(推奨)/ 案 1 のみ(今のまま)/ 案 2 のみ。案 3 は却下。
 - **P21. 設定の継承**: セッション別に**完全に独立**(フォールバックなし。新しいセッションは人が雛形から作る)(推奨)/ 既定のディレクトリへフォールバック(研修用など隔離したいセッションが普段の設定を読んでしまうので非推奨)。
 - **P22. DB の中のセッション名の照合**: 入れる。DB の `meta` に記録し、開くときに指定と照合して不一致は fail-closed(推奨。取り違えと、DB ファイルのコピー・移動の事故を拾う)/ 入れない。
 - **P23. スキーマの移行と版**: 全 DB の一括移行を**人が実行する明示コマンド**にし、通常の起動は「自分の DB だけ遅延移行」(推奨)/ 常に一括 / 遅延だけ。**DB の版がコードより新しいときは書き込み系を止める**(今は止めない。14.4 章)。
+- **P24. 解決の順の矛盾の扱い**: 優先順位の表を 1 つ(5.2 章)に統一し、効かなかった指定は**警告を出す**(推奨。`tb use` が環境に負けるのを黙らせない)/ 黙って優先順に従う(取り違え防止の目的に反する)/ 食い違いはすべて停止(既存の `HERDR_SESSION` 運用が止まる)。
 
 ## 12. 未確認
 
@@ -403,7 +403,7 @@ S1 だけで「今どこを指しているか」が分かるので、S2 以降�
 - ホストは `webui/app/config.py` の定数(ループバック)。変更しない(4 章の方針どおり)。
 - Cookie 名は定数 `herdr_webui_session`(`config.py`)。認証の状態(`auth.json` / `sessions.json`)は `RUN_DIR`(既定は checkout の `webui/run`)にあるので、**checkout ごとに別**。
 - `gen-plist.sh` は `HERDR_SESSION` と `TB_UI_PORT` が設定されていれば plist の環境に渡す。`TB_INSTANCE` が設定されていればラベルは `local.herdr-<instance>-webui`。
-- worker-webui が `feat/webui-instance-isolation` で、既存の `TB_INSTANCE` を使う形で先行している。確認時点では、その worktree に未コミットの変更もコミットも無かった(**コードの中身は見ていない**)。
+- 別の実装担当が 先行ブランチで、既存の `TB_INSTANCE` を使う形で先行している。確認時点では、その worktree に未コミットの変更もコミットも無かった(**コードの中身は見ていない**)。
 
 ### 13.2 決まり(1 つのセッション名から全部決まる)
 
@@ -441,7 +441,7 @@ S1 だけで「今どこを指しているか」が分かるので、S2 以降�
 
 ### 13.6 移行の段階(P18)
 
-worker-webui の `feat/webui-instance-isolation` は、**既存の `TB_INSTANCE`**(ラベルの接頭辞)を使う形で先行している。台帳の導入前に作った分を、台帳に寄せる。
+別の実装担当の先行ブランチは、**既存の `TB_INSTANCE`**(ラベルの接頭辞)を使う形で先行している。台帳の導入前に作った分を、台帳に寄せる。
 
 1. **W1(先行分。台帳なし)**: `TB_INSTANCE` で webui のラベル・`TB_UI_PORT`・`HERDR_SESSION` を決める。Cookie 名と画面表示も `TB_INSTANCE` から導く(`default` = 未設定は従来のまま)。**台帳なしの互換を守る**(未設定なら今と同じ)。
 2. **W2(台帳の読み取り = 設計の S2)**: `tb sessions` が台帳の webui ポート列を表示し、W1 の実際の設定(plist の `TB_UI_PORT` / ラベル)と食い違えば `--check` が警告する。**webui のコードはまだ変えない**。
@@ -449,7 +449,7 @@ worker-webui の `feat/webui-instance-isolation` は、**既存の `TB_INSTANCE`
 4. **W4(任意)**: Cookie 名・表示の導出元を `TB_INSTANCE` から「`HERDR_SESSION` + 台帳」に寄せる。W1 と同じ結果になることを、テストで固定する。
 
 - 1 〜 3 のどの時点でも、**台帳なしの運用は変わらない**。
-- worker-webui の分が `TB_INSTANCE` を**そのまま使う**ので、台帳導入後も `TB_INSTANCE` は「セッション名から導く値」として残る(3 章)。**矛盾しない**。
+- 別の実装担当の分が `TB_INSTANCE` を**そのまま使う**ので、台帳導入後も `TB_INSTANCE` は「セッション名から導く値」として残る(3 章)。**矛盾しない**。
 - 移行後の確認: `tb sessions --check` が、台帳のポートと plist の `TB_UI_PORT`、ラベルと plist の向き先(9.2 章)を一度に検査する。
 
 ## 14. 分離の単位: 物理(clone)/ 論理(1 checkout)/ 1 つの DB
@@ -458,7 +458,7 @@ worker-webui の `feat/webui-instance-isolation` は、**既存の `TB_INSTANCE`
 
 ### 14.1 3 案
 
-- **案 1(物理分離)**: セッションごとに clone(または worktree)。今の hardening 用 checkout と staging 用 clone。
+- **案 1(物理分離)**: セッションごとに clone(または worktree)。今の 派生の checkout B と staging 用 clone。
 - **案 2(論理分離)**: **1 checkout** で、DB を `taskboard/data/<セッション>/tasks.db` のようにセッション名から決める。approvals・roles・routes などの設定もセッション別のディレクトリ。launchd ラベルと webui ポートもセッション名から決める。`tb --session X` は **env と DB パスの切り替えだけ**で済み、別の `tb` への振り分け(`exec`)が要らない。
 - **案 3(1 つの DB に session 列)**: 全テーブルにセッション列を足し、1 つの DB に混ぜる。
 
@@ -494,7 +494,7 @@ worker-webui の `feat/webui-instance-isolation` は、**既存の `TB_INSTANCE`
   - **コードが古く、DB が新しい場合**: 確認済み(コード読み取り)として、`init_db` は `user_version` が最新以上なら**何もせず通す**(止めない)。別 clone の古い版の `tb` が、新しい版の DB を開くと、**知らない列・表があるまま書き込む**。案 2 では全セッションが同じコードなので起きにくいが、**混成**(別 clone のセッションがある)では起きうる。→ **DB の `user_version` がコードの最新より新しければ、書き込み系を止める**(P23。読み取りは通す)。
 - **設定の継承(P21)**:
   - 設定のディレクトリは、`taskboard/data/<セッション>/config/`(DB と同じ場所)のように**セッション別**にする。approvals / routes / limits / notify / repos / gate など(今は `taskboard/config/` にあり、未追跡のものが多い)。
-  - **フォールバックなしで完全に独立**を推奨。理由: 研修用の hardening は「普段の設定が見えない」ことが要件(案 A+ の 5 章)。フォールバックがあると、セッション別の設定が**無い項目は普段の値**になり、設定の置き忘れが隔離の穴になる(fail-open)。
+  - **フォールバックなしで完全に独立**を推奨。理由: 研修用の 派生(B)は「普段の設定が見えない」ことが要件(案 A+ の 5 章)。フォールバックがあると、セッション別の設定が**無い項目は普段の値**になり、設定の置き忘れが隔離の穴になる(fail-open)。
   - 新しいセッションは、人が雛形(`*.example`・追跡されている `approvals.conf` の既定)から作る。雛形からの作成を助ける**読み取りの確認**(`tb sessions --check` が、必須の設定の欠けを列挙する)は足してよい。コピーそのものは人。
   - `roles/` は追跡されたファイル(コードと同じ版)。**既定は checkout の `roles/` を全セッションが使う**。セッション別に変えたいときは、セッション別ディレクトリに**置き換え**(マージしない)で持つ。
   - 同様に、`scheduler/jobs`・`settings`・`logs`、`webui/run`(認証・Cookie)も**セッション別**にする(13 章の「ログイン情報はセッションごとに別」と整合)。
@@ -507,21 +507,21 @@ worker-webui の `feat/webui-instance-isolation` は、**既存の `TB_INSTANCE`
 
 ### 14.5 既存の実機の移行
 
-実機の現状(2.1 章): 開発 checkout の DB が default、hardening 用 checkout は別 DB で稼働、staging 用 clone は DB 未作成、旧 `herdr` ディレクトリは開発 checkout の DB への symlink。
+実機の現状(2.1 章): 開発 checkout の DB が default、派生の checkout B は別 DB で稼働、staging 用 clone は DB 未作成、旧配置のディレクトリ(C)は開発 checkout の DB への symlink。
 
 - **推奨の混成では、既存の DB を動かさない**(移動が要らない)。
   - **default**: 開発 checkout の `taskboard/data/tasks.db` のまま。案 2 の「セッション別ディレクトリ」は、**default だけ従来の場所を使う**(互換。P20 の混成の既定)。他のセッションは `taskboard/data/<名>/tasks.db`。
-  - **hardening**: 台帳の checkout 列で、**今の hardening 用 checkout を指す**(コードが独立した派生で、上流より先行しているため、案 1 のまま)。DB は動かさない。
+  - **派生(B)**: 台帳の checkout 列で、**今の 派生の checkout B を指す**(コードが独立した派生で、上流より先行しているため、案 1 のまま)。DB は動かさない。
   - **staging**: staging 用 clone(コードの検証用なので別 clone)。DB は未作成なので、そのまま。
   - 追加するのは、各 DB の `meta`(初回起動で記録、または `--migrate` で明示)と、台帳だけ。
-- **DB の移動が要る場合**(hardening を案 2 に畳む、など。**推奨ではない**。派生コードを失うため):
+- **DB の移動が要る場合**(派生の B を案 2 に畳む、など。**推奨ではない**。派生コードを失うため):
   1. その DB を使う job と agent を止める(scheduler の job を `bootout`、セッションを `stop`)。DB への書き込みが無いことを確かめる。
   2. `sqlite3 <旧 DB> ".backup <新 DB>"` で新しい場所へ(`cp` ではなく `.backup`。WAL の有無で壊れない。WAL かは未確認)。
   3. 新しい DB の `meta` にセッション名を記録し、`PRAGMA integrity_check` と、タスク・agent の件数を旧と比べる。
   4. 台帳を更新して、新しい場所を指す。**旧 DB は消さず、読み取り専用にして残す**(戻し用)。
   5. job とセッションを再開する。
   - 戻し方: 台帳を旧に戻し、旧 DB の読み取り専用を外す。**移動後に新しい DB に入ったデータは旧に戻らない**ので、戻す判断は早く(再開前の確認の間だけ可能)。
-  - 旧 `herdr` ディレクトリの symlink(`taskboard/data` → 開発 checkout)は、**別名のまま台帳に登録しない**(3 章)。
+  - 旧配置のディレクトリ(C)の symlink(`taskboard/data` → 開発 checkout)は、**別名のまま台帳に登録しない**(3 章)。
 - 全セッションを案 2 の 1 checkout に統合する場合のみ、DB 移動と設定の分割が大きな作業になる。**推奨しない**(14.2 章の「コードの版を分けられない」が、staging の目的とぶつかる)。
 
 ### 14.6 同じ OS ユーザーでの隔離の限界
