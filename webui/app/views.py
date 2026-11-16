@@ -12,6 +12,7 @@ from .sanitize import clean, e
 from .herdr import agent_key, agent_session, get_agents, read_agent, workspace_label
 from .data import has_resolution, parse_ts, NOTIFY_POLL_SEC, QUEUED_WARN_SEC, outbox_rows, activity_for, agent_ops, agent_registry, stopped_agents, db_conn, needs_human, parse_jsonl, q, stalled, tail_lines, tasks_for_agent, urgent_items, LEDGER_MAX, LEDGER_RESULTS, approval_history, ledger_kinds, ledger_rows, ledger_summary
 from .actions import NOTE_MAX
+from .jobview import agent_state, job_defs, mask, next_runs, prompt_file, send_task_decision
 from .jobs import DAY_PRESETS, DAY_TOKENS, INTERVAL_UNITS, interval_sec, interval_text, job_info, job_last, job_names
 from . import docs, perms
 from .markdown import render as render_md
@@ -561,15 +562,103 @@ def page_jobs(_qs):
             sched = (f'{e(interval_text(info))}おき / {e(info["start"])}-{e(info["end"])} / {e(info["days"])}'
                      + (" <span class=note>(Web UI で変更済み)</span>" if info.get("overridden") else ""))
             st = "有効" if info.get("enabled") else '<span class=warn>一時停止</span>'
-            what = e(info["target"]) if info["kind"] == "prompt" else "コマンド"
+            what = (f'<b>agent</b> {e(info["target"])}' if info["kind"] == "prompt" else "<b>コマンド</b>を実行")
         else:
             sched, st, what = f'<span class=warn>{e(err)}</span>', "-", "-"
         rows.append([f'<a href="/jobs/{quote(n)}">{e(n)}</a>' if n in names else e(n), what, sched, st,
                      (f'{e(last.get("ts"))} {e(last.get("action"))} {e(last.get("reason"))}' if last else "-"),
                      (f'{e(lr.get("ts"))} / {e(lr.get("action"))}' + (f' (exit {e(lr.get("exit"))})' if "exit" in lr else "")
                       if lr else "-")])
-    note = "<p class=note>job 名を開くと、間隔(分・秒)・時間帯・曜日・一時停止を変更できます(次の分から反映)。</p>"
-    return "定期実行", note + table(["job", "宛先", "間隔 / 時間帯 / 曜日", "状態", "最終記録", "最後の実行"], rows)
+    note = ("<p class=note>job 名を開くと、型(agent に送る / コマンドを実行)・宛先と今の状態・送られる本文やコマンド・次回の予定・承認の扱いを読めます。"
+            "スケジュール(間隔・時間帯・曜日・一時停止)だけ変更できます(次の分から反映)。</p>")
+    return "定期実行", note + table(["job", "何をする(宛先)", "間隔 / 時間帯 / 曜日", "状態", "最終記録", "最後の実行"], rows)
+
+
+def _fold(text, kind_label, limit_chars=600, limit_lines=12):
+    """長い本文は折りたたむ(全文は details の中)。text は無害化・マスク済みの文字列。"""
+    body = f"<pre>{e(text)}</pre>"
+    if len(text) > limit_chars or text.count("\n") >= limit_lines:
+        return f"<details><summary>{e(kind_label)}を開く({len(text)} 文字)</summary>{body}</details>"
+    return body
+
+
+def _job_overview(name, info):
+    """型・宛先・本文・いつ・直近の結果・副作用・承認の扱い(読み取りのみ。conf は実行しない)。"""
+    defs = job_defs(name) or {}
+    rows = []
+    is_prompt = info["kind"] == "prompt"
+    rows.append(("型", "<b>PROMPT 型</b>: agent にプロンプトを送る" if is_prompt else "<b>COMMAND 型</b>: コマンドを実行する(agent は介さない)"))
+    warn = []
+    if is_prompt:
+        tgt = info["target"]
+        st = agent_state(tgt)
+        if st.get("err"):
+            a_html = f'<code>{e(tgt)}</code> <span class=warn>状態を取得できません: {e(st["err"])}</span>'
+        elif st["count"] == 0:
+            a_html = f'<code>{e(tgt)}</code> <span class=warn>herdr に見つかりません(送れず failed になります)</span>'
+            warn.append("宛先が存在しません")
+        elif st["count"] > 1:
+            a_html = f'<code>{e(tgt)}</code> <span class=warn>同じ名前が {st["count"]} 体あり、一意に決まりません(failed になります)</span>'
+        else:
+            s = st["status"]
+            cls = {"working": "st-working", "blocked": "st-blocked", "idle": "st-idle", "done": "st-done"}.get(s, "")
+            a_html = (f'<code>{e(tgt)}</code> 今: <span class="{cls}">{e(s or "不明")}</span>'
+                      + (f" / workspace {e(st['workspace'])}" if st["workspace"] else "")
+                      + (f" / herdr セッション {e(st['registry'].get('herdr_session'))}" if st["registry"].get("herdr_session") else "")
+                      + (f" / 役割 {e(st['registry'].get('role'))}" if st["registry"].get("role") else ""))
+            if s not in ("idle", "done"):
+                a_html += f' <span class=note>(idle / done 以外のときは送らず skipped になります)</span>'
+        reg = st.get("registry") or {}
+        if reg.get("state") == "stopped":
+            a_html += ' <span class=warn>tb の台帳では停止中です</span>'
+        rows.append(("誰に送られるか", a_html))
+        skip = defs.get("SKIP_IF", "")
+        rows.append(("送る条件", "宛先が idle / done のときだけ送ります。" + (f"さらに状態が <code>{e(skip)}</code> のときは送りません(SKIP_IF)。" if skip else "")))
+        text, note, src = None, "", ""
+        if defs.get("PROMPT_FILE"):
+            body, note = prompt_file(defs["PROMPT_FILE"])
+            src = f'ファイル <code>{e(defs["PROMPT_FILE"])}</code>(展開前の記述そのまま)'
+            text = body
+        elif "PROMPT" in defs:
+            text, src = defs["PROMPT"], "conf の PROMPT(展開前の記述そのまま)"
+        if text is None:
+            rows.append(("何が送られるか", f'{src or "本文の定義が見つかりません"} <span class=note>{e(note)}</span>'))
+        else:
+            masked, nmask = mask(clean(text))
+            rows.append(("何が送られるか", f"{src}" + (f' <span class=note>{e(note)}</span>' if note else "") + _fold(masked, "本文")
+                         + (f'<p class=note>トークンらしい文字列 {nmask} 件をマスクしました</p>' if nmask else "")))
+    else:
+        cmd = defs.get("COMMAND", "")
+        masked, nmask = mask(clean(cmd))
+        rows.append(("何が実行されるか", "<code>bash -c</code> でそのまま実行(展開前の記述そのまま。タイムアウト "
+                     + e(defs.get("COMMAND_TIMEOUT") or "既定") + " 秒)" + _fold(masked, "コマンド")
+                     + (f'<p class=note>トークンらしい文字列 {nmask} 件をマスクしました</p>' if nmask else "")))
+    nxt, nnote = next_runs(info)
+    rows.append(("いつ", f'{e(interval_text(info))}おき / {e(info["start"])}-{e(info["end"])} / {e(info["days"])} / TZ {e(info["tz"])}'
+                 + ("" if info.get("enabled") else ' <span class=warn>一時停止中</span>')))
+    rows.append(("次回の予定", " → ".join(e(x) for x in nxt) + (f' <span class=note>(ジョブの TZ の時刻)</span>' if nxt else f'<span class=note>{e(nnote)}</span>')))
+    last, lr = job_last(name)
+    recs = parse_jsonl(tail_lines(os.path.join(SCHED_LOGS(), name + ".log"), 200))
+    counts = {}
+    for r in recs:
+        counts[r.get("action")] = counts.get(r.get("action"), 0) + 1
+    rows.append(("直近の結果", (f'{e(lr.get("ts"))} {e(lr.get("action"))}' + (f' (exit {e(lr.get("exit"))})' if "exit" in lr else "") if lr else "記録なし")
+                 + (f' / 最後の記録: {e(last.get("ts"))} {e(last.get("action"))} {e(last.get("reason"))}' if last else "")
+                 + (f'<br><span class=note>直近 {len(recs)} 件: ' + ", ".join(f"{e(k)} {v}" for k, v in sorted(counts.items(), key=lambda x: str(x[0]))) + "</span>" if recs else "")))
+    if is_prompt:
+        rows.append(("送信の記録", f'<a href="/ledger?kind=scheduler&amp;target={quote(info["target"])}">送信履歴(scheduler → {e(info["target"])})</a>'))
+    rows.append(("副作用", ("宛先 agent が受け取って動きます。その agent が Slack・Jira など外部へ書けるかは、webui からは分かりません(不明)。"
+                          if is_prompt else "コマンドが何を書くかは、本文から推測しません(不明)。上のコマンド本文を確認してください。")))
+    d = send_task_decision(info["target"]) if is_prompt else None
+    appr = ("scheduler からの送信(<code>tb system-send</code>)は approvals.conf を見ず、人の承認待ちにはなりません。"
+            "上の条件を満たせば自動で送られます。" if is_prompt else "COMMAND 型の実行は approvals.conf の対象外です(承認待ちにならず、時刻になれば実行されます)。")
+    if d:
+        appr += f' <span class=note>参考: 通常の <code>tb send</code> の <code>send:task:{e(info["target"])}</code> は現在 {e(d)}(この job には適用されません)。</span>'
+    rows.append(("承認の扱い", appr))
+    html_rows = "".join(f"<tr><th style='text-align:left;vertical-align:top;white-space:nowrap'>{e(k)}</th><td>{v}</td></tr>" for k, v in rows)
+    return (f'<h2>このジョブが行うこと</h2><table>{html_rows}</table>'
+            '<p class=note>conf の記述を実行せずに読んでいます(<code>$変数</code> などは展開せず、そのまま表示)。'
+            'トークンらしい文字列はマスクしますが完全ではありません。機密を含みうる画面です。</p>')
 
 
 def page_job(name, csrf, error="", saved=False):
@@ -604,7 +693,7 @@ def page_job(name, csrf, error="", saved=False):
     what = f'agent <code>{e(info["target"])}</code> にプロンプトを送る' if info["kind"] == "prompt" else "コマンドを実行する"
     msg = '<p class=note>保存しました。次の分から反映されます。</p>' if saved else ""
     return "定期実行: " + name, (
-        err_html(error) + msg + f"<p>{what}ジョブ。{'Web UI で変更済み。' if info.get('overridden') else ''}</p>" + form +
+        err_html(error) + msg + f"<p>{what}ジョブ。{'Web UI で変更済み。' if info.get('overridden') else ''}</p>" + _job_overview(name, info) + "<h2>スケジュールの変更</h2>" + form +
         "<p class=note>変更できるのはスケジュールだけです(宛先・本文・コマンドは jobs/*.conf を人が編集)。"
         f'保存先: <code>scheduler/settings/{e(name)}.settings</code></p><p><a href="/jobs">一覧へ</a></p>')
 

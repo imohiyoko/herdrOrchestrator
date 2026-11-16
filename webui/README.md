@@ -103,8 +103,8 @@ POST/PUT/DELETE/PATCH は 405。
 | `/docs` | agent が成果物として報告したドキュメント(ローカルのファイル)の一覧。新しい順、`?q=` で絞り込み |
 | `/docs/view?ref=<参照>` | そのドキュメントを読む。Markdown は整形して表示(Mermaid は図に。「元のテキストを表示」で切り替え)、フォルダなら中のファイル一覧 |
 | `/docs/view?path=<絶対パス>` | パスを指定して読む(agent の作業ディレクトリ配下だけ。`/docs` の入力欄から) |
-| `/jobs` | 各 job の実際に効く設定(間隔・時間帯・曜日・有効/一時停止)、最終記録と最後の実行 |
-| `/jobs/<job>` | スケジュールの変更フォーム(自動更新しない)。保存先は `scheduler/settings/<job>.settings`、次の分から反映。「conf の値に戻す」で settings を消す |
+| `/jobs` | 各 job の型・宛先(agent 名 / コマンド)・実際に効く設定(間隔・時間帯・曜日・有効/一時停止)、最終記録と最後の実行 |
+| `/jobs/<job>` | 「ジョブが行うこと」(型・宛先 agent と今の状態・送られる本文 / 実行されるコマンドの全文・次回の予定・直近の結果・副作用の注記・承認の扱い。読み取りのみ)と、スケジュールの変更フォーム(自動更新しない)。保存先は `scheduler/settings/<job>.settings`、次の分から反映。「conf の値に戻す」で settings を消す |
 | `/ledger` | 送信履歴(tb の `messages` 表)。種別 × 結果の件数サマリと直近 100 件。failed は既定で畳む。`?kind=` `?result=`(sent / busy / failed / all) `?target=` `?from=` `?to=`(日付 `YYYY-MM-DD`、UTC)で絞り込み。send の `O-n` は `/outbox` にリンクし、本文は 1 行目だけ |
 | `/perms` | 権限(`taskboard/config/approvals.conf` の読み取り)。上から順に順位・パターン・ask/allow・最後の変更(行末の注記と `approval_changes`)・その行で決まる操作の例・警告(`* = ask`、広い allow、上の行に隠れる行(ワイルドカードを含まない行)、「この操作はどの行で決まるか」の検索(`?op=`、tb の `approval_of` と同じ規則をここで再現。tb は呼ばない)、操作ごとの現在の権限(権限カタログ `taskboard/config/approvals-catalog.conf` × approvals.conf: 現在の値・決まる行・規則の有無(明示 / 既定に落ちる)・リスク階層・副作用・allow 候補・状態、`?kind=` `?state=` `?fallback=1` `?allowed=1` で絞り込み、high / human-only の操作が allow なら警告、reserved(将来用)と unwired(承認判定に渡らない。`proxy:*`)は薄く表示し、unwired の操作に当たる規則には「何も効かない」と警告、カタログに無い規則は「未知の規則」の欄)、変更履歴、`tb allow` / `tb ask` のコマンド行の組み立て表示(`?pat=&val=`。表示だけで実行しない)。変更の操作・POST は無い |
 
@@ -232,6 +232,7 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.herdr-webui.plist
 | `app/markdown.py` | 最小限の Markdown → HTML(エスケープしてから整形) |
 | `app/actions.py` | 画面からの変更。tasks.db には書かず `tb` を呼ぶ(今は `tb resolve` だけ) |
 | `app/jobs.py` | scheduler のジョブ定義と、Web UI から書く上書き設定 |
+| `app/jobview.py` | `/jobs/<job>` の読み取り表示(conf を実行せず PROMPT / COMMAND をそのまま読む、本文のマスク、次回の予定、宛先の状態) |
 | `app/views.py` | HTML の組み立てと各ページ |
 | `app/handler.py` | HTTP ハンドラ・ログイン・起動 |
 | `auth.py` | パスワードとセッション |
@@ -296,3 +297,11 @@ Cookie 名は現在 `herdr_webui_session_<TB_INSTANCE>`。台帳側の設計に�
 ### `TB_INSTANCE` の大文字小文字
 
 大文字小文字を区別しないボリューム(macOS の既定など)で run を共有しないよう、webui は名前を**小文字に正規化**する(`Alpha` と `alpha` は同じインスタンス: Cookie 名・run・表示とも小文字)。launchd のラベルと plist のファイル名は、`TB_INSTANCE` の書いたまま(`bin/gen-plist.sh`)。
+
+## 定期実行ジョブの表示(`/jobs/<job>`)の読み取り範囲
+
+- `scheduler/jobs/<job>.conf` は**実行しない**(bash として source しない)。`PROMPT` / `PROMPT_FILE` / `COMMAND` / `SKIP_IF` / `COMMAND_TIMEOUT` の記述を、`$変数` なども展開せずそのまま表示する。
+- `PROMPT_FILE` の中身は、絶対パスで、リポジトリ(と `scheduler/jobs`)の配下の通常ファイルで、認証情報の置き場(`/docs` と同じ判定)でないときだけ表示する。相対パス・範囲外は、パスだけ表示して中身は読まない。
+- 本文・コマンドのトークンらしい文字列(`ghp_…`・`xox…-`・`AKIA…`・`Bearer …`・`token=…` など)と秘密鍵のブロックは `[マスク]` に置き換える。完全ではない(機密を含みうる画面)。
+- 見るのはこの webui のプロセスの `scheduler/jobs`・`scheduler/logs`(別 checkout・別インスタンスのジョブは見えない)。
+- scheduler からの送信(`tb system-send`)は `approvals.conf` を見ず、人の承認待ちにならない(宛先が idle / done のときだけ自動で送る)。画面にはその旨と、参考として通常の `tb send` の判定(`send:task:<宛先>`)を出す。
