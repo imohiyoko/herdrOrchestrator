@@ -13,6 +13,8 @@ GATE_REVIEWS="${TB_ROOT:-.}/data/gate-reviews.log"
 GATE_INGEST_CONF="${TB_ROOT:-.}/config/gate-ingest.conf"
 # 取り込み口の送信者名(固定)。agent が review-submit では名乗れない。外部系統の記録は、この送信者のものだけを数える
 GATE_INGEST_SENDER="ingest"
+# 全レビューの身元つきの記録(段 1c。追記専用。判定の入力には使わない)。場所は固定で、env では差し替えられない
+GATE_EVENTS="${TB_ROOT:-.}/data/gate-review-events.log"
 # agent の pane から review-submit できる役割(固定。roles/ の固定の置き場と台帳から決める。env では変えられない)
 GATE_REVIEW_ROLES=" reviewer "
 # 外部系統(agent が名乗れない系統)。scheduler などの非 agent の経路だけが記録する
@@ -403,8 +405,10 @@ cmd_gate() {
   case $sub in
     evaluate) _gate_cmd_evaluate "$@";;
     ingest-review) _gate_cmd_ingest "$@";;
+    ingest-events) _gate_cmd_ingest_events "$@";;
+    reviewers) _gate_cmd_reviewers "$@";;
     execute) _gate_cmd_execute "$@";;
-    *) usage "使い方: tb gate evaluate|execute <chain-id> --action merge|approve / tb gate ingest-review <task-id> --pr <o>/<r>#<n> --sha <sha>";;
+    *) usage "使い方: tb gate evaluate|execute <chain-id> --action merge|approve / tb gate ingest-review <task-id> --pr <o>/<r>#<n> --sha <sha> / tb gate ingest-events <task-id> --pr <o>/<r>#<n> / tb gate reviewers <o>/<r>#<n> [--task <id>]";;
   esac
 }
 
@@ -544,8 +548,8 @@ GATE_JQ_DEFS='
     def addressed: test("(^|\n)\\s*✅ Addressed in commit");
 '
 
-_gate_load_ingest_conf() {
-  local LC_ALL=C f=$GATE_INGEST_CONF sec="" line n=0 k v i found
+_gate_load_ingest_conf() {   # $1=login を必須にするか(既定 1。段 1c の全レビュー取り込みは 0)
+  local LC_ALL=C need_login=${1:-1} f=$GATE_INGEST_CONF sec="" line n=0 k v i found
   GATE_ING_ERR=""; GATE_ING_GH=""; GATE_ING_LOGIN=""; GATE_WARNS=()
   GATE_SEV_KEYS=(critical major "potential issue" minor trivial nitpick "refactor suggestion")
   GATE_SEV_VALS=(blocker blocker should should should should should)
@@ -578,7 +582,7 @@ _gate_load_ingest_conf() {
       *) GATE_ING_ERR="L$n: 未知のキー [$sec] $k"; return 1;;
     esac
   done <"$f"
-  [[ -n $GATE_ING_LOGIN ]] || { GATE_ING_ERR="[source] login がありません(例: coderabbitai[bot])"; return 1; }
+  [[ $need_login == 0 || -n $GATE_ING_LOGIN ]] || { GATE_ING_ERR="[source] login がありません(例: coderabbitai[bot])"; return 1; }
   if [[ -z $GATE_ING_GH ]]; then GATE_ING_ERR="[gh] path が指定されていないため止めます(fail-closed)。専用の gh ラッパーの絶対パスを指定してください。PATH 上の gh には落としません"; return 1; fi
   if [[ $GATE_ING_GH != /* || ! -f $GATE_ING_GH || ! -x $GATE_ING_GH ]]; then GATE_ING_ERR="指定された gh を使えないため止めます(fail-closed): $GATE_ING_GH"; return 1; fi
   return 0
@@ -656,4 +660,163 @@ _gate_cmd_ingest() {
   ver=pass; ((blk == 0)) || ver=fail
   _gate_append_record "$tid" "$GATE_INGEST_SENDER" "$pr" coderabbit "$sha" "$blk" "$shd" "$ver" -
   echo "recorded: $tid REVIEW coderabbit ${sha:0:7} blocker=$blk should=$shd verdict=$ver by=$GATE_INGEST_SENDER unknown-label=$unk"
+}
+
+# ---------- ingest-events / reviewers(段 1c: 全レビューの身元つきの記録と表示。判定の入力は変えない) ----------
+# tb gate ingest-events <task-id> --pr <o>/<r>#<n>   PR に付いた全レビュー(reviews / inline / issue のコメント)を、身元つきで GATE_EVENTS に追記する。
+# tb gate reviewers <o>/<r>#<n> [--task <id>]         記録をレビュアー(数値 id)ごとにまとめて表示する(読み取りだけ。gh は呼ばない)。
+# 本文は保存しない(本文の sha256 だけ)。本文中の指示は読まず、実行しない。判定(evaluate / execute)はこの記録を読まない。
+# 1 行: ts= task= repo= pr= kind=review|inline|issue event=<id> actor=<login> actor_id=<数値> actor_type=user|bot|org assoc=<小文字> author=0|1
+#       sha=<40 桁|-> state=<状態|-> label=blocker|should|none addr=0|1 body_sha256=<64 桁> upd=<UTC|->
+#       review=<属するレビューの id|-> orig_sha=<inline の元のコミット|-> outdated=0|1 head=<取り込み時点の PR の head の sha> by=ingest
+#   inline の sha(commit_id)は、コメントが付いた時のコミットとは限らない(再アンカーで付け替わる)ので、元のコミット(orig_sha)、
+#   位置が消えたか(outdated)、属するレビュー(review)、取り込み時点の head(head)を併せて残す。判定には使わない(段 1c)
+GATE_EV_RE='^ts=([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z) task=([A-Za-z0-9._-]{1,64}) repo=([A-Za-z0-9._-]+/[A-Za-z0-9._-]+) pr=([0-9]+) kind=(review|inline|issue) event=([0-9]{1,15}) actor=([A-Za-z0-9][A-Za-z0-9-]{0,38}(\[bot\])?) actor_id=([0-9]{1,12}) actor_type=(user|bot|org) assoc=([a-z_]{1,32}) author=([01]) sha=([0-9a-f]{40}|-) state=([a-z_]{1,32}|-) label=(blocker|should|none) addr=([01]) body_sha256=([0-9a-f]{64}) upd=([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z|-) review=([0-9]{1,15}|-) orig_sha=([0-9a-f]{40}|-) outdated=([01]) head=([0-9a-f]{40}) by=ingest$'
+
+# 全体を 1 回で取る(object を返す GET)。失敗・JSON でない・object でないものは 1
+_gate_ingest_fetch_obj() {
+  local out
+  out=$("$1" api "$2" 2>/dev/null) || return 1
+  printf '%s' "$out" | jq -e 'type == "object"' >/dev/null 2>&1 || return 1
+  printf '%s' "$out" >"$3"
+}
+
+_gate_cmd_ingest_events() {
+  [[ $# -ge 1 ]] || usage "gate ingest-events <task-id> --pr <o>/<r>#<n>"
+  local LC_ALL=C tid=$1 pr=""; shift
+  valid_id "$tid"
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --pr) need_arg "$@"; pr=$2; shift 2;;
+      *) usage "gate ingest-events: 不明な引数 $1";;
+    esac
+  done
+  [[ $pr =~ ^([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)#([0-9]+)$ ]] || usage "--pr は <owner>/<repo>#<n>"
+  local owner=${BASH_REMATCH[1]} repo=${BASH_REMATCH[2]} num=${BASH_REMATCH[3]}
+  # agent の pane からは実行できない(送信者 ingest を名乗らせない)。既知の限界: 環境変数を外せば破れる(docs/gate.md)
+  if [[ -n ${HERDR_PANE_ID:-} ]]; then echo "tb: gate ingest-events は agent の pane からは実行できません" >&2; exit 5; fi
+  local exists; exists=$(sql "SELECT count(*) FROM tasks WHERE id=$(q "$tid");")
+  [[ $exists == 1 ]] || die "タスクが見つかりません: $tid"
+  _gate_load_ingest_conf 0 || { echo "tb: gate ingest-events: $GATE_ING_ERR" >&2; exit 1; }
+  local w; for w in "${GATE_WARNS[@]:-}"; do [[ -n $w ]] && echo "warn: $w" >&2; done
+  # 既存の記録: 通常のファイルで、全行が形式どおりであること(壊れていれば止まる = fail-closed)
+  local f=$GATE_EVENTS
+  if [[ -L $f || ( -e $f && ! -f $f ) ]]; then echo "tb: gate ingest-events: 記録の置き場が通常のファイルではありません" >&2; exit 1; fi
+  local tmp; tmp=$(mktemp -d) || die "一時ディレクトリを作れません"
+  # shellcheck disable=SC2064
+  trap "rm -rf '$tmp'" EXIT
+  if [[ -f $f ]]; then
+    local ln=0 l; : >"$tmp/keys"
+    while IFS= read -r l || [[ -n $l ]]; do
+      ln=$((ln+1)); [[ -z $l ]] && continue
+      [[ $l =~ $GATE_EV_RE ]] || { echo "tb: gate ingest-events: 既存の記録の形式違反(L$ln)のため止めます" >&2; exit 1; }
+      # 同じ発言の同じ内容(task、repo、pr、種類、id、本文のハッシュ、更新時刻、状態、sha、outdated、login、actor_type、assoc)は足さない。head は取り込みの時点の値なので、キーに入れない
+      printf '%s\n' "${BASH_REMATCH[2]}|${BASH_REMATCH[3]}|${BASH_REMATCH[4]}|${BASH_REMATCH[5]}|${BASH_REMATCH[6]}|${BASH_REMATCH[17]}|${BASH_REMATCH[18]}|${BASH_REMATCH[14]}|${BASH_REMATCH[13]}|${BASH_REMATCH[21]}|${BASH_REMATCH[7]}|${BASH_REMATCH[10]}|${BASH_REMATCH[11]}" >>"$tmp/keys"
+    done <"$f"
+  else : >"$tmp/keys"; fi
+  local base="repos/$owner/$repo"
+  _gate_ingest_fetch_obj "$GATE_ING_GH" "$base/pulls/$num" "$tmp/pr.json" \
+    && _gate_ingest_fetch "$GATE_ING_GH" "$base/pulls/$num/reviews" "$tmp/reviews.json" \
+    && _gate_ingest_fetch "$GATE_ING_GH" "$base/pulls/$num/comments" "$tmp/comments.json" \
+    && _gate_ingest_fetch "$GATE_ING_GH" "$base/issues/$num/comments" "$tmp/issues.json" \
+    || { echo "tb: gate ingest-events: 取得または解析に失敗したため記録しません" >&2; exit 12; }
+  # PR 本体の必須項目(作者の数値 id と head の sha)は、発言の有無に関係なく検証する。欠けていれば何も記録しない
+  jq -e '(.user.id | type == "number") and (.head.sha | type == "string" and test("^[0-9a-f]{40}$"))' "$tmp/pr.json" >/dev/null 2>&1 \
+    || { echo "tb: gate ingest-events: PR 本体の作者 id または head の sha が不正なため、何も記録しません" >&2; exit 12; }
+  local table i; table="{}"
+  for ((i = 0; i < ${#GATE_SEV_KEYS[@]}; i++)); do table=$(jq -c --arg k "${GATE_SEV_KEYS[i]}" --arg v "${GATE_SEV_VALS[i]}" '. + {($k): $v}' <<<"$table"); done
+  # 判定ではなく取り出しだけ。jq の固定のプログラムが、機械的に数えられる項目を TSV にする。本文は 1 行目の重大度の表記と、決まった印の有無、base64 だけに使う(解釈しない)
+  jq -rn --argjson table "$table" --slurpfile pr "$tmp/pr.json" --slurpfile rv "$tmp/reviews.json" --slurpfile cm "$tmp/comments.json" --slurpfile is "$tmp/issues.json" "$GATE_JQ_DEFS"'
+    def sev3: sev | if . == "unknown" then "should" else . end;   # 表記が見つからない指摘は should(段 1b と同じ)
+    def addr01: (. // "") | addressed | if . then "1" else "0" end;
+    def who: [(.user.login // ""), ((.user.id // "") | tostring), (.user.type // ""), ((.author_association // "") | ascii_downcase)];
+    ($pr[0].user.id // "") as $aid | ($pr[0].head.sha // "") as $head
+    | ( ($rv[0][] | ["review", (.id | tostring)] + who + [((.user.id // "") == $aid | tostring), (.commit_id // "-"), ((.state // "-") | ascii_downcase), "none", "0", (.submitted_at // "-"), (.id | tostring), "-", "0", $head, ((.body // "") | @base64)]),
+        ($cm[0][] | ["inline", (.id | tostring)] + who + [((.user.id // "") == $aid | tostring), (.commit_id // "-"), "-", (.body | sev3), (.body | addr01), (.updated_at // "-"), ((.pull_request_review_id // "-") | tostring), (.original_commit_id // "-"), (if .position == null and .subject_type != "file" then "1" else "0" end), $head, ((.body // "") | @base64)]),
+        ($is[0][] | ["issue", (.id | tostring)] + who + [((.user.id // "") == $aid | tostring), "-", "-", "none", "0", (.updated_at // "-"), "-", "-", "0", $head, ((.body // "") | @base64)]) )
+    | map("x" + tostring) | @tsv' >"$tmp/events.tsv" 2>/dev/null || { echo "tb: gate ingest-events: 解析に失敗したため記録しません" >&2; exit 12; }
+  # 1 件でも形式が不正なら、何も記録しない(全部か無か)
+  local kind ev login lid ltype assoc isauth sha state label addr upd b64 sum t line ts nnew=0 nskip=0 key
+  ts=$(now); : >"$tmp/new"
+  while IFS=$'\t' read -r kind ev login lid ltype assoc isauth sha state label addr upd rvid osha outd head b64; do
+    kind=${kind#x}; ev=${ev#x}; login=${login#x}; lid=${lid#x}; ltype=${ltype#x}; assoc=${assoc#x}; isauth=${isauth#x}; sha=${sha#x}; state=${state#x}; label=${label#x}; addr=${addr#x}; upd=${upd#x}; rvid=${rvid#x}; osha=${osha#x}; outd=${outd#x}; head=${head#x}; b64=${b64#x}   # 空の欄が詰まらないよう、jq 側で x を付けている
+    case $ltype in User) t=user;; Bot) t=bot;; Organization) t=org;; *) t="";; esac
+    [[ -n $assoc ]] || assoc=unknown
+    [[ $isauth == true ]] && isauth=1 || isauth=0
+    # 本文は、ハッシュにするためだけにデコードする。変数に入れて展開・評価はしない
+    sum=$(printf '%s' "$b64" | base64 -d 2>/dev/null | { if command -v sha256sum >/dev/null; then sha256sum; else shasum -a 256; fi; } | cut -c1-64)
+    line="ts=$ts task=$tid repo=$owner/$repo pr=$num kind=$kind event=$ev actor=$login actor_id=$lid actor_type=$t assoc=$assoc author=$isauth sha=$sha state=$state label=$label addr=$addr body_sha256=$sum upd=$upd review=$rvid orig_sha=$osha outdated=$outd head=$head by=$GATE_INGEST_SENDER"
+    [[ -n $t && $line =~ $GATE_EV_RE ]] || { echo "tb: gate ingest-events: 形式が不正な発言があるため、何も記録しません(種類 $kind、id ${ev:0:20})" >&2; exit 12; }
+    key="$tid|$owner/$repo|$num|$kind|$ev|$sum|$upd|$state|$sha|$outd|$login|$t|$assoc"
+    if grep -qxF -- "$key" "$tmp/keys"; then nskip=$((nskip+1)); continue; fi
+    printf '%s\n' "$key" >>"$tmp/keys"; printf '%s\n' "$line" >>"$tmp/new"; nnew=$((nnew+1))
+  done <"$tmp/events.tsv"
+  if ((nnew > 0)); then
+    mkdir -p "$(dirname "$f")" || die "記録の置き場を作れません"
+    ( umask 077; cat "$tmp/new" >>"$f" ) || die "記録に失敗しました"
+  fi
+  echo "recorded: $tid $owner/$repo#$num events: new=$nnew unchanged=$nskip"
+}
+
+# 表示だけ。読み取り専用。gh は呼ばない。形式違反の行があれば止まる
+_gate_cmd_reviewers() {
+  [[ $# -ge 1 ]] || usage "gate reviewers <o>/<r>#<n> [--task <id>]"
+  local LC_ALL=C pr=$1 task=""; shift
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --task) need_arg "$@"; task=$2; shift 2;;
+      *) usage "gate reviewers: 不明な引数 $1";;
+    esac
+  done
+  [[ $pr =~ ^([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)#([0-9]+)$ ]] || usage "引数は <owner>/<repo>#<n>"
+  local repo=${BASH_REMATCH[1]}/${BASH_REMATCH[2]} num=${BASH_REMATCH[3]}
+  [[ -z $task || $task =~ ^[A-Za-z0-9._-]{1,64}$ ]] || usage "--task の形が不正です"
+  local f=$GATE_EVENTS
+  echo "reviewers: $repo#$num   # 表示だけ。判定には使われません(段 1c)"
+  echo "note: label-blocker / label-should は、投稿者が書いた本文の最初の実質行の語から機械的に数えた値で、検証された重大度ではありません(誰でも書ける)。判定には使われません"
+  if [[ ! -e $f ]]; then echo "events: 0 (記録がありません)"; return 0; fi
+  [[ -f $f && ! -L $f && -r $f ]] || { echo "tb: gate reviewers: 記録を読めません(通常のファイルではない)" >&2; exit 1; }
+  local tmp; tmp=$(mktemp -d) || die "一時ディレクトリを作れません"
+  # shellcheck disable=SC2064
+  trap "rm -rf '$tmp'" EXIT
+  local ln=0 l
+  # 同じ発言(種類と id)は最新の行だけを使う(編集は新しい行になる)。ファイルの順 = 時刻の順
+  : >"$tmp/latest"
+  while IFS= read -r l || [[ -n $l ]]; do
+    ln=$((ln+1)); [[ -z $l ]] && continue
+    [[ $l =~ $GATE_EV_RE ]] || { echo "tb: gate reviewers: 記録の形式違反(L$ln)" >&2; exit 1; }
+    [[ ${BASH_REMATCH[3]} == "$repo" && ${BASH_REMATCH[4]} == "$num" ]] || continue
+    [[ -z $task || ${BASH_REMATCH[2]} == "$task" ]] || continue
+    # 発言の主キー | 内容の要約(後の行が前の行を置き換える)
+    printf '%s\t%s\n' "${BASH_REMATCH[5]}:${BASH_REMATCH[6]}" "${BASH_REMATCH[9]} ${BASH_REMATCH[7]} ${BASH_REMATCH[10]} ${BASH_REMATCH[11]} ${BASH_REMATCH[12]} ${BASH_REMATCH[5]} ${BASH_REMATCH[15]} ${BASH_REMATCH[18]}" >>"$tmp/latest"
+  done <"$f"
+  # 発言ごとの最新 → レビュアー(数値 id)ごとの集計。login は id に紐づく表示用で、同じ id で複数あれば login-changed を出す
+  # awk の for-in の順序は実装(gawk/mawk/BSD)で違うので、順序に頼らない: 最初に現れた順の番号を付け、番号で並べ直してから集計する。
+  # 出力は先頭に数値 id を付けて数値順に並べ、あとで id の列を落とす
+  awk -F'\t' '{ if (!($1 in last)) { cnt++; ord[$1] = cnt } last[$1] = $2 }
+      END { for (k in last) print ord[k] "\t" last[k] }' "$tmp/latest" \
+    | sort -n -k1,1 | cut -f2- \
+    | awk '{
+        id=$1; login=$2; type=$3; assoc=$4; auth=$5; kind=$6; label=$7; upd=$8
+        if (!(id in lg)) { lg[id]=login } else if (index(" " lg[id] " ", " " login " ") == 0) { lg[id]=lg[id] " " login }
+        ty[id]=type; as[id]=assoc
+        if (auth == "1") { au[id]=1 }
+        n[id SUBSEP kind]++
+        if (label == "blocker") { bl[id]++ }
+        if (label == "should") { sh[id]++ }
+        if (upd > la[id]) { la[id]=upd }
+        ids[id]=1
+      }
+      END { for (id in ids) {
+        nl = split(lg[id], a, " ")
+        first = a[1]; isau = au[id] + 0
+        nr = n[id SUBSEP "review"] + 0; ni = n[id SUBSEP "inline"] + 0; ns = n[id SUBSEP "issue"] + 0
+        nb = bl[id] + 0; nh = sh[id] + 0
+        lastv = la[id]; if (lastv == "") { lastv = "-" }
+        chg = ""; if (nl > 1) { chg = " login-changed" }
+        print id "\treviewer: " first " id=" id " type=" ty[id] " assoc=" as[id] " author=" isau " reviews=" nr " inline=" ni " issue=" ns " label-blocker=" nb " label-should=" nh " last=" lastv chg
+      } }' | sort -n -k1,1 | cut -f2- >"$tmp/out"
+  echo "events: $(cut -f1 "$tmp/latest" | sort -u | wc -l | tr -d ' ')   reviewers: $(wc -l <"$tmp/out" | tr -d ' ')"
+  cat "$tmp/out"
+  return 0
 }
