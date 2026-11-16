@@ -277,8 +277,9 @@ _J = env["WEBUI_SCHED_JOBS"]
 _REPO = os.path.dirname(os.path.dirname(HERE))
 _OUTSIDE = os.path.join(TMP, "outside-prompt.txt")
 open(_OUTSIDE, "w").write("OUTSIDE-SECRET-BODY")
+_FAKE_TOK = "gh" + "p_" + "x" * 24   # 架空の値(分割して連結。ソースに token 形の文字列を置かない)
 open(os.path.join(_J, "pj.conf"), "w").write(
-    "TARGET=alpha\nPROMPT='roles/x.md を読んで <b>bold</b> $HOME ${FOO} \"quoted\" ghp_abcdefghijklmnopqrstuvwxyz0123456789 を使う'\n"
+    "TARGET=alpha\nPROMPT='roles/x.md を読んで <b>bold</b> $HOME ${FOO} \"quoted\" " + _FAKE_TOK + " を使う'\n"
     "WINDOW=00:00-23:59\nINTERVAL_MIN=10\nDAYS=daily\nSKIP_IF=\"working blocked\"\nTZ=Asia/Tokyo\n")
 open(os.path.join(_J, "pcomment.conf"), "w").write("TARGET=alpha\nPROMPT='REAL-PROMPT'\n# PROMPT='ignored-line'\nWINDOW=09:00-21:00\nINTERVAL_MIN=30\nTZ=Asia/Tokyo\n")
 os.makedirs(os.path.join(_J, ".ssh"), exist_ok=True)
@@ -683,7 +684,7 @@ check("ジョブ詳細: 宛先と今の状態(working)", "<code>alpha</code> 今
 check("ジョブ詳細: working は送らない旨", "idle / done 以外のときは送らず" in _pjh)
 check("ジョブ詳細: 本文が出る(展開せず、エスケープ)", "roles/x.md を読んで" in _pjh and "&lt;b&gt;bold&lt;/b&gt;" in _pjh and "<b>bold</b>" not in _pjh
       and "$HOME" in _pjh and "${FOO}" in _pjh)
-check("ジョブ詳細: トークンらしい文字列はマスク", "ghp_abcdefgh" not in _pjh and "[マスク]" in _pjh and "1 件をマスク" in _pjh)
+check("ジョブ詳細: トークンらしい文字列はマスク", _FAKE_TOK[:12] not in _pjh and "[マスク]" in _pjh and "1 件をマスク" in _pjh)
 check("ジョブ詳細: SKIP_IF の表示", "working blocked" in _pjh)
 check("ジョブ詳細: 次回の予定が出る", re.search(r"次回の予定\(目安\)</th><td>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} → ", _pjh) is not None)
 check("ジョブ詳細: 承認の扱い(scheduler は approvals.conf を見ない)", "approvals.conf を見ず" in _pjh and "send:task:alpha" in _pjh)
