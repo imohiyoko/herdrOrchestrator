@@ -73,7 +73,7 @@ load_job() {
   [[ "$JOB" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || die "ジョブ名が不正: '$JOB'"
   JOB_CONF="$JOBS_DIR/$JOB.conf"
   [ -f "$JOB_CONF" ] || die "ジョブ定義がない: $JOB_CONF"
-  unset TARGET PROMPT PROMPT_FILE COMMAND COMMAND_TIMEOUT WINDOW START END INTERVAL_MIN INTERVAL_SEC DAYS SKIP_IF TZ ENABLED
+  unset TARGET PROMPT PROMPT_FILE COMMAND COMMAND_TIMEOUT WINDOW START END INTERVAL_MIN INTERVAL_SEC DAYS SKIP_IF TZ ENABLED WATCHER
   # shellcheck disable=SC1090
   source "$JOB_CONF"
   # WINDOW(HH:MM[:SS]-HH:MM[:SS]) を START/END に分解。conf が START/END を直接持つならそちらを優先
@@ -91,6 +91,8 @@ load_job() {
   DAYS=${S_DAYS:-${DAYS:-}}
   ENABLED=${S_ENABLED:-${ENABLED:-1}}
   [[ "$ENABLED" =~ ^[01]$ ]] || die "$JOB: ENABLED は 0 か 1"
+  # WATCHER: 見張り系のジョブか(tb digest の観測が見る)。1 / 0。未設定なら空(TARGET と COMMAND から推定)
+  [[ -z "${WATCHER:-}" || "$WATCHER" =~ ^[01]$ ]] || die "$JOB: WATCHER は 0 か 1"
   # 一時的な上書き: SCHED_WINDOW / SCHED_START / SCHED_END / SCHED_INTERVAL_MIN / SCHED_INTERVAL_SEC
   if [ -n "${SCHED_WINDOW:-}" ]; then
     [[ "$SCHED_WINDOW" =~ ^([0-9:]+)-([0-9:]+)$ ]] || die "SCHED_WINDOW は HH:MM-HH:MM"
