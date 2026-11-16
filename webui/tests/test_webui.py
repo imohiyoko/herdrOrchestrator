@@ -738,6 +738,25 @@ check("次回: 平日の 09:10 の次は 09:30", _jv.next_runs(_inf, datetime(20
 check("次回: 終了後は翌営業日", _jv.next_runs(_inf, datetime(2026, 11, 20, 22, 0, tzinfo=_ZI("Asia/Tokyo")), 1)[0] == ["2026-11-23 09:00:00"])
 check("次回: 一時停止は予定なし", _jv.next_runs({**_inf, "enabled": False})[0] == [])
 check("次回: 不正な TZ は「不明」", "不明" in _jv.next_runs({**_inf, "tz": "No/Such"})[1])
+# conf の読み取り(CodeRabbit 指摘): 閉じ引用符の直後の # と、引用符内・継続行の中の代入
+def _jd(body):
+    os.environ["WEBUI_SCHED_JOBS"] = _J
+    open(os.path.join(_J, "unit.conf"), "w").write(body)
+    return _jv.job_defs("unit")
+for _q in ("'", '"'):
+    _d = _jd(f"PROMPT_FILE={_q}/repo/scheduler/body.txt{_q}#v2\n")
+    check(f"conf: {_q} の閉じ引用符の直後の # はコメントにしない(連結として不完全)", "PROMPT_FILE" in _d["_complex"], str(_d))
+    _d = _jd(f"PROMPT_FILE={_q}/repo/scheduler/body.txt{_q} # note\n")
+    check(f"conf: {_q} の閉じ引用符のあとに空白を置いた # はコメント(完全)", "PROMPT_FILE" not in _d["_complex"] and _d["PROMPT_FILE"] == "/repo/scheduler/body.txt", str(_d))
+_d = _jd("PROMPT='説明\nPROMPT_FILE=/repo/scheduler/body.txt\n終わり'\n")
+check("conf: 複数行 PROMPT の中の PROMPT_FILE= は代入として読まない", "PROMPT_FILE" not in _d and "PROMPT_FILE=/repo/scheduler/body.txt" in _d["PROMPT"], str(_d))
+_d = _jd('PROMPT="説明\nCOMMAND=rm -rf x\n終わり"\n')
+check("conf: 二重引用符の複数行の中の COMMAND= も代入として読まない", "COMMAND" not in _d, str(_d))
+_d = _jd("PROMPT=abc\\\nPROMPT_FILE=/x/y\nSKIP_IF=working\n")
+check("conf: 行末 \\ の継続行の中の代入は読まず、引用符の外の次の代入は読む", "PROMPT_FILE" not in _d and _d["SKIP_IF"] == "working", str(_d))
+_d = _jd("PROMPT='a'\nPROMPT_FILE=/repo/scheduler/b.txt\n")
+check("conf: 引用符が閉じたあとの行の代入は読む", _d["PROMPT_FILE"] == "/repo/scheduler/b.txt", str(_d))
+os.remove(os.path.join(_J, "unit.conf"))
 
 # ---- 権限カタログ × approvals.conf(読み取りのみ)
 check("カタログ: 操作ごとの現在の権限の節", "操作ごとの現在の権限(カタログ × approvals.conf)" in P[2])

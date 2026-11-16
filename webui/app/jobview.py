@@ -42,21 +42,26 @@ def mask(text):
     return out, n
 
 
+def _is_comment(rest):
+    """閉じ引用符の直後の残り。空白のあとの # だけがコメント(`'x'#v2` は引用符の連結で、# は値の一部)。"""
+    return rest[:1] in (" ", "\t") and rest.lstrip().startswith("#")
+
+
 def _value(text, i):
-    """text[i:] から shell の代入の右辺を、展開せずにそのまま取り出す。(値, 解釈が不完全か)。
+    """text[i:] から shell の代入の右辺を、展開せずにそのまま取り出す。(値, 解釈が不完全か, 値の終わりの位置)。
     不完全 = bash が展開・解釈する記述($ ` ; & | ( ) < > \\ や、引用符の連結)を含む。その場合、値は行末までの記述をそのまま返す。"""
     n = len(text)
     eol = text.find("\n", i)
     line = text[i:eol if eol >= 0 else n]
     if i >= n or not line.strip():
-        return "", False
+        return "", False, (eol if eol >= 0 else n)
     c = text[i]
     if c == "'":
         j = text.find("'", i + 1)
         if j < 0:
-            return text[i + 1:], True
+            return text[i + 1:], True, n
         rest = text[j + 1:eol if eol >= 0 and eol > j else (n if eol < 0 else j + 1)]
-        return text[i + 1:j], bool(rest.strip()) and not rest.lstrip().startswith("#")
+        return text[i + 1:j], bool(rest) and not _is_comment(rest), j + 1
     if c == '"':
         j = i + 1
         while j < n:
@@ -68,10 +73,14 @@ def _value(text, i):
             j += 1
         val = text[i + 1:j]
         rest = text[j + 1:eol if eol >= 0 and eol > j else (n if eol < 0 else j + 1)]
-        return val, bool(re.search(r"[$`\\]", val)) or (bool(rest.strip()) and not rest.lstrip().startswith("#"))
+        return val, bool(re.search(r"[$`\\]", val)) or (bool(rest) and not _is_comment(rest)), min(j + 1, n)
     # 引用符なし: 行末まで(bash は空白で値を切るが、$(...) などはその中の空白で切れないので、行全体を記述として見せる)
     raw = re.split(r"\s#", line, maxsplit=1)[0].strip()
-    return raw, bool(re.search(r"[$`;&|()<>\\ \t'\"*?~{]", raw))
+    end = eol if eol >= 0 else n
+    while text[i:end].endswith("\\") and end < n:   # 行末の \ は次の行へ続く(続きの行は独立した代入ではない)
+        nxt = text.find("\n", end + 1)
+        end = nxt if nxt >= 0 else n
+    return raw, bool(re.search(r"[$`;&|()<>\\ \t'\"*?~{]", raw)), end
 
 
 def job_defs(name):
@@ -85,8 +94,13 @@ def job_defs(name):
     except OSError:
         return None
     out, complex_ = {}, set()
-    for m in re.finditer(r"(?m)^[ \t]*(?:export[ \t]+)?(" + "|".join(KEYS) + r")=", text):
-        out[m.group(1)], inexact = _value(text, m.end())   # 後ろの代入が勝つ(source と同じ)
+    rx, pos = re.compile(r"(?m)^[ \t]*(?:export[ \t]+)?(" + "|".join(KEYS) + r")="), 0
+    while True:
+        m = rx.search(text, pos)
+        if not m:
+            break
+        out[m.group(1)], inexact, pos = _value(text, m.end())   # 後ろの代入が勝つ(source と同じ)
+        pos = max(pos, m.end())   # 値(引用符内・継続行)の内側は、独立した代入として読まない
         (complex_.add if inexact else complex_.discard)(m.group(1))
     out["_complex"] = complex_
     out["_truncated"] = len(text) > CONF_MAX
