@@ -19,7 +19,8 @@ def _instance():
     inst = os.environ.get("TB_INSTANCE") or ""
     if inst and not INSTANCE_RE.fullmatch(inst):
         raise SystemExit("herdr-webui: TB_INSTANCE は英数字で始まり、英数字と . _ - の 64 字以内")
-    return inst
+    # 大文字小文字を区別しないボリュームで run を共有しないよう、小文字に正規化する(Cookie 名・run・表示とも)
+    return inst.lower()
 
 
 # 複数の herdr セッションを別ポート・別プロセスで動かす。Cookie は host 単位でポートでは分かれないので、名前をインスタンスごとに変える。

@@ -1224,7 +1224,7 @@ def inst_boot(name, inst, **extra):
     base_ = free_range(1)
     env, d = inst_env(name, inst, HERDR_WEBUI_RANGE=f"{base_}-{base_}", **extra)
     p = start(env)
-    pf = os.path.join(env["WEBUI_RUN_BASE"], *(["instance-" + inst] if inst else []), "port")
+    pf = os.path.join(env["WEBUI_RUN_BASE"], *(["instance-" + inst.lower()] if inst else []), "port")
     end = time.time() + 5
     while time.time() < end and not os.path.exists(pf) and p.poll() is None:
         time.sleep(0.05)
@@ -1447,6 +1447,43 @@ try:
     check("インスタンス名はエスケープされて出る(タイトル)", "<b>" not in _v2.page("t", "", "/", 0) )
 finally:
     _v2.INSTANCE = _orig
+
+# ---- CR-2: TB_INSTANCE 時も、旧 run/ と他インスタンスの run を /docs から読めない
+import app.config as _cfg2  # noqa: E402
+import app.docs as _docs2  # noqa: E402
+_rb = os.path.join(TMP, "docs-runbase")
+for _sub in ("", "instance-me", "instance-other"):
+    os.makedirs(os.path.join(_rb, _sub), exist_ok=True)
+    open(os.path.join(_rb, _sub, "notes.txt"), "w").write("x")
+_old = (os.environ.get("WEBUI_RUN_BASE"), os.environ.get("WEBUI_RUN_DIR"), _cfg2.INSTANCE)
+try:
+    os.environ["WEBUI_RUN_BASE"] = _rb
+    os.environ.pop("WEBUI_RUN_DIR", None)
+    _cfg2.INSTANCE = "me"
+    check("docs: TB_INSTANCE 時に旧 run/ を開かない", _docs2.denied(os.path.realpath(os.path.join(_rb, "auth.json"))) is not None)
+    check("docs: TB_INSTANCE 時に他インスタンスの run を開かない", _docs2.denied(os.path.realpath(os.path.join(_rb, "instance-other", "auth.json"))) is not None)
+    check("docs: TB_INSTANCE 時に自分の run も開かない", _docs2.denied(os.path.realpath(os.path.join(_rb, "instance-me", "sessions.json"))) is not None)
+    _cfg2.INSTANCE = ""
+    check("docs: 未設定でも run/ 配下は開かない(従来)", _docs2.denied(os.path.realpath(os.path.join(_rb, "notes.txt"))) is not None)
+    _ex = os.path.join(TMP, "docs-explicit-run"); os.makedirs(_ex, exist_ok=True)
+    os.environ["WEBUI_RUN_DIR"] = _ex
+    check("docs: WEBUI_RUN_DIR 明示でも、その場所は開かない", _docs2.denied(os.path.realpath(os.path.join(_ex, "auth.json"))) is not None)
+finally:
+    for _k, _v in zip(("WEBUI_RUN_BASE", "WEBUI_RUN_DIR"), _old[:2]):
+        if _v is None:
+            os.environ.pop(_k, None)
+        else:
+            os.environ[_k] = _v
+    _cfg2.INSTANCE = _old[2]
+
+# ---- CR-1: 大文字小文字だけが違う TB_INSTANCE は同じインスタンス(小文字に正規化)
+env, pu_, portu = inst_boot("inst-upper", "Alpha")
+if portu:
+    cu_, nmu = inst_cookie_name(portu)
+    check("TB_INSTANCE=Alpha は小文字に正規化(Cookie 名)", nmu == "herdr_webui_session_alpha", str(nmu))
+    check("TB_INSTANCE=Alpha は小文字に正規化(run は instance-alpha)", os.path.isdir(os.path.join(env["WEBUI_RUN_BASE"], "instance-alpha")) and "instance-Alpha" not in os.listdir(env["WEBUI_RUN_BASE"]))
+    check("TB_INSTANCE=Alpha の画面表示も小文字", ">alpha<" in cu_.get("/tasks")[2])
+stop(pu_)
 
 print()
 print("FAILED: " + ", ".join(fails) if fails else "all passed")
