@@ -7,7 +7,7 @@ import shlex
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote, unquote, urlencode
 
-from .config import HERDR_ROOT, JOB_RE, REFRESH_SEC, SCHED_LOGS, STALL_MIN, TASK_STALE_HOURS
+from .config import HERDR_ROOT, INSTANCE, JOB_RE, REFRESH_SEC, SCHED_LOGS, STALL_MIN, TASK_STALE_HOURS
 from .sanitize import clean, e
 from .herdr import agent_key, agent_session, get_agents, read_agent, workspace_label
 from .data import has_resolution, parse_ts, NOTIFY_POLL_SEC, QUEUED_WARN_SEC, outbox_rows, activity_for, agent_ops, agent_registry, stopped_agents, db_conn, needs_human, parse_jsonl, q, stalled, tail_lines, tasks_for_agent, urgent_items, LEDGER_MAX, LEDGER_RESULTS, approval_history, ledger_kinds, ledger_rows, ledger_summary
@@ -34,12 +34,24 @@ pre{background:#fff;border:1px solid #d0d7de;padding:8px;overflow:auto;white-spa
 code{background:#eaeef2;padding:1px 4px;border-radius:3px}
 .st-working{color:#9a6700}.st-blocked,.warn{color:#cf222e;font-weight:bold}.st-idle{color:#6e7781}.st-done{color:#1a7f37}
 .note{color:#6e7781;font-size:12px}
+.inst{padding:2px 10px;border-radius:4px;font-weight:bold;background:#d0d7de;color:#1f2328}.inst-warn{background:#8a5a00;color:#fff;border:1px solid #fff}
 .doc{background:#fff;border:1px solid #d0d7de;padding:8px 24px;overflow-wrap:anywhere}
 .doc table{width:auto}.doc pre{background:#f6f8fa}.doc blockquote{border-left:4px solid #d0d7de;margin:0;padding:0 12px;color:#57606a}
 .doc h2.md{font-size:20px;border-bottom:1px solid #d0d7de}.doc ul,.doc ol{padding-left:1.5em}.err{background:#ffebe9;border:1px solid #cf222e;padding:6px 10px}
 """
 NAV = [("/", "概要"), ("/notifications", "緊急通知"), ("/agents", "agent"), ("/tasks", "タスク"),
        ("/inbox", "報告・承認待ち"), ("/outbox", "送信"), ("/docs", "ドキュメント"), ("/jobs", "定期実行"), ("/ledger", "送信履歴"), ("/perms", "権限")]
+
+
+def inst_label():
+    """TB_INSTANCE があるときだけ、名前を出す(default 以外は色の帯)。未設定なら空 = 従来の表示。"""
+    if not INSTANCE:
+        return ""
+    return f'<span class="inst{"" if INSTANCE == "default" else " inst-warn"}" title="TB_INSTANCE">{e(INSTANCE)}</span>'
+
+
+def title_suffix():
+    return f" [{INSTANCE}]" if INSTANCE else ""
 
 
 def page(title, body, path, badge, logout="", refresh=True, scripts=()):
@@ -58,10 +70,10 @@ def page(title, body, path, badge, logout="", refresh=True, scripts=()):
         + (f'<meta http-equiv="refresh" content="{REFRESH_SEC}">' if refresh else "") +
         '<meta name=viewport content="width=device-width,initial-scale=1">'
         '<meta name=referrer content=same-origin>'
-        f"<title>{e(title)} - herdr</title><style>{CSS}</style>"
+        f"<title>{e(title)} - herdr{e(title_suffix())}</title><style>{CSS}</style>"
         '<script src="/notify.js" defer></script>'
         + "".join(f'<script src="{e(src)}" defer></script>' for src in scripts) + "</head><body>"
-        f"<nav>{''.join(links)}{logout}</nav><main><h1>{e(title)}</h1>{body}"
+        f"<nav>{inst_label()}{''.join(links)}{logout}</nav><main><h1>{e(title)}</h1>{body}"
         f'<p class=note>{f"自動更新 {REFRESH_SEC} 秒" if refresh else "入力欄があるので自動更新なし(再読み込みで更新)"} / 変更できるのは定期実行の設定・報告の「対応済み」・agent の停止 / 復活 / 作成だけ(権限と送信履歴は読み取りのみ) / 機密を含みうる画面です / Chrome 通知は「緊急通知」で設定</p></main></body></html>'
     )
 

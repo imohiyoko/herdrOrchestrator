@@ -16,6 +16,7 @@ tb proxy-resolve <id> --status done|pending-human|denied [--result <本文かフ
 tb proxy-check <id>   1 行目が allow(自動代行可)か human(人に回す)。mismatch: があれば申告の食い違い
 
 agent の活動記録(hook から。bin/tb-hook 経由が基本):
+tb whoami [--short]   今の向き先(checkout・DB・herdr セッション・TB_INSTANCE・launchd ラベルの接頭辞・agent のペインか)と決まり方を出す。DB を開かず、何も書かない。--short はセッション名だけ
 tb touch --event UserPromptSubmit|Stop --session-id S [--pane-id P] [--tab-id T] [--workspace-id W] [--cwd D] [--prompt-id I]
          常に終了コード 0・出力なし。失敗は data/touch-errors.log に 1 行(理由コードのみ)
 tb activity [--json] [--stuck-min N]   最終入力・最終停止・working 推定・滞留(既定 10 分)
@@ -50,6 +51,8 @@ tb approval <操作>        1 行目 ask|allow、2 行目 rule:。終了コー�
 tb gate evaluate <chain-id> --action merge|approve [--pr <o>/<r>#<n>] [--fact '行'] [--facts-stdin]   merge/approve の判定(読み取りのみ。0=allow 20=ask 21=評価不能)。tb gate execute は常に 30(無効)。docs/gate.md
 tb review-submit <task-id> --lineage L --sha S --blocker N --should N --verdict pass|fail [--pr o/r#n] [--evidence P]   レビュー結果を追記専用の記録に残す(送信者は pane から決まる。作者は拒否 4、レビュー担当の役割だけ 5)。docs/gate.md
 tb gate ingest-review <task-id> --pr <o>/<r>#<n> --sha <head の sha>   外部レビュー(CodeRabbit)を gh の読み取りで取り、送信者 ingest で記録する(agent の pane からは実行不可。スキップ・無い・取得失敗は記録しない)。docs/gate.md
+tb gate ingest-events <task-id> --pr <o>/<r>#<n>   PR の全レビュー(reviews / inline / issue)を、数値 id などの身元つきで追記専用の記録に残す(本文は保存しない。agent の pane からは実行不可)。判定には使わない。docs/gate.md
+tb gate reviewers <o>/<r>#<n> [--task <id>]   記録をレビュアーごとにまとめて表示する(読み取りだけ。gh は呼ばない)
 tb allow <パターン>       今後は承認なしにする(人の端末からだけ)
 tb ask <パターン>         承認制に戻す(人の端末からだけ)
 tb approve O-<n> [--always]   承認待ちの送信を届ける。--always なら send:<kind>:<宛先> を allow にする
