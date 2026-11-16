@@ -55,7 +55,14 @@ web b TB_INSTANCE=training HERDR_SESSION=training TB_UI_PORT=8811
 eq "webui plist: instance label" "$(label_of "$TMP/gen-b/local.herdr-training-webui.plist")" "local.herdr-training-webui"
 eq "webui plist: HERDR_SESSION passed" "$(grep -A1 '<key>HERDR_SESSION</key>' "$TMP/gen-b"/*.plist | grep -c '<string>training</string>')" "1"
 eq "webui plist: TB_UI_PORT passed" "$(grep -A1 '<key>TB_UI_PORT</key>' "$TMP/gen-b"/*.plist | grep -c '<string>8811</string>')" "1"
+eq "webui plist: TB_INSTANCE passed(Cookie 名・表示に要る)" "$(grep -A1 "<key>TB_INSTANCE</key>" "$TMP/gen-b/local.herdr-training-webui.plist" | grep -c '<string>training</string>')" "1"
+eq "webui plist: instance log names differ" "$(grep -c "launchd-webui-training\\." "$TMP/gen-b/local.herdr-training-webui.plist")" "2"
+eq "webui plist: 未設定は TB_INSTANCE を足さず従来のログ名" "$(grep -c -e TB_INSTANCE -e 'launchd-webui-' "$TMP/gen-a/local.herdr-webui.plist")" "0"
 web c TB_INSTANCE='a/b'; eq "webui plist: bad instance writes nothing" "$(ls "$TMP/gen-c" 2>/dev/null | wc -l | tr -d ' ')" "0"
+for badp in 0 99999 65536; do web p$badp TB_UI_PORT=$badp; eq "webui plist: TB_UI_PORT=$badp writes nothing" "$(ls "$TMP/gen-p$badp" 2>/dev/null | wc -l | tr -d ' ')" "0"; done
+web p1 TB_UI_PORT=65535; eq "webui plist: TB_UI_PORT=65535 ok" "$(ls "$TMP/gen-p1" 2>/dev/null | wc -l | tr -d ' ')" "1"
+web l1 TB_INSTANCE=x WEBUI_LEGACY_AUTH=1; eq "webui plist: WEBUI_LEGACY_AUTH=1 passed" "$(grep -A1 '<key>WEBUI_LEGACY_AUTH</key>' "$TMP/gen-l1"/*.plist | grep -c '<string>1</string>')" "1"
+web l2 TB_INSTANCE=x WEBUI_LEGACY_AUTH=yes; eq "webui plist: bad WEBUI_LEGACY_AUTH writes nothing" "$(ls "$TMP/gen-l2" 2>/dev/null | wc -l | tr -d ' ')" "0"
 web d TB_UI_PORT=80x; eq "webui plist: bad port writes nothing" "$(ls "$TMP/gen-d" 2>/dev/null | wc -l | tr -d ' ')" "0"
 
 # --- tb の HSESS は socket パスを見る(tb 本体を source せず、定義行だけ評価)

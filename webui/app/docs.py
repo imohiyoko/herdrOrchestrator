@@ -15,7 +15,7 @@ import os
 import re
 import stat
 
-from .config import RUN_DIR, cfg
+from .config import LEGACY_RUN_DIR, RUN_DIR, cfg
 from .data import q
 
 MAX_BYTES = 1024 * 1024        # これより大きいファイルは先頭だけ出す
@@ -72,9 +72,11 @@ def denied(path):
             return "認証情報が置かれる場所なので開きません"
     if DENY_NAME_RE.search(os.path.basename(path)):
         return "認証情報らしいファイル名なので開きません"
-    run = os.path.realpath(RUN_DIR())
-    if path == run or path.startswith(run + os.sep):
-        return "Web UI のログイン情報なので開きません"
+    # 自分の run と、run の置き場そのもの(旧 run/ と他インスタンスの run/instance-<名>/ を含む)
+    for r in (RUN_DIR(), LEGACY_RUN_DIR()):
+        run = os.path.realpath(r)
+        if path == run or path.startswith(run + os.sep):
+            return "Web UI のログイン情報なので開きません"
     return None
 
 

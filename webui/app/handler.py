@@ -5,6 +5,7 @@ import os
 import re
 import shlex
 import signal
+import socket
 import sys
 import threading
 import time
@@ -13,20 +14,20 @@ from urllib.parse import parse_qs, unquote, urlencode, urlsplit
 
 import auth
 
-from .config import COOKIE, HOST, JOB_RE, ROOT, RUN_DIR, cfg
+from .config import COOKIE, HOST, INSTANCE, JOB_RE, LEGACY_RUN_DIR, ROOT, RUN_DIR, cfg
 from .sanitize import clean, e
 from .actions import agent_decide, agent_new, agent_op, resolve_comment
 from .data import NOTIFY_POLL_SEC, badge_count, urgent_items
 from .jobs import job_names, save_job_settings
-from .views import CSS, DOCS_JS, NOTIFY_JS, err_html, page, page_agent_new, page_job, route
+from .views import CSS, DOCS_JS, NOTIFY_JS, err_html, inst_label, page, page_agent_new, page_job, route, title_suffix
 
 
 def plain_page(title, body):
     """ログイン・初回設定用(ナビも自動更新もなし)。"""
     return ("<!doctype html><html lang=ja><head><meta charset=utf-8><meta name=referrer content=same-origin>"
             '<meta name=viewport content="width=device-width,initial-scale=1">'
-            f"<title>{e(title)} - herdr</title><style>{CSS}</style></head><body>"
-            f"<main style='max-width:420px'><h1>{e(title)}</h1>{body}</main></body></html>")
+            f"<title>{e(title)} - herdr{e(title_suffix())}</title><style>{CSS}</style></head><body>"
+            f"<main style='max-width:420px'>{inst_label()}<h1>{e(title)}</h1>{body}</main></body></html>")
 
 
 def form_html(action, csrf, fields, submit, error="", note="", next_=""):
@@ -388,31 +389,52 @@ def bind_server():
     try:
         if fixed:
             lo = hi = int(fixed)
+            if not 1 <= lo <= 65535:
+                raise SystemExit(f"herdr-webui: TB_UI_PORT は 1〜65535 の数字: {fixed}")
         else:
             lo, hi = (int(x) for x in cfg("HERDR_WEBUI_RANGE", "8800-8819").split("-"))
     except ValueError:
         raise SystemExit("herdr-webui: ポート指定が数値ではありません")
     last = None
+    if fixed:
+        # macOS では SO_REUSEADDR の bind が、0.0.0.0 で待ち受け中のポートにも通ってしまう。先に接続を試して検出する
+        # (固定ポートのときだけ。bind の失敗検査は残す)
+        with socket.socket() as probe:
+            probe.settimeout(0.5)
+            if probe.connect_ex((HOST, lo)) == 0:
+                raise SystemExit(f"herdr-webui: instance={INSTANCE or 'default'} 固定ポート {lo}(TB_UI_PORT)で既に別のプロセスが待ち受けています。別のポートへは移りません")
     for p in range(lo, hi + 1):
         try:
             return ThreadingHTTPServer((HOST, p), Handler), p
         except OSError as ex:
             last = ex
     if fixed:
-        raise SystemExit(f"herdr-webui: ポート {lo} を使えません: {last}")
+        # TB_UI_PORT は「このセッションのポート」の約束なので、別のポートへ黙って逃げない
+        raise SystemExit(f"herdr-webui: instance={INSTANCE or 'default'} 固定ポート {lo}(TB_UI_PORT)を使えません。別のポートへは移りません: {last}")
     raise SystemExit(f"herdr-webui: ポート {lo}〜{hi} がすべて使用中です")
 
 
 def main():
     run_dir = RUN_DIR()
-    Handler.auth = auth.Auth(run_dir)
+    # 旧い場所(run/)の auth.json の引き継ぎは、明示したとき(WEBUI_LEGACY_AUTH=1)だけ。
+    # 既定で引き継ぐと、これから作る別インスタンスも default の認証で入れてしまい、別の認証情報を設定できない
+    legacy = LEGACY_RUN_DIR() if INSTANCE and not os.environ.get("WEBUI_RUN_DIR") and os.environ.get("WEBUI_LEGACY_AUTH") == "1" else None
+    Handler.auth = auth.Auth(run_dir, legacy_dir=legacy)
+    if legacy and not Handler.auth.using_legacy() and not Handler.auth.configured():
+        print("herdr-webui: WEBUI_LEGACY_AUTH=1 ですが、引き継げる旧い auth.json がありません(無い、または通常ファイル・自分の所有・group/other 書込なし を満たさない)。/setup で作ります", flush=True)
+    if Handler.auth.using_legacy():
+        print(f"herdr-webui: 旧い {Handler.auth.legacy_auth_path} を読み取りで使います(消しません)。"
+              f"{run_dir}/auth.json に移す(コピーする)か、パスワード再設定で新しい場所に作ると、この表示は消えます", flush=True)
     srv, port = bind_server()
     Handler.port = port
     port_file = os.path.join(run_dir, "port")
+    inst_file = os.path.join(run_dir, "instance")
     with open(port_file, "w") as f:
         f.write(f"{port}\n")
+    with open(inst_file, "w") as f:
+        f.write(f"{INSTANCE or 'default'}\n")
     print(f"herdr-webui: listening on http://{HOST}:{port}/", flush=True)
-    print(f"herdr-webui: port={port}", flush=True)
+    print(f"herdr-webui: instance={INSTANCE or 'default'} port={port}", flush=True)
     if Handler.auth.configured():
         print(f"herdr-webui: ログイン http://{HOST}:{port}/login", flush=True)
     else:
@@ -426,7 +448,8 @@ def main():
         srv.serve_forever()
     finally:
         srv.server_close()
-        try:
-            os.remove(port_file)
-        except OSError:
-            pass
+        for fn in (port_file, inst_file):
+            try:
+                os.remove(fn)
+            except OSError:
+                pass

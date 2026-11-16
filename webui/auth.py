@@ -93,12 +93,14 @@ def safe_next(n):
 
 
 class Auth:
-    def __init__(self, run_dir, clock=time.time):
+    def __init__(self, run_dir, clock=time.time, legacy_dir=None):
         self.clock = clock  # 時刻の注入点(テスト用)
         self.run_dir = run_dir
         self.allow_path = os.path.join(os.path.abspath(run_dir), "allow-reset")
         self.auth_path = os.path.join(run_dir, "auth.json")
         self.sess_path = os.path.join(run_dir, "sessions.json")
+        # 旧い置き場(TB_INSTANCE を付ける前の run/)の auth.json。新しい場所に無いときだけ「読む」(消さない・書かない)
+        self.legacy_auth_path = os.path.join(legacy_dir, "auth.json") if legacy_dir else None
         self.lock = threading.Lock()
         self.key = secrets.token_bytes(32)  # フォームトークンの署名鍵(プロセス内のみ)
         self.fails = 0
@@ -106,8 +108,24 @@ class Auth:
         os.makedirs(run_dir, exist_ok=True)
 
     # ---- 初回設定
+    def _legacy_file_ok(self):
+        """旧い auth.json を信頼してよいか: 通常ファイル(リンクでない)・自分の所有・group/other に書き込み権限なし。"""
+        try:
+            st = os.lstat(self.legacy_auth_path)
+        except OSError:
+            return False
+        return stat.S_ISREG(st.st_mode) and st.st_uid == os.geteuid() and st.st_mode & 0o022 == 0
+
+    def _auth_read_path(self):
+        if not os.path.isfile(self.auth_path) and self.legacy_auth_path and self._legacy_file_ok() and self.legacy_auth_path and os.path.isfile(self.legacy_auth_path):
+            return self.legacy_auth_path
+        return self.auth_path
+
+    def using_legacy(self):
+        return self._auth_read_path() != self.auth_path
+
     def configured(self):
-        return os.path.isfile(self.auth_path)
+        return os.path.isfile(self._auth_read_path())
 
     def setup(self, username, password):
         """auth.json が無いときだけ作る。作れたら True(先に作られていたら False)。"""
@@ -126,7 +144,7 @@ class Auth:
 
     def _load(self):
         try:
-            with open(self.auth_path) as f:
+            with open(self._auth_read_path()) as f:
                 return json.load(f)
         except (OSError, ValueError):
             return None
