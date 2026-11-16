@@ -273,6 +273,32 @@ open(os.path.join(env["WEBUI_SCHED_JOBS"], "job1.conf"), "w").write(
     "COMMAND='echo hi'\nWINDOW=09:00-21:00\nINTERVAL_MIN=10\nTZ=Asia/Tokyo\n")
 open(os.path.join(env["WEBUI_SCHED_LOGS"], "job1.log"), "w").write(
     json.dumps({"ts": "2026-11-06T12:00:00+0900", "job": "job1", "action": "ran", "reason": "exit 0", "exit": 0}) + "\n")
+_J = env["WEBUI_SCHED_JOBS"]
+_REPO = os.path.dirname(os.path.dirname(HERE))
+_OUTSIDE = os.path.join(TMP, "outside-prompt.txt")
+open(_OUTSIDE, "w").write("OUTSIDE-SECRET-BODY")
+_FAKE_TOK = "gh" + "p_" + "x" * 24   # 架空の値(分割して連結。ソースに token 形の文字列を置かない)
+open(os.path.join(_J, "pj.conf"), "w").write(
+    "TARGET=alpha\nPROMPT='roles/x.md を読んで <b>bold</b> $HOME ${FOO} \"quoted\" " + _FAKE_TOK + " を使う'\n"
+    "WINDOW=00:00-23:59\nINTERVAL_MIN=10\nDAYS=daily\nSKIP_IF=\"working blocked\"\nTZ=Asia/Tokyo\n")
+open(os.path.join(_J, "pcomment.conf"), "w").write("TARGET=alpha\nPROMPT='REAL-PROMPT'\n# PROMPT='ignored-line'\nWINDOW=09:00-21:00\nINTERVAL_MIN=30\nTZ=Asia/Tokyo\n")
+os.makedirs(os.path.join(_J, ".ssh"), exist_ok=True)
+open(os.path.join(_J, ".ssh", "key.txt"), "w").write("DENIED-KEY-BODY")
+open(os.path.join(_J, ".env"), "w").write("DENIED-ENV-BODY")
+os.symlink(os.path.join(_J, ".ssh", "key.txt"), os.path.join(_J, "link.txt"))
+for _n, _p in (("pdeny1", os.path.join(_J, ".ssh", "key.txt")), ("pdeny2", os.path.join(_J, ".env")), ("pdeny3", os.path.join(_J, "link.txt"))):
+    open(os.path.join(_J, _n + ".conf"), "w").write(f"TARGET=alpha\nPROMPT_FILE={_p}\nWINDOW=09:00-21:00\nINTERVAL_MIN=30\nTZ=Asia/Tokyo\n")
+open(os.path.join(_J, "ptb.conf"), "w").write(f"TARGET=alpha\nPROMPT_FILE={os.path.join(_REPO, 'taskboard', 'config', 'approvals-catalog.conf')}\nWINDOW=09:00-21:00\nINTERVAL_MIN=30\nTZ=Asia/Tokyo\n")
+open(os.path.join(_J, "pvar.conf"), "w").write("TARGET=alpha\nPROMPT_FILE=$HOME/x.txt\nWINDOW=09:00-21:00\nINTERVAL_MIN=30\nTZ=Asia/Tokyo\n")
+open(os.path.join(_J, "cmdsub.conf"), "w").write("COMMAND=$(echo hi; date) # comment\nWINDOW=00:00-23:59\nINTERVAL_SEC=120\nTZ=Asia/Tokyo\n")
+open(os.path.join(_J, "cmdplain.conf"), "w").write("COMMAND=bin/tb-prwatch\nWINDOW=00:00-23:59\nINTERVAL_SEC=120\nTZ=Asia/Tokyo\n")
+open(os.path.join(_J, "cmdbig.conf"), "w").write("COMMAND='echo hi'\n" + "# pad\n" * 12000 + "WINDOW=00:00-23:59\nINTERVAL_SEC=120\nTZ=Asia/Tokyo\n")
+open(os.path.join(_J, "pmissing.conf"), "w").write("TARGET=no-such-agent\nPROMPT='hello'\nWINDOW=09:00-21:00\nINTERVAL_MIN=30\nTZ=Asia/Tokyo\n")
+open(os.path.join(_J, "pmulti.conf"), "w").write("TARGET=alpha\nPROMPT='line1\n" + "\n".join(f"line{i}" for i in range(2, 30)) + "'\nWINDOW=09:00-21:00\nINTERVAL_MIN=30\nTZ=Asia/Tokyo\n")
+open(os.path.join(_J, "pfin.conf"), "w").write(f"TARGET=alpha\nPROMPT_FILE={os.path.join(_REPO, 'scheduler', 'README.md')}\nWINDOW=09:00-21:00\nINTERVAL_MIN=30\nTZ=Asia/Tokyo\n")
+open(os.path.join(_J, "pfout.conf"), "w").write(f"TARGET=alpha\nPROMPT_FILE={_OUTSIDE}\nWINDOW=09:00-21:00\nINTERVAL_MIN=30\nTZ=Asia/Tokyo\n")
+open(os.path.join(_J, "pfrel.conf"), "w").write("TARGET=alpha\nPROMPT_FILE=../../etc/passwd\nWINDOW=09:00-21:00\nINTERVAL_MIN=30\nTZ=Asia/Tokyo\n")
+open(os.path.join(_J, "cmdx.conf"), "w").write("COMMAND='cd /x && TOKEN=supersecretvalue1 bin/tb <i>y</i> $(date)'\nCOMMAND_TIMEOUT=45\nWINDOW=00:00-23:59\nINTERVAL_SEC=120\nTZ=Asia/Tokyo\n")
 # 権限(approvals.conf)の fixture。順位・警告・届かない行・エスケープの確認用
 with open(env["WEBUI_APPROVALS"], "w") as f:
     f.write("# 先頭の注釈\nsend:info:* = allow   # 2026-11-01T00:00:00Z に人が変更\nsend:task:dd-* = allow\nsend:task:* = ask\n"
@@ -647,6 +673,90 @@ for _pth in ["/ledger", "/perms", "/perms?op=send:task:x", "/ledger?result=all"]
     _r = _un.get(_pth)
     check(f"未ログインの {_pth} は /login へ(本文なし)", _r[0] == 302 and _r[1].get("Location", "").startswith("/login") and "send:" not in _r[2] and "approvals" not in _r[2])
 check("定期実行が出る", "job1" in cl.get("/jobs")[2])
+
+# ---- 定期実行の詳細: 何が・誰に・いつ・承認は(読み取りのみ)
+_L = cl.get("/jobs")[2]
+check("ジョブ一覧: 型と宛先が分かる", "<b>agent</b> alpha" in _L and "<b>コマンド</b>を実行" in _L)
+_pj = cl.get("/jobs/pj")
+_pjh = _pj[2]
+check("ジョブ詳細: 型(PROMPT 型)", _pj[0] == 200 and "PROMPT 型" in _pjh and "agent にプロンプトを送る" in _pjh)
+check("ジョブ詳細: 宛先と今の状態(working)", "<code>alpha</code> 今:" in _pjh and "working" in _pjh and "workspace ws-label" in _pjh)
+check("ジョブ詳細: working は送らない旨", "idle / done 以外のときは送らず" in _pjh)
+check("ジョブ詳細: 本文が出る(展開せず、エスケープ)", "roles/x.md を読んで" in _pjh and "&lt;b&gt;bold&lt;/b&gt;" in _pjh and "<b>bold</b>" not in _pjh
+      and "$HOME" in _pjh and "${FOO}" in _pjh)
+check("ジョブ詳細: トークンらしい文字列はマスク", _FAKE_TOK[:12] not in _pjh and "[マスク]" in _pjh and "1 件をマスク" in _pjh)
+check("ジョブ詳細: SKIP_IF の表示", "working blocked" in _pjh)
+check("ジョブ詳細: 次回の予定が出る", re.search(r"次回の予定\(目安\)</th><td>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} → ", _pjh) is not None)
+check("ジョブ詳細: 承認の扱い(scheduler は approvals.conf を見ない)", "approvals.conf を見ず" in _pjh and "send:task:alpha" in _pjh)
+check("ジョブ詳細: 副作用は推測せず「不明」", "分かりません(不明)" in _pjh)
+check("ジョブ詳細: 送信履歴へのリンク", 'href="/ledger?kind=scheduler&amp;target=alpha"' in _pjh)
+check("ジョブ詳細: 編集フォームは増えていない(保存と戻すの 2 つだけ)", _pjh.count('<form method=post action="/jobs/pj"') == 2 and "name=prompt" not in _pjh and "name=command" not in _pjh and "name=target" not in _pjh)
+_pcm = cl.get("/jobs/pcomment")[2]
+check("ジョブ詳細: コメントアウトされた PROMPT は読まない", "REAL-PROMPT" in _pcm and "ignored-line" not in _pcm)
+for _n, _body in (("pdeny1", "DENIED-KEY-BODY"), ("pdeny2", "DENIED-ENV-BODY"), ("pdeny3", "DENIED-KEY-BODY")):
+    _d = cl.get("/jobs/" + _n)[2]
+    check(f"ジョブ詳細: PROMPT_FILE が認証情報の置き場({_n})なら中身を出さない", _body not in _d and "認証情報などの置き場なので、中身は表示しません" in _d, _d[:0])
+_vv = cl.get("/jobs/pvar")[2]
+check("ジョブ詳細: PROMPT_FILE=$HOME/x は相対扱いにせず「展開される記述」と明示", "シェルで展開・解釈される記述です" in _vv and "相対パスなので" not in _vv and "確定できず" in _vv)
+_cs = cl.get("/jobs/cmdsub")[2]
+check("ジョブ詳細: COMMAND=$(…) は行全体を出し、展開される記述と明示", "$(echo hi; date)" in _cs and "シェルで展開・解釈される記述です" in _cs and "# comment" not in _cs)
+_cp = cl.get("/jobs/cmdplain")[2]
+check("ジョブ詳細: 単純な引用符なしの値は警告なし", "bin/tb-prwatch" in _cp and "シェルで展開・解釈される記述です" not in _cp)
+check("ジョブ詳細: 展開される記述でない PROMPT(単一引用符)は警告なし", "シェルで展開・解釈される記述です" not in cl.get("/jobs/pcomment")[2])
+check("ジョブ詳細: conf が 64 KiB 超なら注意を出す", "64 KiB を超えている" in cl.get("/jobs/cmdbig")[2])
+_tb = cl.get("/jobs/ptb")[2]
+check("ジョブ詳細: PROMPT_FILE の範囲は scheduler/ 配下(taskboard の設定ファイルは読まない)", "external-write" not in _tb and "外なので、中身は表示しません" in _tb)
+_pm = cl.get("/jobs/pmissing")[2]
+check("ジョブ詳細: 宛先が存在しない警告", "herdr に見つかりません" in _pm and "class=warn" in _pm)
+_pu = cl.get("/jobs/pmulti")[2]
+check("ジョブ詳細: 長い本文は折りたたむ", "<details><summary>本文を開く" in _pu and "line29" in _pu)
+_c = cl.get("/jobs/cmdx")[2]
+check("ジョブ詳細: COMMAND 型はコマンド全文(展開せず・エスケープ・マスク)", "COMMAND 型" in _c and "bash -c" in _c and "$(date)" in _c and "&lt;i&gt;y&lt;/i&gt;" in _c
+      and "supersecretvalue1" not in _c and "タイムアウト 45 秒" in _c)
+check("ジョブ詳細: COMMAND 型は宛先を出さない・承認の対象外と書く", "誰に送られるか" not in _c and "approvals.conf の対象外" in _c)
+_fi = cl.get("/jobs/pfin")[2]
+check("ジョブ詳細: PROMPT_FILE(リポジトリ内)は中身を出す", "scheduler" in _fi and "ファイル <code>" in _fi and "表示しません" not in _fi)
+_fo = cl.get("/jobs/pfout")[2]
+check("ジョブ詳細: PROMPT_FILE(リポジトリ外)は中身を出さない", "OUTSIDE-SECRET-BODY" not in _fo and "外なので、中身は表示しません" in _fo)
+_fr = cl.get("/jobs/pfrel")[2]
+check("ジョブ詳細: PROMPT_FILE(相対パス)は中身を出さない", "root:" not in _fr and "相対パスなので" in _fr)
+_odir = os.path.join(TMP, "other-jobs"); os.makedirs(_odir, exist_ok=True)
+open(os.path.join(_odir, "foreign.conf"), "w").write("COMMAND='echo FOREIGN-JOB'\nWINDOW=09:00-21:00\nINTERVAL_MIN=10\nTZ=Asia/Tokyo\n")
+check("ジョブ詳細: このプロセスの jobs の外(別インスタンス・別 checkout)のジョブは見せない", cl.get("/jobs/foreign")[0] == 404 and "FOREIGN-JOB" not in cl.get("/jobs")[2])
+check("ジョブ詳細: 不正なジョブ名・トラバーサルは 404", cl.get("/jobs/..%2Fetc")[0] == 404 and cl.get("/jobs/nope")[0] == 404)
+check("ジョブ詳細: POST は従来のスケジュール保存だけ(prompt は書けない)",
+      cl.raw("POST", "/jobs/pj", {"csrf": cl.csrf("/jobs/pj"), "action": "save", "interval": "5", "interval_unit": "min", "start": "09:00", "end": "10:00", "days": "daily", "enabled": "1", "prompt": "HACK"})[0] == 302
+      and "HACK" not in open(os.path.join(_J, "pj.conf")).read() and "HACK" not in cl.get("/jobs/pj")[2])
+os.remove(os.path.join(env["WEBUI_SCHED_SETTINGS"], "pj.settings"))
+# 次回の予定(時刻を固定した単体の確認)
+sys.path.insert(0, os.path.dirname(HERE))
+import app.jobview as _jv  # noqa: E402
+from zoneinfo import ZoneInfo as _ZI  # noqa: E402
+_inf = {"enabled": True, "tz": "Asia/Tokyo", "interval_sec": 1800, "start": "09:00", "end": "21:00", "days": "weekdays"}
+check("次回: 土曜の昼は月曜 09:00 から", _jv.next_runs(_inf, datetime(2026, 11, 14, 10, 0, tzinfo=_ZI("Asia/Tokyo")), 2)[0] == ["2026-11-16 09:00:00", "2026-11-16 09:30:00"])
+check("次回: 平日の 09:10 の次は 09:30", _jv.next_runs(_inf, datetime(2026, 11, 16, 9, 10, tzinfo=_ZI("Asia/Tokyo")), 1)[0] == ["2026-11-16 09:30:00"])
+check("次回: 終了後は翌営業日", _jv.next_runs(_inf, datetime(2026, 11, 20, 22, 0, tzinfo=_ZI("Asia/Tokyo")), 1)[0] == ["2026-11-23 09:00:00"])
+check("次回: 一時停止は予定なし", _jv.next_runs({**_inf, "enabled": False})[0] == [])
+check("次回: 不正な TZ は「不明」", "不明" in _jv.next_runs({**_inf, "tz": "No/Such"})[1])
+# conf の読み取り(CodeRabbit 指摘): 閉じ引用符の直後の # と、引用符内・継続行の中の代入
+def _jd(body):
+    os.environ["WEBUI_SCHED_JOBS"] = _J
+    open(os.path.join(_J, "unit.conf"), "w").write(body)
+    return _jv.job_defs("unit")
+for _q in ("'", '"'):
+    _d = _jd(f"PROMPT_FILE={_q}/repo/scheduler/body.txt{_q}#v2\n")
+    check(f"conf: {_q} の閉じ引用符の直後の # はコメントにしない(連結として不完全)", "PROMPT_FILE" in _d["_complex"], str(_d))
+    _d = _jd(f"PROMPT_FILE={_q}/repo/scheduler/body.txt{_q} # note\n")
+    check(f"conf: {_q} の閉じ引用符のあとに空白を置いた # はコメント(完全)", "PROMPT_FILE" not in _d["_complex"] and _d["PROMPT_FILE"] == "/repo/scheduler/body.txt", str(_d))
+_d = _jd("PROMPT='説明\nPROMPT_FILE=/repo/scheduler/body.txt\n終わり'\n")
+check("conf: 複数行 PROMPT の中の PROMPT_FILE= は代入として読まない", "PROMPT_FILE" not in _d and "PROMPT_FILE=/repo/scheduler/body.txt" in _d["PROMPT"], str(_d))
+_d = _jd('PROMPT="説明\nCOMMAND=rm -rf x\n終わり"\n')
+check("conf: 二重引用符の複数行の中の COMMAND= も代入として読まない", "COMMAND" not in _d, str(_d))
+_d = _jd("PROMPT=abc\\\nPROMPT_FILE=/x/y\nSKIP_IF=working\n")
+check("conf: 行末 \\ の継続行の中の代入は読まず、引用符の外の次の代入は読む", "PROMPT_FILE" not in _d and _d["SKIP_IF"] == "working", str(_d))
+_d = _jd("PROMPT='a'\nPROMPT_FILE=/repo/scheduler/b.txt\n")
+check("conf: 引用符が閉じたあとの行の代入は読む", _d["PROMPT_FILE"] == "/repo/scheduler/b.txt", str(_d))
+os.remove(os.path.join(_J, "unit.conf"))
 
 # ---- 権限カタログ × approvals.conf(読み取りのみ)
 check("カタログ: 操作ごとの現在の権限の節", "操作ごとの現在の権限(カタログ × approvals.conf)" in P[2])
