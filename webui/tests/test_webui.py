@@ -1466,6 +1466,20 @@ try:
     _cfg2.INSTANCE = ""
     check("docs: 未設定でも run/ 配下は開かない(従来)", _docs2.denied(os.path.realpath(os.path.join(_rb, "notes.txt"))) is not None)
     _ex = os.path.join(TMP, "docs-explicit-run"); os.makedirs(_ex, exist_ok=True)
+    # 実体で比べる: 綴り違い(大文字小文字を区別しないボリューム)・別名(symlink)でも、run の配下は開かない
+    _cfg2.INSTANCE = "me"
+    _alias = os.path.join(TMP, "docs-run-alias")
+    os.symlink(_rb, _alias)
+    check("docs: run への symlink 経由でも開かない", _docs2.denied(os.path.join(_alias, "instance-other", "auth.json")) is not None)
+    check("docs: run への symlink 経由・存在しないファイルでも開かない", _docs2.denied(os.path.join(_alias, "instance-other", "nope.json")) is not None)
+    _case = os.path.join(os.path.dirname(_rb), os.path.basename(_rb).upper())
+    if os.path.exists(_case):   # 大文字小文字を区別しないボリューム(macOS の既定)
+        check("docs: 綴りを変えた run(大文字小文字違い)でも開かない", _docs2.denied(os.path.join(_case, "instance-other", "auth.json")) is not None)
+        _dd = os.path.join(TMP, "docs-case"); os.makedirs(os.path.join(_dd, ".ssh"), exist_ok=True)
+        check("docs: 綴りを変えた .SSH も開かない", _docs2.denied(os.path.join(_dd, ".SSH", "x")) is not None)
+    check("docs: 無関係な存在しないパスは開く判定(denied でない)", _docs2.denied(os.path.join(TMP, "no-such-dir", "a.md")) is None)
+    check("docs: run の隣の別ディレクトリ(前方一致だけ同じ名前)は denied でない",
+          _docs2.denied(os.path.join(os.path.dirname(_rb), os.path.basename(_rb) + "-x", "a.md")) is None)
     os.environ["WEBUI_RUN_DIR"] = _ex
     check("docs: WEBUI_RUN_DIR 明示でも、その場所は開かない", _docs2.denied(os.path.realpath(os.path.join(_ex, "auth.json"))) is not None)
 finally:
@@ -1478,6 +1492,7 @@ finally:
 
 # ---- CR-1: 大文字小文字だけが違う TB_INSTANCE は同じインスタンス(小文字に正規化)
 env, pu_, portu = inst_boot("inst-upper", "Alpha")
+check("TB_INSTANCE=Alpha の起動", portu is not None)
 if portu:
     cu_, nmu = inst_cookie_name(portu)
     check("TB_INSTANCE=Alpha は小文字に正規化(Cookie 名)", nmu == "herdr_webui_session_alpha", str(nmu))
