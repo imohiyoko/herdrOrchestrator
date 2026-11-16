@@ -1335,6 +1335,79 @@ check("bind はループバックだけ", (not ss_) or ("127.0.0.1:" in ss_ and 
 stop(pf_)
 check("終了時にインスタンスの run ファイルを消す", not os.path.exists(pfile) and not os.path.exists(os.path.join(os.path.dirname(pfile), "instance")))
 
+# ---- 追加: 既存運用の移行(旧い run/auth.json は読み取りだけ引き継ぐ)
+base_ = free_range(1)
+env, d_ = inst_env("inst-mig", "mig", HERDR_WEBUI_RANGE=f"{base_}-{base_}")
+old_run = env["WEBUI_RUN_BASE"]
+os.makedirs(old_run, exist_ok=True)
+# 先に旧い場所で /setup して auth.json を作る(TB_INSTANCE なしの起動)
+env0 = dict(env); env0.pop("TB_INSTANCE"); env0["WEBUI_RUN_DIR"] = old_run
+p0 = start(env0)
+for _ in range(100):
+    if os.path.exists(os.path.join(old_run, "port")):
+        break
+    time.sleep(0.05)
+port0 = int(open(os.path.join(old_run, "port")).read())
+c0 = Client(port0)
+c0.raw("POST", "/setup", {"csrf": c0.csrf("/setup"), "username": USER, "password": PW, "confirm": PW})
+stop(p0)
+old_auth = os.path.join(old_run, "auth.json")
+before = open(old_auth).read()
+p1 = start(env)
+newport = wait_port({"WEBUI_RUN_DIR": os.path.join(old_run, "instance-mig")}, p1)
+check("移行: TB_INSTANCE 付きで起動できる", newport is not None)
+if newport:
+    cm = Client(newport)
+    check("移行: /setup は開かない(旧い auth.json を読む)", cm.get("/setup")[0] != 200 or "初回設定" not in cm.get("/setup")[2])
+    rr = cm.login()
+    check("移行: 旧いユーザー名・パスワードでログインできる", rr[0] == 302 and cm.get("/tasks")[0] == 200, str(rr[0]))
+    check("移行: 旧い auth.json は消えず変わらない(読み取りのみ)", open(old_auth).read() == before)
+    check("移行: 新しい場所には auth.json を作らない", not os.path.exists(os.path.join(old_run, "instance-mig", "auth.json")))
+out1 = stop_out(p1)
+check("移行: 起動ログに旧い場所を読んでいる旨", "読み取りで使います" in out1, out1[:200])
+# 旧い auth.json が無ければ、従来どおり /setup が開く
+env2, _ = inst_env("inst-mig2", "mig2", HERDR_WEBUI_RANGE=f"{base_}-{base_}")
+p2 = start(env2)
+np2 = wait_port({"WEBUI_RUN_DIR": os.path.join(env2["WEBUI_RUN_BASE"], "instance-mig2")}, p2)
+check("移行: 旧い auth.json が無ければ /setup が開く", np2 is not None and "confirm" in Client(np2).get("/setup")[2])
+stop(p2)
+
+# ---- 追加: ワイルドカード(0.0.0.0)で待ち受け中の固定ポートは使用中として扱う
+ws = socket.socket()
+ws.bind(("0.0.0.0", 0)); ws.listen(1); socks.append(ws)
+wport = ws.getsockname()[1]
+env, _ = inst_env("inst-wild", "wild", TB_UI_PORT=str(wport))
+pw_ = start(env)
+try:
+    rc = pw_.wait(5)
+except subprocess.TimeoutExpired:
+    rc = None
+check("TB_UI_PORT が 0.0.0.0 で使用中: エラー終了", rc not in (None, 0), f"rc={rc}")
+check("TB_UI_PORT が 0.0.0.0 で使用中: 理由を出す", "待ち受け" in ((pw_.stderr.read() or "") if rc else ""))
+ws.close(); socks.remove(ws)
+
+# ---- 追加: TB_UI_PORT の範囲(1〜65535)
+for badp in ("0", "99999", "-1", "65536"):
+    env, _ = inst_env("inst-portrange", "pr", TB_UI_PORT=badp)
+    pp = start(env)
+    try:
+        rc = pp.wait(5)
+    except subprocess.TimeoutExpired:
+        rc = None
+    err = (pp.stderr.read() or "") if rc else ""
+    check(f"TB_UI_PORT={badp}: 説明つきでエラー終了(トレースバックなし)", rc not in (None, 0) and "Traceback" not in err and "herdr-webui" in err, f"rc={rc} {err[:120]}")
+
+# ---- 追加: 表示にインスタンス名の生の HTML 特殊文字が出ない(多層防御の確認)
+sys.path.insert(0, os.path.dirname(HERE))
+import app.views as _v2  # noqa: E402
+_orig = _v2.INSTANCE
+try:
+    _v2.INSTANCE = "a<b>&\"x"
+    check("インスタンス名はエスケープされて出る(ヘッダ)", "<b>" not in _v2.inst_label() and "&lt;b&gt;" in _v2.inst_label())
+    check("インスタンス名はエスケープされて出る(タイトル)", "<b>" not in _v2.page("t", "", "/", 0) )
+finally:
+    _v2.INSTANCE = _orig
+
 print()
 print("FAILED: " + ", ".join(fails) if fails else "all passed")
 sys.exit(1 if fails else 0)

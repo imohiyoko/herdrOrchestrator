@@ -5,6 +5,7 @@ import os
 import re
 import shlex
 import signal
+import socket
 import sys
 import threading
 import time
@@ -13,7 +14,7 @@ from urllib.parse import parse_qs, unquote, urlencode, urlsplit
 
 import auth
 
-from .config import COOKIE, HOST, INSTANCE, JOB_RE, ROOT, RUN_DIR, cfg
+from .config import COOKIE, HOST, INSTANCE, JOB_RE, LEGACY_RUN_DIR, ROOT, RUN_DIR, cfg
 from .sanitize import clean, e
 from .actions import agent_decide, agent_new, agent_op, resolve_comment
 from .data import NOTIFY_POLL_SEC, badge_count, urgent_items
@@ -388,11 +389,20 @@ def bind_server():
     try:
         if fixed:
             lo = hi = int(fixed)
+            if not 1 <= lo <= 65535:
+                raise SystemExit(f"herdr-webui: TB_UI_PORT は 1〜65535 の数字: {fixed}")
         else:
             lo, hi = (int(x) for x in cfg("HERDR_WEBUI_RANGE", "8800-8819").split("-"))
     except ValueError:
         raise SystemExit("herdr-webui: ポート指定が数値ではありません")
     last = None
+    if fixed:
+        # macOS では SO_REUSEADDR の bind が、0.0.0.0 で待ち受け中のポートにも通ってしまう。先に接続を試して検出する
+        # (固定ポートのときだけ。bind の失敗検査は残す)
+        with socket.socket() as probe:
+            probe.settimeout(0.5)
+            if probe.connect_ex((HOST, lo)) == 0:
+                raise SystemExit(f"herdr-webui: instance={INSTANCE or 'default'} 固定ポート {lo}(TB_UI_PORT)で既に別のプロセスが待ち受けています。別のポートへは移りません")
     for p in range(lo, hi + 1):
         try:
             return ThreadingHTTPServer((HOST, p), Handler), p
@@ -406,7 +416,12 @@ def bind_server():
 
 def main():
     run_dir = RUN_DIR()
-    Handler.auth = auth.Auth(run_dir)
+    # TB_INSTANCE があり、run を明示していないときだけ、旧い場所(run/)の auth.json を読み取りで引き継ぐ
+    legacy = LEGACY_RUN_DIR() if INSTANCE and not os.environ.get("WEBUI_RUN_DIR") else None
+    Handler.auth = auth.Auth(run_dir, legacy_dir=legacy)
+    if Handler.auth.using_legacy():
+        print(f"herdr-webui: 旧い {Handler.auth.legacy_auth_path} を読み取りで使います(消しません)。"
+              f"{run_dir}/auth.json に移す(コピーする)か、パスワード再設定で新しい場所に作ると、この表示は消えます", flush=True)
     srv, port = bind_server()
     Handler.port = port
     port_file = os.path.join(run_dir, "port")

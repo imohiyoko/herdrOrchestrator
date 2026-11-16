@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.join(HERDR_ROOT, "lib"))
 import herdr_env  # noqa: E402  部品で共通の既定値(lib/herdr-env.sh と同じ)
 
 HOST = "127.0.0.1"
+LEGACY_RUN_DIR = lambda: os.path.join(os.environ.get("WEBUI_RUN_BASE") or os.path.join(ROOT, "run"))  # noqa: E731  TB_INSTANCE 導入前の置き場(読み取りの互換用)
 INSTANCE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")   # lib/herdr-env.sh の TB_INSTANCE と同じ
 
 
@@ -22,6 +23,7 @@ def _instance():
 
 
 # 複数の herdr セッションを別ポート・別プロセスで動かす。Cookie は host 単位でポートでは分かれないので、名前をインスタンスごとに変える。
+# 既に TB_INSTANCE 付きで動かしていた場合、旧い run/auth.json は読み取りだけ引き継ぐ(auth.py。消さない)。
 # 未設定(空)なら従来のまま(Cookie 名・run ディレクトリ・表示とも変わらない)。
 INSTANCE = _instance()
 COOKIE = "herdr_webui_session" + (f"_{INSTANCE}" if INSTANCE else "")
