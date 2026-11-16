@@ -210,6 +210,22 @@ NRVT=$(env -u HERDR_PANE_ID "$ISO6/taskboard/bin/tb" gate reviewers "$PRREF" 2>&
 eq "nits: 4 lines for one review → 'events: 1' (counted per statement), one reviewer" "$(sed -n 3p <<<"$NRVT")" "events: 1   reviewers: 1"
 eq "nits: the reviewer line shows the latest login, type and assoc (one statement, so no login change marker)" "$(grep -c '^reviewer: nit-renamed id=3001 type=bot assoc=member .*last=2026-11-16T02:00:00Z$' <<<"$NRVT")" "1"
 rm -f "$EVLOG"; mv "$GT/ev-nits-hold.log" "$EVLOG"
+# --- 表示の login・type・assoc は、同じ(最後に観測された)発言から取る
+cp "$EVLOG" "$GT/ev-lg-hold.log"; rm -f "$EVLOG"
+LA=$(evcm old-name 4001 User contributor "$H40" "LG-A" 2026-11-16T03:00:00Z 51)
+LB=$(evcm new-name 4001 User member "$H40" "LG-B" 2026-11-16T03:05:00Z 52)
+eq "login: first observation (old login, contributor) recorded" "$(evres "$(evfx l1 "[]" "[$LA]" "[]")")" "0|1"
+eq "login: the old comment is gone; a later comment under the new login (member) is recorded" "$(evres "$(evfx l2 "[]" "[$LB]" "[]")")" "0|1"
+LGT=$(env -u HERDR_PANE_ID "$ISO6/taskboard/bin/tb" gate reviewers "$PRREF" 2>&1)
+eq "login: login, type and assoc come from the last observation (new-name, member), with login-changed" "$(grep -c '^reviewer: new-name id=4001 type=user assoc=member .* login-changed$' <<<"$LGT")|$(grep -c 'old-name id=4001' <<<"$LGT")" "1|0"
+rm -f "$EVLOG"
+LC=$(evcm new-name 4002 User member "$H40" "LG-C" 2026-11-16T03:10:00Z 53)
+LD=$(evcm old-name 4002 User contributor "$H40" "LG-D" 2026-11-16T03:00:00Z 54)
+eq "login: new comment recorded first" "$(evres "$(evfx l3 "[]" "[$LC]" "[]")")" "0|1"
+eq "login: an older comment recorded afterwards (old login, contributor)" "$(evres "$(evfx l4 "[]" "[$LD]" "[]")")" "0|1"
+LGT=$(env -u HERDR_PANE_ID "$ISO6/taskboard/bin/tb" gate reviewers "$PRREF" 2>&1)
+eq "login: the last observation wins by log position, not by time (old-name, contributor, with the changed marker)" "$(grep -c '^reviewer: old-name id=4002 type=user assoc=contributor .* login-changed$' <<<"$LGT")|$(grep -c 'new-name id=4002' <<<"$LGT")" "1|0"
+rm -f "$EVLOG"; mv "$GT/ev-lg-hold.log" "$EVLOG"
 # --- 判定の入力は変わらない: 記録があっても、evaluate の結果は同じ。execute は常に 30
 cp "$GT/gate.conf" "$ISO6/taskboard/config/gate.conf"; cp "$GT/paths.conf" "$ISO6/taskboard/config/gate-paths.conf"; cp "$GT/reviews-good.log" "$ISO6/taskboard/data/gate-reviews.log"
 # 記録が「無い」状態と「有る」状態を比べる(両方とも空でない状態で比べると、記録の存在が判定に混ざっても気づけない)
