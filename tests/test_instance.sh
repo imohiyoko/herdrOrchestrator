@@ -21,6 +21,17 @@ eq "session: unknown socket layout falls back to HERDR_SESSION" "$(HERDR_SESSION
 eq "session: unknown socket layout, nothing else -> default" "$(HERDR_SOCKET_PATH=/tmp/x/other.sock fn herdr_session_name)" "default"
 eq "session: unsafe name in socket path falls back" "$(HERDR_SESSION=staging HERDR_SOCKET_PATH='/h/sessions/a b/herdr.sock' fn herdr_session_name)" "staging"
 
+# --- herdr_session_source: 名前の決まり方(socket / env / default)。判定は herdr_session_name と同じ
+S=/tmp/h/.config/herdr/sessions/training/herdr.sock
+eq "source: nothing set" "$(fn herdr_session_source)" "default"
+eq "source: HERDR_SESSION only" "$(HERDR_SESSION=staging fn herdr_session_source)" "env"
+eq "source: empty HERDR_SESSION" "$(HERDR_SESSION= fn herdr_session_source)" "default"
+eq "source: named socket wins" "$(HERDR_SESSION=staging HERDR_SOCKET_PATH=$S fn herdr_session_source)" "socket"
+eq "source: default socket wins" "$(HERDR_SESSION=staging HERDR_SOCKET_PATH=/tmp/h/.config/herdr/herdr.sock fn herdr_session_source)" "socket"
+eq "source: unknown layout falls back to env" "$(HERDR_SESSION=staging HERDR_SOCKET_PATH=/tmp/x/other.sock fn herdr_session_source)" "env"
+eq "source: unknown layout, nothing else" "$(HERDR_SOCKET_PATH=/tmp/x/other.sock fn herdr_session_source)" "default"
+eq "source: unsafe name in the socket path falls back" "$(HERDR_SESSION=staging HERDR_SOCKET_PATH='/h/sessions/a b/herdr.sock' fn herdr_session_source)" "env"
+
 # --- herdr_label_prefix: TB_INSTANCE 未設定なら従来のまま
 eq "prefix: unset -> legacy" "$(fn herdr_label_prefix)" "local.herdr-"
 eq "prefix: empty -> legacy" "$(TB_INSTANCE= fn herdr_label_prefix)" "local.herdr-"

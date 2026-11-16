@@ -17,6 +17,14 @@ herdr_session_name() {
   echo "${HERDR_SESSION:-default}"
 }
 
+# herdr_session_name の答えがどこから決まったか: socket(HERDR_SOCKET_PATH から名前を導けた) / env(HERDR_SESSION) / default。
+# 判定は herdr_session_name と同じ(片方を変えたらもう片方も変える。tests/test_instance.sh が突き合わせる)。
+herdr_session_source() {
+  local p=${HERDR_SOCKET_PATH:-} named='/sessions/([A-Za-z0-9_][A-Za-z0-9._-]*)/herdr\.sock$' dflt='/herdr/herdr\.sock$'
+  if [[ $p =~ $named || $p =~ $dflt ]]; then echo socket; return 0; fi
+  if [[ -n ${HERDR_SESSION:-} ]]; then echo env; else echo default; fi
+}
+
 # launchd ラベルの接頭辞。TB_INSTANCE 未設定(空)なら従来の "local.herdr-"、設定すれば "local.herdr-<instance>-"。
 # instance は英数字で始まり、英数字と . _ - だけ(64 字以内)。違反は何も出さず 2 を返す。
 herdr_label_prefix() {

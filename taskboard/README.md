@@ -44,6 +44,20 @@ tb pending [--json|--ids]     # done なのに未報告のもの(id / project / 
 tb pending --ids | xargs -n1 tb report    # 未報告の再送(scheduler から呼ぶ想定)
 ```
 
+### 今どこを向いているか(`tb whoami`)
+
+```bash
+tb whoami           # checkout・DB・herdr セッション・TB_INSTANCE・launchd ラベルの接頭辞・agent のペインか、と、それぞれの決まり方
+tb whoami --short   # herdr セッション名だけ
+```
+
+読み取りだけ。DB を開かず、sqlite3・jq・herdr も呼ばず、何も書かない(壊れた DB でも使える)。各行の `[...]` が決まり方で、`env <名前>`(その環境変数)/ `既定` / `checkout`。
+
+- **session**: 決め方は `herdr_session_name` と同じで、`HERDR_SOCKET_PATH`(名前を導けるとき)> `HERDR_SESSION` > `default`。効かなかった `HERDR_SESSION` や、socket の配置から名前を導けなかったことは `note:` に出す。
+- **label-prefix**: `TB_INSTANCE` 未設定なら従来の `local.herdr-`、設定すれば `local.herdr-<TB_INSTANCE>-`。default セッションでは `TB_INSTANCE` を渡さない方針なので、セッションと `TB_INSTANCE` が対応していないときも `note:` に出す(見るだけで、何も変えない)。
+- **db**: `TB_DB` か既定。symlink なら実体も出す。まだ無ければそう出す(作らない)。
+- 設計: [docs/tb-instance-context.md](docs/tb-instance-context.md) の S1。台帳・`--session` による振り分けは後の段で、今は出さない。
+
 `project` は英数字と `_` のみ。ID は project ごとに 001 から採番される。
 
 ## 代行依頼(権限が足りないとき)
