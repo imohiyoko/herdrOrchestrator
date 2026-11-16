@@ -336,7 +336,7 @@ RPROMPT='$(_tb_inst)'"${RPROMPT:-}"
 
 実装は「テスト先行」。順序の依存: **S4 は S3 の後(または同時)、S5 は S4 の後**(止まったときの逃げ道が `--session`)。S5 の前に、全 agent のセッションが台帳に載っていることを `tb sessions --check` で確かめる(載っていないと書き込みが止まる)。**テストは台帳の場所を差し替えられる前提**: `XDG_CONFIG_HOME` を一時領域に向け、台帳なしを既定とし、台帳ありの試験は専用のケースだけが台帳を置く。実台帳のある開発機でも、実台帳の有無の両方で既存のテストが同じ結果になることを S2 の受け入れ条件にする。staging(1 つの OS 上の複数セッションの模擬)が、各段階の動作確認の場所になる。
 
-1. **S1: `tb whoami`**(台帳なし)。checkout・DB・herdr セッション(`herdr_session_name`)・`TB_INSTANCE`・ラベルの接頭辞・決まり方を出す。DB を開かない。何も変えない。
+1. **S1: `tb whoami`**(台帳なし。**実装済み**: `taskboard/lib/whoami.sh`。台帳・`--session`・`forwarded` の表示は後の段)。checkout・DB・herdr セッション(`herdr_session_name`)・`TB_INSTANCE`・ラベルの接頭辞・決まり方を出す。DB を開かない。何も変えない。
 2. **S2: 台帳と `tb sessions`**(読み取りのみ)。書式の検査、`--check`(**9.2 章の launchd 混在の検出を含む**。plist を読むだけ)。
 3. **S3: `herdr_call` のセッション明示**(S4 と同時か、S4 の前)。`herdr_call` 1 か所で、tb が別のセッションを選んだとき(台帳あり・振り分けあり)だけ、解決済みセッションを環境で明示する。**台帳なし・振り分けなしは `HERDR_SOCKET_PATH` を継承したまま、挙動を変えない**(標準でない socket 配置でも同じ)。擬似 herdr のテストで、標準・非標準の両方の配置を固定する。
 4. **S4: `--session` と振り分け**(P1 の案 (a))。`TB_SESSION`、ペインの固定、別セッションの `--session` の拒否(agent)、`TB_FORWARDED`、4 章の観点のテスト。**scheduler の `tick.sh` と webui に同じ環境の明示**を入れ、`gen-plist` が `HERDR_SESSION` を入れ、`install.sh` が向き先の食い違いで止まるようにする。
