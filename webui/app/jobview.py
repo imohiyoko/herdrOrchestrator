@@ -1,7 +1,7 @@
 """定期実行ジョブの「何が・誰に・いつ・承認は」を読み取りで見せる(編集機能は無い)。
 
 - conf は実行しない(bash として source しない)。PROMPT / PROMPT_FILE / COMMAND / SKIP_IF / COMMAND_TIMEOUT の記述を、そのまま(展開せず)読む。
-- PROMPT_FILE の中身は、リポジトリ(HERDR_ROOT)か scheduler/jobs の配下の通常ファイルで、docs.denied() に当たらないものだけ読む。
+- PROMPT_FILE の中身は、scheduler/ か scheduler/jobs の配下の通常ファイルで、docs.denied() に当たらないものだけ読む。
 - 本文は表示前に、トークンらしい文字列をマスクする(完全ではない。機密を含みうる画面です)。
 """
 
@@ -10,7 +10,7 @@ import re
 from datetime import datetime, timedelta
 
 from . import perms
-from .config import HERDR_ROOT, SCHED_JOBS
+from .config import SCHED_JOBS, SCHED_ROOT
 from .docs import denied
 from .sanitize import clean
 
@@ -43,25 +43,35 @@ def mask(text):
 
 
 def _value(text, i):
-    """text[i:] から shell の代入の右辺を、展開せずにそのまま取り出す。"""
-    if i >= len(text):
-        return ""
+    """text[i:] から shell の代入の右辺を、展開せずにそのまま取り出す。(値, 解釈が不完全か)。
+    不完全 = bash が展開・解釈する記述($ ` ; & | ( ) < > \\ や、引用符の連結)を含む。その場合、値は行末までの記述をそのまま返す。"""
+    n = len(text)
+    eol = text.find("\n", i)
+    line = text[i:eol if eol >= 0 else n]
+    if i >= n or not line.strip():
+        return "", False
     c = text[i]
     if c == "'":
         j = text.find("'", i + 1)
-        return text[i + 1:j] if j >= 0 else text[i + 1:]
+        if j < 0:
+            return text[i + 1:], True
+        rest = text[j + 1:eol if eol >= 0 and eol > j else (n if eol < 0 else j + 1)]
+        return text[i + 1:j], bool(rest.strip()) and not rest.lstrip().startswith("#")
     if c == '"':
         j = i + 1
-        while j < len(text):
+        while j < n:
             if text[j] == "\\":
                 j += 2
                 continue
             if text[j] == '"':
                 break
             j += 1
-        return text[i + 1:j]
-    m = re.match(r"[^\s#;]*", text[i:])
-    return m.group(0)
+        val = text[i + 1:j]
+        rest = text[j + 1:eol if eol >= 0 and eol > j else (n if eol < 0 else j + 1)]
+        return val, bool(re.search(r"[$`\\]", val)) or (bool(rest.strip()) and not rest.lstrip().startswith("#"))
+    # 引用符なし: 行末まで(bash は空白で値を切るが、$(...) などはその中の空白で切れないので、行全体を記述として見せる)
+    raw = re.split(r"\s#", line, maxsplit=1)[0].strip()
+    return raw, bool(re.search(r"[$`;&|()<>\\ \t'\"*?~{]", raw))
 
 
 def job_defs(name):
@@ -74,9 +84,11 @@ def job_defs(name):
             text = f.read(CONF_MAX + 1)
     except OSError:
         return None
-    out = {}
+    out, complex_ = {}, set()
     for m in re.finditer(r"(?m)^[ \t]*(?:export[ \t]+)?(" + "|".join(KEYS) + r")=", text):
-        out[m.group(1)] = _value(text, m.end())   # 後ろの代入が勝つ(source と同じ)
+        out[m.group(1)], inexact = _value(text, m.end())   # 後ろの代入が勝つ(source と同じ)
+        (complex_.add if inexact else complex_.discard)(m.group(1))
+    out["_complex"] = complex_
     out["_truncated"] = len(text) > CONF_MAX
     return out
 
@@ -88,9 +100,10 @@ def prompt_file(path):
     if not os.path.isabs(path):
         return None, "相対パスなので、どこから読まれるか webui には分からず、中身は表示しません"
     real = os.path.realpath(path)
-    roots = [os.path.realpath(HERDR_ROOT), os.path.realpath(SCHED_JOBS())]
+    # 範囲は scheduler/ 配下と jobs の置き場だけ(taskboard/data や config は読まない)
+    roots = [os.path.realpath(SCHED_ROOT), os.path.realpath(SCHED_JOBS())]
     if not any(real == r or real.startswith(r + os.sep) for r in roots):
-        return None, "リポジトリ(と scheduler/jobs)の外なので、中身は表示しません"
+        return None, "scheduler/(と jobs の置き場)の外なので、中身は表示しません"
     if denied(real):
         return None, "認証情報などの置き場なので、中身は表示しません"
     try:

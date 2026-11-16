@@ -585,8 +585,12 @@ def _fold(text, kind_label, limit_chars=600, limit_lines=12):
 def _job_overview(name, info):
     """型・宛先・本文・いつ・直近の結果・副作用・承認の扱い(読み取りのみ。conf は実行しない)。"""
     defs = job_defs(name) or {}
+    cx = defs.get("_complex", set())
+    inexact = '<p class=warn>シェルで展開・解釈される記述です(表示は不完全。実際に実行・送信される内容は、展開後の結果になります)。conf を直接確認してください。</p>'
     rows = []
     is_prompt = info["kind"] == "prompt"
+    if defs.get("_truncated"):
+        rows.append(("注意", '<span class=warn>conf が 64 KiB を超えているため、後半は読んでいません(表示は不完全)</span>'))
     rows.append(("型", "<b>PROMPT 型</b>: agent にプロンプトを送る" if is_prompt else "<b>COMMAND 型</b>: コマンドを実行する(agent は介さない)"))
     warn = []
     if is_prompt:
@@ -616,13 +620,16 @@ def _job_overview(name, info):
         rows.append(("送る条件", "宛先が idle / done のときだけ送ります。" + (f"さらに状態が <code>{e(skip)}</code> のときは送りません(SKIP_IF)。" if skip else "")))
         text, note, src = None, "", ""
         if defs.get("PROMPT_FILE"):
-            body, note = prompt_file(defs["PROMPT_FILE"])
+            if "PROMPT_FILE" in cx:
+                body, note = None, "パスにシェルで展開される記述($ や引用符など)が含まれるため、どのファイルか確定できず、中身は表示しません"
+            else:
+                body, note = prompt_file(defs["PROMPT_FILE"])
             src = f'ファイル <code>{e(defs["PROMPT_FILE"])}</code>(展開前の記述そのまま)'
             text = body
         elif "PROMPT" in defs:
-            text, src = defs["PROMPT"], "conf の PROMPT(展開前の記述そのまま)"
+            text, src = defs["PROMPT"], "conf の PROMPT(展開前の記述そのまま)" + (inexact if "PROMPT" in cx else "")
         if text is None:
-            rows.append(("何が送られるか", f'{src or "本文の定義が見つかりません"} <span class=note>{e(note)}</span>'))
+            rows.append(("何が送られるか", f'{src or "本文の定義が見つかりません"} <span class=note>{e(note)}</span>' + (inexact if "PROMPT_FILE" in cx else "")))
         else:
             masked, nmask = mask(clean(text))
             rows.append(("何が送られるか", f"{src}" + (f' <span class=note>{e(note)}</span>' if note else "") + _fold(masked, "本文")
@@ -631,12 +638,12 @@ def _job_overview(name, info):
         cmd = defs.get("COMMAND", "")
         masked, nmask = mask(clean(cmd))
         rows.append(("何が実行されるか", "<code>bash -c</code> でそのまま実行(展開前の記述そのまま。タイムアウト "
-                     + e(defs.get("COMMAND_TIMEOUT") or "既定") + " 秒)" + _fold(masked, "コマンド")
+                     + e(defs.get("COMMAND_TIMEOUT") or "既定") + " 秒)" + (inexact if "COMMAND" in cx else "") + _fold(masked, "コマンド")
                      + (f'<p class=note>トークンらしい文字列 {nmask} 件をマスクしました</p>' if nmask else "")))
     nxt, nnote = next_runs(info)
     rows.append(("いつ", f'{e(interval_text(info))}おき / {e(info["start"])}-{e(info["end"])} / {e(info["days"])} / TZ {e(info["tz"])}'
                  + ("" if info.get("enabled") else ' <span class=warn>一時停止中</span>')))
-    rows.append(("次回の予定", " → ".join(e(x) for x in nxt) + (f' <span class=note>(ジョブの TZ の時刻)</span>' if nxt else f'<span class=note>{e(nnote)}</span>')))
+    rows.append(("次回の予定(目安)", " → ".join(e(x) for x in nxt) + (f' <span class=note>(ジョブの TZ の時刻。間隔・時間帯・曜日からの推定で、実際の起動と数秒ずれることがあります)</span>' if nxt else f'<span class=note>{e(nnote)}</span>')))
     last, lr = job_last(name)
     recs = parse_jsonl(tail_lines(os.path.join(SCHED_LOGS(), name + ".log"), 200))
     counts = {}

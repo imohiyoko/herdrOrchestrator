@@ -300,8 +300,9 @@ Cookie 名は現在 `herdr_webui_session_<TB_INSTANCE>`。台帳側の設計に�
 
 ## 定期実行ジョブの表示(`/jobs/<job>`)の読み取り範囲
 
+- 引用符なしの値は行末まで(` #` の前まで)を記述として出す。`$`・`` ` ``・`;`・`(`・引用符の連結など、bash が展開・解釈する記述を含む値は「シェルで展開・解釈される記述です(表示は不完全)」と明示し、`PROMPT_FILE` はファイルを確定できないので中身を読まない。conf が 64 KiB を超えるときも注意を出す。
 - `scheduler/jobs/<job>.conf` は**実行しない**(bash として source しない)。`PROMPT` / `PROMPT_FILE` / `COMMAND` / `SKIP_IF` / `COMMAND_TIMEOUT` の記述を、`$変数` なども展開せずそのまま表示する。
-- `PROMPT_FILE` の中身は、絶対パスで、リポジトリ(と `scheduler/jobs`)の配下の通常ファイルで、認証情報の置き場(`/docs` と同じ判定)でないときだけ表示する。相対パス・範囲外は、パスだけ表示して中身は読まない。
+- `PROMPT_FILE` の中身は、絶対パスで、`scheduler/`(と jobs の置き場)の配下の通常ファイルで、認証情報の置き場(`/docs` と同じ判定)でないときだけ表示する。相対パス・範囲外は、パスだけ表示して中身は読まない。
 - 本文・コマンドのトークンらしい文字列(`ghp_…`・`xox…-`・`AKIA…`・`Bearer …`・`token=…` など)と秘密鍵のブロックは `[マスク]` に置き換える。完全ではない(機密を含みうる画面)。
 - 見るのはこの webui のプロセスの `scheduler/jobs`・`scheduler/logs`(別 checkout・別インスタンスのジョブは見えない)。
 - scheduler からの送信(`tb system-send`)は `approvals.conf` を見ず、人の承認待ちにならない(宛先が idle / done のときだけ自動で送る)。画面にはその旨と、参考として通常の `tb send` の判定(`send:task:<宛先>`)を出す。
