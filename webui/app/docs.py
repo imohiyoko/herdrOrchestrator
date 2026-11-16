@@ -66,18 +66,39 @@ def resolve_path(raw, base):
 def denied(path):
     """認証情報らしい場所・Web UI 自身のログイン情報は開かない。理由の文字列か None。"""
     parts = path.split(os.sep)
-    joined = "/".join(parts)
+    joined = "/".join(parts).lower()   # 大文字小文字を区別しないボリューム(macOS の既定)で .SSH のように綴りを変えても通さない
     for d in DENY_DIRS:
-        if f"/{d}/" in joined + "/":
+        if f"/{d.lower()}/" in joined + "/":
             return "認証情報が置かれる場所なので開きません"
     if DENY_NAME_RE.search(os.path.basename(path)):
         return "認証情報らしいファイル名なので開きません"
     # 自分の run と、run の置き場そのもの(旧 run/ と他インスタンスの run/instance-<名>/ を含む)
+    # 文字列の前方一致ではなく実体(os.path.samefile)で比べる: path とその祖先のどれかが run と同じディレクトリなら拒否。
+    # 綴り違い(大文字小文字を区別しないボリューム)・symlink・存在しないパス(存在する祖先まで遡る)でも通さない
     for r in (RUN_DIR(), LEGACY_RUN_DIR()):
-        run = os.path.realpath(r)
-        if path == run or path.startswith(run + os.sep):
+        if _under(path, r):
             return "Web UI のログイン情報なので開きません"
     return None
+
+
+def _under(path, root):
+    """path が root(の実体)と同じか、その配下か。存在しない部分は無視して、存在する祖先で比べる。"""
+    try:
+        if not os.path.isdir(root):
+            return False
+        cur = os.path.abspath(path)
+        while True:
+            try:
+                if os.path.exists(cur) and os.path.samefile(cur, root):
+                    return True
+            except OSError:
+                pass
+            nxt = os.path.dirname(cur)
+            if nxt == cur:
+                return False
+            cur = nxt
+    except (OSError, ValueError):
+        return True   # 判定できないときは開かない側に倒す
 
 
 def lookup(ref):
