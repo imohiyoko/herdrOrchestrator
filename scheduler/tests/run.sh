@@ -152,6 +152,15 @@ ok "ログの at は秒まで"                       "$(acts t "$THU 09:05:00")"
 ok "分単位ジョブを秒まで指定: 09:05:30 は刻みの外" "$(acts t "$THU 09:05:30")" "09:05:30 skipped_interval "
 ok "show.sh: 秒の間隔は interval_min が null" "$(bash bin/show.sh sec | jq -c '[.interval_min,.interval_sec,.start,.end]')" '[null,20,"09:00:30","09:02"]'
 ok "show.sh: 分の間隔は両方出る" "$(bash bin/show.sh t | jq -c '[.interval_min,.interval_sec]')" '[5,300]'
+# WATCHER(見張り系の明示): 未設定は null、1 / 0 はそのまま、それ以外は拒否(tick.sh も show.sh も同じ load_job)
+ok "show.sh: WATCHER 未設定は null" "$(bash bin/show.sh t | jq -c .watcher)" 'null'
+printf 'TARGET=dummy\nPROMPT=x\nWINDOW=09:00-10:00\nINTERVAL_MIN=5\nWATCHER=1\n' >"$JOBS_DIR/w1.conf"
+printf 'TARGET=dummy\nPROMPT=x\nWINDOW=09:00-10:00\nINTERVAL_MIN=5\nWATCHER=0\n' >"$JOBS_DIR/w0.conf"
+printf 'TARGET=dummy\nPROMPT=x\nWINDOW=09:00-10:00\nINTERVAL_MIN=5\nWATCHER=yes\n' >"$JOBS_DIR/wbad.conf"
+ok "show.sh: WATCHER=1" "$(bash bin/show.sh w1 | jq -c .watcher)" '"1"'
+ok "show.sh: WATCHER=0" "$(bash bin/show.sh w0 | jq -c .watcher)" '"0"'
+ok "WATCHER=yes は拒否(show.sh)" "$(bash bin/show.sh wbad >/dev/null 2>&1; echo $?)" '2'
+ok "WATCHER=yes は拒否(tick.sh)" "$(DRY_RUN=1 NOW="$THU 09:05" bash bin/tick.sh wbad >/dev/null 2>&1; echo $?)" '2'
 SCHED_INTERVAL_SEC=30 check "SCHED_INTERVAL_SEC=30: 09:00:30 は実行" sent t "$THU 09:00:30" idle
 SCHED_INTERVAL_SEC=30 check "SCHED_INTERVAL_SEC は conf の INTERVAL_MIN より優先" skipped_interval t "$THU 09:00:20" idle
 printf 'TARGET=dummy\nPROMPT=x\nWINDOW=09:00-10:00\nINTERVAL_MIN=1\nINTERVAL_SEC=30\n' >"$JOBS_DIR/both_iv.conf"

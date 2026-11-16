@@ -4,9 +4,11 @@
 # scheduler のログ(scheduler/logs/<job>.log、1 行 1 JSON)と、ジョブの実効設定(scheduler/bin/show.sh)を読むだけ。
 # launchd・scheduler の設定・ログは変更しない。次の 3 つを digest の観測として出す(宛先は DEFAULT_TARGET)。
 #   schedoff   : ENABLED=0 のまま disabled_min 分以上、skipped_disabled が続いているジョブ
-#   schedstale : 見張り系ジョブ(tb limits の watchers を TARGET や COMMAND に持つもの)で、有効で窓の中なのに、
-#                ran が watch_stale_min 分以上無い
-#   schedfail  : 有効なジョブで、直近 fail_window_min 分の実行(ran + failed)が fail_min_runs 回以上あり、
+#   schedstale : 見張り系ジョブで、有効で窓の中なのに、ran が watch_stale_min 分以上無い。
+#                「実行された」= ran(COMMAND 型)または sent(PROMPT 型)。failed は数えない。
+#                見張り系 = conf の WATCHER=1(WATCHER=0 なら対象外)。WATCHER が無ければ、tb limits の watchers を
+#                TARGET か、conf の COMMAND= の行に持つもの
+#   schedfail  : 有効なジョブで、直近 fail_window_min 分の実行(ran + sent + failed)が fail_min_runs 回以上あり、
 #                failed の割合が fail_rate_pct % 以上
 # 同じ観測は、状態が変わるまで 1 回だけ(observations の key。条件が外れたら記録を消すので、また当てはまれば再び出る)。
 #   schedoff   key = schedwatch:off:<job>:<止まり始めの時刻(epoch)>
@@ -58,9 +60,9 @@ sw_summarize() {
         last_is_disabled: (($L | last | .a) == "skipped_disabled"),
         streak_start: ([$L[] | select(.a == "skipped_disabled" and .e > ($lastnd // -1)) | .e] | min),
         streak_count: ([$L[] | select(.a == "skipped_disabled" and .e > ($lastnd // -1))] | length),
-        last_ran: ([$L[] | select(.a == "ran") | .e] | max),
+        last_ran: ([$L[] | select(.a == "ran" or .a == "sent") | .e] | max),
         enabled_since: ([$L[] | select(.a != "skipped_disabled" and .e > ($lastd // -1)) | .e] | min),
-        ran_w: ([$L[] | select(.a == "ran" and .e >= ($now - $win))] | length),
+        ran_w: ([$L[] | select((.a == "ran" or .a == "sent") and .e >= ($now - $win))] | length),
         failed_w: ([$L[] | select(.a == "failed" and .e >= ($now - $win))] | length)
       }' "$1" 2>/dev/null
 }
@@ -84,6 +86,22 @@ sw_hms() {
   echo $((10#${BASH_REMATCH[1]} * 3600 + 10#${BASH_REMATCH[2]} * 60 + s))
 }
 
+# conf の COMMAND= の値だけを出す(1 行 1 値)。引用符で始まれば閉じ引用符までの内側、無ければ最初の " #" の前まで。
+# 行末の コメント(COMMAND=x # watchx)の語は含めない。bash の while read だけで書く(awk・sed の方言に依存しない)
+sw_command_value() {
+  local line v q
+  while IFS= read -r line || [[ -n $line ]]; do
+    [[ $line =~ ^[[:space:]]*COMMAND=(.*)$ ]] || continue
+    v=${BASH_REMATCH[1]}; q=${v:0:1}
+    if [[ $q == "'" || $q == '"' ]]; then
+      v=${v:1}; v=${v%%"$q"*}
+    else
+      v=${v%% \#*}; v=${v%%$'\t'\#*}
+    fi
+    printf '%s\n' "$v"
+  done <"$1"
+}
+
 collect_sched_obs() {
   [[ $(sw_cfg enabled 1) == 1 ]] || return 0
   [[ -d $SW_DIR/jobs && -d $SW_DIR/logs && -f $SW_SHOW ]] || return 0
@@ -103,12 +121,17 @@ collect_sched_obs() {
     [[ -f $log ]] || continue
     sum=$(sw_summarize "$log" "$now" $((fail_win * 60))) || continue
     [[ -n $sum ]] || continue
-    # 見張り系か: TARGET が watchers に入っている、または conf(COMMAND)が watchers の名前を含む
+    # 見張り系か: conf の WATCHER=1 / 0 の明示が最優先。無ければ、TARGET が watchers に入っている、または
+    # conf の COMMAND= の値(行末コメントは除く)が watchers の名前を含む。PROMPT のパスやコメントに入った語には一致させない
     is_watch=0
-    for w in $watchers; do
-      [[ $(jq -r .target <<<"$cfg") == "$w" ]] && is_watch=1
-      grep -qwF -- "$w" "$conf" 2>/dev/null && is_watch=1
-    done
+    case $(jq -r '.watcher // empty' <<<"$cfg") in
+      1) is_watch=1 ;;
+      0) ;;
+      *) for w in $watchers; do
+           [[ $(jq -r .target <<<"$cfg") == "$w" ]] && is_watch=1
+           sw_command_value "$conf" | grep -qwF -- "$w" && is_watch=1
+         done ;;
+    esac
     if [[ $enabled == false ]]; then
       # 1. ENABLED=0 のまま続いている(ログの最後が skipped_disabled のときだけ。止め始めは「最後の有効な記録のあと最初の skipped_disabled」)
       [[ $(jq -r .last_is_disabled <<<"$sum") == true ]] || continue

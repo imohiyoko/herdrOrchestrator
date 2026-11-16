@@ -20,6 +20,7 @@ launchd が `bin/tick.sh <job>` を毎分起動し、時間帯・曜日・間隔
 | `SKIP_IF` | 既定 `"working blocked"`。該当する状態ならスキップ。idle/done 以外も送らない |
 | `TZ` | 既定 `Asia/Tokyo`。判定は tick.sh がこの TZ で行う |
 | `ENABLED` | 既定 `1`。`0` で一時停止 |
+| `WATCHER` | 任意。`1` で見張り系のジョブ(tb digest が ran / sent の途絶を見る)、`0` で対象外。未設定なら、TARGET が `tb limits` の watchers に入っているか、`COMMAND=` の行がその名前を含むかで推定する。PROMPT のパスやコメントの語は見ない |
 
 ### コマンド実行型ジョブ
 
