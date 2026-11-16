@@ -791,13 +791,13 @@ _gate_cmd_reviewers() {
     printf '%s\t%s\n' "${BASH_REMATCH[5]}:${BASH_REMATCH[6]}" "${BASH_REMATCH[9]} ${BASH_REMATCH[7]} ${BASH_REMATCH[10]} ${BASH_REMATCH[11]} ${BASH_REMATCH[12]} ${BASH_REMATCH[5]} ${BASH_REMATCH[15]} ${BASH_REMATCH[18]}" >>"$tmp/latest"
   done <"$f"
   # 発言ごとの最新 → レビュアー(数値 id)ごとの集計。login は id に紐づく表示用で、同じ id で複数あれば login-changed を出す
-  # awk の for-in の順序は実装(gawk/mawk/BSD)で違うので、順序に頼らない: 最初に現れた順の番号を付け、番号で並べ直してから集計する。
+  # awk の for-in の順序は実装(gawk/mawk/BSD)で違うので、順序に頼らない: 発言ごとに最後の行のログ内の位置(NR)を付け、位置で並べ直してから集計する。
   # 出力は先頭に数値 id を付けて数値順に並べ、あとで id の列を落とす
-  awk -F'\t' '{ if (!($1 in last)) { cnt++; ord[$1] = cnt } last[$1] = $2 }
+  awk -F'\t' '{ last[$1] = $2; ord[$1] = NR }
       END { for (k in last) print ord[k] "\t" last[k] }' "$tmp/latest" \
     | sort -n -k1,1 | cut -f2- \
     | awk '{
-        id=$1; login=$2; type=$3; assoc=$4; auth=$5; kind=$6; label=$7; upd=$8
+        id=$1; login=$2; cur[id]=login; type=$3; assoc=$4; auth=$5; kind=$6; label=$7; upd=$8
         if (!(id in lg)) { lg[id]=login } else if (index(" " lg[id] " ", " " login " ") == 0) { lg[id]=lg[id] " " login }
         ty[id]=type; as[id]=assoc
         if (auth == "1") { au[id]=1 }
@@ -809,7 +809,7 @@ _gate_cmd_reviewers() {
       }
       END { for (id in ids) {
         nl = split(lg[id], a, " ")
-        first = a[1]; isau = au[id] + 0
+        first = cur[id]; isau = au[id] + 0
         nr = n[id SUBSEP "review"] + 0; ni = n[id SUBSEP "inline"] + 0; ns = n[id SUBSEP "issue"] + 0
         nb = bl[id] + 0; nh = sh[id] + 0
         lastv = la[id]; if (lastv == "") { lastv = "-" }
