@@ -108,8 +108,16 @@ class Auth:
         os.makedirs(run_dir, exist_ok=True)
 
     # ---- 初回設定
+    def _legacy_file_ok(self):
+        """旧い auth.json を信頼してよいか: 通常ファイル(リンクでない)・自分の所有・group/other に書き込み権限なし。"""
+        try:
+            st = os.lstat(self.legacy_auth_path)
+        except OSError:
+            return False
+        return stat.S_ISREG(st.st_mode) and st.st_uid == os.geteuid() and st.st_mode & 0o022 == 0
+
     def _auth_read_path(self):
-        if not os.path.isfile(self.auth_path) and self.legacy_auth_path and os.path.isfile(self.legacy_auth_path):
+        if not os.path.isfile(self.auth_path) and self.legacy_auth_path and self._legacy_file_ok() and self.legacy_auth_path and os.path.isfile(self.legacy_auth_path):
             return self.legacy_auth_path
         return self.auth_path
 

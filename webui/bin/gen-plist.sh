@@ -9,10 +9,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/../lib/herdr-env.sh"
 LABEL="$(herdr_label_prefix)webui" || exit 2
 EXTRA_ENV=""
-for v in TB_INSTANCE HERDR_SESSION TB_UI_PORT; do
+for v in TB_INSTANCE HERDR_SESSION TB_UI_PORT WEBUI_LEGACY_AUTH; do
   [ -n "${!v:-}" ] || continue
+  [ "$v" != WEBUI_LEGACY_AUTH ] || [ "${!v}" = 1 ] || { echo "error: WEBUI_LEGACY_AUTH は 1 だけ: ${!v}" >&2; exit 2; }
   herdr_plist_value_ok "${!v}" || { echo "error: $v は英数字と . _ - だけ: ${!v}" >&2; exit 2; }
-  [ "$v" != TB_UI_PORT ] || [[ ${!v} =~ ^[0-9]{1,5}$ ]] || { echo "error: TB_UI_PORT は数字: ${!v}" >&2; exit 2; }
+  [ "$v" != TB_UI_PORT ] || { [[ ${!v} =~ ^[0-9]{1,5}$ ]] && ((10#${!v} >= 1 && 10#${!v} <= 65535)); } || { echo "error: TB_UI_PORT は 1〜65535 の数字: ${!v}" >&2; exit 2; }
   EXTRA_ENV="$EXTRA_ENV    <key>$v</key>
     <string>${!v}</string>
 "

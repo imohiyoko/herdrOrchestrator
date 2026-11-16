@@ -1337,7 +1337,7 @@ check("終了時にインスタンスの run ファイルを消す", not os.path
 
 # ---- 追加: 既存運用の移行(旧い run/auth.json は読み取りだけ引き継ぐ)
 base_ = free_range(1)
-env, d_ = inst_env("inst-mig", "mig", HERDR_WEBUI_RANGE=f"{base_}-{base_}")
+env, d_ = inst_env("inst-mig", "mig", HERDR_WEBUI_RANGE=f"{base_}-{base_}", WEBUI_LEGACY_AUTH="1")
 old_run = env["WEBUI_RUN_BASE"]
 os.makedirs(old_run, exist_ok=True)
 # 先に旧い場所で /setup して auth.json を作る(TB_INSTANCE なしの起動)
@@ -1365,6 +1365,46 @@ if newport:
     check("移行: 新しい場所には auth.json を作らない", not os.path.exists(os.path.join(old_run, "instance-mig", "auth.json")))
 out1 = stop_out(p1)
 check("移行: 起動ログに旧い場所を読んでいる旨", "読み取りで使います" in out1, out1[:200])
+# 明示(WEBUI_LEGACY_AUTH=1)が無ければ、旧い auth.json があっても引き継がず /setup が開く(別インスタンスに default の認証を持ち込まない)
+envn = dict(env); envn.pop("WEBUI_LEGACY_AUTH")
+envn["TB_INSTANCE"] = "training"
+pn = start(envn)
+npn = wait_port({"WEBUI_RUN_DIR": os.path.join(old_run, "instance-training")}, pn)
+check("既定は引き継がない: まだ動かしていない別名インスタンスで /setup が開く", npn is not None and "confirm" in Client(npn).get("/setup")[2])
+if npn:
+    cn = Client(npn)
+    check("既定は引き継がない: default の認証では入れない", cn.login()[0] != 302)
+stop(pn)
+# 引き継ぎがあっても、新しい場所の auth.json が優先(インスタンスごとのパスワード)
+newdir = os.path.join(old_run, "instance-prio"); os.makedirs(newdir, exist_ok=True)
+import shutil as _sh
+envp = dict(env); envp["TB_INSTANCE"] = "prio"
+pq0 = start(dict(envp, WEBUI_LEGACY_AUTH=""))
+npq0 = wait_port({"WEBUI_RUN_DIR": newdir}, pq0)
+cq0 = Client(npq0)
+cq0.raw("POST", "/setup", {"csrf": cq0.csrf("/setup"), "username": "userb", "password": "another-long-pass-77", "confirm": "another-long-pass-77"})
+stop(pq0)
+pq = start(envp)   # WEBUI_LEGACY_AUTH=1 でも、新しい場所にあれば新しい方
+npq = wait_port({"WEBUI_RUN_DIR": newdir}, pq)
+cq = Client(npq)
+check("新しい場所の auth.json が優先(旧い認証では入れない)", cq.login(USER, PW)[0] != 302)
+check("新しい場所の auth.json が優先(新しい認証で入れる)", Client(npq).login("userb", "another-long-pass-77")[0] == 302)
+stop(pq)
+# WEBUI_RUN_DIR を明示したら、WEBUI_LEGACY_AUTH=1 でも引き継がない
+envr = dict(env); envr["WEBUI_RUN_DIR"] = os.path.join(old_run, "explicit-run"); envr["TB_INSTANCE"] = "expl"
+pr_ = start(envr)
+npr = wait_port({"WEBUI_RUN_DIR": envr["WEBUI_RUN_DIR"]}, pr_)
+check("WEBUI_RUN_DIR 明示は引き継がない(/setup が開く)", npr is not None and "confirm" in Client(npr).get("/setup")[2])
+stop(pr_)
+# 旧い auth.json が安全でない(group 書込可・リンク)なら引き継がない
+os.chmod(old_auth, 0o666)
+envu = dict(env); envu["TB_INSTANCE"] = "unsafe"
+pu = start(envu)
+npu = wait_port({"WEBUI_RUN_DIR": os.path.join(old_run, "instance-unsafe")}, pu)
+check("旧い auth.json が 0666 なら引き継がない(/setup)", npu is not None and "confirm" in Client(npu).get("/setup")[2])
+outu = stop_out(pu)
+check("引き継げないときは起動ログで知らせる", "引き継げる旧い auth.json がありません" in outu, outu[:200])
+os.chmod(old_auth, 0o600)
 # 旧い auth.json が無ければ、従来どおり /setup が開く
 env2, _ = inst_env("inst-mig2", "mig2", HERDR_WEBUI_RANGE=f"{base_}-{base_}")
 p2 = start(env2)

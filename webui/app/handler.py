@@ -416,9 +416,12 @@ def bind_server():
 
 def main():
     run_dir = RUN_DIR()
-    # TB_INSTANCE があり、run を明示していないときだけ、旧い場所(run/)の auth.json を読み取りで引き継ぐ
-    legacy = LEGACY_RUN_DIR() if INSTANCE and not os.environ.get("WEBUI_RUN_DIR") else None
+    # 旧い場所(run/)の auth.json の引き継ぎは、明示したとき(WEBUI_LEGACY_AUTH=1)だけ。
+    # 既定で引き継ぐと、これから作る別インスタンスも default の認証で入れてしまい、別の認証情報を設定できない
+    legacy = LEGACY_RUN_DIR() if INSTANCE and not os.environ.get("WEBUI_RUN_DIR") and os.environ.get("WEBUI_LEGACY_AUTH") == "1" else None
     Handler.auth = auth.Auth(run_dir, legacy_dir=legacy)
+    if legacy and not Handler.auth.using_legacy() and not Handler.auth.configured():
+        print("herdr-webui: WEBUI_LEGACY_AUTH=1 ですが、引き継げる旧い auth.json がありません(無い、または通常ファイル・自分の所有・group/other 書込なし を満たさない)。/setup で作ります", flush=True)
     if Handler.auth.using_legacy():
         print(f"herdr-webui: 旧い {Handler.auth.legacy_auth_path} を読み取りで使います(消しません)。"
               f"{run_dir}/auth.json に移す(コピーする)か、パスワード再設定で新しい場所に作ると、この表示は消えます", flush=True)
