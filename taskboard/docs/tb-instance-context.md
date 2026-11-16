@@ -1,22 +1,27 @@
-# tb が「どのインスタンスを指すか」を決める設計案
+# tb が「どの herdr セッションを指すか」を決める設計案
 
 - 対象タスク: T-herdrorch-007(設計のみ。実装・台帳の作成・セッション操作は含まない)
-- 前提: 複数セッションの紐づけ設計(案 A+) = 1 セッション = 1 checkout = 1 DB = 1 launchd 名前空間 = 1 webui。
-  この文書の「インスタンス」は、その 1 組を指す。
-- 根拠: コード読み取りと、`ls -l` / `grep` による確認(「確認済み」)。実機で動かしていない点は「推測」と書く。
+- **方針(人の決定。2 回目の改訂)**:
+  1. herdr のセッションごとに **DB・台帳・checkout を分ける**。1 つの DB を複数セッションで共有しない。同じ `tb` の実体である必要はない。
+  2. 問題は、tb に**セッションを指定する構造が無い**こと。`tb --session staging list` を、どの cwd・どのシェルからでも、staging セッションの tb・DB・herdr に向けて実行できるようにする。
+  3. staging は「1 つの OS の上で herdr セッションが複数立ち上がる場合」の模擬と動作確認の場所。
+- 前提: 複数セッションの紐づけ設計(案 A+)= 1 セッション = 1 checkout = 1 DB = 1 launchd 名前空間 = 1 webui。
+  この文書の「**インスタンス**」は、その 1 組を指し、**herdr セッションと 1 対 1** である(インスタンス名 = セッション名。default は default)。
+- 根拠: コード読み取りと、`ls -l` / `grep` / `herdr` の読み取り専用の確認(「確認済み」)。実機で動かしていない点は「推測」と書く。
 
 ## 1. 結論(先に)
 
-- 今の tb は「どのインスタンスか」を**持っていない**。PATH 上の `tb` が symlink で指す checkout の DB を開くだけで、
-  それが事実上の「現在のインスタンス」になっている(**cwd は見ない**。2.1 章)(確認済み: 普段使う `tb` は開発 checkout の `taskboard/bin/tb` への symlink 1 本。`taskboard/bin/tb:17` の `DB=${TB_DB:-$HERDR_DEFAULT_TB_DB}` は、その checkout を基準に決まる)。
-  staging 用 checkout や研修用 checkout を足しても、人のシェルで素の `tb` を打てば、これまでと同じ checkout の DB に書く。**取り違えの根はここ**。
-- 推奨は次の 4 つ。
-  1. **台帳**(人だけが書く 1 ファイル)にインスタンスを名前で登録し、名前 → checkout・DB・herdr セッション・webui ポートを引く。
-  2. **解決の順**は `--instance` > 環境変数 `TB_INSTANCE` > 現在の選択(`tb use`)> 未選択。agent のペインでは、これらを見ず **herdr のセッションから決める**。
-  3. **複数インスタンスがあるのに未選択**なら、書き込み系は止まる(fail-closed)。読み取りは動くが、対象を必ず出す。
-  4. **全コマンドが stderr に今のインスタンスを出す**。台帳が無い環境は、今と同じ動作(出力の追加もしない)。
-- 実装は 5 段階(10 章)。まず `tb whoami`(台帳なし・挙動変更なし)から。
-- 人が決める点は 11 章(P1〜P10)。
+- 今の tb は「どのセッションか」を**持っていない**。PATH 上の `tb` が symlink で指す checkout の DB を開くだけで、それが事実上の「現在のインスタンス」になっている(**cwd は見ない**。2.1 章。確認済み)。
+  別セッション用の checkout を足しても、人のシェルの素の `tb` は、これまでと同じ checkout の DB に書く。**取り違えの根はここ**。
+- 推奨は次の 5 つ。
+  1. **台帳のキーは herdr セッション名**(人だけが書く 1 ファイル)。1 行 = 1 セッション = 1 checkout = 1 DB = 1 webui ポート。launchd ラベルはセッション名から導く。
+  2. **`tb --session <名> <コマンド>` が主たる指定**。台帳の checkout の `tb` に振り分け(`exec`)、そのプロセス内の herdr 呼び出しは**すべてそのセッション**に向く。振り分け先で DB・approvals・roles・ラベル・ポートがそのセッションのものになる(4 章)。
+  3. **未指定時**: agent のペインは、ペインの herdr セッション(herdr の環境から決まる)に固定され、切り替えられない。人のシェルは、`--session` > `TB_SESSION` > `HERDR_SESSION` > 現在の選択(`tb use`)の順。台帳に複数あって未選択なら、書き込み系は止まり(fail-closed)、読み取りは対象を表示して実行する(5 章)。
+  4. **全コマンドが stderr に今のセッションを出す**。台帳が無い環境は今と同じ動作(出力の追加もしない)。
+  5. **別セッション宛ての操作**は、既定では人の `tb --session <宛先> …` だけ。承認は宛先のセッションの設定で判定する(5.1 章)。
+- launchd が 1 つの名前空間に 2 checkout の job を混在させている実機の状態は、セッション = launchd 名前空間の 1 対 1 化で解消する。**検出**と**移行手順**は 9.2 章。
+- 実装は 7 段階(10 章)。まず `tb whoami`(台帳なし・挙動変更なし)から。
+- 人が決める点は 11 章(P1〜P14)。
 
 ## 2. 現状
 
@@ -54,113 +59,169 @@ cwd や checkout に関係なく、**PATH 上の `tb`(symlink)が指す checkout
 
 | 組 | DB | 備考 |
 |---|---|---|
-| 開発 checkout と旧 `herdr` | **共有**(symlink。パスは別、実体は 1 つ) | `tb instances --check` の「DB の重複」は**パスの文字列でなく realpath で比べる**こと |
+| 開発 checkout と旧 `herdr` | **共有**(symlink。パスは別、実体は 1 つ) | `tb sessions --check` の「DB の重複」は**パスの文字列でなく realpath で比べる**こと |
 | 開発 checkout と hardening 用 | **別** | PATH の `tb` では hardening 用の DB は見えない。見るにはフルパスの `tb` か `TB_DB` |
 | 開発 checkout と staging | **別**(staging の DB はこれから) | |
 
 - **launchd が 1 つの名前空間に複数 checkout を混ぜている**(確認済み): ラベルは全部 `local.herdr-…`(`TB_INSTANCE` 無し)で、plist の指す checkout が job ごとに違う。大半の scheduler job は hardening 用 checkout、webui と残りの job は開発 checkout を指す。plist に `TB_DB` は無く、各 job は**自分の checkout の DB** を開く。つまり、同じラベルの規則の下に、2 つの DB を触る job が同居している。`install.sh` は「後勝ち」なので、どの checkout で最後に install したかで job ごとに行き先が決まった結果、と読める(推測。履歴は未確認)。
 
-### 2.2 設計書の前提との照合
+### 2.2 設計書の前提との照合(前の版の前提。今回の方針で 9.2 章に移した点がある)
 
 | 前提 | 判定 | 直し方 |
 |---|---|---|
 | 「PATH 上の `tb` が指す checkout の DB が事実上のインスタンス」 | **人のシェルの `tb` については合っている**(cwd を見ない、まで確認) | 1 章の文に「cwd は関係ない」を足した |
-| 「1 インスタンス = 1 checkout = 1 DB = 1 launchd 名前空間」(案 A+ の前提) | **実機は満たしていない**。launchd ラベルの名前空間が 1 つで、そこに 2 checkout の job が混在する。また 2 つのパスが同じ DB を指す(symlink) | 台帳の DB 検査を realpath にする。`tb instances --check` に「同じラベル規則の下で plist の向き先が複数 checkout」を足す。**案 A+ のラベル分離(`TB_INSTANCE`)を先に実機へ適用しないと、台帳の「launchd ラベル」の列は意味を持たない** |
-| 「`TB_INSTANCE` を `herdr-up.sh` が設定する」 | 実機の launchd には効いていない(plist は従来のラベル) | 台帳の導出は、plist の再生成後にだけ成り立つと書く |
-| 台帳の「checkout」の列は 1 つの DB を持つ | 旧 `herdr` は DB を共有する別名なので、台帳には**登録しない**(別名として `tb instances --check` が検出して警告) | 3 章に 1 行足す |
+| 「1 インスタンス = 1 checkout = 1 DB = 1 launchd 名前空間」(案 A+ の前提) | **実機は満たしていない**。launchd ラベルの名前空間が 1 つで、そこに 2 checkout の job が混在する。また 2 つのパスが同じ DB を指す(symlink) | 台帳の DB 検査を realpath にする。`tb sessions --check` に「同じラベル規則の下で plist の向き先が複数 checkout」を足す。**案 A+ のラベル分離(`TB_INSTANCE`)を先に実機へ適用しないと、台帳の「launchd ラベル」の列は意味を持たない** |
+| 「`TB_INSTANCE` を `herdr-up.sh` が設定する」 | 実機の launchd には効いていない(plist は従来のラベル) | 台帳からの導出は、plist の再生成後にだけ成り立つ(9.2 章) |
+| 台帳の「checkout」の列は 1 つの DB を持つ | 旧 `herdr` は DB を共有する別名なので、台帳には**登録しない**(別名として `tb sessions --check` が検出して警告) | 3 章に 1 行足す |
 
 **P1 の推奨は変わらない**(案 (a): `tb` 本体の冒頭で、解決した checkout の `tb` に振り分ける)。理由は、cwd でも PATH でも選べない実機の挙動と、「フルパスで呼ぶ以外に別 DB を見る手段が無い」ことが、案 (a) の動機そのものだから。ただし次を足す。
 
-- 振り分け先の `tb` が**旧版**(旧 `herdr` のような別スクリプト)だと、`TB_FORWARDED` などの合図を解釈しない。台帳に登録できるのは、新しい `tb`(`lib/herdr-env.sh` を持つ checkout)だけにし、`tb instances --check` で確認する。
-- 当面は、**hardening 用 checkout を台帳の別インスタンスとして登録**し、`tb --instance <名前> list` でその DB を見られるようにするのが、最初の実用的な利益になる。
+- 振り分け先の `tb` が**旧版**(旧 `herdr` のような別スクリプト)だと、`TB_FORWARDED` などの合図を解釈しない。台帳に登録できるのは、新しい `tb`(`lib/herdr-env.sh` を持つ checkout)だけにし、`tb sessions --check` で確認する。
+- 当面は、**hardening 用 checkout を台帳の別セッションとして登録**し、`tb --session <名前> list` でその DB を見られるようにするのが、最初の実用的な利益になる。
 
-## 3. 用語と台帳
+## 3. 台帳
 
-### インスタンス名
+### セッション名(= インスタンス名)
 
-- `TB_INSTANCE` と**同じ名前空間**にする(新しい名前を増やさない)。規則は既存と同じ: `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`。
-- 既定の運用では、**インスタンス名 = herdr セッション名**にする(案 A+ の P2 の推奨と同じ)。`default` セッションのインスタンスは `default`。
+- **キーは herdr のセッション名**。herdr のセッション名以外の識別子は無い(確認済み: `herdr session list --json` の項目は `name` / `default` / `running` / `session_dir` / `socket_path` だけ。socket のパスは名前から決まる)。
+- 規則は launchd ラベルと同じ(英数字で始まり、英数字と `. _ -` の 64 字以内。`herdr_label_prefix` の検査と同じ)。`default` はセッション `default`。
+- `TB_INSTANCE`(launchd ラベルの接頭辞用の既存 env)は、**セッション名から導く**値に降格する(9 章)。人が手で設定する入力ではなくなる。
 
-### 台帳(`instances.conf`)
+### 台帳(`sessions.conf`)
 
-- 置き場所: `${XDG_CONFIG_HOME:-$HOME/.config}/herdr-tb/instances.conf`。**人だけが書く**。tb は読むだけで、書くコマンドを作らない。
-- 1 行 1 インスタンス、`|` 区切り(presets と同じ流儀)。`#` と空行は無視。
+- 置き場所: `${XDG_CONFIG_HOME:-$HOME/.config}/herdr-tb/sessions.conf`。**人だけが書く**。tb は読むだけで、書くコマンドを作らない。
+- 1 行 1 セッション、`|` 区切り(presets と同じ流儀)。`#` と空行は無視。
 
 ```
-# name | checkout(絶対パス) | herdr セッション | webui ポート | DB(空なら checkout の既定)
-default | /path/to/orchestrator            | default  | 8800 |
-staging | /path/to/orchestrator-staging    | staging  | 8801 |
-training| /path/to/orchestrator-training   | training | 8802 | /path/to/other/tasks.db
+# session | checkout(絶対パス) | webui ポート | DB(空なら checkout の既定)
+default  | /path/to/orchestrator            | 8800 |
+staging  | /path/to/orchestrator-staging    | 8801 |
+training | /path/to/orchestrator-training   | 8802 | /path/to/other/tasks.db
 ```
 
-- DB が**同じ実体を指す別名**(symlink)は、別インスタンスとして登録しない。重複の検査は realpath で比べる(2.1 章)。
-- 名前・セッション・ポートはそれぞれ**重複不可**(読み込み時に検査し、違反は台帳全体を無効にして止まる)。
-- 台帳に書かず**導く**もの(二重管理を避ける): launchd ラベル(`herdr_label_prefix` と同じ規則。`default` は従来のラベルのまま。そのため `default` のインスタンスでは `TB_INSTANCE` を未設定にして渡す。`tb whoami` の「ラベルの接頭辞」も、その実際の値(`local.herdr-` か `local.herdr-<名前>-`)をそのまま出す)、approvals / roles / routes の場所(checkout 内)。
+- **セッション・checkout・DB の実体・ポートは、それぞれ重複不可**(読み込み時に検査し、違反は台帳全体を無効にして止まる)。DB と checkout の重複は realpath で比べる(同じ実体を指す symlink の別名は、別セッションとして登録できない。2.1 章)。
+- 台帳に書かず**導く**もの(二重管理を避ける): launchd ラベル(`herdr_label_prefix` と同じ規則。`default` は従来の `local.herdr-` のまま。`default` では `TB_INSTANCE` を**渡さない**)、approvals / roles / routes / projects の場所(checkout 内)。
+- 台帳の checkout は、**新しい tb(`lib/herdr-env.sh` を持つ checkout)**だけ。旧版(別スクリプト)は振り分けの合図を解釈できないので、`tb sessions --check` が弾く。
 - 台帳ファイルが他のユーザーの所有、または group / world 書き込み可なら、無視して止まる(最低限の衛生。6 章の限界は残る)。
 - 台帳が**無い**とき: 「台帳なし」として今と完全に同じに動く。出力も増やさない(互換)。
+- presets の `# session:` と台帳の組が食い違う場合は、`tb sessions --check` が警告する(直すのは人)。
 
-## 4. コマンド
+## 4. コマンドとセッション単位の routing
 
 | コマンド | 内容 | 誰が |
 |---|---|---|
-| `tb whoami` | 今のインスタンスと、その決まり方(`--instance` / env / 選択 / ペイン / 未選択 / 台帳なし)、checkout、DB、セッション、ポート、ラベルの接頭辞を出す。`--short` は名前だけ(プロンプト用) | 誰でも |
-| `tb instances` | 台帳の一覧。現在の選択に印を付ける。`--check` は台帳と実際のずれを探す(checkout が無い、presets の `# session:` と不一致、DB の場所が重複、ラベルの衝突など) | 誰でも(読み取り) |
-| `tb use <名前>` | 現在の選択を保存する。台帳に無い名前は拒否 | **人だけ**(6 章) |
+| `tb --session <名> <コマンド>` | **その 1 回だけ**、台帳のセッション `<名>` の checkout の `tb` に振り分けて実行する。`tb` の他の引数より前に書く | 人。agent は**自分のペインのセッションと同じ名前のときだけ**(5 章) |
+| `TB_SESSION=<名> tb …` | 同じ意味を env で(シェルや 1 回限りの指定) | 人(agent のペインでは無視して警告) |
+| `tb whoami` | 今のセッションと、その決まり方(`flag` / `env` / `use` / `pane` / 未選択 / 台帳なし)、checkout、DB、ポート、ラベルの接頭辞、herdr の socket を出す。`--short` は名前だけ | 誰でも |
+| `tb sessions` | 台帳の一覧。現在の選択に印を付ける。`--check` は台帳と実際のずれを探す(9.2 章の launchd の混在、checkout が無い・旧版、presets の不一致、DB の実体の重複、herdr に無いセッション名など) | 誰でも(読み取り) |
+| `tb use <名>` | 現在の選択を保存する。台帳に無い名前は拒否 | **人だけ**(6 章) |
 | `tb use --unset` | 選択を消す | 人だけ |
-| `tb use --shell <名前>` | 保存せず `export TB_INSTANCE=<名前>` を出す(`eval "$(tb use --shell staging)"`)。そのシェルだけの切り替え | 人だけ |
-| `tb --instance <名前> <コマンド>` | その 1 回だけ対象を指定する。`tb` の他の引数より前に書く | 人 |
+| `tb use --shell <名>` | 保存せず `export TB_SESSION=<名>` を出す(`eval "$(tb use --shell staging)"`)。そのシェルだけの切り替え | 人だけ |
 
-- 「そのコマンドでだけ」は、`--instance`(1 回だけ)と `TB_INSTANCE=staging tb …`(env で 1 回だけ)で満たす。
-- `use` は kubectl の `use-context` に相当するが、保存は**ユーザーごとの 1 ファイル**で、シェルごとの切り替えは `--shell` / env で別に取れる(P3)。
-- `tb use` / `tb instances` / `tb whoami` は **DB を開かない**(`init_db` の前に処理する)。DB を壊しているインスタンスでも切り替えられるようにするため。
+- 「そのコマンドでだけ」は `--session`(1 回)と `TB_SESSION=… tb …`(env で 1 回)で満たす。`tb use` は kubectl の `use-context` に相当するが、シェルごとの切り替えは `--shell` / env で別に取れる(P3)。
+- `tb use` / `tb sessions` / `tb whoami` は **DB を開かない**(`init_db` の前に処理する)。壊れた DB のセッションでも切り替えと確認ができるようにする。
+- **`--instance`**: セッションと 1 対 1 になったので、別名を持つと「2 つの名前が食い違う」状態が生まれる。**廃止を推奨**(まだ実装も公開もされていない。P11)。
+- env の整理: `TB_SESSION`(**tb の選択**。人のシェル用)/ `HERDR_SESSION`(**herdr の環境**。agent のペインでは herdr が設定する。tb は振り分け先の子プロセスにだけ渡す)/ `TB_INSTANCE`(**launchd ラベル用の導出値**。`default` では未設定)。`TB_DB` などの個別の上書きは 5 章。
 
-### 実際に別の checkout を動かす仕組み(P1)
+### routing の仕組み(P1)
 
-選択しても、PATH の `tb` は 1 本の checkout の実体のままなので、**別の checkout の `tb` に渡す**仕組みが要る。
+PATH の `tb` は 1 本の checkout の実体なので、**別セッションの checkout の `tb` に渡す**仕組みが要る。
 
-- **案 (a) tb 本体の冒頭で振り分ける(推奨)**。`taskboard/bin/tb` の `source` より前で、解決したインスタンスの checkout が自分と違えば、`TB_INSTANCE` / `HERDR_SESSION` / `TB_DB` / `TB_UI_PORT` を整えて(**`default` のインスタンスでは `TB_INSTANCE` を渡さず unset する**。`TB_INSTANCE=default` を渡すとラベルが `local.herdr-default-` になり、従来の `local.herdr-` と変わる。`herdr-up.sh` の default 分岐と同じ)、相手の `taskboard/bin/tb` を `exec` する。**このとき `HERDR_SOCKET_PATH` は unset し、`HERDR_SESSION=<台帳のセッション>` だけを渡す**(`herdr_session_name` は socket を優先するので、default の socket が残ると `HERDR_SESSION` が無視される。`herdr-up.sh` が両方を unset してから `HERDR_SESSION` を入れるのと同じ流儀。socket のパスを tb が組み立てない)。5 章の agent のペインでの逆引きは、振り分けの前に済ませる。無限ループ防止に `TB_FORWARDED=1` を付け、付いていれば振り分けない。振り分けを持つのは PATH の `tb` を含む checkout だけでよく、相手が古くても動く。
+- **案 (a) `tb` 本体の冒頭で振り分ける(推奨)**。`taskboard/bin/tb` の `source` より前で、解決したセッションの checkout が自分と違えば、次の環境を整えて相手の `taskboard/bin/tb` を `exec` する。
+  - `HERDR_SOCKET_PATH` は **unset**、`HERDR_SESSION=<セッション>` だけを渡す(`herdr_session_name` は socket を優先するので、別セッションの socket が残ると `HERDR_SESSION` が無視される。`herdr-up.sh` が両方を unset してから渡すのと同じ流儀。socket のパスを tb が組み立てない)。`default` は両方を unset する(herdr の既定が default のため)。
+  - `TB_INSTANCE=<セッション>`(`default` では **unset**。`TB_INSTANCE=default` を渡すとラベルが `local.herdr-default-` になり、従来の `local.herdr-` と変わるため)。
+  - `TB_DB`(台帳の DB 列があるときだけ。無ければ unset して相手の checkout の既定に任せる)、`TB_UI_PORT`(台帳のポート。webui を扱う操作のみ)。
+  - 継承された `TB_APPROVALS` / `TB_ROUTES` / `TB_CONFIG` / `TB_ROLES` / `TB_ALLOWLIST` は **unset**(別セッションの設定を引き継がない。テストの上書きは `TB_FORWARDED` が付かない経路で使う)。
+  - 無限ループ防止に `TB_FORWARDED=1`(と振り分け元の名前)を付ける。付いていれば振り分けない。
+  - 振り分けを持つのは PATH の `tb` を含む checkout だけでよい。相手の `tb` は台帳に載る新しい版だけ(3 章)。
 - 案 (b) 別名の薄いラッパー(`tb` を人用の shim に置き換える)。tb 本体は触らないが、shim の更新と配置が増え、agent が PATH の別 `tb` を打つ経路との整合を取る別の仕組みが要る。
-- 案 (c) 振り分けなし。選択は DB 等の環境変数を整えるだけ。checkout のコード(approvals などの設定)は PATH の checkout のまま混ざるので、取り違えの防止にならない。
+- 案 (c) 振り分けなし。env を整えるだけ。checkout のコード(approvals などの設定)は PATH の checkout のまま混ざるので、取り違えの防止にならない。
+
+### herdr 側への指定(P14)
+
+- **herdr の `agent` / `workspace` / `pane` の各サブコマンドは `--session` を持たない**(確認済み: `herdr agent list --help` に options が無い)。セッションを選ぶ手段は、**環境(`HERDR_SESSION` / `HERDR_SOCKET_PATH`)**。トップレベルの `herdr --session <名> [options]` は「セッションを使う・作る」ためのもので、`herdr --session <名> agent list` が通るかは**未確認**(12 章)。
+- 推奨: `herdr_call` を、**解決済みのセッションを環境で明示する**形にする(`env -u HERDR_SOCKET_PATH HERDR_SESSION=<セッション> herdr …`。`default` は両方を unset)。`herdr_call` は tb の herdr 呼び出しの唯一の入口(`taskboard/lib/transport.sh:7`)なので、1 か所で足りる。**フラグ形が使えるとわかっても、環境形を主にする**(`herdr-up.sh` が使っている実績のある形。差し替える利益が薄い)。
+- この明示は、振り分け済みの子プロセスだけでなく、振り分けが起きない経路(PATH の `tb` がそのセッションの checkout のとき)でも、**シェルに残った別セッションの `HERDR_SOCKET_PATH`** で意図しないセッションに向く事故を防ぐ。
+
+### 振り分け先で確認する観点(テストの項目)
+
+`tb --session <名> whoami` と、擬似 herdr(`HERDR_BIN`)を使った 2 つの fixture checkout で、次を**振り分けの前後で比べる**。
+
+| 観点 | 期待 |
+|---|---|
+| DB | 台帳の DB(無ければ振り分け先 checkout の既定)。元の checkout の DB を開かない |
+| approvals / routes / roles / projects / allowlist | 振り分け先の checkout のファイル。継承した `TB_*` の上書きは落ちる |
+| herdr の宛先 | 擬似 herdr が受け取った環境で、`HERDR_SOCKET_PATH` が空・`HERDR_SESSION` が指定のセッション |
+| launchd ラベル | `default` は `local.herdr-`、他は `local.herdr-<名>-`(`install` / `gen-plist` を dry-run で) |
+| webui ポート | 台帳のポート(`TB_UI_PORT`) |
+| 無限ループ | `TB_FORWARDED` 付きは振り分けない。台帳に無い名前は止まる |
+| 互換 | 台帳なしでは振り分けも出力の追加もしない |
 
 ## 5. 解決の優先順位
 
 ### 人のシェル(`HERDR_PANE_ID` が無い)
 
-1. `--instance <名前>`
-2. 環境変数 `TB_INSTANCE`
-3. 現在の選択(`current` ファイル)
-4. 未選択
+1. `--session <名>`
+2. env `TB_SESSION`
+3. env `HERDR_SESSION` / `HERDR_SOCKET_PATH`(`herdr_session_name` の結果。**台帳があるときだけ**選択として扱う。既存の案内「`HERDR_SESSION=<名前> で指定`」の運用を壊さないため。`TB_SESSION` と食い違えば止まる)
+4. 現在の選択(`current` ファイル)
+5. 未選択
 
-- 1〜3 で決まった名前が台帳に無ければ、**止まる**(暗黙のフォールバックはしない)。
-- 明示した `TB_DB` が、決まったインスタンスの DB と違えば、止まる(両方指定したのにずれている状態は、取り違えの典型なので)。
-- **`TB_DB` が設定されていて、インスタンスが選ばれていない**とき(P10): tb は `TB_DB` が継承されたものか明示されたものかを区別できないので、区別しない。
-  - `TB_DB` が台帳のいずれかのインスタンスの DB と**一致する** → そのインスタンスが選ばれたものとして扱う(未選択ではない)。
+- 1〜4 で決まった名前が台帳に無ければ、**止まる**(暗黙のフォールバックはしない)。
+- env の `TB_INSTANCE` が、決まったセッションから導く値(`default` は未設定)と違えば、止まる(黙って片方を選ばない)。
+- 明示した `TB_DB` が、決まったセッションの DB と違えば、止まる(両方指定したのにずれている状態は、取り違えの典型なので)。
+- **`TB_DB` が設定されていて、セッションが選ばれていない**とき(P10): tb は `TB_DB` が継承されたものか明示されたものかを区別できないので、区別しない。
+  - `TB_DB` が台帳のいずれかのセッションの DB と**一致する** → そのセッションが選ばれたものとして扱う(未選択ではない)。
   - 一致する DB が無い(**台帳外の DB**) → fail-closed の対象外とし、今と同じに動く。出力には「DB 明示(台帳外)」と出す。
   - この例外は、テスト・scheduler・webui が `TB_DB` で動くための互換。`TB_DB` を付けるだけで fail-closed を抜けられるが、これは 6 章の限界(同じ OS ユーザーが env で回避できる柵)と同じ性質で、新しい穴ではない。
-- 4 の扱い:
+- 5(未選択)の扱い:
 
 | 台帳の状態 | 読み取り系 | 書き込み系・送信系 |
 |---|---|---|
 | 台帳なし | 今と同じ | 今と同じ |
-| インスタンス 1 つ | そのインスタンス(選択済みと同じ扱い) | 同左 |
-| **2 つ以上で未選択** | **実行する。対象は PATH の `tb` の checkout(今と同じ場所)とし、対象を出す**(「未選択。N 個ある。`tb use` で選ぶ」) | **止まる(fail-closed)**(ただし `TB_DB` が設定されているときは上の `TB_DB` の規則) |
+| セッション 1 つ | そのセッション(選択済みと同じ扱い) | 同左 |
+| **2 つ以上で未選択** | **実行する。対象は PATH の `tb` の checkout(今と同じ場所)とし、対象を出す**(「未選択。N 個ある。`tb use` か `--session` で選ぶ」) | **止まる(fail-closed)**(ただし `TB_DB` が設定されているときは上の `TB_DB` の規則) |
 
-- 読み取り / 書き込みの分類は、**コード側に読み取りコマンドの一覧**(許可リスト)を持つ。一覧に無いコマンドは書き込み扱い(新しいコマンドを足して分類を忘れても安全側に倒れる)。一覧に入れる候補: `list` / `show` / `comments` / `digest` / `agents` / `approval`(参照)/ `limits` / `roles` / `alerts` / `proposals` / `pending` / `outbox`(一覧)/ `whoami` / `instances` など。`touch` と hook 系(`role-context`)は常に 0 で返す既存の決まりを守るので、この判定の外。
-- 止まるときの終了コードは専用の値にする(既存の 1 / 2 / 5 / 10 / 11 と衝突しないもの。実装時に決める)。メッセージに、選べるインスタンスの一覧と `tb use` / `--instance` の書き方を出す。
+- 読み取り / 書き込みの分類は、**コード側に読み取りコマンドの一覧**(許可リスト)を持つ。一覧に無いコマンドは書き込み扱い(新しいコマンドを足して分類を忘れても安全側に倒れる)。一覧に入れる候補: `list` / `show` / `comments` / `digest` / `agents` / `approval`(参照)/ `limits` / `roles` / `alerts` / `proposals` / `pending` / `outbox`(一覧)/ `whoami` / `sessions` など。`touch` と hook 系(`role-context`)は常に 0 で返す既存の決まりを守るので、この判定の外。
+- 止まるときの終了コードは専用の値にする(既存の 1 / 2 / 5 / 10 / 11 と衝突しないもの。実装時に決める)。メッセージに、選べるセッションの一覧と `tb use` / `--session` の書き方を出す。
 
 ### agent のペイン(`HERDR_PANE_ID` がある)
 
-- agent は台帳の選択(`current`)も `--instance` / `TB_INSTANCE` による切り替えも**使えない**。ペインが属する herdr セッション(`herdr_session_name` = `HERDR_SOCKET_PATH` > `HERDR_SESSION`)から、**台帳の「herdr セッション」の列を逆引き**して決める。
-- 台帳に該当が無い・複数ある → 書き込みは止まる。読み取りは対象を出して実行する。
-- `TB_INSTANCE` が環境にあり、逆引きの結果と**食い違う**なら止まる(黙って片方を選ばない)。一致していれば、そのまま。
-- 同じ checkout を向いていない場合(振り分けが要る場合)は、人のシェルと同じ仕組み(P1)で相手の `tb` に渡す。
+- agent は台帳の選択(`current`)も `TB_SESSION` も**使えない**。ペインが属する herdr セッション(`herdr_session_name` = `HERDR_SOCKET_PATH` > `HERDR_SESSION`)で**固定**され、台帳のセッション名として引く。
+- 台帳に該当が無い → 書き込みは止まる。読み取りは対象を出して実行する。
+- `--session <名>` は、**ペインのセッションと同じ名前のときだけ**通す(振り分けが要るときの指定方法として)。違う名前は拒否(終了コード 5)。別セッション宛ては 5.1 章。
+- `TB_SESSION` / `TB_INSTANCE` が環境にあり、ペインのセッションと**食い違う**なら止まる。一致していれば、そのまま。
+- 同じ checkout を向いていない場合(PATH の `tb` がペインのセッションの checkout でない場合)は、人のシェルと同じ仕組み(P1)でペインのセッションの `tb` に渡す。
+
+### 5.1 別セッション宛ての操作(P12・P13)
+
+例: default セッションの conductor が、staging セッションの agent に `send` する。
+
+- 現状は、`send` / `report` の宛先は**名前だけ**で、herdr が見るセッションは実行プロセスの環境で決まる。宛先が別セッションにいれば `agent_not_found` で失敗し、**同名の agent が実行セッションにいると、意図しない相手に届く**(案 A+ の調査で確認済み)。
+- 方針:
+  - 別セッション宛ては、**`tb --session <宛先> send …` と明示したときだけ**。宛先の名前だけで暗黙に別セッションへ届けない(`agent_not_found` のまま)。
+  - **送信者の特定は、実行する側のセッションの `agent list` とペインの ID**で行う(`HERDR_PANE_ID` と `pane_owner_name`)。振り分けると `agent list` の見るセッションが宛先側に変わるので、別セッションのペインの ID は**見つからず、送信者を特定できない**(`comments.sh` の「報告者を特定できないため保存しません」と同じ失敗に倒れる)。したがって agent からの別セッション宛ては、そのままでは**成立しない**。
+  - 成立させるには、送信者を「振り分け元のセッションとペインの名前」として宛先に渡す仕組みが要る(宛先側が元のセッションの `agent list` を引く、または振り分け元が署名する)。これは agent の自己申告に頼れず、実装が重い。**初期は作らず、人だけが別セッションに送れる**とする(推奨)。
+- 承認(approvals)の判定: **宛先のセッションの `approvals.conf` / `routes.conf`**(推奨)。振り分けが宛先 checkout の `tb` を `exec` するので、設定は自然に宛先のものになる。送信元のセッションの設定を持ち込むと、2 つのセッションの設定を突き合わせる仕組みが要り、研修用など設定を**分けたい**セッションの隔離が崩れる。
+- 注意: 宛先のセッションの `routes.conf` は、送信者の役割を**宛先の `roles/`** で判定する。人の送信(送信者が人)は、宛先の設定で人として扱われるか(ルールが人を許すか)を実装時に確認する。
+
+### 5.2 解決の入口のまとめ(どの経路で決まるか)
+
+| 経路 | セッションの決まり方 |
+|---|---|
+| 人のシェル | `--session` > `TB_SESSION` > `HERDR_SESSION` > `use` > 未選択 |
+| agent のペイン | ペインのセッション(固定) |
+| hook(`tb-hook` / `tb-role-hook`) | ペインのセッション。決まらなければ 9 章 |
+| scheduler(launchd) | plist の `HERDR_SESSION`(9.1 章) |
+| webui(launchd) | plist の `HERDR_SESSION`(9.1 章) |
 
 ## 6. agent は切り替えられない(`tb use` は人専用)
 
-- `tb use`(`--shell` を含む)と `tb use --unset` は、`HERDR_PANE_ID` があれば **拒否する**(終了コード 5。`gate ingest-review` が同じ判定で拒否している実装に倣う)。
+- `tb use`(`--shell` を含む)・`tb use --unset`・他セッションへの `--session` は、`HERDR_PANE_ID` があれば **拒否する**(終了コード 5。`gate ingest-review` が同じ判定で拒否している実装に倣う)。
 - **既知の限界**:
   - `HERDR_PANE_ID` は環境変数なので、同じ OS ユーザーで動く agent は `env -u HERDR_PANE_ID tb use …` で外せる。**これは防御ではなく、うっかりを防ぐ柵**。
   - 親プロセスをたどる・tty を見る判定を足しても、同じユーザーの agent には回避できる(別シェルを起動する等)。足すかどうかは費用対効果で P4。
+  - 人が herdr のペインの中のシェルで `tb` を打つと、`HERDR_PANE_ID` があるので agent と同じ扱いになり、`tb use` が拒否される(切り替えは `--session` か、ペインの外のシェルで)。
   - 選択を保存するファイル(7 章)も同じユーザーが書ける。つまり、**agent が `current` を書き換えて、人の次の `tb`(未選択のはずが選択済みになる)の対象を変える**ことは防げない。
 - 効く対策は「防ぐ」より「**気づく**」:
   1. 8 章の出力(全コマンドが対象を出す)。人が見れば、書き換えられていても対象が出る。
@@ -172,19 +233,19 @@ training| /path/to/orchestrator-training   | training | 8802 | /path/to/other/ta
 ## 7. 選択の保存先
 
 - `${XDG_CONFIG_HOME:-$HOME/.config}/herdr-tb/current`(1 行: 名前。2 行目以降に保存時刻など)。ディレクトリ 0700、ファイル 0600。ユーザーごと。
-- 台帳と同じディレクトリにする(`instances.conf` が置かれる所で人が見つけやすい)。状態ファイルを設定ディレクトリに置くのが気になる場合は `$XDG_STATE_HOME` 側も取れる(P5。推奨は台帳と同じ場所)。
+- 台帳と同じディレクトリにする(`sessions.conf` が置かれる所で人が見つけやすい)。状態ファイルを設定ディレクトリに置くのが気になる場合は `$XDG_STATE_HOME` 側も取れる(P5。推奨は台帳と同じ場所)。
 - checkout の中には置かない(checkout は複数あり、`git` で追跡される事故の元になる)。
 - 書き込みは一時ファイル + `mv`(途中の状態を読まれない)。
-- **限界**(6 章と同じ): 同じ OS ユーザーの agent は読み書きできる。権限で守れない。読み取りで「他のインスタンスの存在が見える」程度は、同じユーザーの前提では防げないので、台帳に秘密を書かない。
-- 研修用など**別の OS ユーザー・別のホームを使う運用**なら、台帳も選択も別になり、完全に分かれる(これが最も強い分離。必要なら案 A+ の外で検討)。
+- **限界**(6 章と同じ): 同じ OS ユーザーの agent は読み書きできる。権限で守れない。読み取りで「他のセッションの存在が見える」程度は、同じユーザーの前提では防げないので、台帳に秘密を書かない。
+- 研修用など**別の OS ユーザー・別のホームを使う運用**なら、台帳も選択も別になり、完全に分かれる(これが最も強い分離。必要なら案 A+ の外で検討。P9)。
 
 ## 8. 取り違えの防止
 
-### 全コマンドの出力に今のインスタンスを出す
+### 全コマンドの出力に今のセッションを出す
 
-- stderr に 1 行: `[tb: staging | checkout=…/orchestrator-staging | db=…/tasks.db | session=staging]`(checkout と DB は末尾 2 要素に短縮。決まり方も付ける: `(use)` / `(env)` / `(flag)` / `(pane)`)。
+- stderr に 1 行: `[tb: session=staging | checkout=…/orchestrator-staging | db=…/tasks.db]`(checkout と DB は末尾 2 要素に短縮。決まり方も付ける: `(use)` / `(env)` / `(flag)` / `(pane)`。別セッションへ振り分けたときは `(flag) → staging` のように振り分け先も)。
 - **stdout は変えない**(スクリプトや agent が出力を解析しているため)。
-- エラーメッセージ(`die` / `usage`)の先頭にもインスタンス名を付ける。
+- エラーメッセージ(`die` / `usage`)の先頭にもセッション名を付ける。
 - 台帳なしのときは**出さない**(互換)。台帳があって 1 つしかないときも、既定では出さない(出力を増やす価値が薄い。`TB_BANNER=always` で出せる)。
 - 色: 端末のとき、`default` 以外は色を付ける(台帳に `protected` のような列を足さず、名前で決める。P6)。
 
@@ -192,7 +253,7 @@ training| /path/to/orchestrator-training   | training | 8802 | /path/to/other/ta
 
 - 対象: `send` / `report` / `approve` / `reject` / `flush` / `allow` / `ask` / `agent-*`(spawn・stop・shed・restart など)/ `gate` / `pr-queue` / `proposal-resolve` など。
 - 実行の直前に「**対象: staging(選択による)。実行します**」を出す。`--yes` なしの確認プロンプトは、スクリプトと agent を止めるので**付けない**(P7 の推奨)。
-- 人のシェルで、選択が `current` ファイル(暗黙)から来ていて、かつ台帳が複数あるときだけ、書き込み系に限って **1 行を強調**して出す(明示した `--instance` / env のときは出さない)。
+- 人のシェルで、選択が `current` ファイル(暗黙)から来ていて、かつ台帳が複数あるときだけ、書き込み系に限って **1 行を強調**して出す(明示した `--session` / env のときは出さない)。
 
 ### シェルのプロンプト表示案(zsh)
 
@@ -202,7 +263,7 @@ training| /path/to/orchestrator-training   | training | 8802 | /path/to/other/ta
 # ~/.zshrc 用の例
 _tb_inst() {
   local f=${XDG_CONFIG_HOME:-$HOME/.config}/herdr-tb/current
-  local n=${TB_INSTANCE:-}
+  local n=${TB_SESSION:-}
   [[ -z $n && -r $f ]] && n=$(<$f) && n=${n%%$'\n'*}
   [[ -n $n ]] && print -n "[tb:$n] "
 }
@@ -217,31 +278,77 @@ RPROMPT='$(_tb_inst)'"${RPROMPT:-}"
 
 | 既存 | 扱い |
 |---|---|
-| `TB_INSTANCE` | そのまま**インスタンス名**として使う(launchd ラベルの接頭辞と同じ規則)。台帳に無い名前を人が env に入れたら止まる(台帳がある場合のみ) |
-| `HSESS` / `herdr_session_name` | そのまま。ペインのインスタンス逆引きの入力にする。台帳の「herdr セッション」列は同じ名前を指す |
-| launchd ラベル | 台帳に持たず、`TB_INSTANCE` から導く規則を維持(`default` は従来のラベルのまま。`default` のインスタンスでは `TB_INSTANCE` を unset して渡す。`herdr-up.sh` と同じ)。`tb instances --check` が衝突を検査する |
+| `TB_INSTANCE` | **セッション名から導く値**に降格(`default` は未設定)。人が env に入れて指定する入力ではなくなる。台帳があって、導く値と食い違えば止まる(5 章)。台帳が無いときは今と同じ(ラベルの接頭辞に使うだけ) |
+| `HSESS` / `herdr_session_name` | そのまま。ペインのセッションを引く入力にする。台帳のキーは同じ名前を指す |
+| launchd ラベル | 台帳に持たず、セッション名から導く規則を維持(`default` は従来のラベルのまま。`herdr-up.sh` と同じ)。`tb sessions --check` が衝突と混在を検査する(9.2 章) |
 | webui ポート | 台帳の列は **`TB_UI_PORT` の既定値として、`webui` を起動する側に渡す**(webui の探索コードは変えない)。`tb use` は webui や scheduler に**影響しない**(それらは launchd の環境で固定) |
-| `TB_DB` | 明示があれば優先。台帳のインスタンスと食い違えば止まる。未選択のときは、台帳の DB と一致すればそのインスタンス、台帳外なら「DB 明示(台帳外)」の例外(5 章) |
-| `herdr-up.sh` / presets | 変更しない。`# session:` と台帳のセッションが一致するかを `tb instances --check` で確かめる。ずれた場合に直すのは人 |
-| hook(`tb-hook` など) | 常に 0 で返す既存の決まりを守る。インスタンスはペインのセッションから決める。決まらないとき: **台帳が無い運用は現状どおり**(checkout の DB)。**台帳があって決まらない(逆引きに該当が無い・複数)ときは DB を更新せず 0 で返し**、`TOUCH_LOG` に `reason=instance-unresolved` を残す(別インスタンスの DB を誤って更新しないため) |
+| `TB_DB` | 明示があれば優先。台帳のセッションと食い違えば止まる。未選択のときは、台帳の DB と一致すればそのセッション、台帳外なら「DB 明示(台帳外)」の例外(5 章) |
+| `herdr-up.sh` / presets | 変更しない。`# session:` と台帳が一致するかを `tb sessions --check` で確かめる。ずれた場合に直すのは人 |
+| hook(`tb-hook` など) | 常に 0 で返す既存の決まりを守る。セッションはペインから決める。決まらないとき: **台帳が無い運用は現状どおり**(checkout の DB)。**台帳があって決まらない(該当が無い・複数)ときは DB を更新せず 0 で返し**、`TOUCH_LOG` に `reason=instance-unresolved` を残す(別セッションの DB を誤って更新しないため) |
 | **台帳が無い運用** | 今と完全に同じ。振り分けも出力の追加もしない(受け入れ条件。テストで固定する) |
+
+### 9.1 herdr の呼び出し箇所と、セッションを通す必要がある所(P14)
+
+確認済み(`grep`)。「tb の herdr_call」は `taskboard/lib/transport.sh:7` の 1 か所に集約されている。
+
+| 箇所 | 呼び方 | 今のセッションの決まり方 | 変更 |
+|---|---|---|---|
+| `transport.sh` の `herdr_call` | `"$HERDR_BIN" "$@"` | 実行プロセスの環境 | **ここ 1 か所で、解決済みセッションを環境で明示**(4 章 P14) |
+| 同 `herdr_send`(`agent get` / `agent prompt`) | `herdr_call` 経由 | 同上 | 上で足りる。エラー文の `HERDR_SESSION` の案内を `--session` に直す |
+| 同 spawn / close(`workspace create` / `agent start` / `workspace close` / `pane close`) | `herdr_call` 経由 | 同上 | 上で足りる |
+| `agents.sh` の `agent_sync` / `HSESS` | `herdr_call agent list` + `herdr_session_name` | 環境(socket 優先) | 上で足りる。`HSESS` は明示した環境から導かれるので一致する |
+| `roles.sh`(`pane_owner_name` ほか)・`comments.sh`・`digest.sh`・`send.sh`・`limits.sh`・`approvals.sh`・`gate.sh`・`compact.sh` | 全部 `herdr_call` 経由(`agent list` / `workspace list`) | 同上 | 上で足りる |
+| `send.sh` の `OUTBOX_SESSION` | `HERDR_SESSION` 未指定時の既定の宛先セッション | 設定ファイル | 台帳があれば、台帳のセッションを使う(別の入口を作らない)。台帳なしは今のまま |
+| `scheduler/bin/tick.sh`(`agent list`)と `system-send` | `"$HERDR" …` を直接実行。`system-send` は tb を呼ぶ | launchd の環境(`HERDR_SESSION` 無し = default 固定)。**plist に `HERDR_SESSION` を渡す口は案 A+ で追加済み**(`herdr_plist_value_ok`)。使うかは設定次第 | **`tick.sh` の直接呼び出しは `herdr_call` と同じ環境の明示に揃える**。plist は `gen-plist` が台帳のセッションを `HERDR_SESSION` に入れる(default は入れない) |
+| `webui/app/herdr.py`(`subprocess.run([HERDR_BIN(), …])`)と `actions.py`(tb を `bash` で起動) | herdr を直接実行。tb は env を引き継ぐ | launchd の環境(default 固定) | 同じ環境の明示を足す(Python 側の `herdr_env.py` に、`herdr_session_name` と同じ規則を持たせる。`tests/test_env.sh` が突き合わせる既存の仕組みを使う) |
+| `tb-hook` / `tb-role-hook` | pane・tab・workspace の ID と、`agent list` で名前を引く | herdr が hook に渡す環境 | ペインのセッションで決まる(9 章の表)。`tb-hook` は ID を渡すだけで herdr を呼ばない |
+| `herdr-up.sh` | `herdr --session <名>` を明示(`:20`)。起動時に両 env を整理(`:90-92`) | プリセットの `# session:` | 変更しない |
+| `setup/check.sh` | ラベルの接頭辞を `TB_INSTANCE` から導く | env | セッション名から導くように揃える(S4) |
+
+- つまり、**tb 本体は 1 か所の変更で全部のセッションを通せる**。残るのは、`tb` を経由せず herdr を直接呼ぶ **scheduler の `tick.sh` と webui の 2 系統**(と、それらの plist の環境)。
+
+### 9.2 launchd の 1 名前空間に 2 checkout が混在している状態の解消
+
+実機の状態(2.1 章): ラベルは全部 `local.herdr-…`(`TB_INSTANCE` 無し)で、plist の向き先の checkout が job ごとに違う。大半の scheduler job は 2 つ目の checkout、webui と残りの job は普段の checkout。plist に `TB_DB` も `HERDR_SESSION` も無い(**推測**: そのため、2 つ目の checkout の job が herdr を呼ぶ場合は default セッションを見る。その checkout の `tick.sh` の版を未確認)。
+
+セッション = インスタンス = launchd 名前空間の 1 対 1 化で、次のように解消する。
+
+- **混在の定義**: 同じラベルの接頭辞(= 同じセッション)の plist の向き先が、台帳のそのセッションの checkout と違う。または、1 つの接頭辞の下に複数の checkout の plist がある。
+- **検出**(`tb sessions --check`、読み取りのみ。`launchctl` は呼ばず plist を読む):
+  1. `~/Library/LaunchAgents/local.herdr-*.plist` を列挙し、`ProgramArguments` / `WorkingDirectory` のパスから checkout を決める。
+  2. ラベルの接頭辞(`local.herdr-<名>-` か、無印 = default)から期待するセッションを決め、台帳の checkout と一致するかを見る。
+  3. 不一致を「ラベルのセッション」「plist の checkout」「期待する checkout」の表で出す。plist の環境に `HERDR_SESSION` / `TB_DB` が無いものも指摘する。
+  4. `TB_DB` / `HERDR_SESSION` が plist にあるのに、台帳のセッションと食い違うものも指摘する。
+- **移行手順**(人が行う。tb は実行しない。この文書も実行していない):
+  1. **棚卸し**: 全 plist について、ラベル・向き先 checkout・job 名を表にする(`tb sessions --check` の出力)。どの job をどのセッションに属させるかを人が決める(**P13 とは別の判断。job ごとに「普段のセッションにも要るか」を決める**)。
+  2. **台帳を先に作る**: 全セッションと checkout を登録して `--check` が通る状態にする(plist は触らない)。
+  3. **default は何も変えない**: 普段の checkout の job は、従来のラベルのまま(互換優先。案 A+ の P3 の推奨)。
+  4. **他セッションの checkout ごとに**、その checkout で `TB_INSTANCE=<セッション>`(と `HERDR_SESSION`)を付けて `gen-plist` で plist を作り直し(新しいラベル `local.herdr-<名>-sched-<job>`)、**新旧を並べて内容を比べる**。
+  5. **旧ラベルを止めてから新ラベルを入れる**: 旧ラベル(その checkout を指していたもの)を `bootout` し、plist を退避(削除でなく別ディレクトリへ)。その後、新ラベルを `install`。**順序を逆にすると同じ job が二重に動く**。job ごとに 1 つずつ行う。
+  6. **後勝ちの巻き戻し**: 旧い `install` の「後勝ち」で、普段の checkout の job が 2 つ目の checkout で上書きされた可能性がある。各旧ラベルの向き先を見て、普段のセッションに属すべき job は**普段の checkout から再 install** する。
+  7. **確認**: `tb sessions --check` が混在 0。`launchctl list` のラベルが期待どおり。各 job の最初の実行で、そのセッションの DB と herdr を見ていること(ログのセッション名・DB パス)。
+  8. **戻し方**: 退避した旧 plist を戻して `bootstrap` する。DB は触らないので、データの戻しは不要。
+- **ずれたまま残さないための予防**: `install.sh` が、同じ接頭辞の既存の plist の向き先が自分の checkout と違えば、**警告して止まる**(上書きしない)。今の「後勝ち」をやめる(S4)。
+- staging は、この移行の**予行**に使う: 1 つの OS 上に 2 セッション(default と staging)を立て、staging の checkout で `gen-plist` / `install` を dry-run し、ラベルが衝突しないこと、`--check` が混在を検出し、直すと消えることを先に確かめる(普段のセッションの plist に触らずに)。
 
 ## 10. 段階案
 
-各段階は、前の段階が無くても壊れない。実装は「テスト先行」。
+各段階は、前の段階が無くても壊れない。実装は「テスト先行」。staging(1 つの OS 上の複数セッションの模擬)が、各段階の動作確認の場所になる。
 
-1. **S1: `tb whoami`**(台帳なし)。checkout・DB・セッション・`TB_INSTANCE`・ラベルの接頭辞・決まり方を出す。DB を開かない。何も変えない。
-2. **S2: 台帳と `tb instances`**(読み取りのみ)。書式の検査、`--check`、プロンプトの例を docs に載せる。
-3. **S3: `tb use` / `--instance` / 振り分け**(P1 の案 (a))。ペインの逆引き、`use` のペイン拒否、`current` の保存、`use.log`。出力に対象の 1 行(複数のときだけ)。
-4. **S4: 書き込み系の fail-closed**(複数・未選択)。読み取り許可リスト、専用の終了コード。
-5. **S5: 仕上げ**。破壊的操作の対象表示、`TB_BANNER`、色、`--check` の拡張。
+1. **S1: `tb whoami`**(台帳なし)。checkout・DB・herdr セッション(`herdr_session_name`)・`TB_INSTANCE`・ラベルの接頭辞・決まり方を出す。DB を開かない。何も変えない。
+2. **S2: 台帳と `tb sessions`**(読み取りのみ)。書式の検査、`--check`(**9.2 章の launchd 混在の検出を含む**。plist を読むだけ)。
+3. **S3: `herdr_call` のセッション明示**。`herdr_call` 1 か所で、解決済みセッション(台帳なしでは今の `herdr_session_name`)を環境で明示する。挙動は変えない(台帳なしは同じ値)。擬似 herdr のテストで固定する。
+4. **S4: `--session` と振り分け**(P1 の案 (a))。`TB_SESSION`、ペインの固定、別セッションの `--session` の拒否(agent)、`TB_FORWARDED`、4 章の観点のテスト。**scheduler の `tick.sh` と webui に同じ環境の明示**を入れ、`gen-plist` が `HERDR_SESSION` を入れ、`install.sh` が向き先の食い違いで止まるようにする。
+5. **S5: `tb use` と fail-closed**。`current` の保存、`use.log`、ペインでの拒否、書き込み系の fail-closed(複数・未選択)、読み取り許可リスト、専用の終了コード。
+6. **S6: 別セッション宛ての送信**(P12 で許す場合のみ)。人の `tb --session <宛先> send` を確かめるテストから。agent からの送信者の引き継ぎは別の設計(5.1 章)。
+7. **S7: 仕上げと移行**。破壊的操作の対象表示、`TB_BANNER`、色、launchd の移行(9.2 章。人の手順)。
 
-S1 だけで「今どこを指しているか」が分かるので、S2 以降を急がなくても事故の確認はできる。
+S1 だけで「今どこを指しているか」が分かるので、S2 以降を急がなくても事故の確認はできる。S3 は、台帳なしでも効く(シェルに残った別セッションの socket による取り違えを防ぐ)ので、**S2 と並行してよい**。
 
 ## 11. 人が決める点
 
-- **P1. 別 checkout への渡し方**: (a) `tb` 本体の冒頭で振り分ける(推奨)/ (b) 人用の別名ラッパー / (c) 振り分けなし(環境変数だけ。取り違えを防げない)。
-- **P2. 台帳の置き場**: `~/.config/herdr-tb/instances.conf`(推奨。ユーザーごと)/ リポジトリ内(公開物に載る危険があるので非推奨)。
+- **P1. セッション単位の routing の仕組み**: (a) `tb` 本体の冒頭で台帳の checkout の `tb` に振り分ける(推奨)/ (b) 人用の別名ラッパー / (c) 振り分けなし(env を整えるだけ。取り違えを防げない)。
+- **P2. 台帳の置き場**: `~/.config/herdr-tb/sessions.conf`(推奨。ユーザーごと)/ リポジトリ内(公開物に載る危険があるので非推奨)。
 - **P3. 選択の持ち方**: `current` ファイル(全シェル共通)+ `--shell` / env でシェル別の切り替え(推奨。両方用意し、人が使い分ける。迷うなら `--shell` を勧める)/ ファイルだけ / env だけ。
 - **P4. ペイン判定を強めるか**: `HERDR_PANE_ID` だけ(推奨。柵と割り切る)/ 親プロセス・tty の判定も足す(回避できるので効果が薄い)。
 - **P5. 状態ファイルの場所**: 台帳と同じ `~/.config/herdr-tb/`(推奨)/ `$XDG_STATE_HOME`。
@@ -249,13 +356,21 @@ S1 だけで「今どこを指しているか」が分かるので、S2 以降�
 - **P7. 破壊的操作の確認**: 対象を表示するだけで止めない(推奨)/ `--yes` を要求(スクリプトと agent が止まる)。
 - **P8. 台帳が 1 つだけのときの出力**: 出さない(推奨)/ 常に出す。
 - **P9. 研修用の分離の強さ**: 同じ OS ユーザーの別 checkout(この設計の範囲。選択と台帳は共有で、6〜7 章の限界を受け入れる)/ 別 OS ユーザー・別ホーム(台帳も選択も別。最も強い。運用の手間が増える)。
-- **P10. `TB_DB` が設定済みで未選択のとき**: 台帳の DB と一致すればそのインスタンス、台帳外なら「DB 明示(台帳外)」の例外として今と同じに動かす(推奨。継承と明示を区別できず、テスト・scheduler が `TB_DB` で動くため)/ `TB_DB` も fail-closed の対象にする(テストと scheduler に別の口が要る)/ 台帳外の例外をなくし台帳に登録を必須にする。
+- **P10. `TB_DB` が設定済みで未選択のとき**: 台帳の DB と一致すればそのセッション、台帳外なら「DB 明示(台帳外)」の例外として今と同じに動かす(推奨。継承と明示を区別できず、テスト・scheduler が `TB_DB` で動くため)/ `TB_DB` も fail-closed の対象にする(テストと scheduler に別の口が要る)/ 台帳外の例外をなくし台帳に登録を必須にする。
+- **P11. `--instance` の扱い**: 廃止し `--session` だけ(推奨。1 対 1 なので 2 つの名前は食い違いの元。まだ実装も公開もされていない)/ `--session` の別名として残す(食い違いは同じ値だけ許す)。`TB_INSTANCE` は launchd ラベル用の導出値として残す。
+- **P12. 別セッション宛ての操作**: (a) 人の `tb --session <宛先> …` だけ許す。agent は拒否(推奨。送信者の引き継ぎが未設計で、別セッションの agent は元のセッションのペインを `agent list` で引けない)/ (b) agent も `--session` 明示で許す(送信者の引き継ぎの設計が先に要る)/ (c) 許さない(同名の宛先の取り違えは防げるが、人が別セッションを操作する手段も無くなる)。
+- **P13. 別セッション宛ての承認の判定**: 宛先のセッションの `approvals.conf` / `routes.conf`(推奨。振り分けが宛先の `tb` を実行するので自然。設定を分けたいセッションの隔離が保てる)/ 送信元の設定 / 両方で許可されたときだけ(2 つの設定を突き合わせる仕組みが要る。要検討)。
+- **P14. herdr へのセッション指定の形**: 環境で明示する(`HERDR_SOCKET_PATH` を unset して `HERDR_SESSION`。`default` は両方 unset)。`herdr_call` 1 か所 + scheduler の `tick.sh` + webui の 2 系統(推奨。実績がある形)/ `herdr --session <名> …` のフラグ形(サブコマンドで通るか未確認。確認できたら再検討)。
 
 ## 12. 未確認
 
 - agent のペインの PATH が、人のシェルと同じか(同じ前提で 2 章を書いた)。
 - `HERDR_PANE_ID` が agent の起動するサブシェル・子プロセスに必ず引き継がれるか(引き継がれなければ、ペイン判定が外れる)。
 - herdr の hook が、セッションごとに別の checkout の `tb-hook` を呼べるか(設定は全セッション共有)。
+- **`herdr --session <名> agent list` のようなフラグ形が通るか**(今回、セッションへの影響を避けて試していない。通れば P14 の別案になる)。`HERDR_SESSION=default` を明示した場合の herdr の挙動(default は両方 unset にする前提で、試していない)。
 - 台帳に書く webui ポートと、`HERDR_WEBUI_RANGE` の探索が競合した場合の挙動。
-- 既存の `TB_INSTANCE` を人がシェルに恒久的に入れている運用があるか(あれば、3 の選択より優先されるため気づきにくい)。
-- `HERDR_SOCKET_PATH` が人のシェルに入る場面(herdr がペインに入れる / 人が設定する / 親から継承される)。入る場合、振り分けでの unset(5 章・4 章の P1)が効く前提になる。
+- 既存の `TB_INSTANCE` を人がシェルに恒久的に入れている運用があるか(あれば、導く値と食い違って止まる)。
+- `HERDR_SOCKET_PATH` が人のシェルに入る場面(herdr がペインに入れる / 人が設定する / 親から継承される)。入る場合、振り分けでの unset と 5 章の `HERDR_SESSION` / socket の扱いが効く前提になる。
+- 2 つ目の checkout の `tick.sh` の版と、その job が今どのセッションの herdr を呼んでいるか(9.2 章の推測)。
+- 宛先のセッションの `routes.conf` が、人の送信者を許すか(5.1 章)。
+- herdr のセッションが停止中(`running: false`)のとき、`tb --session <名>` の読み取り系が何を返すか(herdr の呼び出しは失敗し、DB だけで動く読み取りは動く、と想定)。
