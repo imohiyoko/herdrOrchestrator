@@ -8,7 +8,7 @@
 ## 1. 結論(先に)
 
 - 今の tb は「どのインスタンスか」を**持っていない**。PATH 上の `tb` が symlink で指す checkout の DB を開くだけで、
-  それが事実上の「現在のインスタンス」になっている(確認済み: 普段使う `tb` は開発 checkout の `taskboard/bin/tb` への symlink 1 本。`taskboard/bin/tb:17` の `DB=${TB_DB:-$HERDR_DEFAULT_TB_DB}` は、その checkout を基準に決まる)。
+  それが事実上の「現在のインスタンス」になっている(**cwd は見ない**。2.1 章)(確認済み: 普段使う `tb` は開発 checkout の `taskboard/bin/tb` への symlink 1 本。`taskboard/bin/tb:17` の `DB=${TB_DB:-$HERDR_DEFAULT_TB_DB}` は、その checkout を基準に決まる)。
   staging 用 checkout や研修用 checkout を足しても、人のシェルで素の `tb` を打てば、これまでと同じ checkout の DB に書く。**取り違えの根はここ**。
 - 推奨は次の 4 つ。
   1. **台帳**(人だけが書く 1 ファイル)にインスタンスを名前で登録し、名前 → checkout・DB・herdr セッション・webui ポートを引く。
@@ -36,6 +36,44 @@
   その場合 staging のペインでも `TB_INSTANCE` は空で、PATH の `tb` は**開発 checkout の DB を開く**(推測: ペインの PATH が人のシェルと同じ前提)。
 - hook(`tb-hook`)の DB は「呼ばれたスクリプトがある checkout」で決まる。herdr の設定は全セッション共有なので、どのセッションの hook も同じ checkout を向きうる。
 
+### 2.1 実機の配置(確認済み。読み取りのみで調べた。公開版なので件数は伏せる)
+
+cwd や checkout に関係なく、**PATH 上の `tb`(symlink)が指す checkout の DB** が使われる。
+人のシェルで、別 checkout(研修 / hardening 用)の `scheduler` ディレクトリに cd して `tb list` を打っても、普段の開発 checkout のタスク一覧が出た(再現済み)。`tb` は cwd を見ない。
+
+| 場所(呼び名) | 実体 | origin / 関係 | DB | launchd |
+|---|---|---|---|---|
+| 開発 checkout | git clone。ブランチ `main`、origin は公開リポジトリ | PATH の `tb` の symlink 先(`which -a tb` は 1 本だけ) | 自分の `taskboard/data/tasks.db`(**普段の運用の DB**) | webui と scheduler の一部 |
+| hardening 用 checkout | 別の git clone。remote は開発 checkout のローカルパス(`upstream`)で、上流より先行し、worktree 多数・変更あり | 開発 checkout の派生 | **自分の DB(別。開発 checkout の DB とはタスク ID の体系も違う)** | **scheduler の job の大半**(plist が自分の `tick.sh` を指す) |
+| 旧 `herdr` ディレクトリ | git リポジトリ。remote なし。`taskboard/bin/tb` は旧版(1 本の大きなスクリプト) | `hd` が呼ぶ `herdr-up.sh` の置き場。`lib/` は無い | **`taskboard/data` が開発 checkout の `taskboard/data` への symlink = 開発 checkout と同じ DB**(別名の入口) | なし |
+| staging clone | 別の git clone(origin は公開リポジトリ)。開発 checkout と同じコミット | 検証用 | **未作成**(初回の `tb` 実行時に作られる。確認時点では無い) | なし(install 系は実行させない運用) |
+
+- **フルパスで `tb list` を呼んだときの DB**(DB ファイルの存在と、各 `tb` の DB 既定値の読み取りで確認。`tb` 自体は実行していない。`init_db` が書く可能性があるため):
+  開発 checkout → 自分の DB / hardening 用 → 自分の別 DB / 旧 `herdr` → symlink 経由で**開発 checkout と同じ DB** / staging → 初回に自分の新しい DB。
+- **DB の共有と分離**:
+
+| 組 | DB | 備考 |
+|---|---|---|
+| 開発 checkout と旧 `herdr` | **共有**(symlink。パスは別、実体は 1 つ) | `tb instances --check` の「DB の重複」は**パスの文字列でなく realpath で比べる**こと |
+| 開発 checkout と hardening 用 | **別** | PATH の `tb` では hardening 用の DB は見えない。見るにはフルパスの `tb` か `TB_DB` |
+| 開発 checkout と staging | **別**(staging の DB はこれから) | |
+
+- **launchd が 1 つの名前空間に複数 checkout を混ぜている**(確認済み): ラベルは全部 `local.herdr-…`(`TB_INSTANCE` 無し)で、plist の指す checkout が job ごとに違う。大半の scheduler job は hardening 用 checkout、webui と残りの job は開発 checkout を指す。plist に `TB_DB` は無く、各 job は**自分の checkout の DB** を開く。つまり、同じラベルの規則の下に、2 つの DB を触る job が同居している。`install.sh` は「後勝ち」なので、どの checkout で最後に install したかで job ごとに行き先が決まった結果、と読める(推測。履歴は未確認)。
+
+### 2.2 設計書の前提との照合
+
+| 前提 | 判定 | 直し方 |
+|---|---|---|
+| 「PATH 上の `tb` が指す checkout の DB が事実上のインスタンス」 | **人のシェルの `tb` については合っている**(cwd を見ない、まで確認) | 1 章の文に「cwd は関係ない」を足した |
+| 「1 インスタンス = 1 checkout = 1 DB = 1 launchd 名前空間」(案 A+ の前提) | **実機は満たしていない**。launchd ラベルの名前空間が 1 つで、そこに 2 checkout の job が混在する。また 2 つのパスが同じ DB を指す(symlink) | 台帳の DB 検査を realpath にする。`tb instances --check` に「同じラベル規則の下で plist の向き先が複数 checkout」を足す。**案 A+ のラベル分離(`TB_INSTANCE`)を先に実機へ適用しないと、台帳の「launchd ラベル」の列は意味を持たない** |
+| 「`TB_INSTANCE` を `herdr-up.sh` が設定する」 | 実機の launchd には効いていない(plist は従来のラベル) | 台帳の導出は、plist の再生成後にだけ成り立つと書く |
+| 台帳の「checkout」の列は 1 つの DB を持つ | 旧 `herdr` は DB を共有する別名なので、台帳には**登録しない**(別名として `tb instances --check` が検出して警告) | 3 章に 1 行足す |
+
+**P1 の推奨は変わらない**(案 (a): `tb` 本体の冒頭で、解決した checkout の `tb` に振り分ける)。理由は、cwd でも PATH でも選べない実機の挙動と、「フルパスで呼ぶ以外に別 DB を見る手段が無い」ことが、案 (a) の動機そのものだから。ただし次を足す。
+
+- 振り分け先の `tb` が**旧版**(旧 `herdr` のような別スクリプト)だと、`TB_FORWARDED` などの合図を解釈しない。台帳に登録できるのは、新しい `tb`(`lib/herdr-env.sh` を持つ checkout)だけにし、`tb instances --check` で確認する。
+- 当面は、**hardening 用 checkout を台帳の別インスタンスとして登録**し、`tb --instance <名前> list` でその DB を見られるようにするのが、最初の実用的な利益になる。
+
 ## 3. 用語と台帳
 
 ### インスタンス名
@@ -55,6 +93,7 @@ staging | /path/to/orchestrator-staging    | staging  | 8801 |
 training| /path/to/orchestrator-training   | training | 8802 | /path/to/other/tasks.db
 ```
 
+- DB が**同じ実体を指す別名**(symlink)は、別インスタンスとして登録しない。重複の検査は realpath で比べる(2.1 章)。
 - 名前・セッション・ポートはそれぞれ**重複不可**(読み込み時に検査し、違反は台帳全体を無効にして止まる)。
 - 台帳に書かず**導く**もの(二重管理を避ける): launchd ラベル(`herdr_label_prefix` と同じ規則。`default` は従来のラベルのまま。そのため `default` のインスタンスでは `TB_INSTANCE` を未設定にして渡す。`tb whoami` の「ラベルの接頭辞」も、その実際の値(`local.herdr-` か `local.herdr-<名前>-`)をそのまま出す)、approvals / roles / routes の場所(checkout 内)。
 - 台帳ファイルが他のユーザーの所有、または group / world 書き込み可なら、無視して止まる(最低限の衛生。6 章の限界は残る)。
