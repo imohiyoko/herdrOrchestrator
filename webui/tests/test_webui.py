@@ -6,6 +6,7 @@ import json
 import os
 import random
 import re
+import shutil
 import signal
 import hashlib
 import socket
@@ -1206,6 +1207,133 @@ for host in ("127.0.0.1", "localhost"):
     r = c.raw("POST", "/login", {"csrf": tok("/login"), "username": "u", "password": pw2}, origin=None, host=H)
     check(f"[{host}] Origin も Referer も無い /login は 403(成功後も)", r[0] == 403)
     stop(p)
+
+# ================= 複数セッション(TB_INSTANCE): Cookie 名・ポート固定・取り違え表示・run ファイル
+def inst_env(name, inst=None, **extra):
+    env, d = make_env(name, **extra)
+    env.pop("TB_INSTANCE", None)
+    env.pop("WEBUI_RUN_DIR", None)   # 既定の run ディレクトリ(インスタンスごとに分かれること)を見る
+    if inst is not None:
+        env["TB_INSTANCE"] = inst
+    # 既定の run を使うテストでも、checkout の run/ を汚さないよう ROOT を差し替える口は無いので WEBUI_RUN_DIR の親だけ指定する
+    env["WEBUI_RUN_BASE"] = os.path.join(d, "runbase")
+    return env, d
+
+
+def inst_boot(name, inst, **extra):
+    base_ = free_range(1)
+    env, d = inst_env(name, inst, HERDR_WEBUI_RANGE=f"{base_}-{base_}", **extra)
+    p = start(env)
+    pf = os.path.join(env["WEBUI_RUN_BASE"], *(["instance-" + inst] if inst else []), "port")
+    end = time.time() + 5
+    while time.time() < end and not os.path.exists(pf) and p.poll() is None:
+        time.sleep(0.05)
+    port_ = int(open(pf).read()) if os.path.exists(pf) else None
+    return env, p, port_
+
+
+def inst_cookie_name(port_):
+    c_ = Client(port_)
+    r = c_.raw("POST", "/setup", {"csrf": c_.csrf("/setup"), "username": USER, "password": PW, "confirm": PW})
+    if r[0] != 302:
+        return c_, None
+    c_.cookie = re.match(r"([^;]+)", r[1]["Set-Cookie"]).group(1)
+    return c_, c_.cookie.split("=")[0]
+
+
+# (1) Cookie 名
+env, pa, porta = inst_boot("inst-a", "alpha")
+check("TB_INSTANCE=alpha: 起動できる", porta is not None)
+if porta:
+    ca, nm = inst_cookie_name(porta)
+    check("TB_INSTANCE=alpha: Cookie 名にインスタンス名が入る", nm == "herdr_webui_session_alpha", str(nm))
+    check("TB_INSTANCE=alpha: そのセッションで入れる", ca.cookie and ca.get("/tasks")[0] == 200)
+    # (3) 取り違え表示
+    pg = ca.get("/tasks")[2]
+    check("TB_INSTANCE=alpha: タイトルにインスタンス名", re.search(r"<title>[^<]*alpha[^<]*</title>", pg) is not None)
+    check("TB_INSTANCE=alpha: ヘッダに名前と色の帯", 'class="inst inst-warn"' in pg and ">alpha<" in pg)
+    check("TB_INSTANCE=alpha: ログイン画面にも出る", ">alpha<" in Client(porta).get("/login")[2])
+    # (4) run ファイル
+    rd = os.path.join(env["WEBUI_RUN_BASE"], "instance-alpha")
+    check("TB_INSTANCE=alpha: run/instance-alpha/ に port と instance", os.path.exists(os.path.join(rd, "port"))
+          and open(os.path.join(rd, "instance")).read().strip() == "alpha")
+    check("TB_INSTANCE=alpha: 既定の run には書かない", not os.path.exists(os.path.join(env["WEBUI_RUN_BASE"], "port")))
+out_a = stop_out(pa)
+check("起動ログにポートとインスタンス名", f"instance=alpha" in out_a and f"port={porta}" in out_a, out_a[:200])
+
+env, pb, portb = inst_boot("inst-b", "beta")
+if portb and porta:
+    cb, nmb = inst_cookie_name(portb)
+    check("別インスタンスの Cookie 名は別", nmb == "herdr_webui_session_beta" and nmb != nm, str(nmb))
+    # 同じ host の別ポートでも、他方の Cookie では入れない
+    foreign = Client(portb)
+    foreign.cookie = ca.cookie
+    check("他インスタンスの Cookie ではログインにならない", foreign.get("/tasks")[0] == 302)
+stop(pb)
+
+env, pd, portd = inst_boot("inst-def", None)
+if portd:
+    cd_, nmd = inst_cookie_name(portd)
+    check("TB_INSTANCE 未設定: Cookie 名は従来のまま", nmd == "herdr_webui_session", str(nmd))
+    pg = cd_.get("/tasks")[2]
+    check("TB_INSTANCE 未設定: 表示は従来どおり(帯なし)", 'class="inst' not in pg and "<title>タスク - herdr</title>" in pg)
+    check("TB_INSTANCE 未設定: run/ 直下に port", os.path.exists(os.path.join(env["WEBUI_RUN_BASE"], "port")))
+stop(pd)
+
+env, pe, porte = inst_boot("inst-default-name", "default")
+if porte:
+    ce, nme = inst_cookie_name(porte)
+    pg = ce.get("/tasks")[2]
+    check("instance=default: 名前は出るが色の帯(inst-warn)は付かない", 'class="inst"' in pg and ">default<" in pg and "inst inst-warn" not in pg)
+stop(pe)
+
+for bad in ("a/b", "../x", "a b", "-x", "x" * 65):
+    env, _ = inst_env("inst-bad", bad)
+    pbad = start(env)
+    try:
+        rc = pbad.wait(5)
+    except subprocess.TimeoutExpired:
+        rc = None
+    check(f"不正な TB_INSTANCE({bad[:12]!r})は起動しない", rc not in (None, 0), f"rc={rc}")
+
+# (2) ポート固定: 使用中なら逃げずにエラー。ログに指定ポートと理由
+base = free_range(3)
+occupy(base)
+env, _ = inst_env("inst-fixed", "gamma", TB_UI_PORT=str(base), HERDR_WEBUI_RANGE=f"{base}-{base + 2}")
+pf_ = start(env)
+try:
+    rc = pf_.wait(5)
+except subprocess.TimeoutExpired:
+    rc = None
+err = (pf_.stderr.read() or "") if rc else ""
+check("TB_UI_PORT 使用中: 別ポートへ逃げずエラー終了", rc not in (None, 0), f"rc={rc}")
+check("TB_UI_PORT 使用中: エラーに指定ポートと instance", str(base) in err and "gamma" in err, err[:200])
+check("TB_UI_PORT 使用中: 隣のポートで待ち受けていない", all(
+    socket.socket().connect_ex(("127.0.0.1", q)) != 0 for q in (base + 1, base + 2)))
+env, _ = inst_env("inst-fixed-bad", "gamma", TB_UI_PORT="abc")
+pf_ = start(env)
+try:
+    rc = pf_.wait(5)
+except subprocess.TimeoutExpired:
+    rc = None
+check("TB_UI_PORT が数値でない: エラー終了(範囲探索に落ちない)", rc not in (None, 0), f"rc={rc}")
+for s in socks:
+    s.close()
+socks.clear()
+# 固定ポートが空いていればそのポートで起動し、run ファイルに残す
+base = free_range(1)
+env, _ = inst_env("inst-fixed-ok", "gamma", TB_UI_PORT=str(base))
+pf_ = start(env)
+pfile = os.path.join(env["WEBUI_RUN_BASE"], "instance-gamma", "port")
+end = time.time() + 5
+while time.time() < end and not os.path.exists(pfile) and pf_.poll() is None:
+    time.sleep(0.05)
+check("TB_UI_PORT 空き: そのポートで起動し run に残す", os.path.exists(pfile) and open(pfile).read().strip() == str(base))
+# (5) bind はループバックのまま
+ss_ = subprocess.run(["lsof", "-nP", f"-iTCP:{base}", "-sTCP:LISTEN"], capture_output=True, text=True).stdout if shutil.which("lsof") else ""
+check("bind はループバックだけ", (not ss_) or ("127.0.0.1:" in ss_ and "*:" not in ss_ and "0.0.0.0" not in ss_), ss_)
+stop(pf_)
+check("終了時にインスタンスの run ファイルを消す", not os.path.exists(pfile) and not os.path.exists(os.path.join(os.path.dirname(pfile), "instance")))
 
 print()
 print("FAILED: " + ", ".join(fails) if fails else "all passed")

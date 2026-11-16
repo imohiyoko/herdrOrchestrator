@@ -206,7 +206,8 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.herdr-webui.plist
 
 | 変数 | 既定 | 意味 |
 | --- | --- | --- |
-| `TB_UI_PORT` | (なし) | 固定ポート。指定すると探索しない |
+| `TB_INSTANCE` | (なし) | セッション(インスタンス)名。設定すると Cookie 名が `herdr_webui_session_<名>`、run ファイルが `run/instance-<名>/`、全画面のタイトルとヘッダに名前が出る(`default` 以外は色の帯)。未設定は従来どおり |
+| `TB_UI_PORT` | (なし) | 固定ポート。指定すると探索せず、使用中なら別ポートへ移らずエラーで終了する |
 | `HERDR_WEBUI_RANGE` | `8800-8819` | 探索範囲(`下限-上限`)。テスト用 |
 | `WEBUI_SESSION_TTL` / `WEBUI_LOCK_MAX` / `WEBUI_LOCK_SEC` | `43200` / `5` / `300` | ログインの有効秒数 / ロックまでの失敗回数 / ロック秒数 |
 | `WEBUI_FAIL_DELAY` | `1` | ログイン・再設定の失敗時の遅延(秒) |
@@ -262,3 +263,13 @@ herdr は `tests/fake/herdr`(疑似)、DB・ログは一時ディレクトリ。
 - **承認待ちの操作**: agent(指揮官など)が `tb agent-*` を使い、`approvals.conf` の `agent:<op>:<名前>` が `ask` だったものは
   「承認待ちの操作」に出る(緊急通知にも出る)。「承認して実行」か「却下」
 - 結果は画面上部(実行した / 承認待ちに積んだ / 前提を満たさない / 失敗)と、「直近の操作」(`agent_ops`)に出る
+
+## 複数セッションの並行運用
+
+herdr のセッションごとに、別ポート・別プロセスで webui を動かす(同一ポートでの切り替えはしない)。
+
+- セッションごとに `TB_INSTANCE=<名>` と `TB_UI_PORT=<ポート>` を決めて起動する(`bin/gen-plist.sh` は両方を plist に渡す)。
+- Cookie は host 単位で、ポートでは分かれない。そのため Cookie 名にインスタンス名を入れ、別セッションのログインと干渉しないようにしている。
+- `TB_UI_PORT` が使用中ならエラーで終了する(別ポートへ黙って移ると、別セッションの画面と取り違えるため)。未指定なら従来どおり `HERDR_WEBUI_RANGE` で探索し、選んだポートとインスタンス名を起動ログ(`instance=<名> port=<n>`)と run ファイル(`port`・`instance`)に残す。
+- run ファイル(ログイン情報・セッション・port)は `run/instance-<名>/`、launchd のログは `logs/launchd-webui-<名>.{out,err}`。未設定なら従来の `run/`・`logs/launchd-webui.*`。
+- bind は `127.0.0.1` のまま(変更なし)。

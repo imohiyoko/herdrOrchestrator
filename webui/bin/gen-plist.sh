@@ -1,7 +1,7 @@
 #!/bin/bash
 # 使い方: bin/gen-plist.sh   -> generated/local.herdr-webui.plist を生成して lint する。
 # TB_INSTANCE があれば local.herdr-<instance>-webui(複数セッションを別 checkout で動かすとき)。
-# HERDR_SESSION / TB_UI_PORT が設定されていれば plist の環境変数に渡す(未設定なら何も足さない)。
+# TB_INSTANCE / HERDR_SESSION / TB_UI_PORT が設定されていれば plist の環境変数に渡す(未設定なら何も足さない)。
 # launchctl への登録はしない(人が行う。README 参照)。
 set -eu
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -9,7 +9,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/../lib/herdr-env.sh"
 LABEL="$(herdr_label_prefix)webui" || exit 2
 EXTRA_ENV=""
-for v in HERDR_SESSION TB_UI_PORT; do
+for v in TB_INSTANCE HERDR_SESSION TB_UI_PORT; do
   [ -n "${!v:-}" ] || continue
   herdr_plist_value_ok "${!v}" || { echo "error: $v は英数字と . _ - だけ: ${!v}" >&2; exit 2; }
   [ "$v" != TB_UI_PORT ] || [[ ${!v} =~ ^[0-9]{1,5}$ ]] || { echo "error: TB_UI_PORT は数字: ${!v}" >&2; exit 2; }
@@ -19,6 +19,7 @@ for v in HERDR_SESSION TB_UI_PORT; do
 done
 OUT_DIR="${OUT_DIR:-$ROOT/generated}"
 LOG_DIR="$ROOT/logs"
+LOG_NAME="launchd-webui"; [ -z "${TB_INSTANCE:-}" ] || LOG_NAME="launchd-webui-$TB_INSTANCE"   # 同じ checkout で複数動かしてもログが混ざらない
 PY="${PYTHON3:-$(command -v python3)}"
 mkdir -p "$OUT_DIR" "$LOG_DIR"
 OUT="$OUT_DIR/$LABEL.plist"
@@ -46,9 +47,9 @@ $EXTRA_ENV  </dict>
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>$LOG_DIR/launchd-webui.out</string>
+  <string>$LOG_DIR/$LOG_NAME.out</string>
   <key>StandardErrorPath</key>
-  <string>$LOG_DIR/launchd-webui.err</string>
+  <string>$LOG_DIR/$LOG_NAME.err</string>
 </dict>
 </plist>
 PLIST

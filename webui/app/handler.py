@@ -13,20 +13,20 @@ from urllib.parse import parse_qs, unquote, urlencode, urlsplit
 
 import auth
 
-from .config import COOKIE, HOST, JOB_RE, ROOT, RUN_DIR, cfg
+from .config import COOKIE, HOST, INSTANCE, JOB_RE, ROOT, RUN_DIR, cfg
 from .sanitize import clean, e
 from .actions import agent_decide, agent_new, agent_op, resolve_comment
 from .data import NOTIFY_POLL_SEC, badge_count, urgent_items
 from .jobs import job_names, save_job_settings
-from .views import CSS, DOCS_JS, NOTIFY_JS, err_html, page, page_agent_new, page_job, route
+from .views import CSS, DOCS_JS, NOTIFY_JS, err_html, inst_label, page, page_agent_new, page_job, route, title_suffix
 
 
 def plain_page(title, body):
     """ログイン・初回設定用(ナビも自動更新もなし)。"""
     return ("<!doctype html><html lang=ja><head><meta charset=utf-8><meta name=referrer content=same-origin>"
             '<meta name=viewport content="width=device-width,initial-scale=1">'
-            f"<title>{e(title)} - herdr</title><style>{CSS}</style></head><body>"
-            f"<main style='max-width:420px'><h1>{e(title)}</h1>{body}</main></body></html>")
+            f"<title>{e(title)} - herdr{e(title_suffix())}</title><style>{CSS}</style></head><body>"
+            f"<main style='max-width:420px'>{inst_label()}<h1>{e(title)}</h1>{body}</main></body></html>")
 
 
 def form_html(action, csrf, fields, submit, error="", note="", next_=""):
@@ -399,7 +399,8 @@ def bind_server():
         except OSError as ex:
             last = ex
     if fixed:
-        raise SystemExit(f"herdr-webui: ポート {lo} を使えません: {last}")
+        # TB_UI_PORT は「このセッションのポート」の約束なので、別のポートへ黙って逃げない
+        raise SystemExit(f"herdr-webui: instance={INSTANCE or 'default'} 固定ポート {lo}(TB_UI_PORT)を使えません。別のポートへは移りません: {last}")
     raise SystemExit(f"herdr-webui: ポート {lo}〜{hi} がすべて使用中です")
 
 
@@ -409,10 +410,13 @@ def main():
     srv, port = bind_server()
     Handler.port = port
     port_file = os.path.join(run_dir, "port")
+    inst_file = os.path.join(run_dir, "instance")
     with open(port_file, "w") as f:
         f.write(f"{port}\n")
+    with open(inst_file, "w") as f:
+        f.write(f"{INSTANCE or 'default'}\n")
     print(f"herdr-webui: listening on http://{HOST}:{port}/", flush=True)
-    print(f"herdr-webui: port={port}", flush=True)
+    print(f"herdr-webui: instance={INSTANCE or 'default'} port={port}", flush=True)
     if Handler.auth.configured():
         print(f"herdr-webui: ログイン http://{HOST}:{port}/login", flush=True)
     else:
@@ -426,7 +430,8 @@ def main():
         srv.serve_forever()
     finally:
         srv.server_close()
-        try:
-            os.remove(port_file)
-        except OSError:
-            pass
+        for fn in (port_file, inst_file):
+            try:
+                os.remove(fn)
+            except OSError:
+                pass
