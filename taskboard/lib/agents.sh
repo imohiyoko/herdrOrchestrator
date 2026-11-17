@@ -174,6 +174,8 @@ OP_OUT=""
 do_agent_new() {  # name cwd model role prompt killable by [spawned_by spawn_task](tb agent-spawn のときだけ) [kind]
   local name=$1 cwd=$2 model=$3 role=$4 prompt=$5 kill=$6 by=$7 sby=${8:-} stask=${9:-} kind=${10:-$KIND_DEFAULT}
   kind_check_launch "$kind" "$model" "" || return 12
+  # 承認待ちの間に roles/<名前>.md が作られていたら、承認した役割と作成後の役割がずれるので作らない
+  ! role_conflict "$name" "$role" || { OP_OUT="roles/$name.md があるため、$name の役割は $role になりません"; return 1; }
   agent_sync || { OP_OUT="herdr agent list に失敗しました"; return 11; }
   [[ -z $(live_row "$name") ]] || { OP_OUT="$name はすでに動いています"; return 1; }
   ! other_session "$name" || return 1
@@ -347,7 +349,7 @@ cmd_agent-new() {
   if [[ -n $role ]]; then
     [[ $role =~ $ROLE_RE && $role != _* && $role != README && -f $ROLES_DIR/$role.md ]] || usage "agent-new: --role は roles/<名前>.md の名前: $role"
     # roles/<名前>.md は台帳の役割より優先される。承認(要求された役割)と作成後の役割がずれないよう拒否する
-    [[ ! -f $ROLES_DIR/$name.md || $role == "$name" ]] || usage "agent-new: roles/$name.md があるため、この名前の役割は $name に固定です(--role $role は効きません)"
+    ! role_conflict "$name" "$role" || usage "agent-new: roles/$name.md があるため、この名前の役割は $name に固定です(--role $role は効きません)"
   fi
   [[ $kill == yes || $kill == no || $kill == unknown ]] || usage "agent-new: --killable は yes|no"
   if [[ $kill != unknown ]]; then   # 判定フラグを付けられるのは agent-flag と同じく判定役か人だけ
@@ -587,6 +589,9 @@ cmd_agent-approve() {
   op=$(jq -r .op <<<"$row"); target=$(jq -r .target <<<"$row"); args=$(jq -r .args <<<"$row"); by=$(jq -r .requested_by <<<"$row")
   if [[ $op == new && -n $(jq -r '.spawn.parent // ""' <<<"$args") ]]; then spawn_recheck "$id" "$args" || return 1
   elif [[ $op == new || $op == revive ]]; then limits_refuse_running 1 || return 4   # 承認待ちの間に上限へ達していたら、承認待ちのまま残す
+  fi
+  if [[ $op == new ]] && role_conflict "$target" "$(jq -r '.role // ""' <<<"$args")"; then   # --always の規則を書く前に止める
+    die "L-$id: roles/$target.md があるため、要求された役割 $(jq -r '.role' <<<"$args") になりません(tb agent-reject L-$id で却下)"
   fi
   ((always)) && set_approval allow "agent:$op:$target" >/dev/null && echo "agent:$op:$target = allow(今後は承認なし)"
   run_op "$op" "$target" "$args" "$by" || r=$?

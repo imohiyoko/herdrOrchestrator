@@ -37,6 +37,11 @@ role_name_of() {  # $1=agent 名
   local f; f=$(role_file_for "$1") || return 1; f=${f##*/}; printf '%s' "${f%.md}"
 }
 
+# roles/<名前>.md があり、要求された役割と違うか(作成後の役割が承認したものとずれる)。ずれるなら 0
+role_conflict() {  # $1=agent 名 $2=要求された役割(空なら無し)
+  [[ -n $2 && $2 != "$1" && -f $ROLES_DIR/$1.md ]]
+}
+
 # 規則のパターンと agent 名を比べる。@<役割の glob> なら役割で、それ以外は名前の glob で比べる。一致すれば 0
 # (routes.conf / approvals.conf の宛先 / spawn-policy の denied_parents が使う。役割の決まり方は role_file_for と同じ)
 # 一致しなければ 1。台帳を読めず役割を確かめられないときは 2(呼び出し側は、そこで許可側に倒さず止める)
