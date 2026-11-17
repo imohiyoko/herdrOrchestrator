@@ -31,7 +31,7 @@ oneline() {  # $1=本文 $2=最大字数
 deliver_comment() {  # $1=comments.id → 0 送信済み / 10 / 11
   local cid=$1 row delivered tid kind text name pane project target msg
   [[ $cid =~ ^[0-9]+$ ]] || usage "コメント ID は C-<数字>"
-  row=$(sql -json "SELECT * FROM comments WHERE herdr_session=$SQS AND id=$cid;" | jq -c '.[0] // empty')
+  row=$(session_row comments id "$cid")
   [[ -n $row ]] || die "コメントが見つかりません: C-$cid"
   delivered=$(jq -r '.delivered_at // ""' <<<"$row")
   if [[ -n $delivered ]]; then echo "C-$cid は配送済みです($delivered)"; return 0; fi

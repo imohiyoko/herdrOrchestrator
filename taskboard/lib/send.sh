@@ -9,13 +9,9 @@ ROUTES=${TB_ROUTES:-$TB_ROOT/config/routes.conf}
 SEND_KINDS="task info answer"
 SEND_MAX=${TB_SEND_MAX:-4000}
 # 届け先の herdr セッションは、この tb のセッション(lib/db.sh の SESS)。outbox の行もそのセッションのものだけを見る
-outbox_deliver_default() { outbox_deliver "$1"; }   # $1=outbox.id
-
-# flush の前に、台帳を herdr の一覧と突き合わせる(台帳の stopped が古いままのことがある)。失敗なら 1
-outbox_sync() { agent_sync; } >/dev/null 2>&1
 
 # 宛先が tb の台帳で停止中(agent-stop 済み、または herdr の一覧から消えた)か。
-# 停止中の宛先には送らず queued のまま残す(revive 後の flush で届く)。outbox_sync のあとでだけ使う
+# 停止中の宛先には送らず queued のまま残す(revive 後の flush で届く)。agent_sync のあとでだけ使う
 outbox_target_stopped() {  # $1=宛先
   [[ -n $(sql "SELECT 1 FROM agents WHERE herdr_session=$SQS AND name=$(q "$1") AND state='stopped' LIMIT 1;" 2>/dev/null) ]]
 }
@@ -71,7 +67,7 @@ _route_rules() {
 
 outbox_deliver() {  # $1=outbox.id → 0 送信済み / 10 / 11
   local oid=$1 row st from pane target kind tid text msg
-  row=$(sql -json "SELECT * FROM outbox WHERE herdr_session=$SQS AND id=$oid;" | jq -c '.[0] // empty')
+  row=$(session_row outbox id "$oid")
   [[ -n $row ]] || die "outbox が見つかりません: O-$oid"
   st=$(jq -r .status <<<"$row")
   [[ $st == queued ]] || { echo "O-$oid は $st です"; return 0; }
@@ -145,7 +141,8 @@ cmd_flush() {
   [[ $# -eq 0 ]] || usage "flush(引数なし)"
   local oid target rc=0 r busy=" " held=" " synced=0
   [[ -n $(sql "SELECT 1 FROM outbox WHERE herdr_session=$SQS AND status='queued' LIMIT 1;") ]] || return 0
-  outbox_sync && synced=1   # herdr に届かなければ判定せず、今までどおり送ってみる
+  # 台帳を herdr の一覧と突き合わせる(台帳の stopped が古いままのことがある)。herdr に届かなければ判定せず、今までどおり送ってみる
+  agent_sync >/dev/null 2>&1 && synced=1
   while IFS=$'\t' read -r oid target; do
     [[ -n $oid ]] || continue
     [[ $busy == *" $target "* || $held == *" $target "* ]] && continue   # 同じ宛先の後続は順序を保つため送らない
@@ -154,7 +151,7 @@ cmd_flush() {
       echo "tb: 宛先 '$target' は停止中のため送りません(queued のまま。tb agent-revive $target のあとの flush で届きます)" >&2
       continue
     fi
-    r=0; outbox_deliver_default "$oid" || r=$?
+    r=0; outbox_deliver "$oid" || r=$?
     if ((r)); then busy+="$target "; ((r > rc)) && rc=$r; fi
   done < <(sql -separator $'\t' "SELECT id, target FROM outbox WHERE herdr_session=$SQS AND status='queued' ORDER BY id;")
   return $rc

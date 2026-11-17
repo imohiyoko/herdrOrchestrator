@@ -112,7 +112,7 @@ cmd_proposal() {
 
 proposal_deliver() {  # $1=id
   local row msg
-  row=$(sql -json "SELECT * FROM proposals WHERE herdr_session=$SQS AND id=$1;" | jq -c '.[0] // empty')
+  row=$(session_row proposals id "$1")
   [[ -n $row && $(jq -r '.delivered_at // ""' <<<"$row") == "" ]] || return 0
   msg="[from: tb / proposal / P-$1 / info] $(jq -r .by_name <<<"$row") から roles/$(jq -r .role_file <<<"$row") の改善提案: $(oneline "$(jq -r .title <<<"$row")" 120) (全文: tb proposals P-$1。対応後に tb proposal-resolve P-$1)"
   herdr_send "$HR_NAME" "$msg" "P-$1" proposal || return $?
@@ -121,7 +121,7 @@ proposal_deliver() {  # $1=id
 
 cmd_proposals() {
   if [[ ${1:-} =~ ^P-[0-9]+$ ]]; then
-    local row; row=$(sql -json "SELECT * FROM proposals WHERE herdr_session=$SQS AND id=${1#P-};" | jq -c '.[0] // empty')
+    local row; row=$(session_row proposals id "${1#P-}")
     [[ -n $row ]] || die "提案が見つかりません: $1"
     jq -r '"P-\(.id) [\(.status)] roles/\(.role_file)  \(.title)\n提案: \(.by_name) / \(.created_at)\(if .note then "\n対応: \(.note)" else "" end)\n\n\(.text)"' <<<"$row"
     return 0

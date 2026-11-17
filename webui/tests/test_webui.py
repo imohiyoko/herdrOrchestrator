@@ -539,7 +539,6 @@ check("報告・承認待ち: 承認待ちの節に、どこでどう承認す�
       "承認待ち(どこで・どう承認するか)" in _ib and "tb approve O-1" in _ib.split("要対応の報告")[0] and "手元で tb …" in _ib)
 check("報告・承認待ち: 質問には答え方(tb send --kind answer)と対応済みの付け方が出る", "--kind answer" in _ib and "tb resolve C-" in _ib)
 # outbox 一覧(読み取り専用。queued が 60 秒超なら強調)
-from datetime import datetime, timedelta, timezone
 _old = (datetime.now(timezone.utc) - timedelta(seconds=300)).strftime("%Y-%m-%dT%H:%M:%SZ")
 _new = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 _c = sqlite3.connect(env["WEBUI_TB_DB"])
@@ -1133,7 +1132,7 @@ check("同梱の mermaid.min.js を同一オリジンから配る", s_ == 200 an
 check("未ログインでは同梱 JS も読めない", Client(port).get("/static/mermaid.min.js")[0] == 302 and Client(port).get("/docs.js")[0] == 302)
 check("static の他のファイルは出さない", cl.get("/static/mermaid.LICENSE")[0] == 404 and cl.get("/static/../app/docs.py")[0] == 404)
 b = cl.get("/tasks/T-1")[2]
-check("タスク画面の成果物が Web UI へのリンクになる", f'href="/docs/view?ref=C-{_cid}%2F0"' in b and f'href="/docs/view?ref=task%3AT-1%2F0"' in b)
+check("タスク画面の成果物が Web UI へのリンクになる", f'href="/docs/view?ref=C-{_cid}%2F0"' in b and 'href="/docs/view?ref=task%3AT-1%2F0"' in b)
 
 # ---- 他のメソッド
 for method in ("POST", "PUT", "DELETE", "PATCH"):
@@ -1421,7 +1420,7 @@ if porta:
           and open(os.path.join(rd, "instance")).read().strip() == "alpha")
     check("TB_INSTANCE=alpha: 既定の run には書かない", not os.path.exists(os.path.join(env["WEBUI_RUN_BASE"], "port")))
 out_a = stop_out(pa)
-check("起動ログにポートとインスタンス名", f"instance=alpha" in out_a and f"port={porta}" in out_a, out_a[:200])
+check("起動ログにポートとインスタンス名", "instance=alpha" in out_a and f"port={porta}" in out_a, out_a[:200])
 
 # ログインは共通: 同じログイン情報の置き場(AUTH_DIR)を見るほかのインスタンスにも、同じ Cookie で入れる
 env, pb, portb = inst_boot("inst-b", "beta", WEBUI_AUTH_DIR=os.path.join(TMP, "inst-a", "auth"))
@@ -1592,9 +1591,24 @@ _data2.q_checked = _qc
 os.makedirs(os.path.join(_rd, "sessions", "s2"), exist_ok=True)
 open(os.path.join(_rd, "sessions", "s2", "auditor.md"), "w").write("a")
 open(os.path.join(_rd, "sessions", "s2", "map.conf"), "w").write("worker* = auditor\n")
-check("graph: ロールは herdr セッション固有(roles/sessions/<s>/ があればそこだけ)",
-      [_graph.role_of("worker1"), _graph.role_of("worker1", session="s2"), _graph.role_of("worker1", "worker", session="s2"),
-       _graph.role_of("worker1", session="s9"), _graph.name_matches("worker1", "@auditor", session="s2")]
+_hs = os.environ.get("HERDR_SESSION")
+
+
+def _in_session(s, f):
+    os.environ["HERDR_SESSION"] = s
+    try:
+        return f()
+    finally:
+        if _hs is None:
+            os.environ.pop("HERDR_SESSION", None)
+        else:
+            os.environ["HERDR_SESSION"] = _hs
+
+
+check("graph: ロールは herdr セッション固有(このセッションの roles/sessions/<s>/ があればそこだけ)",
+      [_in_session("default", lambda: _graph.role_of("worker1")), _in_session("s2", lambda: _graph.role_of("worker1")),
+       _in_session("s2", lambda: _graph.role_of("worker1", "worker")), _in_session("s9", lambda: _graph.role_of("worker1")),
+       _in_session("s2", lambda: _graph.name_matches("worker1", "@auditor"))]
       == ["worker", "auditor", "auditor", "worker", True])
 check("perms: 拡張 glob の行(!(...) など)は判定できないとして止まる(下の allow に進まない)",
       _perms2.decide([{"raw": "send:task:@!(conductor)", "value": "ask"}, {"raw": "*", "value": "allow"}], "send:task:worker1")[0] == "unknown")

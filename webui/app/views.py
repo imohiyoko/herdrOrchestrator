@@ -7,7 +7,7 @@ import shlex
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote, unquote, urlencode
 
-from .config import HERDR_ROOT, INSTANCE, JOB_RE, REFRESH_SEC, SCHED_LOGS, STALL_MIN, TASK_STALE_HOURS
+from .config import INSTANCE, JOB_RE, REFRESH_SEC, SCHED_LOGS, STALL_MIN, TASK_STALE_HOURS
 from .sanitize import clean, e
 from . import graph
 from .herdr import agent_key, agent_session, get_agents, read_agent, workspace_label
@@ -183,9 +183,8 @@ def stop_cell(ctx, name, r):
 
 
 def reg_role(reg, name):
-    """台帳の行(role と herdr_session)から役割。ロールはセッション固有なので、その agent のセッションの役割ファイルで決める。"""
-    r = reg.get(name) or {}
-    return graph.role_of(name, r.get("role"), session=r.get("herdr_session"))
+    """台帳の行の role から役割(台帳も役割ファイルも、このセッションのもの)。"""
+    return graph.role_of(name, (reg.get(name) or {}).get("role"))
 
 
 def role_groups_html(agents, reg):
@@ -276,9 +275,8 @@ def page_agents(qs, ctx=None):
 def page_agent_new(csrf, error="", form=None):
     """新しい agent を作るフォーム(入力欄があるので自動更新しない)。"""
     f = form or {}
-    roles_dir = os.path.join(HERDR_ROOT, "roles")
-    try:
-        roles = sorted(n[:-3] for n in os.listdir(roles_dir) if n.endswith(".md") and not n.startswith("_") and n != "README.md")
+    try:   # 選べる役割は tb と同じ場所(このセッションの roles/sessions/<セッション>/ があればそこ)
+        roles = sorted(n[:-3] for n in os.listdir(graph.roles_dir()) if n.endswith(".md") and not n.startswith("_") and n != "README.md")
     except OSError:
         roles = []
     opts = '<option value="">(名前と roles/map.conf で決める)</option>' + "".join(

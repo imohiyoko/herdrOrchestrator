@@ -22,7 +22,7 @@ need_arg()      { [[ $# -ge 2 ]] || usage "$1 に値が必要です"; }
 blank()         { [[ -z "${1//[[:space:]]/}" ]]; }
 
 task_row() {  # $1=id → JSON 1 行(なければ空)
-  sql -json "SELECT * FROM tasks WHERE herdr_session=$SQS AND id=$(q "$1");" | jq -c '.[0] // empty'
+  session_row tasks id "$1"
 }
 require_task() { local r; r=$(task_row "$1"); [[ -n $r ]] || die "タスクが見つかりません: $1"; printf '%s' "$r"; }
 
