@@ -347,7 +347,11 @@ cmd_agent-new() {
   [[ -z $model || $model =~ $MODEL_RE ]] || usage "agent-new: --model に使えない文字があります: $model"
   kind_check_launch "$kind" "$model" "" || { echo "tb: $OP_OUT" >&2; return 12; }   # 承認待ちに積む前に、その kind でできない依頼は止める
   if [[ -n $role ]]; then
-    [[ $role =~ $ROLE_RE && $role != _* && $role != README && -f $ROLES_DIR/$role.md ]] || usage "agent-new: --role は roles/<名前>.md の名前: $role"
+    local rx; local -a rxs; IFS=, read -ra rxs <<<"$role"
+    ((${#rxs[@]} >= 1 && ${#rxs[@]} <= 4)) || usage "agent-new: --role はカンマ区切りで 1〜4 個: $role"
+    for rx in "${rxs[@]}"; do
+      [[ $rx =~ $ROLE_RE && $rx != _* && $rx != README && -f $ROLES_DIR/$rx.md ]] || usage "agent-new: --role は roles/<名前>.md の名前(カンマ区切りで複数可): $rx"
+    done
     # roles/<名前>.md は台帳の役割より優先される。承認(要求された役割)と作成後の役割がずれないよう拒否する
     ! role_conflict "$name" "$role" || usage "agent-new: roles/$name.md があるため、この名前の役割は $name に固定です(--role $role は効きません)"
   fi
@@ -537,7 +541,7 @@ cmd_agents() {
     load_role "$name" >/dev/null 2>&1 || true
     out=$(jq -c --argjson r "$r" --arg k "$k" --arg s "$status" --arg f "$ROLE_LABEL" \
       '. + [$r + {killable:$k, agent_status:(if $s=="" then null else $s end), role_file:(if $f=="" then null else $f end),
-                  role_name:(if $f=="" then null else ($f | gsub("\\.md"; "")) end)}]' <<<"$out")
+                  role_name:(if $f=="" then null else ($f | split(",") | map(sub("\\.md$"; "")) | join(",")) end)}]' <<<"$out")
   done < <(jq -c '.[]' <<<"$rows")
   if ((graph)); then
     local edges extra g n f
@@ -585,7 +589,10 @@ cmd_peek() {
       return 20
     fi
   fi
-  load_live || die "herdr agent list に失敗しました"
+  if ! load_live; then
+    sql "INSERT INTO read_log (reader, target, lines, status, rule, created_at) VALUES ($(q "$REQ_BY"), $(q "$name"), $lines, 'failed', NULLIF($(q "$rule"),''), $(q "$(now)"));"
+    die "herdr agent list に失敗しました"
+  fi
   row=$(live_row "$name"); pane=$(jq -r '.pane_id // empty' <<<"$row")
   if [[ -z $pane ]]; then
     sql "INSERT INTO read_log (reader, target, lines, status, rule, created_at) VALUES ($(q "$REQ_BY"), $(q "$name"), $lines, 'failed', NULLIF($(q "$rule"),''), $(q "$(now)"));"

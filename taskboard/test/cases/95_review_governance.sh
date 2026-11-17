@@ -13,7 +13,8 @@ rgsql "INSERT INTO outbox (from_name, from_pane, from_session, target, kind, tex
   ('stop','w9','{}','conductor','done','2026-01-01T00:00:00Z',$NOW), ('stop','w9','{}','conductor','pending',$NOW,NULL),
   ('stop','w8','{}','conductor','done',$NOW,$NOW);
   INSERT INTO comments (task_id, kind, text, from_name, from_pane, from_session, created_at) VALUES
-  ('T-x-001','question','鍵はどこ?','worker1','p','s',$NOW), ('T-x-001','question','鍵はどこ?','worker1','p','s',$NOW);
+  ('T-x-001','question','鍵はどこ?','worker1','p','s',$NOW), ('T-x-001','question','鍵はどこ?','worker1','p','s',$NOW),
+  ('T-x-001','question','0123456789012345678901234567890123456789-A','worker2','p','s',$NOW), ('T-x-001','question','0123456789012345678901234567890123456789-B','worker2','p','s',$NOW);
   INSERT INTO agents (name, state, created_by, created_at, updated_at, role) VALUES
   ('worker1','running','human',$NOW,$NOW,'worker'), ('worker2','running','human',$NOW,$NOW,'worker'), ('worker3','running','human',$NOW,$NOW,NULL);
   INSERT INTO tasks (id, project, title, owner_agent, status, created_at, updated_at) VALUES
