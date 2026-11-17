@@ -28,12 +28,18 @@ eq "agent-spawn: a human is refused (use agent-new)" "$(rc $TB agent-spawn worke
 
 # 規則に合わないもの → 4、理由は stderr、何も作らない
 eq "agent-spawn: disallowed role → 4 with the reason" "$(HERDR_PANE_ID=wP:p1 $TB agent-spawn auditor --task "$T1" --brief x 2>&1 >/dev/null | grep -c '許可: worker') $(HERDR_PANE_ID=wP:p1 rc $TB agent-spawn auditor --task "$T1" --brief x)" "1 4"
+rm -rf "$TMP/roles98"; cp -r "$HERE/../../roles" "$TMP/roles98"; printf '別の役割\n' >"$TMP/roles98/parent1-s1.md"
+eq "agent-spawn: a child name with its own roles file (role would differ) → 4, nothing made" "$(TB_ROLES=$TMP/roles98 HERDR_PANE_ID=wP:p1 $TB agent-spawn worker --task "$T1" --brief x 2>&1 >/dev/null | grep -c 'roles/parent1-s1.md') $(TB_ROLES=$TMP/roles98 HERDR_PANE_ID=wP:p1 rc $TB agent-spawn worker --task "$T1" --brief x) $(ws_count)" "1 4 0"
 eq "agent-spawn: unknown role → 4" "$(HERDR_PANE_ID=wP:p1 rc $TB agent-spawn nosuchrole --task "$T1" --brief x)" "4"
 eq "agent-spawn: task of another agent → 4" "$(HERDR_PANE_ID=wP:p1 rc $TB agent-spawn worker --task "$T2" --brief x)" "4"
 eq "agent-spawn: parent without an in_progress task → 4" "$(FAKE_AGENTS="[$SP_C,$(sp_ag idle1 wI:p1)]" HERDR_PANE_ID=wI:p1 $TB agent-spawn worker --task "$T3" --brief x 2>&1 >/dev/null | grep -c 'in_progress') $(FAKE_AGENTS="[$SP_C,$(sp_ag idle1 wI:p1)]" HERDR_PANE_ID=wI:p1 rc $TB agent-spawn worker --task "$T3" --brief x)" "1 4"
 eq "agent-spawn: task not in_progress (todo) → 4" "$(HERDR_PANE_ID=wP:p1 rc $TB agent-spawn worker --task "$T3" --brief x)" "4"
 INC=$(sp_ag inc42-fixer wF:p1); INC_T=$(sp_task inc42-fixer in_progress)
 printf 'denied_parents = inc*-*\n' >"$TMP/spawn-deny.conf"
+printf 'denied_parents = @nosuchrole\n' >"$TMP/spawn-deny-role.conf"
+spsql "ALTER TABLE agents RENAME COLUMN role TO role_x;"
+eq "agent-spawn: denied_parents by role fails closed when the role cannot be read → 4" "$(TB_SPAWN_POLICY=$TMP/spawn-deny-role.conf HERDR_PANE_ID=wP:p1 $TB agent-spawn worker --task "$T1" --brief x 2>&1 >/dev/null | grep -c '確かめられません')" "1"
+spsql "ALTER TABLE agents RENAME COLUMN role_x TO role;"
 eq "agent-spawn: parent matching denied_parents cannot spawn → 4" "$(TB_SPAWN_POLICY=$TMP/spawn-deny.conf FAKE_AGENTS="[$SP_C,$INC]" HERDR_PANE_ID=wF:p1 rc $TB agent-spawn worker --task "$INC_T" --brief x)" "4"
 eq "agent-spawn: nothing created by any refusal" "$(ws_count) $(spsql "SELECT COUNT(*) FROM agents WHERE spawned_by IS NOT NULL;") $(spsql "SELECT COUNT(*) FROM agent_ops;")" "0 0 0"
 
@@ -155,6 +161,8 @@ note=$(grep '^prompt sp-conductor' "$FAKE_LOG")
 eq "agent-spawn ask: rc 20 and the conductor is told (who/role/task/child/L-n/approve)" "$(tail -1 <<<"$out") $(grep -c "from: parent3 / wR:p1 / $T4 / question\] spawn 承認待ち $lid: parent3 が役割 worker の子 parent3-s1 を要求(task $T4)。人が自分の端末で tb agent-approve $lid" <<<"$note")" "rc=20 1"
 eq "agent-spawn ask: brief shown truncated to 80 chars, marked as data" "$(grep -c '依頼(データ): b\{1,80\}' <<<"$note") $(grep -c 'b\{81\}' <<<"$note")" "1 0"
 eq "agent-spawn ask: notification is a saved, delivered question" "$(sqlite3 "$TB_DB" "SELECT kind||' '||(delivered_at IS NOT NULL)||' '||from_name FROM comments WHERE text LIKE 'spawn 承認待ち $lid:%';")" "question 1 parent3"
+rm -rf "$TMP/roles98b"; cp -r "$HERE/../../roles" "$TMP/roles98b"; printf 'x\n' >"$TMP/roles98b/parent3-s1.md"
+eq "agent-approve (spawn): a roles file made while pending stops it before --always is written" "$(TB_ROLES=$TMP/roles98b rc $TB agent-approve "$lid" --always) $(grep -c 'parent3-s1' "$TB_APPROVALS") $(spsql "SELECT status FROM agent_ops WHERE 'L-'||id='$lid';") $(ws_count)" "1 0 pending 0"
 spsql "UPDATE agent_ops SET status='rejected' WHERE status='pending';"
 # 凍結中
 printf 'agent:spawn:* = allow\nagent:* = ask\n* = ask\n' >"$TB_APPROVALS"; $TB spawn-freeze >/dev/null

@@ -9,12 +9,15 @@ ROLE_FILE=""; ROLE_HASH=""; ROLE_TEXT=""
 
 sha256() { if command -v sha256sum >/dev/null; then sha256sum | cut -c1-64; else shasum -a 256 | cut -c1-64; fi; }
 
-role_file_for() {  # $1=agent 名 → 役割ファイルのパス(無ければ空)
+role_file_for() {  # $1=agent 名 [$2=台帳の role(渡せば台帳を読まずにこれで決める)] → 役割ファイルのパス(無ければ空)
   local name=$1 k v pat
   [[ $name =~ ^[A-Za-z0-9._-]{1,64}$ && $name != _* && $name != README ]] || return 0
   if [[ -f $ROLES_DIR/$name.md ]]; then printf '%s' "$ROLES_DIR/$name.md"; return 0; fi
   # tb agent-new --role で決めた役割(台帳 agents.role)
-  local reg; reg=$(sql "SELECT COALESCE(role,'') FROM agents WHERE name=$(q "$name");" 2>/dev/null) || reg=""
+  # ROLE_STRICT=1(許可判定の経路)では照会の失敗を 1 で返し、map.conf に進まない。それ以外(load_role など)は未登録扱い
+  local reg
+  if [[ -n ${2+x} ]]; then reg=$2
+  else reg=$(sql "SELECT COALESCE(role,'') FROM agents WHERE name=$(q "$name");" 2>/dev/null) || { [[ -n ${ROLE_STRICT:-} ]] && return 1; reg=""; }; fi
   if [[ $reg =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && -f $ROLES_DIR/$reg.md ]]; then printf '%s' "$ROLES_DIR/$reg.md"; return 0; fi
   [[ -f $ROLES_DIR/map.conf ]] || return 0
   while IFS='=' read -r k v || [[ -n $k ]]; do
@@ -26,6 +29,58 @@ role_file_for() {  # $1=agent 名 → 役割ファイルのパス(無ければ�
       return 0
     fi
   done <"$ROLES_DIR/map.conf"
+}
+
+# 役割名(roles/<役割>.md の <役割>)。無ければ空
+# ROLE_HINT_NAME / ROLE_HINT: まだ台帳に無い agent(作成の承認判定)は、名前から推定せず要求された役割で判定する
+ROLE_HINT_NAME=""; ROLE_HINT=""
+role_name_of() {  # $1=agent 名
+  if [[ -n $ROLE_HINT_NAME && $1 == "$ROLE_HINT_NAME" ]]; then printf '%s' "$ROLE_HINT"; return 0; fi
+  local i
+  for i in "${!ROLE_PIN_N[@]}"; do
+    if [[ ${ROLE_PIN_N[i]} == "$1" ]]; then [[ ${ROLE_PIN_V[i]} == ok:* ]] || return 1; printf '%s' "${ROLE_PIN_V[i]#ok:}"; return 0; fi
+  done
+  local f; f=$(role_file_for "$1") || return 1; f=${f##*/}; printf '%s' "${f%.md}"
+}
+
+# 作成後の役割が、要求された(承認した)役割とずれるか。ずれるなら 0 で ROLE_CONFLICT_WHY に理由
+#   roles/<名前>.md があり要求と違う(名前のファイルが優先される)/ 要求した roles/<役割>.md が無い(map.conf の役割に落ちる)
+ROLE_CONFLICT_WHY=""
+role_conflict() {  # $1=agent 名 $2=要求された役割(空なら無し)
+  ROLE_CONFLICT_WHY=""
+  [[ -n $2 ]] || return 1
+  if [[ $2 != "$1" && -f $ROLES_DIR/$1.md ]]; then ROLE_CONFLICT_WHY="roles/$1.md があるため、$1 の役割は $2 になりません"; return 0; fi
+  if [[ ! -f $ROLES_DIR/$2.md ]]; then ROLE_CONFLICT_WHY="roles/$2.md が無いため、$1 の役割は $2 になりません"; return 0; fi
+  return 1
+}
+
+# 1 回の判定の中で役割を固定する(規則ごとに台帳を読み直すと、途中の変更で規則をすり抜けうる)。
+# role_pin <名前>...: 役割を一度だけ引いて覚える(引けなければ「確かめられない」として覚える)。role_unpin で忘れる
+ROLE_PIN_N=(); ROLE_PIN_V=()
+role_pin() {
+  local n i r
+  for n in "$@"; do
+    for i in "${!ROLE_PIN_N[@]}"; do [[ ${ROLE_PIN_N[i]} == "$n" ]] && continue 2; done
+    if r=$(ROLE_STRICT=1 role_name_of "$n"); then ROLE_PIN_V+=("ok:$r"); else ROLE_PIN_V+=("fail:"); fi
+    ROLE_PIN_N+=("$n")
+  done
+}
+role_unpin() { ROLE_PIN_N=(); ROLE_PIN_V=(); }
+
+# 規則のパターンと agent 名を比べる。@<役割の glob> なら役割で、それ以外は名前の glob で比べる。一致すれば 0
+# (routes.conf / approvals.conf の宛先 / spawn-policy の denied_parents が使う。役割の決まり方は role_file_for と同じ)
+# 一致しなければ 1。台帳を読めず役割を確かめられないときは 2(呼び出し側は、そこで許可側に倒さず止める)
+name_matches() {  # $1=agent 名 $2=パターン
+  if [[ $2 == @* ]]; then
+    local r
+    # 台帳を読めないときは一致させない(map.conf の役割に落ちて許可側に倒れるのを防ぐ)。役割を引く照会そのものの失敗で判定する
+    r=$(ROLE_STRICT=1 role_name_of "$1") || return 2
+    # shellcheck disable=SC2053  # glob として比べる
+    [[ -n $r && $r == ${2#@} ]]
+  else
+    # shellcheck disable=SC2053
+    [[ $1 == $2 ]]
+  fi
 }
 
 # ROLE_FILE / ROLE_HASH / ROLE_TEXT を埋める。渡すものが無ければ 1
@@ -96,6 +151,59 @@ cmd_role-broadcast() {
     echo "sent $name (${ROLE_HASH:0:12})"
   done < <(jq -r '.result.agents[]? | [.pane_id, (.name // ""), (.agent_session.value // "")] | map(tostring | gsub("[\u001f\n]"; " ")) | join("\u001f")' <<<"$list")
   return $rc
+}
+
+# ロールを変える(台帳 agents.role)。ロールは許可ルール(@<役割>)の主語・目的語なので、これは権限の変更でもある。
+# 人の端末からはそのまま。agent からは人事役(@hr、TB_ROLE_ADMIN で変えられる)だけで、approvals の role:change が allow のときだけ。
+# agent は自分のロールと、人事役のロールを付けることはできない(権限の自己拡大を防ぐ)。記録は role_changes に残る
+ROLE_ADMIN=${TB_ROLE_ADMIN:-hr}
+cmd_role-set() {
+  [[ $# -ge 2 ]] || usage "role-set <agent 名> <ロール> [--reason R]"
+  local name=$1 role=$2 why="" old new; shift 2
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --reason) need_arg "$@"; why=$2; shift 2;;
+      *) usage "role-set: 不明な引数 $1";;
+    esac
+  done
+  [[ $name =~ ^[a-z][a-z0-9_-]{0,31}$ ]] || usage "agent 名は英小文字で始まり、英小文字・数字・_・- の 32 字以内: $name"
+  [[ $role =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ && $role != README && -f $ROLES_DIR/$role.md ]] || usage "ロールは roles/<ロール>.md がある名前: $role"
+  requester
+  if [[ $REQ_BY != human ]]; then
+    name_matches "$REQ_BY" "@$ROLE_ADMIN" || die "ロールを変えられるのは人と人事役(@$ROLE_ADMIN)だけです($REQ_BY)"
+    [[ $REQ_BY != "$name" ]] || die "自分のロールは変えられません"
+    [[ $role != "$ROLE_ADMIN" ]] || die "人事役のロール($ROLE_ADMIN)を付けられるのは人だけです"
+    approval_of "role:change"
+    if [[ $APPROVAL_VALUE != allow ]]; then
+      echo "tb: role:change は人の承認が要ります($APPROVAL_RULE)。人が自分の端末で実行してください: tb role-set $name $role" >&2
+      return 20
+    fi
+  fi
+  agent_sync >/dev/null 2>&1 || true
+  [[ -n $(sql "SELECT 1 FROM agents WHERE name=$(q "$name");") ]] || die "台帳に無い agent です: $name(tb agents で確かめる)"
+  [[ ! -f $ROLES_DIR/$name.md ]] || die "roles/$name.md があるため、台帳のロールは効きません(そのファイルを人事役の手順で直す)"
+  # 旧ロールは実効の役割(台帳の役割ファイルが無ければ map.conf)。台帳の値を先に読み、変更はその値が変わっていないときだけ行う
+  # (読んでから書くまでに別の変更が入ったら、履歴の old_role がずれるので何もせずやり直しを促す)
+  local reg n
+  reg=$(sql "SELECT COALESCE(role,'') FROM agents WHERE name=$(q "$name");") || die "台帳を読めません"
+  old=$(role_file_for "$name" "$reg"); old=${old##*/}; old=${old%.md}   # 読んだ台帳の値から実効の役割を決める(もう一度は読まない)
+  n=$(sql "BEGIN IMMEDIATE;
+    INSERT INTO role_changes (agent, old_role, new_role, changed_by, reason, created_at)
+    SELECT $(q "$name"), NULLIF($(q "$old"),''), $(q "$role"), $(q "$REQ_BY"), NULLIF($(q "$(oneline "$why" 300)"),''), $(q "$(now)")
+    WHERE (SELECT COALESCE(role,'') FROM agents WHERE name=$(q "$name"))=$(q "$reg");
+    UPDATE agents SET role=$(q "$role"), updated_at=$(q "$(now)") WHERE name=$(q "$name") AND COALESCE(role,'')=$(q "$reg");
+    SELECT changes();
+    COMMIT;") || die "ロールを変えられませんでした(DB)"
+  [[ $n == 1 ]] || die "同時に別のロール変更が入りました。もう一度実行してください"
+  new=$(role_name_of "$name")
+  echo "$name role ${old:--} -> $new (by $REQ_BY)。本人に配るには: tb role-broadcast $name"
+}
+
+# ロール変更の記録
+cmd_role-log() {
+  local json=0; [[ ${1:-} == --json ]] && json=1
+  if ((json)); then sql -json "SELECT * FROM role_changes ORDER BY id DESC LIMIT 100;" | jq -c '(. // [])[]'
+  else sql -nullvalue - -separator $'\t' "SELECT created_at, agent, COALESCE(old_role,'-')||' -> '||new_role, changed_by, COALESCE(reason,'') FROM role_changes ORDER BY id DESC LIMIT 100;"; fi
 }
 
 # agent ごとの役割ファイルと、渡した版が最新か

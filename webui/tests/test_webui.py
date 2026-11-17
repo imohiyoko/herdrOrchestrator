@@ -457,6 +457,15 @@ check("resume コマンドは出さず、使わないよう注意する", "claud
 check("attach 欄にインラインのスクリプトがない", "onfocus" not in b)
 check("名前に HTML を含む agent も安全", "&lt;img src=x onerror=alert(2)&gt;" in cl.get("/agents")[2])
 check("pane_id フォールバックの URL", cl.get("/agents/w1%3Ap3")[0] == 200)
+_ab = cl.get("/agents")[2]
+check("agent 一覧にロール別と関係グラフへのリンク", '<h2 id="roles">ロール別</h2>' in _ab and 'href="/agent-graph"' in _ab and _ab.count('<a href="/agents/alpha">') >= 2)
+_gs, _gh, _gb = cl.get("/agent-graph")
+check("関係グラフ: mermaid と表、スクリプトは同一オリジンだけ", _gs == 200 and "<pre class=mermaid>flowchart LR" in _gb
+      and re.findall(r"<script[^>]*>", _gb, re.I) == [NOTIFY_TAG[:-9], '<script src="/static/mermaid.min.js" defer>', '<script src="/docs.js" defer>'],
+      str(re.findall(r"<script[^>]*>", _gb, re.I)))
+_gm = _gb.split("<pre class=mermaid>")[1].split("</pre>")[0]
+check("関係グラフ: 名前のない agent も pane_id で点になる", '[&quot;w1:p3&quot;]' in _gm, _gm[:300])
+check("関係グラフ: HTML を含む名前もラベルでは安全な文字だけ", "&lt;" not in _gm and "_img_src_x_onerror_alert_2_" in _gm, _gm[:300])
 check("未知の agent は 404", cl.get("/agents/nope")[0] == 404)
 check("未知のタスクは 404", cl.get("/tasks/nope")[0] == 404)
 check("未知の URL は 404", cl.get("/nope")[0] == 404)
@@ -1609,6 +1618,61 @@ if portu:
     check("TB_INSTANCE=Alpha は小文字に正規化(run は instance-alpha)", os.path.isdir(os.path.join(env["WEBUI_RUN_BASE"], "instance-alpha")) and "instance-Alpha" not in os.listdir(env["WEBUI_RUN_BASE"]))
     check("TB_INSTANCE=Alpha の画面表示も小文字", ">alpha<" in cu_.get("/tasks")[2])
 stop(pu_)
+
+# ================= 関係グラフ(app/graph.py。tb agents --graph と同じ SQL とまとめ方)と規則の @<役割>
+sys.path.insert(0, os.path.dirname(HERE))
+import app.graph as _graph  # noqa: E402
+import app.perms as _perms2  # noqa: E402
+_rd = os.path.join(TMP, "graph-roles")
+os.makedirs(_rd, exist_ok=True)
+for _r in ("conductor", "worker", "watcher"):
+    open(os.path.join(_rd, _r + ".md"), "w").write("x")
+open(os.path.join(_rd, "map.conf"), "w").write("*-conductor = conductor\nworker* = worker\nwatch* = watcher\n")
+_pc = os.path.join(TMP, "graph-projects.conf")
+open(_pc, "w").write("# c\nprojb = b-conductor\n")
+_old = {k: os.environ.get(k) for k in ("TB_ROLES", "TB_CONFIG")}
+os.environ.update(TB_ROLES=_rd, TB_CONFIG=_pc)
+check("graph: 役割は名前の .md > 台帳の role > map.conf", [_graph.role_of(n, r) for n, r in
+      (("conductor", None), ("b-conductor", None), ("worker1", None), ("helper", "worker"), ("helper", None), ("_x", None))]
+      == ["conductor", "conductor", "worker", "worker", None, None])
+_rows = [{"verb": "lead", "src": None, "dst": "worker2", "project": "projb", "status": "ok", "n": 1, "last_at": "a"},
+         {"verb": "lead", "src": None, "dst": "worker2", "project": "proja", "status": "ok", "n": 1, "last_at": "b"},
+         {"verb": "send:task", "src": "conductor", "dst": "worker1", "project": None, "status": "ok", "n": 2, "last_at": "c"},
+         {"verb": "report", "src": "worker2", "dst": None, "project": "projb", "status": "ok", "n": 1, "last_at": "d"},
+         {"verb": "spawn", "src": "worker1", "dst": "worker1", "project": None, "status": "ok", "n": 1, "last_at": "e"}]
+_es = _graph.edges(_rows)
+check("graph: project の端は指揮官で埋め、自分への辺は捨てる(1 体に複数の上流)",
+      [(x["from"], x["verb"], x["to"]) for x in _es] == [("b-conductor", "lead", "worker2"), ("conductor", "send:task", "worker1"),
+                                                         ("conductor", "lead", "worker2"), ("worker2", "report", "b-conductor")])
+_ns = [{"name": n, "role": _graph.role_of(n)} for n in ("conductor", "b-conductor", "worker1", "worker2", "<b>x</b>")]
+_mm = _graph.mermaid(_ns, _es + [{"verb": "send:task", "from": "worker1", "to": "worker2", "status": "denied", "n": 1, "last_at": ""}])
+check("graph: ロールごとの subgraph とラベルつきの辺(拒否は点線)", 'subgraph g0["conductor"]' in _mm and 'subgraph g2["役割なし"]' in _mm
+      and "-- 依頼 x2 -->" in _mm and "-. 依頼 拒否 .->" in _mm and "<b>" not in _mm, _mm)
+check("graph: 規則の @役割", [_graph.name_matches(n, p) for n, p in (("worker1", "@worker"), ("worker1", "@cond*"), ("x", "@worker"), ("x", "x"))]
+      == [True, False, False, True])
+_rules = [{"raw": "send:*:@worker", "value": "allow"}, {"raw": "*", "value": "ask"}]
+check("perms: @役割 の行は文字列の一致だけで「届かない」としない",
+      _perms2.shadowed_by([{"no": 1, "raw": "send:task:*r", "value": "allow"}, {"no": 2, "raw": "send:task:@worker", "value": "ask"}],
+                          {"no": 2, "raw": "send:task:@worker", "value": "ask"}) is None)
+import app.data as _data2  # noqa: E402
+_qc = _data2.q_checked
+_data2.q_checked = lambda *a, **k: ([], True)   # 台帳は読めるが行が無い
+check("perms: 末尾 @役割 の行を役割で照合", [_perms2.decide(_rules, op)[0] for op in ("send:task:worker1", "send:task:conductor", "role:change")]
+      == ["allow", "ask", "ask"])
+_data2.q_checked = lambda *a, **k: ([], False)
+check("perms: 台帳を読めないときは @役割 を map.conf で一致させない(名前の役割ファイルは使う)",
+      [_perms2.decide(_rules, "send:task:worker1")[0],
+       _perms2.decide([{"raw": "send:*:@conductor", "value": "allow"}, {"raw": "*", "value": "ask"}], "send:task:conductor")[0],
+       _perms2.decide([{"raw": "send:task:@worker", "value": "ask"}, {"raw": "*", "value": "allow"}], "send:task:worker1")[0]]
+      == ["ask", "allow", "ask"])
+_data2.q_checked = _qc
+check("perms: 拡張 glob の行(!(...) など)は判定できないとして止まる(下の allow に進まない)",
+      _perms2.decide([{"raw": "send:task:@!(conductor)", "value": "ask"}, {"raw": "*", "value": "allow"}], "send:task:worker1")[0] == "unknown")
+for _k, _v in _old.items():
+    if _v is None:
+        os.environ.pop(_k, None)
+    else:
+        os.environ[_k] = _v
 
 print()
 print("FAILED: " + ", ".join(fails) if fails else "all passed")

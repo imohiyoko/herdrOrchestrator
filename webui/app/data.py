@@ -37,6 +37,19 @@ def q(sql, params=()):
         c.close()
 
 
+def q_checked(sql, params=()):
+    """q と同じだが、照会できたかを返す: (行, 成否)。許可判定で「該当なし」と「読めない」を区別するため。"""
+    c = db_conn()
+    if c is None:
+        return [], False
+    try:
+        return [dict(r) for r in c.execute(sql, params).fetchall()], True
+    except sqlite3.Error:
+        return [], False
+    finally:
+        c.close()
+
+
 def tail_lines(path, n, maxbytes=262144):
     try:
         with open(path, "rb") as f:

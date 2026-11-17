@@ -99,8 +99,11 @@ spawn_check() {
   # shellcheck disable=SC2053  # glob として比べる
   local pat
   for pat in $SP_DENY_PARENTS; do
-    # shellcheck disable=SC2053  # glob として比べる
-    if [[ $parent == $pat ]]; then SPAWN_WHY="$parent は子を立てられません(spawn-policy の denied_parents: $pat)"; return 1; fi
+    local m=0; name_matches "$parent" "$pat" || m=$?
+    case $m in
+      0) SPAWN_WHY="$parent は子を立てられません(spawn-policy の denied_parents: $pat)"; return 1;;
+      2) SPAWN_WHY="台帳を読めないため、$parent が denied_parents($pat)に当たるか確かめられません"; return 1;;
+    esac
   done
   agent_sync || { SPAWN_WHY="herdr agent list に失敗したため、親が動いているか確かめられません"; return 1; }
   [[ -n $(live_row "$parent") ]] || { SPAWN_WHY="親 $parent は herdr で動いていません"; return 1; }
@@ -169,6 +172,8 @@ cmd_agent-spawn() {
   local name cwd args prompt
   name=$(spawn_next_name "$parent") || { echo "tb: agent-spawn を拒否しました: 子の名前を決められません" >&2; return 4; }
   [[ $name =~ $AGENT_NAME_RE ]] || { echo "tb: agent-spawn を拒否しました: 子の名前 $name が長すぎます(32 字まで)" >&2; return 4; }
+  # roles/<子の名前>.md は要求された役割より優先される。承認と作成後の役割がずれないよう拒否する
+  ! role_conflict "$name" "$role" || { echo "tb: agent-spawn を拒否しました: $ROLE_CONFLICT_WHY" >&2; return 4; }
   cwd=$(sql "SELECT COALESCE(cwd,'') FROM agents WHERE name=$(q "$parent");"); [[ -n $cwd && -d $cwd ]] || cwd=$AGENT_CWD
   prompt=$(spawn_prompt "$parent" "$name" "$role" "$task" "$(oneline "$brief" "$BRIEF_MAX")")
   args=$(jq -nc --arg c "$cwd" --arg m "$SP_MODEL" --arg r "$role" --arg p "$prompt" --arg pa "$parent" --arg t "$task" \
@@ -176,7 +181,9 @@ cmd_agent-spawn() {
   local why="" id r=0
   if spawn_frozen; then why="spawn-freeze 中"
   else
+    ROLE_HINT_NAME=$name; ROLE_HINT=$role   # 子はまだ台帳に無い。名前からの推定でなく要求された役割で判定する
     approval_of "agent:spawn:$name"
+    ROLE_HINT_NAME=""; ROLE_HINT=""
     [[ $APPROVAL_VALUE == allow ]] || why="approvals: $APPROVAL_RULE"
   fi
   if [[ -n $why ]]; then

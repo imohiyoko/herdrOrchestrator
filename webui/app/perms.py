@@ -6,10 +6,11 @@ from fnmatch import fnmatchcase
 import shlex
 
 from .config import APPROVALS, CATALOG
+from .graph import name_matches, roles_dir
 from .sanitize import clean
 
 # tb の valid_action と同じ文字種
-ACTION_RE = re.compile(r"[A-Za-z0-9._:*?][A-Za-z0-9._:*?-]{0,127}")
+ACTION_RE = re.compile(r"[A-Za-z0-9._:*?@][A-Za-z0-9._:*?@-]{0,127}")
 
 # 一致の例に使う、tb が実際に出す操作名(宛先は仮の名前)
 SAMPLE_OPS = ["send:task:worker1", "send:info:worker1", "send:answer:worker1", "role:change", "proxy:read-only",
@@ -45,7 +46,29 @@ def load_rules():
 
 
 def has_bracket(r):
-    return "[" in r["raw"]
+    """bash の glob と fnmatch で結果が変わりうる行([...] と、拡張 glob の !(...) @(...) など)。"""
+    return "[" in r["raw"] or "(" in r["raw"]
+
+
+def matches(op, pat):
+    """tb の approval_of と同じ照合。末尾が @<役割> の行は、操作の末尾の名前を役割で比べる。
+    台帳を読めず役割を確かめられないときは None(tb と同じく、その行で ask にして下へ進まない)。"""
+    head, _, last = pat.rpartition(":")
+    if last.startswith("@"):
+        if ":" not in op:
+            return False
+        oh, _, on = op.rpartition(":")
+        if not fnmatchcase(oh, head):
+            return False
+        from . import data   # tb と同じく台帳の role を先に見る(循環 import を避けてここで読む)
+        reg, ok = data.q_checked("SELECT role FROM agents WHERE name=?", (on,))
+        if not ok:
+            # 台帳を読めないときは map.conf に落とさない(tb の ROLE_STRICT と同じ)。名前そのものの役割ファイルだけは台帳なしで決まる
+            if os.path.isfile(os.path.join(roles_dir(), on + ".md")):
+                return name_matches(on, last)
+            return None
+        return name_matches(on, last, reg[0]["role"] if reg else None)
+    return fnmatchcase(op, pat)
 
 
 def decide(rules, op):
@@ -54,7 +77,10 @@ def decide(rules, op):
     for r in rules:
         if has_bracket(r):
             return "unknown", r
-        if fnmatchcase(op, r["raw"]):
+        m = matches(op, r["raw"])
+        if m is None:
+            return "ask", r
+        if m:
             return r["value"], r
     return "ask", None
 
@@ -80,10 +106,10 @@ def warning(r):
 
 def shadowed_by(rules, r):
     """ワイルドカードを含まない行が、上の行で先に決まってしまうとき、その行(届かない行の検出)。"""
-    if wildcard(r["raw"]):
-        return None
+    if wildcard(r["raw"]) or "@" in r["raw"]:
+        return None   # @<役割> は名前でなく役割の集合なので、文字列の一致では判定しない
     for o in rules[: r["no"] - 1]:
-        if has_bracket(o):
+        if has_bracket(o) or "@" in o["raw"]:
             return None   # 判定できないので「隠れる」とは言わない
         if fnmatchcase(r["raw"], o["raw"]):
             return o

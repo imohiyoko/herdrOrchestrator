@@ -6,11 +6,18 @@
 APPROVALS=${TB_APPROVALS:-$TB_ROOT/config/approvals.conf}
 APPROVAL_RULE=""
 
-valid_action() { [[ $1 =~ ^[A-Za-z0-9._:*?-]{1,128}$ ]] || usage "操作名に使えない文字があります: $1"; }
+valid_action() { [[ $1 =~ ^[A-Za-z0-9._:*?@-]{1,128}$ ]] || usage "操作名に使えない文字があります: $1"; }
 
 # approval_of <操作>: APPROVAL_VALUE に ask|allow、根拠の行を APPROVAL_RULE に入れる(サブシェルで呼ばない)
 APPROVAL_VALUE=ask
 approval_of() {
+  # 対象の役割は判定の間 1 回だけ引いて固定する(規則ごとに読み直さない)
+  local pinned=0
+  if [[ $1 == *:* && ${#ROLE_PIN_N[@]} -eq 0 ]]; then role_pin "${1##*:}"; pinned=1; fi
+  _approval_rules "$1"
+  ((pinned == 0)) || role_unpin
+}
+_approval_rules() {
   local act=$1 line k v
   APPROVAL_RULE="(一致なし: 既定 ask)"; APPROVAL_VALUE=ask
   if [[ -f $APPROVALS ]]; then
@@ -18,6 +25,18 @@ approval_of() {
       line=$(trim "${line%%#*}"); [[ $line == *=* ]] || continue
       k=$(trim "${line%%=*}"); v=$(trim "${line#*=}")
       [[ $v == ask || $v == allow ]] || continue
+      if [[ ${k##*:} == @* ]]; then
+        # 末尾が @<役割>(例: send:task:@worker)なら、操作の末尾の名前を役割で比べる
+        [[ $act == *:* ]] || continue
+        # shellcheck disable=SC2053  # glob として比べる
+        [[ ${act%:*} == ${k%:*} ]] || continue
+        local m=0; name_matches "${act##*:}" "${k##*:}" || m=$?
+        case $m in
+          0) APPROVAL_RULE="$k = $v"; APPROVAL_VALUE=$v; return 0;;
+          2) APPROVAL_RULE="$k(台帳を読めず役割を確かめられないため ask)"; APPROVAL_VALUE=ask; return 0;;   # 下の行の allow に進まない
+        esac
+        continue
+      fi
       # shellcheck disable=SC2053  # glob として比べる
       if [[ $act == $k ]]; then APPROVAL_RULE="$k = $v"; APPROVAL_VALUE=$v; return 0; fi
     done <"$APPROVALS"

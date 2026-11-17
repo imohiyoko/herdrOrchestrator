@@ -213,6 +213,8 @@ tb alert-close A-<n>                # 人が閉じる
 
 ```bash
 tb agents [--json] [--all]          # 台帳と判定材料: 状態・killable・未完了タスク数・未対応の質問数・idle 分・役割ファイル
+tb agents --group role              # ロールごとにまとめた一覧
+tb agents --graph [--json]          # 関係グラフ(下の「agent の関係グラフ」)
 tb agent-new <名前> [--cwd D] [--kind K] [--model M] [--role R] [--prompt P] [--killable yes|no]
 tb agent-stop <名前> [--force]
 tb agent-revive <名前> [--fresh] [--model M] [--prompt P]
@@ -243,6 +245,54 @@ tb agent-approve L-<n> [--always] / tb agent-reject L-<n>      # 人だけ
   `ask` なら `L-<n>` として人の承認待ちに積む(終了コード 20。Web UI の緊急通知と agent 一覧に出る)。`allow` ならそのまま実行する(停止の前提はそれでも確かめる)。`--force` は人だけ
 - herdr のセッション(`HERDR_SESSION`、プリセットの `# session:`)ごとに台帳を分けて扱う。別セッションの agent は同期で「止まった」扱いにせず、操作するときは `HERDR_SESSION=<名前>` を付けるよう案内する
 - 実行したもの・断ったもの・承認待ちは `agent_ops` にすべて残る。終了コード: 0 実行済み / 1 拒否・前提違い / 11 herdr の失敗 / 20 承認待ち
+
+### agent の関係グラフ(`tb agents --graph`)とロール
+
+agent 同士の関係は 1 本の木ではなく、`主体 -動詞→ 対象` のエッジの集まり(メッシュ)として出す。1 体が複数の上流(spawn の親・複数 project の指揮官・送信者)を持ってよい。
+エッジは既存の記録から作る(`taskboard/sql/agent_edges.sql`。Web UI の /agent-graph も同じ SQL を読む)。
+
+| 動詞 | 元の記録 | 意味 |
+|---|---|---|
+| spawn | 台帳 `agents.spawned_by` | 親が `tb agent-spawn` で子を立てた |
+| lead | 未完了タスク(in_progress / review / blocked)の project | その project の指揮官(`config/projects.conf`)→ 担当 agent |
+| send:task / send:info / send:answer | `tb send` の outbox(直近 7 日) | 依頼・連絡・回答。routes.conf で拒否された試みは `[denied]` |
+| report | `tb comment`(直近 7 日) | 担当 agent → タスクの project の指揮官 |
+| analyze | アラート(直近 7 日) | 報告した見張り役 → 解析役 |
+| role | `tb role-set` の記録(直近 7 日) | 人事役 → ロールを変えられた agent(人の操作は辺にしない) |
+
+```
+[conductor]
+  conductor  running/idle
+[worker]
+  worker1  running/working
+  worker3  running/idle
+
+関係(直近 7 日。spawn と lead は今の状態):
+  conductor  -send:task ×2→  worker1
+  worker1  -spawn→  worker3
+```
+
+ロールは `roles/<名前>.md` > 台帳の role(`tb agent-new --role`)> `roles/map.conf` の順で決まる。`tb agents --group role` はロールごとにまとめた一覧。
+
+#### 規則の @<役割>
+
+「どのロールがどのロールに何をしてよいか」を書けるように、次の規則では名前の glob の代わりに `@<役割の glob>` が使える。
+
+- `config/routes.conf`: `@conductor -> @worker`、`!@worker -> @conductor`(送信者・宛先の両方)
+- `config/approvals.conf`: 末尾の宛先を `@<役割>` にする(例 `send:task:@worker = allow`、`agent:stop:@analyst = allow`)
+- `config/spawn-policy.conf` の `denied_parents`(例 `@watcher`)
+
+役割は上の決まり方で引くので、役割を変えられる操作(`tb agent-new --role`、`roles/` や `map.conf` の書き換え)は、そのまま権限の変更になる。agent からのそれらは従来どおり人の承認が要る(`agent:new:*` と `role:change` は ask のまま)。
+
+#### ロール変更は人事役の専用操作(`tb role-set`)
+
+agent ごとのロールを変える入口は `tb role-set <agent 名> <ロール> [--reason R]` に絞る(台帳の role を書き換え、`role_changes` に記録する)。
+
+- 人の端末からはそのまま実行できる
+- agent から実行できるのは人事役(`@hr`。`TB_ROLE_ADMIN` で変えられる)だけ。`approvals.conf` の `role:change` が allow でなければ終了コード 20 で止まり、人の実行を求める
+- agent は自分のロールを変えられず、人事役のロールを付けることもできない(権限の自己拡大を防ぐ)
+- `roles/<名前>.md` がある agent は台帳のロールが効かないので拒否する
+- 記録は `tb role-log`。人事役による変更は関係グラフに `role` の辺として出る。会計役(auditor)は提案するだけで、変えない
 
 ### 規則つきの子 agent 作成(`tb agent-spawn`)
 

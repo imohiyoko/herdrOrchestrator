@@ -9,6 +9,7 @@ from urllib.parse import quote, unquote, urlencode
 
 from .config import HERDR_ROOT, INSTANCE, JOB_RE, REFRESH_SEC, SCHED_LOGS, STALL_MIN, TASK_STALE_HOURS
 from .sanitize import clean, e
+from . import graph
 from .herdr import agent_key, agent_session, get_agents, read_agent, workspace_label
 from .data import has_resolution, parse_ts, NOTIFY_POLL_SEC, QUEUED_WARN_SEC, outbox_rows, activity_for, agent_ops, agent_registry, stopped_agents, db_conn, needs_human, parse_jsonl, q, stalled, tail_lines, tasks_for_agent, urgent_items, LEDGER_MAX, LEDGER_RESULTS, approval_history, ledger_kinds, ledger_rows, ledger_summary
 from .actions import NOTE_MAX
@@ -35,6 +36,7 @@ pre{background:#fff;border:1px solid #d0d7de;padding:8px;overflow:auto;white-spa
 code{background:#eaeef2;padding:1px 4px;border-radius:3px}
 .st-working{color:#9a6700}.st-blocked,.warn{color:#cf222e;font-weight:bold}.st-idle{color:#6e7781}.st-done{color:#1a7f37}
 .note{color:#6e7781;font-size:12px}
+pre.mermaid{background:#fff}
 .inst{padding:2px 10px;border-radius:4px;font-weight:bold;background:#d0d7de;color:#1f2328}.inst-warn{background:#8a5a00;color:#fff;border:1px solid #fff}
 .doc{background:#fff;border:1px solid #d0d7de;padding:8px 24px;overflow-wrap:anywhere}
 .doc table{width:auto}.doc pre{background:#f6f8fa}.doc blockquote{border-left:4px solid #d0d7de;margin:0;padding:0 12px;color:#57606a}
@@ -179,6 +181,46 @@ def stop_cell(ctx, name, r):
     return op_form(ctx, "force-stop", name, "強制停止", confirm=True)
 
 
+def role_groups_html(agents, reg):
+    """動いている agent をロールごとにまとめた一覧。"""
+    nodes = [{"agent": a, "role": graph.role_of(a.get("name") or "", (reg.get(a.get("name") or "") or {}).get("role"))} for a in agents]
+    rows = [[e(role) if role else "(役割なし)", ", ".join(f'{alink(n["agent"])} {state_html(n["agent"].get("agent_status"))}' for n in ns)]
+            for role, ns in graph.by_role(nodes)]
+    return table(["ロール", "agent"], rows)
+
+
+def page_agent_graph(qs, ctx=None):
+    """関係グラフ(主体 -動詞→ 対象)。ロールごとの枠にまとめて mermaid で描き、表でも出す(JS なしでも読める)。"""
+    ctx = {} if ctx is None else ctx
+    agents, err = get_agents()
+    reg = agent_registry()
+    es = graph.edges(q(graph.edge_sql()))
+    nodes, seen = [], set()
+    for a in agents:
+        n = agent_key(a)   # 名前が無ければ pane_id(一覧・リンクと同じ)
+        if n and n not in seen:
+            seen.add(n)
+            nodes.append({"name": n, "role": graph.role_of(a.get("name") or "", (reg.get(a.get("name") or "") or {}).get("role")), "agent": a})
+    for x in [v for ed in es for v in (ed["from"], ed["to"])]:
+        if x not in seen:   # 関係の端に居るが今は動いていない名前(止まった agent・cli など)
+            seen.add(x)
+            nodes.append({"name": x, "role": graph.role_of(x, (reg.get(x) or {}).get("role")), "agent": None})
+    ctx["scripts"] = ["/static/mermaid.min.js", "/docs.js"]
+    body = err_html(err) + (
+        '<p class=note>直近 7 日の「誰が誰に何をしたか」(spawn と指揮は今の状態)。1 体が複数の上流を持つこともあります。'
+        '点線は routes.conf で拒否された送信の試みです。手元では tb agents --graph で同じものを出せます。 <a href="/agents">agent 一覧へ</a></p>')
+    body += f"<pre class=mermaid>{e(graph.mermaid(nodes, es))}</pre>"
+    body += "<h2>関係</h2>" + table(
+        ["主体", "動詞", "対象", "件数", "最後", "判定"],
+        [[e(ed["from"]), e(graph.VERB_LABEL.get(ed["verb"], ed["verb"])), e(ed["to"]), e(ed["n"]), e(ed["last_at"]),
+          '<span class=warn>拒否</span>' if ed["status"] == "denied" else "ok"] for ed in es])
+    body += "<h2>ロール</h2>" + table(
+        ["ロール", "agent"],
+        [[e(role) if role else "(役割なし)", ", ".join(alink(n["agent"]) if n["agent"] else e(n["name"]) for n in ns)]
+         for role, ns in graph.by_role(nodes)])
+    return "agent の関係", body
+
+
 def page_agents(qs, ctx=None):
     ctx = {} if ctx is None else ctx
     agents, err = get_agents()
@@ -200,6 +242,8 @@ def page_agents(qs, ctx=None):
     st = (qs.get("op") or [""])[0]
     body = (f"<p class=note>{e(OP_MSG[st])}</p>" if st in OP_MSG else "") + err_html(err) + table(
         ["名前", "状態", "workspace", "いま何を", "最終入力 / 停止", "警告", "止めてよいか", "操作"], rows)
+    body += ('<h2 id="roles">ロール別</h2>' + role_groups_html(agents, reg) +
+             '<p class=note>誰が誰に何をしたか(spawn・指揮・依頼・報告・解析)は <a href="/agent-graph">関係グラフ</a> で見られます。</p>')
     body += ('<p class=note>「止めてよいか」は判定役(roles/sweeper.md)か人が付けます。止めてよい印があり、未完了タスクが無いものは「停止」、'
              'それ以外は確認つきの「強制停止」。止めても台帳に会話が残り、下から同じ会話で復活できます。 '
              '<a href="/agent-new">新しい agent を作る</a></p>')
@@ -1151,6 +1195,8 @@ def route(path, qs, ctx=None):
         return page_inbox(qs, ctx)
     if path == "/agents":
         return page_agents(qs, ctx)
+    if path == "/agent-graph":
+        return page_agent_graph(qs, ctx)
     if path == "/agent-new":
         ctx["norefresh"] = True
         return page_agent_new(ctx.get("csrf", ""))

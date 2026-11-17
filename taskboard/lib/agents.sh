@@ -21,7 +21,7 @@ AGENT_CWD=${TB_AGENT_CWD:-$TB_ROOT/..}
 OPEN_TASK_STATUSES="'in_progress','review','blocked'"
 HSESS=$(herdr_session_name)   # HERDR_SOCKET_PATH > HERDR_SESSION > default(lib/herdr-env.sh)。 herdr agent list が見せるのはこのセッションの agent だけ
 
-valid_agent_name() { [[ $1 =~ $AGENT_NAME_RE ]] || usage "agent 名は英小文字で始まり、英小文字・数字・_・- の 32 字以内: $1"; }
+valid_agent_name() { [[ $1 != human && $1 =~ $AGENT_NAME_RE ]] || usage "agent 名は英小文字で始まり、英小文字・数字・_・- の 32 字以内(human は予約名): $1"; }
 valid_lid() { [[ $1 =~ ^L-[0-9]+$ ]] || usage "操作 ID は L-<数字>: $1"; }
 agent_reg_row() { sql -json "SELECT * FROM agents WHERE name=$(q "$1");" | jq -c '.[0] // empty'; }
 
@@ -100,6 +100,7 @@ requester() {
   if [[ -n ${HERDR_PANE_ID:-} ]]; then
     n=$(pane_owner_name "$HERDR_PANE_ID") || die "herdr agent list に失敗したため、実行者を特定できません"
   fi
+  [[ $n != human ]] || die "agent 名 human は予約名です(人と区別できないため、この agent からの操作は受けません)"
   REQ_BY=${n:-human}
 }
 
@@ -107,7 +108,10 @@ requester() {
 authorize_op() {  # $1=op $2=対象 $3=引数の JSON
   requester
   [[ $REQ_BY == human ]] && return 0
+  # 作成は、名前から推定した役割ではなく要求された役割(--role)で @<役割> を判定する
+  if [[ $1 == new && -n $(jq -r '.role // ""' <<<"$3") ]]; then ROLE_HINT_NAME=$2; ROLE_HINT=$(jq -r '.role' <<<"$3"); fi
   approval_of "agent:$1:$2"
+  ROLE_HINT_NAME=""; ROLE_HINT=""
   [[ $APPROVAL_VALUE == allow ]] && return 0
   local id
   id=$(sql "INSERT INTO agent_ops (op, target, args, requested_by, status, result, created_at)
@@ -170,6 +174,8 @@ OP_OUT=""
 do_agent_new() {  # name cwd model role prompt killable by [spawned_by spawn_task](tb agent-spawn のときだけ) [kind]
   local name=$1 cwd=$2 model=$3 role=$4 prompt=$5 kill=$6 by=$7 sby=${8:-} stask=${9:-} kind=${10:-$KIND_DEFAULT}
   kind_check_launch "$kind" "$model" "" || return 12
+  # 承認待ちの間に roles/<名前>.md が作られていたら、承認した役割と作成後の役割がずれるので作らない
+  ! role_conflict "$name" "$role" || { OP_OUT=$ROLE_CONFLICT_WHY; return 1; }
   agent_sync || { OP_OUT="herdr agent list に失敗しました"; return 11; }
   [[ -z $(live_row "$name") ]] || { OP_OUT="$name はすでに動いています"; return 1; }
   ! other_session "$name" || return 1
@@ -342,6 +348,8 @@ cmd_agent-new() {
   kind_check_launch "$kind" "$model" "" || { echo "tb: $OP_OUT" >&2; return 12; }   # 承認待ちに積む前に、その kind でできない依頼は止める
   if [[ -n $role ]]; then
     [[ $role =~ $ROLE_RE && $role != _* && $role != README && -f $ROLES_DIR/$role.md ]] || usage "agent-new: --role は roles/<名前>.md の名前: $role"
+    # roles/<名前>.md は台帳の役割より優先される。承認(要求された役割)と作成後の役割がずれないよう拒否する
+    ! role_conflict "$name" "$role" || usage "agent-new: roles/$name.md があるため、この名前の役割は $name に固定です(--role $role は効きません)"
   fi
   [[ $kill == yes || $kill == no || $kill == unknown ]] || usage "agent-new: --killable は yes|no"
   if [[ $kill != unknown ]]; then   # 判定フラグを付けられるのは agent-flag と同じく判定役か人だけ
@@ -468,13 +476,41 @@ cmd_agent-flag() {
   echo "$name killable=$kill"
 }
 
-# 台帳 + 判定に使う材料(判定役はこれを読んで決める)
+# 関係グラフ: taskboard/sql/agent_edges.sql の行を、主体 -動詞→ 対象 のエッジにする(Web UI の /agent-graph と同じ SQL)。
+# project しか分からない端(lead の主体・report の宛先)は target_for で指揮官にする。自分への辺と端の欠けた行は捨て、同じ (動詞, 主体, 対象, status) はまとめる
+EDGES_SQL=$TB_ROOT/sql/agent_edges.sql
+agent_edges() {
+  local rows projects map="{}" p
+  rows=$(sql -json "$(grep -v '^--' "$EDGES_SQL");") || return 1
+  [[ -n $rows ]] || rows="[]"
+  projects=$(jq -r '[.[] | .project // empty] | unique[]' <<<"$rows")
+  while IFS= read -r p; do
+    [[ -n $p ]] || continue
+    map=$(jq -c --arg k "$p" --arg v "$(target_for "$p")" '. + {($k): $v}' <<<"$map")
+  done <<<"$projects"
+  jq -c --argjson m "$map" '
+    map(.src = (.src // (if .project then $m[.project] else null end)) | .dst = (.dst // (if .project then $m[.project] else null end)))
+    | map(select(.src != null and .dst != null and .src != "" and .dst != "" and .src != .dst))
+    | group_by([.verb, .src, .dst, .status])
+    | map({verb: .[0].verb, from: .[0].src, to: .[0].dst, status: .[0].status, n: (map(.n) | add), last_at: (map(.last_at // "") | max)})' <<<"$rows"
+}
+
+# --graph の文字の出力: ロールごとの agent と、直近 7 日の関係(拒否された試みには [denied])
+AGENT_GRAPH_RENDER_JQ='
+  (.nodes | group_by(.role // "-") | map("[\(.[0].role // "-")]", (.[] | "  \(.name)  \(.state)/\(.agent_status // "-")")) | .[]),
+  "", "関係(直近 7 日。spawn と lead は今の状態):",
+  (if (.edges | length) == 0 then "  (なし)" else
+     (.edges | sort_by(.from, .to, .verb) | .[] | "  \(.from)  -\(.verb)\(if .n > 1 then " ×\(.n)" else "" end)→  \(.to)\(if .status == "denied" then "  [denied]" else "" end)") end)'
+
+# 台帳 + 判定に使う材料(判定役はこれを読んで決める)。--group role はロールごとにまとめる。--graph は関係グラフ
 cmd_agents() {
-  local json=0 all=0
+  local json=0 all=0 graph=0 group=""
   while [[ $# -gt 0 ]]; do
     case $1 in
       --json) json=1; shift;;
       --all) all=1; shift;;
+      --graph) graph=1; shift;;
+      --group) need_arg "$@"; [[ $2 == role ]] || usage "agents: --group は role だけ"; group=$2; shift 2;;
       *) usage "agents: 不明な引数 $1";;
     esac
   done
@@ -482,7 +518,7 @@ cmd_agents() {
   local where="1=1"; ((all)) || where="(a.state='running' OR a.stopped_at > strftime('%Y-%m-%dT%H:%M:%SZ','now','-7 days'))"
   local rows name k status
   rows=$(sql -json "SELECT a.name, a.state, a.pane_id, a.session_id, a.cwd, a.model, a.role, a.killable_reason, a.killable_by, a.killable_at,
-      a.created_by, a.created_at, a.stopped_at,
+      a.created_by, a.created_at, a.stopped_at, a.spawned_by, a.spawn_task,
       (SELECT COUNT(*) FROM tasks t WHERE t.owner_agent=a.name AND t.status IN ($OPEN_TASK_STATUSES)) AS open_tasks,
       (SELECT COUNT(*) FROM comments c LEFT JOIN tasks t ON t.id=c.task_id WHERE c.from_name=a.name AND c.kind IN ('question','blocked')
          AND c.resolved_at IS NULL AND COALESCE(t.status,'')!='done') AS open_questions,
@@ -500,9 +536,29 @@ cmd_agents() {
     status=$(jq -r --arg n "$name" '[.[] | select(.name==$n)][0].agent_status // ""' <<<"$LIVE_AGENTS")
     load_role "$name" >/dev/null 2>&1 || true
     out=$(jq -c --argjson r "$r" --arg k "$k" --arg s "$status" --arg f "${ROLE_FILE#"$ROLES_DIR"/}" \
-      '. + [$r + {killable:$k, agent_status:(if $s=="" then null else $s end), role_file:(if $f=="" then null else $f end)}]' <<<"$out")
+      '. + [$r + {killable:$k, agent_status:(if $s=="" then null else $s end), role_file:(if $f=="" then null else $f end),
+                  role_name:(if $f=="" then null else ($f | sub("\\.md$"; "")) end)}]' <<<"$out")
   done < <(jq -c '.[]' <<<"$rows")
+  if ((graph)); then
+    local edges extra g n f
+    edges=$(agent_edges) || die "関係を読めません(DB)"
+    # 関係の端に居るが一覧に無い名前(止まって 7 日を過ぎた agent・cli など)も点として足す
+    g=$(jq -c --argjson e "$edges" '{nodes: map({name, state, agent_status, role: .role_name}), edges: $e}' <<<"$out")
+    extra=$(jq -r '(.nodes | map(.name)) as $have | [.edges[] | .from, .to] | unique | map(select(. as $x | $have | index($x) | not)) | .[]' <<<"$g")
+    while IFS= read -r n; do
+      [[ -n $n ]] || continue
+      f=$(role_name_of "$n")
+      g=$(jq -c --arg n "$n" --arg r "$f" '.nodes += [{name:$n, state:"-", agent_status:null, role:(if $r=="" then null else $r end)}]' <<<"$g")
+    done <<<"$extra"
+    if ((json)); then jq -c . <<<"$g"; else jq -r "$AGENT_GRAPH_RENDER_JQ" <<<"$g"; fi
+    return 0
+  fi
   if ((json)); then jq -c '.[]' <<<"$out"; return 0; fi
+  if [[ $group == role ]]; then
+    jq -r 'group_by(.role_name // "-") | .[] | "[\(.[0].role_name // "-")]", (.[] | "  " + ([.name, .state, (.agent_status // "-"), .killable,
+       "tasks:\(.open_tasks)", "q:\(.open_questions)", "idle:\(.idle_min // "-")m", (.killable_reason // "")] | join("\t")))' <<<"$out"
+    return 0
+  fi
   jq -r '.[] | [.name, .state, (.agent_status // "-"), .killable, "tasks:\(.open_tasks)", "q:\(.open_questions)",
      "idle:\(.idle_min // "-")m", (.role_file // "-"), (.killable_reason // "")] | join("\t")' <<<"$out"
 }
@@ -533,6 +589,9 @@ cmd_agent-approve() {
   op=$(jq -r .op <<<"$row"); target=$(jq -r .target <<<"$row"); args=$(jq -r .args <<<"$row"); by=$(jq -r .requested_by <<<"$row")
   if [[ $op == new && -n $(jq -r '.spawn.parent // ""' <<<"$args") ]]; then spawn_recheck "$id" "$args" || return 1
   elif [[ $op == new || $op == revive ]]; then limits_refuse_running 1 || return 4   # 承認待ちの間に上限へ達していたら、承認待ちのまま残す
+  fi
+  if [[ $op == new ]] && role_conflict "$target" "$(jq -r '.role // ""' <<<"$args")"; then   # --always の規則を書く前に止める
+    die "L-$id: $ROLE_CONFLICT_WHY(tb agent-reject L-$id で却下)"
   fi
   ((always)) && set_approval allow "agent:$op:$target" >/dev/null && echo "agent:$op:$target = allow(今後は承認なし)"
   run_op "$op" "$target" "$args" "$by" || r=$?
