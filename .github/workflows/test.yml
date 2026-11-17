@@ -6,11 +6,35 @@ on:
 permissions:
   contents: read
 jobs:
-  test:
+  # 組の一覧は tests/run-all.sh --list から作る(組を足しても、ここは書き換えない)
+  plan:
     runs-on: ubuntu-latest
+    outputs:
+      suites: ${{ steps.list.outputs.suites }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - id: list
+        run: echo "suites=$(bash tests/run-all.sh --list)" >> "$GITHUB_OUTPUT"
+  test:
+    needs: plan
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: ${{ fromJSON(needs.plan.outputs.suites) }}
+    name: test (${{ matrix.suite }})
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
       - run: sudo apt-get update && sudo apt-get install -y sqlite3 jq
-      - run: bash tests/run-all.sh
+      - run: bash tests/run-all.sh "${{ matrix.suite }}"
+  # ブランチ保護で必須にする 1 つのチェック(matrix の名前が変わっても、これだけ見ればよい)
+  test-all:
+    if: always()
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - run: '[ "${{ needs.test.result }}" = success ]'

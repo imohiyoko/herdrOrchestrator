@@ -29,8 +29,11 @@ conductor  <--- reports ---  workers (herdr panes)
 Each component has its own README and test script:
 
 ```
-bash tests/run-all.sh          # 全部(GitHub Actions でも同じものを流す)。webui の SQL を本物のスキーマで確かめる tests/test_webui_queries.py も含む
-bash taskboard/test/run.sh
+bash tests/run-all.sh          # 全部。webui の SQL を本物のスキーマで確かめる tests/test_webui_queries.py も含む
+bash tests/run-all.sh -j 4     # 全部を 4 本ずつ並列に
+bash tests/run-all.sh --list   # 組の一覧(GitHub Actions は組ごとに別のジョブで並列に流す)
+bash tests/run-all.sh webui    # 組を選んで流す
+bash taskboard/test/run.sh     # --shard <組> で taskboard/test/shards の組だけ
 bash webui/tests/run.sh
 bash scheduler/tests/run.sh
 bash setup/tests/run.sh
