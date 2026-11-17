@@ -110,7 +110,7 @@ authorize_op() {  # $1=op $2=対象 $3=引数の JSON
   [[ $REQ_BY == human ]] && return 0
   # 作成は、名前から推定した役割ではなく要求された役割(--role)で @<役割> を判定する
   if [[ $1 == new && -n $(jq -r '.role // ""' <<<"$3") ]]; then ROLE_HINT_NAME=$2; ROLE_HINT=$(jq -r '.role' <<<"$3"); fi
-  approval_of "agent:$1:$2"
+  approval_of "agent:$1:$2" "$REQ_BY"
   ROLE_HINT_NAME=""; ROLE_HINT=""
   [[ $APPROVAL_VALUE == allow ]] && return 0
   local id
@@ -431,8 +431,8 @@ cmd_agent-restart() {
       while IFS= read -r n; do [[ $n == "$name" ]] && why="指揮官($name)は agent から再起動できません(人が実行します)"; done < <(conductor_names)
     fi
     if [[ -z $why ]]; then
-      approval_of "agent:stop:$name"; s=$APPROVAL_VALUE
-      approval_of "agent:revive:$name"; v=$APPROVAL_VALUE
+      approval_of "agent:stop:$name" "$REQ_BY"; s=$APPROVAL_VALUE
+      approval_of "agent:revive:$name" "$REQ_BY"; v=$APPROVAL_VALUE
       [[ $s == allow && $v == allow ]] || why="approvals で agent:stop:$name と agent:revive:$name の両方が allow ではありません(stop=$s revive=$v)。人が実行するか、人が許可してください"
     fi
     if [[ -n $why ]]; then
@@ -578,10 +578,10 @@ cmd_peek() {
   valid_agent_name "$name"
   requester
   if [[ $REQ_BY != human && $REQ_BY != "$name" ]]; then
-    approval_of "agent:read:$name"; rule=$APPROVAL_RULE
+    approval_of "agent:read:$name" "$REQ_BY"; rule=$APPROVAL_RULE
     if [[ $APPROVAL_VALUE != allow ]]; then
       sql "INSERT INTO read_log (reader, target, lines, status, rule, created_at) VALUES ($(q "$REQ_BY"), $(q "$name"), $lines, 'denied', $(q "$rule"), $(q "$(now)"));"
-      echo "tb: $REQ_BY は $name の中身を読めません($rule)。必要なら人が approvals に agent:read:$name か agent:read:@<役割> を allow で足す" >&2
+      echo "tb: $REQ_BY は $name の中身を読めません($rule)。必要なら人が approvals に agent:read:$name か agent:read:@<役割> を allow で足すか、grants.conf に個別の許可を足す" >&2
       return 20
     fi
   fi

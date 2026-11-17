@@ -1,0 +1,13 @@
+# grants.conf: 主体ごとの個別の許可(cp grants.conf.example grants.conf で有効。TB_GRANTS で場所を変えられる)
+# 1 行 1 つ: <主体> <操作> <対象>。どれかに当たれば allow(approvals.conf より先に見る)。当たらなければ approvals.conf が決める
+#   主体   agent 名の glob か @<役割>(@hr+manager のように全部を持つ指定も可)
+#   操作   操作名の glob(対象の手前まで): agent:read(tb peek)/ send:task / send:info / agent:stop / agent:revive / agent:compact / role:change など
+#   対象   agent 名の glob か @<役割>、または spawn の関係(tb agent-spawn の親子):
+#            ~child 子 / ~descendant 子孫(子・孫…)/ ~parent 親 / ~sibling 同じ親の兄弟
+# 許可を足すだけで、拒否(routes.conf の ! など)は外さない。役割を確かめられない行は使わない
+#
+# 例: manager ロールは、子孫の中身を読め、子には依頼を送れる
+# @manager agent:read ~descendant
+# @manager send:task  ~child
+# 例: 個別に、lead1 は worker の停止を承認なしで
+# lead1    agent:stop @worker

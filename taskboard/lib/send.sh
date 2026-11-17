@@ -114,7 +114,7 @@ cmd_send() {
   if ! route_allowed "$LABEL_NAME" "$target"; then status=denied; reason=$ROUTE_REASON
   else
     reason=$ROUTE_REASON
-    approval_of "send:$kind:$target"
+    approval_of "send:$kind:$target" "$LABEL_NAME"
     [[ $APPROVAL_VALUE == allow ]] || status=pending
     reason+=" / approvals: $APPROVAL_RULE"
     # リスク評価(第 1 段: 参考値を reason に残すだけ。status は変えない)
