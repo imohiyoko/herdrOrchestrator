@@ -107,6 +107,72 @@ def job_defs(name):
     return out
 
 
+# conf の先頭コメントのうち、どの job にも付く注意書き(説明ではない)は省く
+_BOILER = re.compile(r"^(注意: COMMAND は bash -c|HERDR_SESSION は tb が操作する|先頭を / にしないこと|xargs は空入力では)")
+
+
+def job_about(name):
+    """conf の先頭のコメント(最初の代入より前の # 行)を説明として返す。[行]。無ければ []。"""
+    path = os.path.join(SCHED_JOBS(), name + ".conf")
+    try:
+        if os.path.islink(path) or not os.path.isfile(path):
+            return []
+        with open(path, encoding="utf-8", errors="replace") as f:
+            text = f.read(CONF_MAX)
+    except OSError:
+        return []
+    out = []
+    for line in text.splitlines():
+        t = line.strip()
+        if not t:
+            if out:
+                break   # 空行で説明は終わり
+            continue
+        if not t.startswith("#"):
+            break
+        t = t.lstrip("#").strip()
+        if t and not _BOILER.match(t):
+            out.append(mask(clean(t))[0])
+        if len(out) >= 12:
+            break
+    return out
+
+
+# COMMAND 型でよく使う tb のサブコマンドの説明(conf に説明が無いときの補い)
+TB_CMDS = (
+    (r"\btb\s+notify\s+flush\b", "tb notify flush", "通知のキューを進める(承認待ち・定期まとめを Slack などへ送る。返事の無いものは再送)"),
+    (r"\btb\s+flush\b", "tb flush", "届かなかった送信(宛先が作業中など)を再送する"),
+    (r"\btb\s+digest\b", "tb digest", "worker から指揮官への報告をまとめて送る"),
+    (r"\btb\s+pr-watch\b", "tb pr-watch", "許可したリポジトリの PR の動き(新規・approve・変更依頼・マージ)を通知に積む"),
+    (r"\btb\s+compact-check\b", "tb compact-check", "文脈が大きくなった待機中の agent に /compact を送る"),
+    (r"\btb\s+pending\b", "tb pending", "未報告の完了・未配送の報告を再送する"),
+    (r"\btb\s+system-send\b", "tb system-send", "agent に本文を送る(scheduler からの送信)"),
+    (r"\btb\s+review-pack\b", "tb review-pack", "レビュー用の集計を作る"),
+)
+
+
+def command_summary(cmd):
+    """COMMAND から tb のサブコマンドを見つけて [(コマンド, 説明)]。見つからなければ []。"""
+    out, seen = [], set()
+    for rx, label, desc in TB_CMDS:
+        if re.search(rx, cmd or "") and label not in seen:
+            seen.add(label)
+            out.append((label, desc))
+    return out
+
+
+def job_summary(name, info):
+    """一覧用の 1 行: conf の先頭コメントの 1 行目。無ければ COMMAND から推した説明。"""
+    about = job_about(name)
+    if about:
+        return about[0]
+    if info and info.get("kind") != "prompt":
+        cs = command_summary((job_defs(name) or {}).get("COMMAND", ""))
+        if cs:
+            return " / ".join(d for _, d in cs)
+    return ""
+
+
 def prompt_file(path):
     """PROMPT_FILE の中身。(本文 or None, 注記)。相対パス・範囲外・認証情報らしい場所は読まない。"""
     if not path:
