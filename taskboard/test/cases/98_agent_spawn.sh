@@ -28,6 +28,8 @@ eq "agent-spawn: a human is refused (use agent-new)" "$(rc $TB agent-spawn worke
 
 # 規則に合わないもの → 4、理由は stderr、何も作らない
 eq "agent-spawn: disallowed role → 4 with the reason" "$(HERDR_PANE_ID=wP:p1 $TB agent-spawn auditor --task "$T1" --brief x 2>&1 >/dev/null | grep -c '許可: worker') $(HERDR_PANE_ID=wP:p1 rc $TB agent-spawn auditor --task "$T1" --brief x)" "1 4"
+rm -rf "$TMP/roles98"; cp -r "$HERE/../../roles" "$TMP/roles98"; printf '別の役割\n' >"$TMP/roles98/parent1-s1.md"
+eq "agent-spawn: a child name with its own roles file (role would differ) → 4, nothing made" "$(TB_ROLES=$TMP/roles98 HERDR_PANE_ID=wP:p1 $TB agent-spawn worker --task "$T1" --brief x 2>&1 >/dev/null | grep -c 'roles/parent1-s1.md') $(TB_ROLES=$TMP/roles98 HERDR_PANE_ID=wP:p1 rc $TB agent-spawn worker --task "$T1" --brief x) $(ws_count)" "1 4 0"
 eq "agent-spawn: unknown role → 4" "$(HERDR_PANE_ID=wP:p1 rc $TB agent-spawn nosuchrole --task "$T1" --brief x)" "4"
 eq "agent-spawn: task of another agent → 4" "$(HERDR_PANE_ID=wP:p1 rc $TB agent-spawn worker --task "$T2" --brief x)" "4"
 eq "agent-spawn: parent without an in_progress task → 4" "$(FAKE_AGENTS="[$SP_C,$(sp_ag idle1 wI:p1)]" HERDR_PANE_ID=wI:p1 $TB agent-spawn worker --task "$T3" --brief x 2>&1 >/dev/null | grep -c 'in_progress') $(FAKE_AGENTS="[$SP_C,$(sp_ag idle1 wI:p1)]" HERDR_PANE_ID=wI:p1 rc $TB agent-spawn worker --task "$T3" --brief x)" "1 4"

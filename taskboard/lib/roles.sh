@@ -14,7 +14,8 @@ role_file_for() {  # $1=agent 名 → 役割ファイルのパス(無ければ�
   [[ $name =~ ^[A-Za-z0-9._-]{1,64}$ && $name != _* && $name != README ]] || return 0
   if [[ -f $ROLES_DIR/$name.md ]]; then printf '%s' "$ROLES_DIR/$name.md"; return 0; fi
   # tb agent-new --role で決めた役割(台帳 agents.role)
-  local reg; reg=$(sql "SELECT COALESCE(role,'') FROM agents WHERE name=$(q "$name");" 2>/dev/null) || reg=""
+  # ROLE_STRICT=1(許可判定の経路)では照会の失敗を 1 で返し、map.conf に進まない。それ以外(load_role など)は未登録扱い
+  local reg; reg=$(sql "SELECT COALESCE(role,'') FROM agents WHERE name=$(q "$name");" 2>/dev/null) || { [[ -n ${ROLE_STRICT:-} ]] && return 1; reg=""; }
   if [[ $reg =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && -f $ROLES_DIR/$reg.md ]]; then printf '%s' "$ROLES_DIR/$reg.md"; return 0; fi
   [[ -f $ROLES_DIR/map.conf ]] || return 0
   while IFS='=' read -r k v || [[ -n $k ]]; do
@@ -33,7 +34,7 @@ role_file_for() {  # $1=agent 名 → 役割ファイルのパス(無ければ�
 ROLE_HINT_NAME=""; ROLE_HINT=""
 role_name_of() {  # $1=agent 名
   if [[ -n $ROLE_HINT_NAME && $1 == "$ROLE_HINT_NAME" ]]; then printf '%s' "$ROLE_HINT"; return 0; fi
-  local f; f=$(role_file_for "$1"); f=${f##*/}; printf '%s' "${f%.md}"
+  local f; f=$(role_file_for "$1") || return 1; f=${f##*/}; printf '%s' "${f%.md}"
 }
 
 # 規則のパターンと agent 名を比べる。@<役割の glob> なら役割で、それ以外は名前の glob で比べる。一致すれば 0
@@ -41,9 +42,8 @@ role_name_of() {  # $1=agent 名
 name_matches() {  # $1=agent 名 $2=パターン
   if [[ $2 == @* ]]; then
     local r
-    # 台帳を読めないときは一致させない(map.conf の役割に落ちて許可側に倒れるのを防ぐ)
-    if [[ $1 != "$ROLE_HINT_NAME" ]]; then sql "SELECT 1;" >/dev/null 2>&1 && sql "SELECT COUNT(*) FROM agents WHERE name=$(q "$1");" >/dev/null 2>&1 || return 1; fi
-    r=$(role_name_of "$1")
+    # 台帳を読めないときは一致させない(map.conf の役割に落ちて許可側に倒れるのを防ぐ)。役割を引く照会そのものの失敗で判定する
+    r=$(ROLE_STRICT=1 role_name_of "$1") || return 1
     # shellcheck disable=SC2053  # glob として比べる
     [[ -n $r && $r == ${2#@} ]]
   else
@@ -151,14 +151,19 @@ cmd_role-set() {
   agent_sync >/dev/null 2>&1 || true
   [[ -n $(sql "SELECT 1 FROM agents WHERE name=$(q "$name");") ]] || die "台帳に無い agent です: $name(tb agents で確かめる)"
   [[ ! -f $ROLES_DIR/$name.md ]] || die "roles/$name.md があるため、台帳のロールは効きません(そのファイルを人事役の手順で直す)"
+  # 旧ロールは実効の役割(台帳の役割ファイルが無ければ map.conf)。台帳の値を先に読み、変更はその値が変わっていないときだけ行う
+  # (読んでから書くまでに別の変更が入ったら、履歴の old_role がずれるので何もせずやり直しを促す)
+  local reg n
+  reg=$(sql "SELECT COALESCE(role,'') FROM agents WHERE name=$(q "$name");") || die "台帳を読めません"
   old=$(role_name_of "$name")
-  # 履歴と変更は 1 つのトランザクションで(片方だけ残らない)。旧ロールは台帳の値があればトランザクション内で読み直す
-  sql "BEGIN IMMEDIATE;
+  n=$(sql "BEGIN IMMEDIATE;
     INSERT INTO role_changes (agent, old_role, new_role, changed_by, reason, created_at)
-    VALUES ($(q "$name"), COALESCE((SELECT role FROM agents WHERE name=$(q "$name") AND role IS NOT NULL AND role!=''), NULLIF($(q "$old"),'')),
-            $(q "$role"), $(q "$REQ_BY"), NULLIF($(q "$(oneline "$why" 300)"),''), $(q "$(now)"));
-    UPDATE agents SET role=$(q "$role"), updated_at=$(q "$(now)") WHERE name=$(q "$name");
-    COMMIT;" || die "ロールを変えられませんでした(DB)"
+    SELECT $(q "$name"), NULLIF($(q "$old"),''), $(q "$role"), $(q "$REQ_BY"), NULLIF($(q "$(oneline "$why" 300)"),''), $(q "$(now)")
+    WHERE (SELECT COALESCE(role,'') FROM agents WHERE name=$(q "$name"))=$(q "$reg");
+    UPDATE agents SET role=$(q "$role"), updated_at=$(q "$(now)") WHERE name=$(q "$name") AND COALESCE(role,'')=$(q "$reg");
+    SELECT changes();
+    COMMIT;") || die "ロールを変えられませんでした(DB)"
+  [[ $n == 1 ]] || die "同時に別のロール変更が入りました。もう一度実行してください"
   new=$(role_name_of "$name")
   echo "$name role ${old:--} -> $new (by $REQ_BY)。本人に配るには: tb role-broadcast $name"
 }

@@ -94,6 +94,8 @@ printf 'agent:new:@worker = allow\n* = ask\n' >"$TB_APPROVALS"
 export FAKE_AGENTS="[$(ag conductor),$(ag worker1)]"
 out=$(HERDR_PANE_ID=wconductor:p1 $TB agent-new worker9 --role watcher 2>&1; echo "rc=$?")
 eq "agent-new: @worker approval does not cover a worker-named agent asking for another role" "$(tail -1 <<<"$out") $(grep -c 'pending' <<<"$out")" "rc=20 1"
+rm -rf "$TMP/roles97"; cp -r "$HERE/../../roles" "$TMP/roles97"; printf 'x\n' >"$TMP/roles97/watcher2.md"
+eq "agent-new: --role cannot differ from the name's own roles file" "$(TB_ROLES=$TMP/roles97 rc $TB agent-new watcher2 --role worker) $(TB_ROLES=$TMP/roles97 $TB agent-new watcher2 --role worker 2>&1 | grep -c 'roles/watcher2.md')" "2 1"
 eq "agent-new: human is reserved" "$(rc $TB agent-new human)" "2"
 export FAKE_AGENTS="[$(ag conductor),$(ag human)]"
 eq "requester: an agent named human is not treated as the human" "$(HERDR_PANE_ID=whuman:p1 rc $TB role-set conductor worker)" "1"
@@ -101,6 +103,8 @@ export FAKE_AGENTS="[$(ag conductor),$(ag worker1)]"
 printf 'agent:stop:@worker = allow\n* = ask\n' >"$TB_APPROVALS"
 eq "approvals: @worker matches a worker by map.conf" "$($TB approval agent:stop:worker3 | head -1)" "allow"
 eq "approvals: @role does not match when the registry cannot be read" "$(sqlite3 "$TB_DB" "ALTER TABLE agents RENAME TO agents_x;"; $TB approval agent:stop:worker3 2>/dev/null | head -1; sqlite3 "$TB_DB" "ALTER TABLE agents_x RENAME TO agents;")" "ask"
+eq "approvals: @role does not match when only the role lookup fails" "$(sqlite3 "$TB_DB" "ALTER TABLE agents RENAME COLUMN role TO role_x;"; $TB approval agent:stop:worker3 2>/dev/null | head -1; sqlite3 "$TB_DB" "ALTER TABLE agents RENAME COLUMN role_x TO role;")" "ask"
+eq "role-set: old_role is the effective role (registry role without a file falls back to map.conf)" "$(sqlite3 "$TB_DB" "UPDATE agents SET role='gone' WHERE name='worker1';"; $TB role-set worker1 watcher >/dev/null; sqlite3 "$TB_DB" "SELECT old_role FROM role_changes ORDER BY id DESC LIMIT 1;")" "worker"
 eq "role-set: change and history are written together" "$($TB role-set worker1 watcher >/dev/null; sqlite3 "$TB_DB" "SELECT (SELECT role FROM agents WHERE name='worker1')||' '||(SELECT new_role FROM role_changes ORDER BY id DESC LIMIT 1);")" "watcher watcher"
 export TB_APPROVALS=$_saved_appr
 unset FAKE_AGENTS; export HERDR_PANE_ID=$_saved_pane

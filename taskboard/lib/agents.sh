@@ -346,6 +346,8 @@ cmd_agent-new() {
   kind_check_launch "$kind" "$model" "" || { echo "tb: $OP_OUT" >&2; return 12; }   # 承認待ちに積む前に、その kind でできない依頼は止める
   if [[ -n $role ]]; then
     [[ $role =~ $ROLE_RE && $role != _* && $role != README && -f $ROLES_DIR/$role.md ]] || usage "agent-new: --role は roles/<名前>.md の名前: $role"
+    # roles/<名前>.md は台帳の役割より優先される。承認(要求された役割)と作成後の役割がずれないよう拒否する
+    [[ ! -f $ROLES_DIR/$name.md || $role == "$name" ]] || usage "agent-new: roles/$name.md があるため、この名前の役割は $name に固定です(--role $role は効きません)"
   fi
   [[ $kill == yes || $kill == no || $kill == unknown ]] || usage "agent-new: --killable は yes|no"
   if [[ $kill != unknown ]]; then   # 判定フラグを付けられるのは agent-flag と同じく判定役か人だけ
