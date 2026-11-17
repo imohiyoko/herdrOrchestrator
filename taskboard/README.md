@@ -624,6 +624,7 @@ bash test/run.sh
 ```
 
 機能ごとのテストは `test/cases/NN_*.sh`(`lib/` のファイルにおおむね対応)で、`run.sh` が番号順に同じシェルで流す。
+CI では `test/shards` の組ごとに別のジョブで並列に流す(`bash test/run.sh --shard <組>`。`--list-shards` で組の一覧、`--shard-cases <組>` で組のケース)。前のケースが作った状態を使うケースは、使われる側と同じ組に書く。組に書いていないケースは `rest` で流れるので、新しいケースは書き足さなくても漏れない。ケースを足して CI の 1 組が長くなったら、`test/shards` で組を分け直す。
 `HERDR_BIN` を `test/fake-herdr`(疑似 herdr)に固定して実行する。本物の herdr は呼ばない。
 `FAKE_STATUS`(idle / working / blocked / unknown / missing)で宛先の状態を、`FAKE_PROMPT_RC` で送信の成否を切り替えられる。
 `test/fake-herdr` には実行権限(`chmod +x`)が必要。
