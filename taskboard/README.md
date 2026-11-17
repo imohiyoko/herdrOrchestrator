@@ -315,6 +315,22 @@ agent ごとのロールを変える入口は `tb role-set <agent 名> <ロー�
 - `tb role-set` は別のセッションの agent を拒否する(`HERDR_SESSION=<そのセッション>` で実行する)。`role_changes` にセッションを残し、`tb role-log` はそのセッションの分だけ出す
 - Web UI は agent ごとに、その agent のセッションの役割ファイルで表示・判定する
 
+#### 個別の許可と相対指定(`config/grants.conf`)
+
+`approvals.conf` は「操作 → ask/allow」を決める共通の表。そこに、主体ごとの許可を足すのが `grants.conf`(`grants.conf.example` を写して使う。`TB_GRANTS` で場所を変えられる)。
+
+```
+# <主体> <操作> <対象>
+@manager agent:read ~descendant   # manager ロールは、子孫(子・孫…)の中身を tb peek で読める
+@manager send:task  ~child        # 子には依頼を送れる
+lead1    agent:stop @worker       # lead1 は worker を承認なしで止められる(個別の付与)
+```
+
+- 主体は agent 名の glob か `@<役割>`。対象は agent 名の glob、`@<役割>`、または `tb agent-spawn` の親子関係による相対指定 `~child` / `~descendant` / `~parent` / `~sibling`(同じセッションの台帳で引く)
+- どれかの行に当たれば allow。当たらなければ従来どおり `approvals.conf` が決める。許可を足すだけで、`routes.conf` の拒否などは外さない
+- 使う場所: `tb peek`(`agent:read`)、`tb send`(`send:<kind>`)、`tb agent-stop` などの agent 操作、`tb role-set`(`role:change`。人事役だけ・自分は不可・人事役は付けられない、の制限はそのまま)
+- 役割を確かめられない(台帳を読めない)行は使わない。`tb approval <操作> --by <agent>` で、その agent から見た判定(grants を含む)を確かめられる
+
 #### agent の中身を読むのは `tb peek` だけ
 
 `tb peek <agent> [--lines N]` は pane の直近の出力を読む。人と本人はそのまま、ほかの agent からは `approvals.conf` の `agent:read:<名前>`(`agent:read:@<役割>` も可)が allow のときだけ(既定は ask = 読めない。終了コード 20)。誰がいつ誰を読んだかは `read_log` に残り、agent 同士の読み取りは関係グラフに `read` の辺として出る(拒否は denied)。

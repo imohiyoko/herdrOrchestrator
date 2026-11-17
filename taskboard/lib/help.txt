@@ -48,7 +48,7 @@ tb role-set <agent 名> <ロール[,ロール...]> [--reason R]   ロールを�
 tb role-log [--json]               ロール変更の記録(このセッションの分。誰がいつ誰を何から何に)
 
 人の承認(config/approvals.conf。<操作のパターン> = ask|allow、最初に一致した行、無一致は ask):
-tb approval <操作>        1 行目 ask|allow、2 行目 rule:。終了コード 0=allow 20=ask(例: send:task:worker1, role:change, setup:hooks)
+tb approval <操作> [--by A]  1 行目 ask|allow、2 行目 rule:。終了コード 0=allow 20=ask(例: send:task:worker1, role:change, setup:hooks)。--by で agent A から見た判定(grants.conf も見る)
   [--to 宛先 --text 本文 [--kind K]]  付けると risk:(リスク評価。第 1 段は参考値で判定は変えない)を併記。設計: docs/risk-based-approvals.md
 tb gate evaluate <chain-id> --action merge|approve [--pr <o>/<r>#<n>] [--fact '行'] [--facts-stdin]   merge/approve の判定(読み取りのみ。0=allow 20=ask 21=評価不能)。tb gate execute は常に 30(無効)。docs/gate.md
 tb review-submit <task-id> --lineage L --sha S --blocker N --should N --verdict pass|fail [--pr o/r#n] [--evidence P]   レビュー結果を追記専用の記録に残す(送信者は pane から決まる。作者は拒否 4、レビュー担当の役割だけ 5)。docs/gate.md

@@ -229,7 +229,7 @@ cmd_role-set() {
     name_matches "$REQ_BY" "@$ROLE_ADMIN" || die "ロールを変えられるのは人と人事役(@$ROLE_ADMIN)だけです($REQ_BY)"
     [[ $REQ_BY != "$name" ]] || die "自分のロールは変えられません"
     for x in "${xs[@]}"; do [[ $x != "$ROLE_ADMIN" ]] || die "人事役のロール($ROLE_ADMIN)を付けられるのは人だけです"; done
-    approval_of "role:change"
+    if grant_of "$REQ_BY" role:change "$name"; then APPROVAL_VALUE=allow; APPROVAL_RULE=$GRANT_RULE; else approval_of "role:change"; fi
     if [[ $APPROVAL_VALUE != allow ]]; then
       echo "tb: role:change は人の承認が要ります($APPROVAL_RULE)。人が自分の端末で実行してください: tb role-set $name $role" >&2
       return 20
