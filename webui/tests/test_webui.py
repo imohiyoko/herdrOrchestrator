@@ -507,8 +507,14 @@ _c.commit(); _c.close()
 time.sleep(3.2)  # 通知のキャッシュ切れを待つ
 r = cl.get("/api/notifications")
 _it = [it for it in json.loads(r[2])["items"] if it["id"].startswith("o:")] if r[0] == 200 else []
-check("送信の承認待ちが通知に出る(承認コマンド付き)", [it["id"] for it in _it] == ["o:1"] and "tb approve O-1" in _it[0]["body"], str(_it))
+check("送信の承認待ちが通知に出る(承認コマンド付き)", [it["id"] for it in _it] == ["o:1"] and "tb approve O-1" in _it[0]["how"] and "tb approve" not in _it[0]["body"], str(_it))
 check("送信の承認待ちは /notifications でエスケープ", "&lt;b&gt;x&lt;/b&gt;" in cl.get("/notifications")[2])
+_nb = cl.get("/notifications")[2]
+check("通知は 3 行(何が / 中身 / 対応)で、対応に承認コマンドが出る", "対応: 送ってよければ手元で tb approve O-1" in _nb)
+_ib = cl.get("/inbox")[2]
+check("報告・承認待ち: 承認待ちの節に、どこでどう承認するかが出る",
+      "承認待ち(どこで・どう承認するか)" in _ib and "tb approve O-1" in _ib.split("要対応の報告")[0] and "手元で tb …" in _ib)
+check("報告・承認待ち: 質問には答え方(tb send --kind answer)と対応済みの付け方が出る", "--kind answer" in _ib and "tb resolve C-" in _ib)
 # outbox 一覧(読み取り専用。queued が 60 秒超なら強調)
 from datetime import datetime, timedelta, timezone
 _old = (datetime.now(timezone.utc) - timedelta(seconds=300)).strftime("%Y-%m-%dT%H:%M:%SZ")

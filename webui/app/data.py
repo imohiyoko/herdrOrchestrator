@@ -224,38 +224,48 @@ def urgent_items():
                           "label": "質問" if c["kind"] == "question" else "ブロック報告",
                           "title": _short(f"{c['task_id']} {c.get('task_title') or ''}", 80),
                           "body": _short(f"{c['from_name']}: {c['text']}"),
+                          "how": _short((f"{c['from_name']} に答える: 手元で tb send {c['from_name']} --kind answer --task {c['task_id']} --text '答え'"
+                                         if c["kind"] == "question" else
+                                         f"止まっている原因を取り除くか、{c['from_name']} に指示を送る(手元で tb send {c['from_name']} --task {c['task_id']} --text '指示')")
+                                        + f"。済んだら「報告・承認待ち」の「対応済みにする」(手元なら tb resolve C-{c['id']})", 300),
                           "href": "/tasks/" + quote(str(c["task_id"]), safe=""), "ts": clean(c.get("created_at") or "")})
         for r in proxies:
             items.append({"id": f"p:{r['id']}", "kind": "proxy_pending", "label": "代行依頼(人の判断待ち)",
                           "title": _short(f"{r['task_id']} {r.get('effect') or ''}", 80),
                           "body": _short(f"{r['cmd']} / 理由: {r['why']}"),
+                          "how": _short(f"agent の代わりに人が実行するか決める。実行したら手元で tb proxy-resolve {r['id']} --status done --result '結果'、断るなら --status denied", 300),
                           "href": "/tasks/" + quote(str(r["task_id"]), safe=""), "ts": clean(r.get("updated_at") or "")})
         for al in q("SELECT * FROM alerts WHERE status='analyzed' AND severity IN ('critical','high') ORDER BY id DESC LIMIT 50"):
             items.append({"id": f"r:{al['id']}:{clean(al.get('analyzed_at'))}", "kind": "alert_result",
                           "label": f"アラート解析結果({clean(al['severity'])})",
                           "title": _short(f"A-{al['id']} {al['title']}", 80),
-                          "body": _short(f"{al.get('result_summary') or ''} / 全文: tb alerts A-{al['id']}(対応後に tb alert-close A-{al['id']})"),
+                          "body": _short(al.get("result_summary") or ""),
+                          "how": f"全文は手元で tb alerts A-{al['id']}。対応したら tb alert-close A-{al['id']}",
                           "href": "/notifications", "ts": clean(al.get("analyzed_at") or "")})
         for al in q("SELECT * FROM alerts WHERE status='awaiting-approval' ORDER BY id DESC LIMIT 50"):
             items.append({"id": f"w:{al['id']}", "kind": "alert_approval", "label": "アラート(解析役の起動待ち)",
                           "title": _short(f"A-{al['id']} {al['title']}", 80),
-                          "body": _short(f"{al.get('body') or ''} / 手元で tb alert-approve A-{al['id']}(今後も自動なら --always)"),
+                          "body": _short(al.get("body") or ""),
+                          "how": f"解析役を起動してよければ手元で tb alert-approve A-{al['id']}(今後も自動なら --always)",
                           "href": "/notifications", "ts": clean(al.get("last_seen") or "")})
         for o in q("SELECT * FROM outbox WHERE status='pending' ORDER BY id DESC LIMIT 100"):
             items.append({"id": f"o:{o['id']}", "kind": "send_pending", "label": "送信の承認待ち",
                           "title": _short(f"O-{o['id']} {o['from_name']} → {o['target']} ({o['kind']})", 80),
-                          "body": _short(f"{o['text']} / 手元で tb approve O-{o['id']}(今後も許可なら --always)か tb reject O-{o['id']}"),
+                          "body": _short(o["text"]),
+                          "how": f"送ってよければ手元で tb approve O-{o['id']}(今後も許可なら --always)、止めるなら tb reject O-{o['id']}",
                           "href": "/notifications", "ts": clean(o.get("created_at") or "")})
         for o in agent_ops("pending", NOTIFY_MAX):
             items.append({"id": f"l:{o['id']}", "kind": "agent_op_pending", "label": "agent 操作の承認待ち",
                           "title": _short(f"L-{o['id']} {o['requested_by']} → {o['op']} {o['target']}", 80),
-                          "body": _short(f"{o.get('args') or ''} / agent 一覧で承認・却下(手元なら tb agent-approve L-{o['id']})"),
+                          "body": _short(o.get("args") or ""),
+                          "how": f"Web UI の agent 一覧の「承認待ちの操作」で承認か却下(手元なら tb agent-approve L-{o['id']} / tb agent-reject L-{o['id']})",
                           "href": "/agents#ops", "ts": clean(o.get("created_at") or "")})
         agents, _ = get_agents()
         for a in blocked:
             k = agent_key(a)
             items.append({"id": "a:" + clean(k), "kind": "agent_blocked", "label": "承認待ちの agent",
                           "title": _short(k, 80), "body": _short(a.get("terminal_title_stripped") or a.get("terminal_title") or "人の対応待ち"),
+                          "how": "agent の画面の「承認待ちの内容」で何を求めているか確かめ、その agent の herdr の pane で許可か拒否を選ぶ",
                           "href": f"/agents/{quote(k, safe='')}#approval", "ts": ""})
         for a in agents:
             act = activity_for(a)
@@ -264,10 +274,12 @@ def urgent_items():
                 items.append({"id": f"s:{clean(k)}:{clean(act.get('last_prompt_at'))}", "kind": "agent_stalled",
                               "label": f"滞留({STALL_MIN} 分超)", "title": _short(k, 80),
                               "body": _short(f"working のまま。最終入力 {act.get('last_prompt_at')}"),
+                              "how": "agent の画面で直近の出力を見て、止まっていれば pane で続きを指示する(要らなければ停止)",
                               "href": f"/agents/{quote(k, safe='')}", "ts": clean(act.get("last_prompt_at") or "")})
         for n, r in failed_jobs():
             items.append({"id": f"j:{n}:{clean(r.get('ts'))}", "kind": "job_failed", "label": "定期実行の失敗",
                           "title": n, "body": _short(r.get("reason") or "failed"),
+                          "how": f"定期実行の画面で理由と設定を確かめる(記録は scheduler/logs/{n}.log)",
                           "href": "/jobs/" + quote(n), "ts": clean(r.get("ts") or "")})
         return items[:NOTIFY_MAX]
     return cached("urgent", load)

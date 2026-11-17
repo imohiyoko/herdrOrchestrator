@@ -578,10 +578,18 @@ def page_inbox(qs, ctx=None):
     ctx = {} if ctx is None else ctx
     comments, proxies, blocked = needs_human()
     ids = {c["id"] for c in comments}
-    body = resolve_notice(qs) + "<h2>要対応 (needs-human)</h2>"
-    body += table(["id", "種別", "タスク", "本文", "from", "時刻", "操作"],
+    body = resolve_notice(qs) + "<h2>承認待ち(どこで・どう承認するか)</h2>"
+    appr = [it for it in urgent_items() if it.get("kind") in APPROVAL_KINDS]
+    body += table(["種別", "何が・中身・どう対応するか", "時刻"],
+                  [[f'<span class=warn>{e(it["label"])}</span>', summary3(it), e(it["ts"])] for it in appr])
+    body += ("<p class=note>「手元で tb …」は、人の端末(agent の pane ではない)で実行するコマンドです。"
+             "agent 操作の承認だけは Web UI の agent 一覧からもできます。</p>")
+    how = {it["id"]: it.get("how") for it in urgent_items() if it["id"].startswith("c:")}
+    body += "<h2>要対応の報告 (needs-human)</h2>"
+    body += table(["id", "種別", "タスク", "本文", "from", "時刻", "どう対応するか", "操作"],
                   [[f"C-{c['id']}", f'<span class=warn>{e(c["kind"])}</span>', tlink(c["task_id"]),
                     f'<pre>{e(c["text"])}</pre>', e(c["from_name"]), e(c["created_at"]),
+                    f'<span class=note>{e(how.get("c:" + str(c["id"])) or "")}</span>',
                     resolve_cell(c, "/inbox", ctx)] for c in comments])
     body += "<h3>代行依頼 (pending-human)</h3>" + table(
         ["id", "タスク", "effect", "コマンド", "理由"],
@@ -1043,15 +1051,24 @@ def page_outbox(_qs):
     return "送信 (outbox)", body
 
 
+def summary3(it):
+    """通知 1 件の 3 行: 何が(対象へのリンク) / 中身 / どう対応するか。"""
+    return (f'<div><a href="{e(it["href"])}">{e(it["title"])}</a></div>'
+            f'<div>{e(it.get("body") or "-")}</div>'
+            f'<div class=note>対応: {e(it.get("how") or "リンク先で確かめる")}</div>')
+
+
+APPROVAL_KINDS = ("send_pending", "agent_op_pending", "alert_approval", "proxy_pending", "agent_blocked")
+
+
 def page_notifications(_qs):
     items = urgent_items()
     body = ("<p>10 分おきのまとめ送信を待たずに知らせるものです。開いている間、"
             f"{NOTIFY_POLL_SEC} 秒ごとに確認し、新しく出たものを Chrome のデスクトップ通知で出します。</p>"
             "<p><span id=nstate class=note>Chrome 通知: JavaScript が無効か、読み込み中です</span> "
             "<button type=button id=nenable hidden>Chrome 通知を有効にする</button></p>")
-    body += table(["種別", "対象", "内容", "時刻"],
-                  [[f'<span class=warn>{e(it["label"])}</span>', f'<a href="{e(it["href"])}">{e(it["title"])}</a>',
-                    e(it["body"]), e(it["ts"])] for it in items])
+    body += table(["種別", "何が・中身・どう対応するか", "時刻"],
+                  [[f'<span class=warn>{e(it["label"])}</span>', summary3(it), e(it["ts"])] for it in items])
     body += ("<p class=note>対象: 未完了タスクの question/blocked 報告、pending-human の代行依頼、blocked の agent、"
              f"working のまま {STALL_MIN} 分超の agent、最後の実行が失敗した定期実行。"
              "通知は Web UI のタブが 1 つ開いている間だけ届きます(タブを閉じると止まる)。</p>")
@@ -1262,7 +1279,7 @@ NOTIFY_JS = """(function () {
   }
   function safeHref(h) { return typeof h === "string" && h.charAt(0) === "/" && h.charAt(1) !== "/" && h.charAt(1) !== "\\\\"; }
   function notify(it) {
-    var n = new Notification("[herdr] " + it.label + ": " + it.title, {body: it.body, tag: "herdr-" + it.id});
+    var n = new Notification("[herdr] " + it.label + ": " + it.title, {body: (it.body || "-") + "\\n対応: " + (it.how || "Web UI で確かめる"), tag: "herdr-" + it.id});
     n.onclick = function () { window.focus(); if (safeHref(it.href)) location.href = it.href; n.close(); };
   }
   if (btn) btn.addEventListener("click", function () {
