@@ -60,16 +60,44 @@ role_file_for() {  # $1=agent 名 [$2=台帳の role]
 ROLE_HINT_NAME=""; ROLE_HINT=""
 role_name_of() {  # $1=agent 名 [$2=台帳の role]
   if [[ -n $ROLE_HINT_NAME && $1 == "$ROLE_HINT_NAME" ]]; then printf '%s' "$ROLE_HINT"; return 0; fi
-  local fs f out=""
+  local i fs f out=""
+  if [[ $# -eq 1 ]]; then   # 判定の間に固定した役割があればそれを使う(role_pin)
+    for i in "${!ROLE_PIN_N[@]}"; do
+      if [[ ${ROLE_PIN_N[i]} == "$1" ]]; then [[ ${ROLE_PIN_V[i]} == ok:* ]] || return 1; printf '%s' "${ROLE_PIN_V[i]#ok:}"; return 0; fi
+    done
+  fi
   fs=$(role_files_for "$@") || return 1
   while IFS= read -r f; do [[ -n $f ]] || continue; f=${f##*/}; out+="${out:+,}${f%.md}"; done <<<"$fs"
   printf '%s' "$out"
 }
 
-# roles/<名前>.md があり、要求された役割と違うか(作成後の役割が承認したものとずれる)。ずれるなら 0
+# 作成後の役割が、要求された(承認した)役割とずれるか。ずれるなら 0 で ROLE_CONFLICT_WHY に理由
+#   roles/<名前>.md があり要求と違う(名前のファイルが優先される)/ 要求した roles/<役割>.md が無い(map.conf の役割に落ちる)
+ROLE_CONFLICT_WHY=""
 role_conflict() {  # $1=agent 名 $2=要求された役割(空なら無し)
-  [[ -n $2 && $2 != "$1" && -f $ROLES_DIR/$1.md ]]
+  ROLE_CONFLICT_WHY=""
+  [[ -n $2 ]] || return 1
+  if [[ $2 != "$1" && -f $ROLES_DIR/$1.md ]]; then ROLE_CONFLICT_WHY="roles/$1.md があるため、$1 の役割は $2 になりません"; return 0; fi
+  local x; local -a xs; IFS=, read -ra xs <<<"$2"
+  for x in "${xs[@]}"; do
+    x=$(trim "$x")
+    if [[ ! -f $ROLES_DIR/$x.md ]]; then ROLE_CONFLICT_WHY="roles/$x.md が無いため、$1 の役割は $2 になりません"; return 0; fi
+  done
+  return 1
 }
+
+# 1 回の判定の中で役割を固定する(規則ごとに台帳を読み直すと、途中の変更で規則をすり抜けうる)。
+# role_pin <名前>...: 役割を一度だけ引いて覚える(引けなければ「確かめられない」として覚える)。role_unpin で忘れる
+ROLE_PIN_N=(); ROLE_PIN_V=()
+role_pin() {
+  local n i r
+  for n in "$@"; do
+    for i in "${!ROLE_PIN_N[@]}"; do [[ ${ROLE_PIN_N[i]} == "$n" ]] && continue 2; done
+    if r=$(ROLE_STRICT=1 role_name_of "$n"); then ROLE_PIN_V+=("ok:$r"); else ROLE_PIN_V+=("fail:"); fi
+    ROLE_PIN_N+=("$n")
+  done
+}
+role_unpin() { ROLE_PIN_N=(); ROLE_PIN_V=(); }
 
 # 規則のパターンと agent 名を比べる。一致すれば 0、しなければ 1
 #   @<役割の glob>          その役割を(複数のうちどれかとして)持つ

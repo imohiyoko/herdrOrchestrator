@@ -56,6 +56,13 @@ grant_of() {
 # 主体(実行する agent)を渡すと、先に grants.conf を見る(操作の末尾を対象とみなす)
 APPROVAL_VALUE=ask
 approval_of() {
+  # 対象の役割は判定の間 1 回だけ引いて固定する(規則ごとに読み直さない)
+  local pinned=0
+  if [[ $1 == *:* && ${#ROLE_PIN_N[@]} -eq 0 ]]; then role_pin "${1##*:}"; pinned=1; fi
+  _approval_rules "$1"
+  ((pinned == 0)) || role_unpin
+}
+_approval_rules() {
   local act=$1 line k v
   APPROVAL_RULE="(一致なし: 既定 ask)"; APPROVAL_VALUE=ask
   if [[ -n ${2:-} && $act == *:* ]] && grant_of "$2" "${act%:*}" "${act##*:}"; then APPROVAL_RULE=$GRANT_RULE; APPROVAL_VALUE=allow; return 0; fi

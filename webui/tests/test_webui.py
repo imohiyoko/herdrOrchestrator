@@ -1677,6 +1677,8 @@ check("graph: ロールは herdr セッション固有(roles/sessions/<s>/ が�
       [_graph.role_of("worker1"), _graph.role_of("worker1", session="s2"), _graph.role_of("worker1", "worker", session="s2"),
        _graph.role_of("worker1", session="s9"), _graph.name_matches("worker1", "@auditor", session="s2")]
       == ["worker", "auditor", "auditor", "worker", True])
+check("perms: 拡張 glob の行(!(...) など)は判定できないとして止まる(下の allow に進まない)",
+      _perms2.decide([{"raw": "send:task:@!(conductor)", "value": "ask"}, {"raw": "*", "value": "allow"}], "send:task:worker1")[0] == "unknown")
 for _k, _v in _old.items():
     if _v is None:
         os.environ.pop(_k, None)

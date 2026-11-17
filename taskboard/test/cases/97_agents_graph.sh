@@ -104,6 +104,8 @@ eq "agent-new: --role cannot differ from the name's own roles file" "$(TB_ROLES=
 _lid=$(sqlite3 "$TB_DB" "SELECT 'L-'||id FROM agent_ops WHERE op='new' AND target='worker9' AND status='pending' ORDER BY id DESC LIMIT 1;")
 cp "$TMP/roles97/watcher.md" "$TMP/roles97/worker9.md"
 eq "agent-approve: a roles file made while pending stops it before --always is written" "$(TB_ROLES=$TMP/roles97 rc $TB agent-approve "$_lid" --always) $(grep -c 'worker9' "$TB_APPROVALS") $(sqlite3 "$TB_DB" "SELECT status FROM agent_ops WHERE 'L-'||id='$_lid';")" "1 0 pending"
+rm -f "$TMP/roles97/worker9.md" "$TMP/roles97/watcher.md"
+eq "agent-approve: the requested role file removed while pending also stops it" "$(TB_ROLES=$TMP/roles97 $TB agent-approve "$_lid" --always 2>&1 | grep -c 'roles/watcher.md が無い') $(grep -c 'worker9' "$TB_APPROVALS") $(sqlite3 "$TB_DB" "SELECT status FROM agent_ops WHERE 'L-'||id='$_lid';")" "1 0 pending"
 eq "agent-new: human is reserved" "$(rc $TB agent-new human)" "2"
 export FAKE_AGENTS="[$(ag conductor),$(ag human)]"
 eq "requester: an agent named human is not treated as the human" "$(HERDR_PANE_ID=whuman:p1 rc $TB role-set conductor worker)" "1"

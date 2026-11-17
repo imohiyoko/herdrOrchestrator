@@ -48,6 +48,14 @@ conductor_names() {
 # 行頭に ! を付けると拒否。routes.conf が無いときは「指揮官 → 誰でも」だけを許可する
 ROUTE_REASON=""
 route_allowed() {
+  # 送信者と宛先の役割は判定の間 1 回だけ引いて固定する(行ごとに読み直さない)
+  local rc=0 pinned=0
+  if [[ ${#ROLE_PIN_N[@]} -eq 0 ]]; then role_pin "$1" "$2"; pinned=1; fi
+  _route_rules "$1" "$2" || rc=$?
+  ((pinned == 0)) || role_unpin
+  return $rc
+}
+_route_rules() {
   local from=$1 to=$2 line neg l r n
   if [[ ! -f $ROUTES ]]; then
     while IFS= read -r n; do

@@ -161,6 +161,8 @@ note=$(grep '^prompt sp-conductor' "$FAKE_LOG")
 eq "agent-spawn ask: rc 20 and the conductor is told (who/role/task/child/L-n/approve)" "$(tail -1 <<<"$out") $(grep -c "from: parent3 / wR:p1 / $T4 / question\] spawn 承認待ち $lid: parent3 が役割 worker の子 parent3-s1 を要求(task $T4)。人が自分の端末で tb agent-approve $lid" <<<"$note")" "rc=20 1"
 eq "agent-spawn ask: brief shown truncated to 80 chars, marked as data" "$(grep -c '依頼(データ): b\{1,80\}' <<<"$note") $(grep -c 'b\{81\}' <<<"$note")" "1 0"
 eq "agent-spawn ask: notification is a saved, delivered question" "$(sqlite3 "$TB_DB" "SELECT kind||' '||(delivered_at IS NOT NULL)||' '||from_name FROM comments WHERE text LIKE 'spawn 承認待ち $lid:%';")" "question 1 parent3"
+rm -rf "$TMP/roles98b"; cp -r "$HERE/../../roles" "$TMP/roles98b"; printf 'x\n' >"$TMP/roles98b/parent3-s1.md"
+eq "agent-approve (spawn): a roles file made while pending stops it before --always is written" "$(TB_ROLES=$TMP/roles98b rc $TB agent-approve "$lid" --always) $(grep -c 'parent3-s1' "$TB_APPROVALS") $(spsql "SELECT status FROM agent_ops WHERE 'L-'||id='$lid';") $(ws_count)" "1 0 pending 0"
 spsql "UPDATE agent_ops SET status='rejected' WHERE status='pending';"
 # 凍結中
 printf 'agent:spawn:* = allow\nagent:* = ask\n* = ask\n' >"$TB_APPROVALS"; $TB spawn-freeze >/dev/null
