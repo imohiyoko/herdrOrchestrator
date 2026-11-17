@@ -17,7 +17,7 @@ SESSION_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]{0,63}")   # herdr セッシ
 # 1 つのプロセスが全 herdr セッションの画面を返す。ページは /s/<セッション名>/ の下に置き、セッションはリクエストごとに決める(app/reqctx.py)。
 # ログインは全セッションで共通(AUTH_DIR の 1 組と、Path=/ の Cookie 1 つ)。
 COOKIE = "herdr_webui_session"
-REFRESH_SEC = 8
+REFRESH_SEC = 30   # 自動更新の間隔(見ていないタブでは止まる。app/scripts.py の REFRESH_JS)
 CACHE_TTL = 3.0
 TASK_STALE_HOURS = 24  # in_progress のまま最終更新からこの時間を超えたタスクに「停滞」の目印を付ける
 STALL_MIN = 30  # working のまま最終入力から何分超で滞留警告にするか

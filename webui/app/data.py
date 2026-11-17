@@ -1,9 +1,11 @@
 """tasks.db とログの読み取り(読み取り専用)、緊急通知の集計。"""
 
+import contextvars
 import json
 import os
 import re
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
@@ -55,22 +57,42 @@ def db_conn():
         return None
 
 
-def q(sql, params=()):
-    """読み取り専用で実行。DB 不在・テーブル欠落・破損でも空リスト。"""
-    c = db_conn()
-    if c is None:
-        return []
+# リクエストの間は接続を使い回す(1 画面で q() を何度も呼んでも、開く・一時ビューを作るのは 1 回)。
+# 鍵は (DB のパス, セッション): 一時ビューはセッションごとなので、1 リクエストで複数のセッションを読む画面(/sessions)でも混ざらない。
+# スレッドごとに別の文脈(ThreadingHTTPServer)なので、接続をスレッドの間で共有しない。request_db() の外では従来どおり毎回開いて閉じる
+_req_conns = contextvars.ContextVar("herdr_webui_db", default=None)
+
+
+@contextmanager
+def request_db():
+    conns = {}
+    tok = _req_conns.set(conns)
     try:
-        return [dict(r) for r in c.execute(sql, params).fetchall()]
-    except sqlite3.Error:
-        return []
+        yield
     finally:
-        c.close()
+        _req_conns.reset(tok)
+        for c in conns.values():
+            if c is not None:
+                c.close()
+
+
+def _conn():
+    """(接続, 使い終わったら閉じるか)。"""
+    conns = _req_conns.get()
+    if conns is None:
+        return db_conn(), True
+    key = (TB_DB(), reqctx.session())
+    c = conns.get(key)
+    if c is None:
+        c = db_conn()
+        if c is not None:
+            conns[key] = c
+    return c, False
 
 
 def q_checked(sql, params=()):
     """q と同じだが、照会できたかを返す: (行, 成否)。許可判定で「該当なし」と「読めない」を区別するため。"""
-    c = db_conn()
+    c, close = _conn()
     if c is None:
         return [], False
     try:
@@ -78,7 +100,13 @@ def q_checked(sql, params=()):
     except sqlite3.Error:
         return [], False
     finally:
-        c.close()
+        if close:
+            c.close()
+
+
+def q(sql, params=()):
+    """読み取り専用で実行。DB 不在・テーブル欠落・破損でも空リスト。"""
+    return q_checked(sql, params)[0]
 
 
 # ---- 設定(config 表。taskboard/schema/013)。tb の lib/config.sh の config_lookup と同じ順で引く:

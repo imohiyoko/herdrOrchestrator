@@ -19,9 +19,9 @@ from .httpbase import host_ok, log_request_line, origins, send
 from .config import AUTH_DIR, COOKIE, HOST, herdr_env, JOB_RE, ROOT, RUN_DIR, SESSION_RE
 from .sanitize import clean, e
 from .actions import agent_decide, agent_new, agent_op, resolve_comment
-from .data import NOTIFY_POLL_SEC, badge_count, urgent_items
+from .data import NOTIFY_POLL_SEC, badge_count, request_db, urgent_items
 from .jobs import job_names, save_job_settings
-from .scripts import DOCS_JS, notify_js
+from .scripts import DOCS_JS, REFRESH_JS, notify_js
 from .views import CSS, err_html, inst_label, page, page_agent_new, page_job, route, title_suffix
 
 
@@ -217,6 +217,8 @@ class Handler(BaseHTTPRequestHandler):
                   '<button type=submit>ログアウト</button></form>')
         if path == "/notify.js":
             return self._send(200, notify_js(reqctx.base(), NOTIFY_POLL_SEC * 1000), "text/javascript; charset=utf-8")
+        if path == "/refresh.js":
+            return self._send(200, REFRESH_JS, "text/javascript; charset=utf-8")
         if path == "/docs.js":
             return self._send(200, DOCS_JS, "text/javascript; charset=utf-8")
         if path == "/static/mermaid.min.js":
@@ -373,7 +375,7 @@ class Handler(BaseHTTPRequestHandler):
         name = m.group(1)
         if not SESSION_RE.fullmatch(name) or not sessions.is_known(name):
             return self._text(404, "Not Found(その herdr セッションはありません。/ からこのプロセスのセッションへ)")
-        with reqctx.use(name, name):
+        with reqctx.use(name, name), request_db():
             if not m.group(2):   # /s/<名前> → /s/<名前>/
                 return self._send(302, "", "text/plain", [("Location", reqctx.base() + "/" + q)])
             self._dispatch(m.group(2), q)

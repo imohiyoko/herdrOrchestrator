@@ -17,6 +17,26 @@ DOCS_JS = """(function () {
 """
 
 
+# 画面の自動更新。<meta name=herdr-refresh content=秒> があるページだけ。
+# 見ていないタブ(document.hidden)では再読み込みしない: 再読み込みのたびにサーバーが画面を作り直し herdr を呼ぶため。
+# 見えるようになった時点で期限を過ぎていれば、すぐに読み直す。読み直しは GET(POST の結果画面を再送しない)
+REFRESH_JS = """(function () {
+  "use strict";
+  var m = document.querySelector('meta[name="herdr-refresh"]');
+  var sec = m ? parseInt(m.getAttribute("content"), 10) : 0;
+  if (!(sec > 0)) return;
+  var due = Date.now() + sec * 1000, timer = null;
+  function arm() {
+    clearTimeout(timer);
+    if (document.hidden) return;
+    timer = setTimeout(function () { if (!document.hidden) location.replace(location.href); }, Math.max(0, due - Date.now()));
+  }
+  document.addEventListener("visibilitychange", arm);
+  arm();
+})();
+"""
+
+
 _NOTIFY_TMPL = """(function () {
   "use strict";
   // BASE: /s/<セッション名>(同じオリジンに全セッションの画面が並ぶので、保存キーと通知のタグも分ける)

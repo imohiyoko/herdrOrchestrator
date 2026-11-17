@@ -71,14 +71,16 @@ def page(title, body, path, badge, logout="", refresh=True, scripts=()):
         links.append(f'<a href="{href}"{" class=on" if on else ""}>{label}{b}</a>')
     return (
         "<!doctype html><html lang=ja><head><meta charset=utf-8>"
-        + (f'<meta http-equiv="refresh" content="{REFRESH_SEC}">' if refresh else "") +
+        # 自動更新は /refresh.js(見ていないタブでは止める)。スクリプトが動かない環境だけ meta refresh で更新する
+        + (f'<meta name=herdr-refresh content="{REFRESH_SEC}"><script src="/refresh.js" defer></script>'
+           f'<noscript><meta http-equiv="refresh" content="{REFRESH_SEC}"></noscript>' if refresh else "") +
         '<meta name=viewport content="width=device-width,initial-scale=1">'
         '<meta name=referrer content=same-origin>'
         f"<title>{e(title)} - herdr{e(title_suffix())}</title><style>{CSS}</style>"
         '<script src="/notify.js" defer></script>'
         + "".join(f'<script src="{e(src)}" defer></script>' for src in scripts) + "</head><body>"
         f"<nav>{inst_label()}{''.join(links)}{logout}</nav><main><h1>{e(title)}</h1>{body}"
-        f'<p class=note>{f"自動更新 {REFRESH_SEC} 秒" if refresh else "入力欄があるので自動更新なし(再読み込みで更新)"} / 変更できるのは定期実行の設定・報告の「対応済み」・agent の停止 / 復活 / 作成だけ(権限と送信履歴は読み取りのみ) / 機密を含みうる画面です / Chrome 通知は「緊急通知」で設定</p></main></body></html>'
+        f'<p class=note>{f"自動更新 {REFRESH_SEC} 秒(見ていないタブでは止まる)" if refresh else "入力欄があるので自動更新なし(再読み込みで更新)"} / 変更できるのは定期実行の設定・報告の「対応済み」・agent の停止 / 復活 / 作成だけ(権限と送信履歴は読み取りのみ) / 機密を含みうる画面です / Chrome 通知は「緊急通知」で設定</p></main></body></html>'
     )
 
 
