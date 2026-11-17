@@ -352,7 +352,7 @@ pq_add() {
   [[ $abs == "$root"/* ]] || die "pr-queue: 本文ファイルは body_root の中だけ: $file"
   (($(wc -c <"$abs") <= PQ_MAX_BODY)) || die "pr-queue: 本文が大きすぎます(100KB まで)"
   if [[ -n ${HERDR_PANE_ID:-} ]]; then by=$(pane_owner_name "$HERDR_PANE_ID" 2>/dev/null || true); by=${by:-unknown}; else by=human; fi
-  id=$(sql "INSERT INTO pr_queue (herdr_session, repo,branch,title,body_file,body_sha256,task_id,requested_by,status,created_at)
+  id=$(sql "INSERT INTO main.pr_queue (herdr_session, repo,branch,title,body_file,body_sha256,task_id,requested_by,status,created_at)
     VALUES ($SQS, $(q "$repo"),$(q "$branch"),$(q "$title"),$(q "$abs"),$(q "$(pq_sha "$abs")"),NULLIF($(q "$task"),''),$(q "$by"),'pending',$(q "$(now)")); SELECT last_insert_rowid();")
   echo "PQ-$id pending"
 }
@@ -386,7 +386,7 @@ pq_approve() {
   pq_repo_dir_ok || die "PQ-$id は承認しません: $PQ_REASON"
   pq_sync_origin "$(jq -r .branch <<<"$row")" 0 || die "PQ-$id は承認しません: $PQ_REASON"
   if ! pq_guard "$row"; then die "PQ-$id はガードに落ちるため承認しません: $PQ_REASON"; fi
-  sql "UPDATE pr_queue SET status='approved', decided_at=$(q "$(now)"), last_error=NULL WHERE herdr_session=$SQS AND id=$id AND status='pending';"
+  sql "UPDATE main.pr_queue SET status='approved', decided_at=$(q "$(now)"), last_error=NULL WHERE herdr_session=$SQS AND id=$id AND status='pending';"
   echo "PQ-$id approved(次の tb pr-queue run で draft PR を作ります)"
 }
 
@@ -398,7 +398,7 @@ pq_reject() {
   require_human "tb pr-queue reject"
   row=$(pq_row "$id"); [[ -n $row ]] || die "見つかりません: PQ-$id"
   st=$(jq -r .status <<<"$row"); [[ $st == pending || $st == approved ]] || die "PQ-$id は $st です(却下できるのは pending / approved だけ)"
-  sql "UPDATE pr_queue SET status='rejected', decided_at=$(q "$(now)"), last_error=$(q "人が却下${note:+: $note}") WHERE herdr_session=$SQS AND id=$id AND status IN ('pending','approved');"
+  sql "UPDATE main.pr_queue SET status='rejected', decided_at=$(q "$(now)"), last_error=$(q "人が却下${note:+: $note}") WHERE herdr_session=$SQS AND id=$id AND status IN ('pending','approved');"
   echo "PQ-$id rejected"
 }
 
@@ -408,7 +408,7 @@ pq_retry() {
   require_human "tb pr-queue retry"
   local id row st; id=$(pq_ref "$1"); row=$(pq_row "$id"); [[ -n $row ]] || die "見つかりません: PQ-$id"
   st=$(jq -r .status <<<"$row"); [[ $st == failed ]] || die "PQ-$id は $st です(戻せるのは failed だけ)"
-  sql "UPDATE pr_queue SET status='approved', attempts=0, last_error=NULL, executed_at=NULL WHERE herdr_session=$SQS AND id=$id AND status='failed';"
+  sql "UPDATE main.pr_queue SET status='approved', attempts=0, last_error=NULL, executed_at=NULL WHERE herdr_session=$SQS AND id=$id AND status='failed';"
   echo "PQ-$id approved(failed から戻しました。次の tb pr-queue run が、ガードを通して draft PR を作ります)"
 }
 
@@ -417,7 +417,7 @@ pq_auth_locked() {  # $1=dry
   echo "pr-queue: 認証で止まっています(auth-locked)。残りの行は処理せず、次の回に自動で再開します" >&2
   [[ $1 == 1 ]] && return 0
   local was; was=$(sql "SELECT COUNT(*) FROM pr_queue WHERE herdr_session=$SQS AND status='approved' AND last_error='auth-locked';")
-  sql "UPDATE pr_queue SET last_error='auth-locked' WHERE herdr_session=$SQS AND status='approved';"
+  sql "UPDATE main.pr_queue SET last_error='auth-locked' WHERE herdr_session=$SQS AND status='approved';"
   ((was == 0)) && notify_emit warning "pr-queue-auth-locked" "" "pr-queue: 公開待ちがあるが、ghtkn が token を返せず止まっています。人の対話端末で ghtkn agent unlock --enable-refresh(ロック中)か ghtkn auth <app>(期限切れ)。再開は次の run が自動で拾います"
   return 0
 }
@@ -442,7 +442,7 @@ pq_run() {
     if ((rc == 2)); then echo "PQ-$id skipped: $PQ_REASON(検査できないので作らない。次の回に回す)"; continue; fi
     if ((rc == 1)) || ! pq_guard "$row"; then
       echo "PQ-$id rejected: $PQ_REASON"
-      ((dry)) || sql "UPDATE pr_queue SET status='rejected', last_error=$(q "ガード: $PQ_REASON"), executed_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$id AND status='approved';"
+      ((dry)) || sql "UPDATE main.pr_queue SET status='rejected', last_error=$(q "ガード: $PQ_REASON"), executed_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$id AND status='approved';"
       continue
     fi
     # 公開前検査(題・本文・コミットメッセージ・ブランチ名・差分)。ヒットしたら作らず却下(attempts は使わない)。規則名と位置だけを通知する
@@ -451,7 +451,7 @@ pq_run() {
     if ((rc != 0)); then
       echo "PQ-$id rejected: $PQ_REASON"
       if ((!dry)); then
-        sql "UPDATE pr_queue SET status='rejected', last_error=$(q "公開前検査: $PQ_REASON"), executed_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$id AND status='approved';"
+        sql "UPDATE main.pr_queue SET status='rejected', last_error=$(q "公開前検査: $PQ_REASON"), executed_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$id AND status='approved';"
         notify_emit warning "pq-deny-$id" "" "PQ-$id は公開前検査で止めました(PR は作っていません): $PQ_REASON"
       fi
       continue
@@ -461,13 +461,13 @@ pq_run() {
     if ((lrc == PQ_AUTH_RC)); then pq_auth_locked "$dry"; locked=1; break; fi
     if ((lrc != 0)) || ! jq -e 'type=="array"' <<<"$out" >/dev/null 2>&1; then
       echo "PQ-$id skipped: 重複確認の gh pr list に失敗(作らない)"
-      ((dry)) || sql "UPDATE pr_queue SET attempts=attempts+1, last_error='重複確認に失敗' WHERE herdr_session=$SQS AND id=$id;"
+      ((dry)) || sql "UPDATE main.pr_queue SET attempts=attempts+1, last_error='重複確認に失敗' WHERE herdr_session=$SQS AND id=$id;"
       pq_cap_attempts "$id" "$dry"; continue
     fi
     n=$(jq 'length' <<<"$out")
     if ((n > 0)); then
       echo "PQ-$id rejected: 同じ head の open PR が既にある"
-      ((dry)) || sql "UPDATE pr_queue SET status='rejected', last_error='同じ head の open PR が既にある', executed_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$id AND status='approved';"
+      ((dry)) || sql "UPDATE main.pr_queue SET status='rejected', last_error='同じ head の open PR が既にある', executed_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$id AND status='approved';"
       continue
     fi
     if ((dry)); then echo "PQ-$id would-create: $repo $branch → $PQ_BASE (draft)"; made=$((made+1)); continue; fi
@@ -478,23 +478,23 @@ pq_run() {
     out=$("$gh" pr create --repo "$repo" --base "$PQ_BASE" --head "$branch" --title "$title" --body-file "$file" --draft 2>/dev/null) && rc=0 || rc=$?
     if ((rc == 0)); then
       url=$(grep -Eo 'https://[^[:space:]]+/pull/[0-9]+' <<<"$out" | head -n 1 || true)
-      sql "UPDATE pr_queue SET status='created', pr_url=NULLIF($(q "$url"),''), last_error=NULL, executed_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$id AND status='approved';"
+      sql "UPDATE main.pr_queue SET status='created', pr_url=NULLIF($(q "$url"),''), last_error=NULL, executed_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$id AND status='approved';"
       echo "PQ-$id created${url:+: $url}"; made=$((made+1))
     elif ((rc == PQ_AUTH_RC)); then pq_auth_locked 0; locked=1; break
     else
-      sql "UPDATE pr_queue SET attempts=attempts+1, last_error=$(q "gh pr create が失敗(exit $rc)") WHERE herdr_session=$SQS AND id=$id;"
+      sql "UPDATE main.pr_queue SET attempts=attempts+1, last_error=$(q "gh pr create が失敗(exit $rc)") WHERE herdr_session=$SQS AND id=$id;"
       echo "PQ-$id error: gh pr create が失敗(exit $rc)"
       pq_cap_attempts "$id" 0
     fi
   done < <(sql "SELECT id FROM pr_queue WHERE herdr_session=$SQS AND status='approved' ORDER BY id;")
   # 印を消すのは、この run が認証で止まらずに最後まで進んだときだけ(list が通って create が 75 のときに毎回消えて、毎回通知されるのを防ぐ)
-  ((locked || dry)) || sql "UPDATE pr_queue SET last_error=NULL WHERE herdr_session=$SQS AND last_error='auth-locked';"
+  ((locked || dry)) || sql "UPDATE main.pr_queue SET last_error=NULL WHERE herdr_session=$SQS AND last_error='auth-locked';"
   return 0
 }
 
 pq_cap_attempts() {  # $1=id $2=dry。上限を超えたら failed にして、人に見える形にする
   [[ $2 == 1 ]] && return 0
-  sql "UPDATE pr_queue SET status='failed', executed_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$1 AND status='approved' AND attempts>=$PQ_MAX_ATTEMPTS;"
+  sql "UPDATE main.pr_queue SET status='failed', executed_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$1 AND status='approved' AND attempts>=$PQ_MAX_ATTEMPTS;"
 }
 
 # config/pr-queue.conf(人だけが編集。無ければ既定)の "<キー>=<値>" を読む。$1=キー $2=既定
@@ -549,7 +549,7 @@ pq_scan() {
     if (($(jq length <<<"$out") > 0)); then echo "skip $b: 同じ head の PR が既にある"; continue; fi
     if ((dry)); then echo "would-queue $b ($st): $title"; continue; fi
     by=scan
-    id=$(sql "INSERT INTO pr_queue (herdr_session, repo,branch,title,body_file,body_sha256,requested_by,status,created_at,decided_at)
+    id=$(sql "INSERT INTO main.pr_queue (herdr_session, repo,branch,title,body_file,body_sha256,requested_by,status,created_at,decided_at)
       VALUES ($SQS, $(q "$repo"),$(q "$b"),$(q "$title"),$(q "$file"),$(q "$sha"),'scan',$(q "$st"),$(q "$(now)"),$([[ $st == approved ]] && q "$(now)" || echo NULL)); SELECT last_insert_rowid();")
     echo "PQ-$id $st: $b"
   done <<<"$heads"

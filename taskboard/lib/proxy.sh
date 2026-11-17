@@ -32,7 +32,7 @@ cmd_proxy-request() {
   if [[ -n $prior ]]; then
     status=denied; result="同一 cmd が人に拒否済み(依頼 $prior)。同じ依頼は出し直さず、別の方法を提案すること"
   fi
-  id=$(sql "INSERT INTO proxy_requests (herdr_session, task_id, cmd, why, effect, expect, status, result, created_at, updated_at)
+  id=$(sql "INSERT INTO main.proxy_requests (herdr_session, task_id, cmd, why, effect, expect, status, result, created_at, updated_at)
             VALUES ($SQS, $(q "$tid"), $(q "$c"), $(q "$why"), $(q "$effect"), NULLIF($(q "$expect"),''), $(q "$status"),
                     NULLIF($(q "$result"),''), $(q "$n"), $(q "$n")); SELECT last_insert_rowid();")
   [[ $status == denied ]] && echo "tb: $result" >&2
@@ -74,7 +74,7 @@ cmd_proxy-resolve() {
   local cur; cur=$(sql "SELECT status FROM proxy_requests WHERE herdr_session=$SQS AND id=$id;")
   [[ -n $cur ]] || die "代行依頼が見つかりません: $id"
   [[ $cur == open || $cur == pending-human ]] || die "解決済み($cur)の依頼は変更できません: $id"
-  sql "UPDATE proxy_requests SET status=$(q "$status"), result=NULLIF($(q "$result"),''), updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$id;"
+  sql "UPDATE main.proxy_requests SET status=$(q "$status"), result=NULLIF($(q "$result"),''), updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$id;"
   echo "$id $status"
 }
 

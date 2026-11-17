@@ -28,7 +28,7 @@ pqgh() { grep -c "$1" "$FAKE_GH_LOG"; }
 # 差分のガードは必須(PR_QUEUE_REPO_DIR が空なら run しない)。clone を先に作り、pqadd がブランチも用意する
 # 公開前検査の設定は固定の conf(<tb>/config/pr-queue.conf)だけで決まり、環境変数では差し替えられない。テストでは tb をコピーした木の conf を書く(リポジトリの config は触らない)
 _tb_saved=$TB; PQ_TBROOT=$TMP/pq-tbtree; mkdir -p "$PQ_TBROOT/taskboard/config"
-cp -R "$HERE/../bin" "$HERE/../lib" "$HERE/../schema" "$PQ_TBROOT/taskboard/"; cp -R "$HERE/../../lib" "$PQ_TBROOT/lib"
+cp -R "$HERE/../bin" "$HERE/../lib" "$HERE/../schema" "$HERE/../sql" "$PQ_TBROOT/taskboard/"; cp -R "$HERE/../../lib" "$PQ_TBROOT/lib"
 TB=$PQ_TBROOT/taskboard/bin/tb; PQ_FIXEDCONF=$PQ_TBROOT/taskboard/config/pr-queue.conf
 pqdeny() { { [[ -z ${1:-} ]] || printf 'deny_patterns = %s\n' "$1"; [[ -z ${2:-} ]] || printf 'deny_exceptions = %s\n' "$2"; } >"$PQ_FIXEDCONF"; }
 # 本物の bare origin と clone。mkb は clone で枝を作って origin へ force push する(追跡参照も更新される)

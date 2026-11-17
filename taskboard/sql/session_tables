@@ -1,0 +1,26 @@
+# herdr_session 列を持つ表(1 行 1 つ)。tb の sql() と Web UI が、このセッションの行だけの一時ビューと書き込みの見張りを作る。
+# スキーマ(taskboard/schema)で herdr_session 列を足した・持つ表を作ったら、ここにも足す(テストが食い違いを落とす)。
+agent_activity
+agent_ops
+agents
+alerts
+approval_changes
+comments
+config
+config_changes
+digests
+messages
+notify_events
+notify_seen
+notify_sends
+observations
+outbox
+pr_queue
+proposals
+proxy_requests
+read_log
+reviews
+role_briefings
+role_changes
+tasks
+tb_flags

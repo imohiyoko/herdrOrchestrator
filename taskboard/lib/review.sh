@@ -82,7 +82,7 @@ cmd_review-pack() {
   else echo "(scheduler のログなし)"; fi
   sec "提案の状況(状態 | 件数)"
   tsv "SELECT status, COUNT(*) FROM proposals WHERE $w GROUP BY status;"
-  ((mark)) && sql "INSERT INTO reviews (herdr_session, since_at, until_at, created_at) VALUES ($SQS, $(q "$since"), $(q "$until"), $(q "$until"));" >/dev/null
+  ((mark)) && sql "INSERT INTO main.reviews (herdr_session, since_at, until_at, created_at) VALUES ($SQS, $(q "$since"), $(q "$until"), $(q "$until"));" >/dev/null
   return 0
 }
 
@@ -104,7 +104,7 @@ cmd_proposal() {
   if [[ -n $tfile ]]; then [[ -f $tfile && -r $tfile ]] || die "--text-file を読めません: $tfile"; text=$(head -c 20000 "$tfile"); fi
   blank "$text" && usage "proposal: --text か --text-file が必要です"
   resolve_label || return 3
-  local id; id=$(sql "INSERT INTO proposals (herdr_session, role_file, title, text, status, by_name, created_at) VALUES
+  local id; id=$(sql "INSERT INTO main.proposals (herdr_session, role_file, title, text, status, by_name, created_at) VALUES
     ($SQS, $(q "$role"), $(q "$title"), $(q "$text"), 'open', $(q "$LABEL_NAME"), $(q "$(now)")); SELECT last_insert_rowid();")
   local r=0; proposal_deliver "$id" >/dev/null 2>&1 || r=$?
   echo "P-$id $([[ $r == 0 ]] && echo delivered || echo saved-undelivered)"
@@ -116,7 +116,7 @@ proposal_deliver() {  # $1=id
   [[ -n $row && $(jq -r '.delivered_at // ""' <<<"$row") == "" ]] || return 0
   msg="[from: tb / proposal / P-$1 / info] $(jq -r .by_name <<<"$row") から roles/$(jq -r .role_file <<<"$row") の改善提案: $(oneline "$(jq -r .title <<<"$row")" 120) (全文: tb proposals P-$1。対応後に tb proposal-resolve P-$1)"
   herdr_send "$HR_NAME" "$msg" "P-$1" proposal || return $?
-  sql "UPDATE proposals SET delivered_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$1;"
+  sql "UPDATE main.proposals SET delivered_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$1;"
 }
 
 cmd_proposals() {
@@ -148,6 +148,6 @@ cmd_proposal-resolve() {
     [[ $LABEL_NAME == "$HR_NAME" ]] || die "提案を閉じられるのは設定役($HR_NAME)か人だけです"
   fi
   [[ $(sql "SELECT status FROM proposals WHERE herdr_session=$SQS AND id=$id;") == open ]] || die "P-$id は open ではありません"
-  sql "UPDATE proposals SET status=$(q "$st"), note=NULLIF($(q "$note"),''), resolved_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$id;"
+  sql "UPDATE main.proposals SET status=$(q "$st"), note=NULLIF($(q "$note"),''), resolved_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$id;"
   echo "P-$id $st"
 }

@@ -45,7 +45,7 @@ role_forget() { local cv; cv=$(_role_cache_var "$1"); unset "${cv}_B" "${cv}_S";
 role_list() {
   local f
   {
-    sql "SELECT substr(key, 6) FROM config WHERE key LIKE 'role:%' AND herdr_session IN ($SQS, '*');" 2>/dev/null || true
+    sql "SELECT substr(key, 6) FROM main.config WHERE key LIKE 'role:%' AND herdr_session IN ($SQS, '*');" 2>/dev/null || true
     for f in "$ROLES_DIR"/*.md; do [[ -f $f ]] && basename "$f" .md; done
   } | grep -Ev '^(_|README$)' | sort -u
 }
@@ -183,7 +183,7 @@ last_briefed_hash() {  # $1=session_id
   sql "SELECT hash FROM role_briefings WHERE herdr_session=$SQS AND session_id=$(q "$1") ORDER BY id DESC LIMIT 1;"
 }
 record_briefing() {  # session agent file hash source via
-  sql "INSERT INTO role_briefings (herdr_session, session_id, agent, role_file, hash, source, via, created_at)
+  sql "INSERT INTO main.role_briefings (herdr_session, session_id, agent, role_file, hash, source, via, created_at)
     VALUES ($SQS, $(q "$1"), $(q "$2"), NULLIF($(q "$3"),''), $(q "$4"), $(q "$5"), $(q "$6"), $(q "$(now)"));" >/dev/null
 }
 
@@ -357,10 +357,10 @@ cmd_role-set() {
   reg=$(sql "SELECT COALESCE(role,'') FROM agents WHERE herdr_session=$SQS AND name=$(q "$name");") || die "台帳を読めません"
   old=$(role_name_of "$name" "$reg")   # 読んだ台帳の値から実効の役割を決める(もう一度は読まない)
   n=$(sql "BEGIN IMMEDIATE;
-    INSERT INTO role_changes (agent, old_role, new_role, changed_by, reason, created_at, herdr_session)
+    INSERT INTO main.role_changes (agent, old_role, new_role, changed_by, reason, created_at, herdr_session)
     SELECT $(q "$name"), NULLIF($(q "$old"),''), $(q "$role"), $(q "$REQ_BY"), NULLIF($(q "$(oneline "$why" 300)"),''), $(q "$(now)"), $SQS
     WHERE (SELECT COALESCE(role,'') FROM agents WHERE herdr_session=$SQS AND name=$(q "$name"))=$(q "$reg");
-    UPDATE agents SET role=$(q "$role"), updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND name=$(q "$name") AND COALESCE(role,'')=$(q "$reg");
+    UPDATE main.agents SET role=$(q "$role"), updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND name=$(q "$name") AND COALESCE(role,'')=$(q "$reg");
     SELECT changes();
     COMMIT;") || die "ロールを変えられませんでした(DB)"
   [[ $n == 1 ]] || die "同時に別のロール変更が入りました。もう一度実行してください"

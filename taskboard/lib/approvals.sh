@@ -154,7 +154,7 @@ set_approval() {  # $1=allow|ask $2=パターン
     else body=$(awk -v rule="$pat = $val   # $(now) に人が追加" 'BEGIN{d=0} !d && $0 !~ /^#/ && $0 !~ /^[[:space:]]*$/ {print rule; d=1} {print} END{if(!d) print rule}' <<<"$body"); fi
   fi
   config_put approvals "$body" "$val"
-  sql "INSERT INTO approval_changes (herdr_session, pattern, value, created_at) VALUES ($SQS, $(q "$pat"), $(q "$val"), $(q "$(now)"));" >/dev/null
+  sql "INSERT INTO main.approval_changes (herdr_session, pattern, value, created_at) VALUES ($SQS, $(q "$pat"), $(q "$val"), $(q "$(now)"));" >/dev/null
   echo "$pat = $val"
 }
 cmd_allow() { [[ $# -eq 1 ]] || usage "allow <操作のパターン>"; set_approval allow "$1"; }
@@ -170,7 +170,7 @@ cmd_approve() {
   [[ -n $row ]] || die "outbox が見つかりません: O-$oid"
   [[ $(jq -r .status <<<"$row") == pending ]] || die "O-$oid は承認待ちではありません($(jq -r .status <<<"$row"))"
   kind=$(jq -r .kind <<<"$row"); target=$(jq -r .target <<<"$row")
-  sql "UPDATE outbox SET status='queued', reason=reason||' / 人が承認 $(now)' WHERE herdr_session=$SQS AND id=$oid;"
+  sql "UPDATE main.outbox SET status='queued', reason=reason||' / 人が承認 $(now)' WHERE herdr_session=$SQS AND id=$oid;"
   ((always)) && set_approval allow "send:$kind:$target" >/dev/null && echo "send:$kind:$target = allow(今後は承認なし)"
   local r=0; outbox_deliver "$oid" >/dev/null || r=$?
   case $r in
@@ -186,6 +186,6 @@ cmd_reject() {
   local oid=${1#O-}
   require_human "tb reject"
   [[ $(sql "SELECT status FROM outbox WHERE herdr_session=$SQS AND id=$oid;") == pending ]] || die "O-$oid は承認待ちではありません"
-  sql "UPDATE outbox SET status='denied', reason=reason||' / 人が却下 $(now)' WHERE herdr_session=$SQS AND id=$oid;"
+  sql "UPDATE main.outbox SET status='denied', reason=reason||' / 人が却下 $(now)' WHERE herdr_session=$SQS AND id=$oid;"
   echo "O-$oid rejected"
 }

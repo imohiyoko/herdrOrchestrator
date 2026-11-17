@@ -23,12 +23,12 @@ cmd_add() {
   local n=$(now) p; p=$(q "$project")
   # 採番と挿入を 1 文で行い、同時 add でも重複しないようにする
   # ID は DB 全体で一意(採番は全セッションの行を見る。ここだけ herdr_session で絞らない)
-  sql "INSERT INTO tasks (id, project, title, owner_agent, session_id, account, parent_id, created_at, updated_at, herdr_session)
+  sql "INSERT INTO main.tasks (id, project, title, owner_agent, session_id, account, parent_id, created_at, updated_at, herdr_session)
        SELECT 'T-'||$p||'-'||printf('%03d', COALESCE(MAX(CAST(substr(id, length($p)+4) AS INTEGER)),0)+1),
               $p, $(q "$title"), NULLIF($(q "$owner"),''), NULLIF($(q "$session"),''), NULLIF($(q "$account"),''),
               NULLIF($(q "$parent"),''), $(q "$n"), $(q "$n"), $SQS
-       FROM tasks WHERE project=$p;
-       SELECT id FROM tasks WHERE rowid=last_insert_rowid();"
+       FROM main.tasks WHERE project=$p;
+       SELECT id FROM main.tasks WHERE rowid=last_insert_rowid();   -- rowid は表のもの(ビューには無い)"
 }
 
 # ---------- list ----------
@@ -79,7 +79,7 @@ cmd_claim() {
   blank "$owner" && usage "claim: --owner が必要です"
   require_task "$id" >/dev/null
   local changed
-  changed=$(sql "UPDATE tasks SET status='in_progress', owner_agent=$(q "$owner"),
+  changed=$(sql "UPDATE main.tasks SET status='in_progress', owner_agent=$(q "$owner"),
       session_id=COALESCE(NULLIF($(q "$session"),''), session_id),
       account=COALESCE(NULLIF($(q "$account"),''), account), updated_at=$(q "$(now)")
     WHERE herdr_session=$SQS AND id=$(q "$id") AND status='todo'; SELECT changes();")
@@ -112,7 +112,7 @@ cmd_update() {
   row=$(require_task "$id"); cur=$(jq -r .status <<<"$row")
   [[ $cur != done ]] || die "done のタスクは update できません: $id"
   local IFS=,
-  sql "UPDATE tasks SET ${sets[*]}, updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id");"
+  sql "UPDATE main.tasks SET ${sets[*]}, updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id");"
   echo "$id updated"
 }
 
@@ -134,7 +134,7 @@ cmd_done() {
   row=$(require_task "$id"); cur=$(jq -r .status <<<"$row")
   [[ $cur != done ]] || die "すでに done です: $id"
   dj=$(jq -nc '$ARGS.positional' --args "${dels[@]}")
-  sql "UPDATE tasks SET status='done', deliverables=$(q "$dj"), summary=$(q "$summary"),
+  sql "UPDATE main.tasks SET status='done', deliverables=$(q "$dj"), summary=$(q "$summary"),
          reported_at=NULL, updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id");"
   notify_hook notify_hook_task_done "$id"
   echo "$id done (未報告。tb report $id を実行)"
@@ -153,7 +153,7 @@ cmd_block() {
   done
   local row cur; row=$(require_task "$id"); cur=$(jq -r .status <<<"$row")
   [[ $cur != done ]] || die "done のタスクは block できません: $id"
-  sql "UPDATE tasks SET status='blocked', note=NULLIF($(q "$reason"),''), updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id");"
+  sql "UPDATE main.tasks SET status='blocked', note=NULLIF($(q "$reason"),''), updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id");"
   echo "$id blocked"
 }
 
@@ -176,7 +176,7 @@ cmd_report() {
   summary=${summary%"${summary##*[![:space:]]}"}
   msg="[$id done] $summary / $paths"
   herdr_send "$target" "$msg" "$id" || return $?
-  sql "UPDATE tasks SET reported_at=$(q "$(now)"), updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id");"
+  sql "UPDATE main.tasks SET reported_at=$(q "$(now)"), updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id");"
   echo "$id reported to $target"
 }
 

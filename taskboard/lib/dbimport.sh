@@ -38,8 +38,8 @@ cmd_db-import() {
   local sv; sv=$(sqlite3 -readonly "$real" "PRAGMA user_version;" 2>/dev/null) || die "旧 DB を開けません: $src"
   ((sv < 12)) || die "取り込めるのは旧形式(セッションごとに分ける前、スキーマ v11 まで)の DB だけです(この DB は v$sv)"
   local mark="db-import:$real"
-  [[ -z $(sql "SELECT 1 FROM tb_flags WHERE key=$(q "$mark") LIMIT 1;") ]] \
-    || die "この DB は取り込み済みです: $real($(sql "SELECT herdr_session||' / '||value FROM tb_flags WHERE key=$(q "$mark") LIMIT 1;"))"
+  [[ -z $(sql "SELECT 1 FROM main.tb_flags WHERE key=$(q "$mark") LIMIT 1;") ]] \
+    || die "この DB は取り込み済みです: $real($(sql "SELECT herdr_session||' / '||value FROM main.tb_flags WHERE key=$(q "$mark") LIMIT 1;"))"
 
   # 写しを作り、取り込み先のセッションとして最新まで移行する(元の DB には触らない)
   local tmp copy; tmp=$(mktemp -d); copy=$tmp/src.db
