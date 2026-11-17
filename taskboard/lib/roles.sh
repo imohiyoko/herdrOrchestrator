@@ -29,7 +29,10 @@ role_file_for() {  # $1=agent 名 → 役割ファイルのパス(無ければ�
 }
 
 # 役割名(roles/<役割>.md の <役割>)。無ければ空
+# ROLE_HINT_NAME / ROLE_HINT: まだ台帳に無い agent(作成の承認判定)は、名前から推定せず要求された役割で判定する
+ROLE_HINT_NAME=""; ROLE_HINT=""
 role_name_of() {  # $1=agent 名
+  if [[ -n $ROLE_HINT_NAME && $1 == "$ROLE_HINT_NAME" ]]; then printf '%s' "$ROLE_HINT"; return 0; fi
   local f; f=$(role_file_for "$1"); f=${f##*/}; printf '%s' "${f%.md}"
 }
 
@@ -37,7 +40,10 @@ role_name_of() {  # $1=agent 名
 # (routes.conf / approvals.conf の宛先 / spawn-policy の denied_parents が使う。役割の決まり方は role_file_for と同じ)
 name_matches() {  # $1=agent 名 $2=パターン
   if [[ $2 == @* ]]; then
-    local r; r=$(role_name_of "$1")
+    local r
+    # 台帳を読めないときは一致させない(map.conf の役割に落ちて許可側に倒れるのを防ぐ)
+    if [[ $1 != "$ROLE_HINT_NAME" ]]; then sql "SELECT 1;" >/dev/null 2>&1 && sql "SELECT COUNT(*) FROM agents WHERE name=$(q "$1");" >/dev/null 2>&1 || return 1; fi
+    r=$(role_name_of "$1")
     # shellcheck disable=SC2053  # glob として比べる
     [[ -n $r && $r == ${2#@} ]]
   else
@@ -146,9 +152,13 @@ cmd_role-set() {
   [[ -n $(sql "SELECT 1 FROM agents WHERE name=$(q "$name");") ]] || die "台帳に無い agent です: $name(tb agents で確かめる)"
   [[ ! -f $ROLES_DIR/$name.md ]] || die "roles/$name.md があるため、台帳のロールは効きません(そのファイルを人事役の手順で直す)"
   old=$(role_name_of "$name")
-  sql "UPDATE agents SET role=$(q "$role"), updated_at=$(q "$(now)") WHERE name=$(q "$name");
+  # 履歴と変更は 1 つのトランザクションで(片方だけ残らない)。旧ロールは台帳の値があればトランザクション内で読み直す
+  sql "BEGIN IMMEDIATE;
     INSERT INTO role_changes (agent, old_role, new_role, changed_by, reason, created_at)
-    VALUES ($(q "$name"), NULLIF($(q "$old"),''), $(q "$role"), $(q "$REQ_BY"), NULLIF($(q "$(oneline "$why" 300)"),''), $(q "$(now)"));"
+    VALUES ($(q "$name"), COALESCE((SELECT role FROM agents WHERE name=$(q "$name") AND role IS NOT NULL AND role!=''), NULLIF($(q "$old"),'')),
+            $(q "$role"), $(q "$REQ_BY"), NULLIF($(q "$(oneline "$why" 300)"),''), $(q "$(now)"));
+    UPDATE agents SET role=$(q "$role"), updated_at=$(q "$(now)") WHERE name=$(q "$name");
+    COMMIT;" || die "ロールを変えられませんでした(DB)"
   new=$(role_name_of "$name")
   echo "$name role ${old:--} -> $new (by $REQ_BY)。本人に配るには: tb role-broadcast $name"
 }

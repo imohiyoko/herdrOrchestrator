@@ -197,10 +197,10 @@ def page_agent_graph(qs, ctx=None):
     es = graph.edges(q(graph.edge_sql()))
     nodes, seen = [], set()
     for a in agents:
-        n = a.get("name") or ""
+        n = agent_key(a)   # 名前が無ければ pane_id(一覧・リンクと同じ)
         if n and n not in seen:
             seen.add(n)
-            nodes.append({"name": n, "role": graph.role_of(n, (reg.get(n) or {}).get("role")), "agent": a})
+            nodes.append({"name": n, "role": graph.role_of(a.get("name") or "", (reg.get(a.get("name") or "") or {}).get("role")), "agent": a})
     for x in [v for ed in es for v in (ed["from"], ed["to"])]:
         if x not in seen:   # 関係の端に居るが今は動いていない名前(止まった agent・cli など)
             seen.add(x)

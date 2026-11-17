@@ -464,6 +464,7 @@ check("関係グラフ: mermaid と表、スクリプトは同一オリジンだ
       and re.findall(r"<script[^>]*>", _gb, re.I) == [NOTIFY_TAG[:-9], '<script src="/static/mermaid.min.js" defer>', '<script src="/docs.js" defer>'],
       str(re.findall(r"<script[^>]*>", _gb, re.I)))
 _gm = _gb.split("<pre class=mermaid>")[1].split("</pre>")[0]
+check("関係グラフ: 名前のない agent も pane_id で点になる", '[&quot;w1:p3&quot;]' in _gm, _gm[:300])
 check("関係グラフ: HTML を含む名前もラベルでは安全な文字だけ", "&lt;" not in _gm and "_img_src_x_onerror_alert_2_" in _gm, _gm[:300])
 check("未知の agent は 404", cl.get("/agents/nope")[0] == 404)
 check("未知のタスクは 404", cl.get("/tasks/nope")[0] == 404)
@@ -1650,6 +1651,9 @@ check("graph: ロールごとの subgraph とラベルつきの辺(拒否は点�
 check("graph: 規則の @役割", [_graph.name_matches(n, p) for n, p in (("worker1", "@worker"), ("worker1", "@cond*"), ("x", "@worker"), ("x", "x"))]
       == [True, False, False, True])
 _rules = [{"raw": "send:*:@worker", "value": "allow"}, {"raw": "*", "value": "ask"}]
+check("perms: @役割 の行は文字列の一致だけで「届かない」としない",
+      _perms2.shadowed_by([{"no": 1, "raw": "send:task:*r", "value": "allow"}, {"no": 2, "raw": "send:task:@worker", "value": "ask"}],
+                          {"no": 2, "raw": "send:task:@worker", "value": "ask"}) is None)
 check("perms: 末尾 @役割 の行を役割で照合", [_perms2.decide(_rules, op)[0] for op in ("send:task:worker1", "send:task:conductor", "role:change")]
       == ["allow", "ask", "ask"])
 for _k, _v in _old.items():

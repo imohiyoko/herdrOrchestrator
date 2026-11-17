@@ -21,7 +21,7 @@ AGENT_CWD=${TB_AGENT_CWD:-$TB_ROOT/..}
 OPEN_TASK_STATUSES="'in_progress','review','blocked'"
 HSESS=$(herdr_session_name)   # HERDR_SOCKET_PATH > HERDR_SESSION > default(lib/herdr-env.sh)。 herdr agent list が見せるのはこのセッションの agent だけ
 
-valid_agent_name() { [[ $1 =~ $AGENT_NAME_RE ]] || usage "agent 名は英小文字で始まり、英小文字・数字・_・- の 32 字以内: $1"; }
+valid_agent_name() { [[ $1 != human && $1 =~ $AGENT_NAME_RE ]] || usage "agent 名は英小文字で始まり、英小文字・数字・_・- の 32 字以内(human は予約名): $1"; }
 valid_lid() { [[ $1 =~ ^L-[0-9]+$ ]] || usage "操作 ID は L-<数字>: $1"; }
 agent_reg_row() { sql -json "SELECT * FROM agents WHERE name=$(q "$1");" | jq -c '.[0] // empty'; }
 
@@ -100,6 +100,7 @@ requester() {
   if [[ -n ${HERDR_PANE_ID:-} ]]; then
     n=$(pane_owner_name "$HERDR_PANE_ID") || die "herdr agent list に失敗したため、実行者を特定できません"
   fi
+  [[ $n != human ]] || die "agent 名 human は予約名です(人と区別できないため、この agent からの操作は受けません)"
   REQ_BY=${n:-human}
 }
 
@@ -107,7 +108,10 @@ requester() {
 authorize_op() {  # $1=op $2=対象 $3=引数の JSON
   requester
   [[ $REQ_BY == human ]] && return 0
+  # 作成は、名前から推定した役割ではなく要求された役割(--role)で @<役割> を判定する
+  if [[ $1 == new && -n $(jq -r '.role // ""' <<<"$3") ]]; then ROLE_HINT_NAME=$2; ROLE_HINT=$(jq -r '.role' <<<"$3"); fi
   approval_of "agent:$1:$2"
+  ROLE_HINT_NAME=""; ROLE_HINT=""
   [[ $APPROVAL_VALUE == allow ]] && return 0
   local id
   id=$(sql "INSERT INTO agent_ops (op, target, args, requested_by, status, result, created_at)

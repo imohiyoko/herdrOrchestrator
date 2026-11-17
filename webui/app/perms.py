@@ -56,7 +56,11 @@ def matches(op, pat):
         if ":" not in op:
             return False
         oh, _, on = op.rpartition(":")
-        return fnmatchcase(oh, head) and name_matches(on, last)
+        if not fnmatchcase(oh, head):
+            return False
+        from .data import q   # tb と同じく台帳の role を先に見る(循環 import を避けてここで読む)
+        reg = q("SELECT role FROM agents WHERE name=?", (on,))
+        return name_matches(on, last, reg[0]["role"] if reg else None)
     return fnmatchcase(op, pat)
 
 
@@ -92,10 +96,10 @@ def warning(r):
 
 def shadowed_by(rules, r):
     """ワイルドカードを含まない行が、上の行で先に決まってしまうとき、その行(届かない行の検出)。"""
-    if wildcard(r["raw"]):
-        return None
+    if wildcard(r["raw"]) or "@" in r["raw"]:
+        return None   # @<役割> は名前でなく役割の集合なので、文字列の一致では判定しない
     for o in rules[: r["no"] - 1]:
-        if has_bracket(o):
+        if has_bracket(o) or "@" in o["raw"]:
             return None   # 判定できないので「隠れる」とは言わない
         if fnmatchcase(r["raw"], o["raw"]):
             return o

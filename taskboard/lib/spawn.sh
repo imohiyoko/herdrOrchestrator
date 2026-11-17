@@ -175,7 +175,9 @@ cmd_agent-spawn() {
   local why="" id r=0
   if spawn_frozen; then why="spawn-freeze 中"
   else
+    ROLE_HINT_NAME=$name; ROLE_HINT=$role   # 子はまだ台帳に無い。名前からの推定でなく要求された役割で判定する
     approval_of "agent:spawn:$name"
+    ROLE_HINT_NAME=""; ROLE_HINT=""
     [[ $APPROVAL_VALUE == allow ]] || why="approvals: $APPROVAL_RULE"
   fi
   if [[ -n $why ]]; then

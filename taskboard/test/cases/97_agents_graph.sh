@@ -86,3 +86,21 @@ eq "role-set: a name with its own roles file is refused" "$(rc $TB role-set watc
 eq "role-log: newest first, with who and why" "$($TB role-log | cut -f2-5 | tr '\t\n' '| ')" "worker1|worker -> hr|human| worker2|worker -> watcher|hr1|ログ番に "
 eq "agents --graph: hr's change is a role edge (a human's is not)" "$($TB agents --graph --json | jq -r '[.edges[] | select(.verb=="role") | "\(.from)>\(.to)"] | join(",")')" "hr1>worker2"
 unset FAKE_AGENTS; export TB_APPROVALS=$_saved_appr HERDR_PANE_ID=$_saved_pane
+
+# --- マージ前の修正: 作成の承認は要求した役割で / human は予約名 / 台帳を読めないときは @ に一致させない
+_saved_pane=${HERDR_PANE_ID-}; unset HERDR_PANE_ID
+export TB_DB=$TMP/graph.db TB_APPROVALS=$TMP/graph-appr3.conf TB_SPAWN_RETRY_SEC=0 TB_AGENT_CWD=$TMP
+printf 'agent:new:@worker = allow\n* = ask\n' >"$TB_APPROVALS"
+export FAKE_AGENTS="[$(ag conductor),$(ag worker1)]"
+out=$(HERDR_PANE_ID=wconductor:p1 $TB agent-new worker9 --role watcher 2>&1; echo "rc=$?")
+eq "agent-new: @worker approval does not cover a worker-named agent asking for another role" "$(tail -1 <<<"$out") $(grep -c 'pending' <<<"$out")" "rc=20 1"
+eq "agent-new: human is reserved" "$(rc $TB agent-new human)" "2"
+export FAKE_AGENTS="[$(ag conductor),$(ag human)]"
+eq "requester: an agent named human is not treated as the human" "$(HERDR_PANE_ID=whuman:p1 rc $TB role-set conductor worker)" "1"
+export FAKE_AGENTS="[$(ag conductor),$(ag worker1)]"
+printf 'agent:stop:@worker = allow\n* = ask\n' >"$TB_APPROVALS"
+eq "approvals: @worker matches a worker by map.conf" "$($TB approval agent:stop:worker3 | head -1)" "allow"
+eq "approvals: @role does not match when the registry cannot be read" "$(sqlite3 "$TB_DB" "ALTER TABLE agents RENAME TO agents_x;"; $TB approval agent:stop:worker3 2>/dev/null | head -1; sqlite3 "$TB_DB" "ALTER TABLE agents_x RENAME TO agents;")" "ask"
+eq "role-set: change and history are written together" "$($TB role-set worker1 watcher >/dev/null; sqlite3 "$TB_DB" "SELECT (SELECT role FROM agents WHERE name='worker1')||' '||(SELECT new_role FROM role_changes ORDER BY id DESC LIMIT 1);")" "watcher watcher"
+export TB_APPROVALS=$_saved_appr
+unset FAKE_AGENTS; export HERDR_PANE_ID=$_saved_pane
