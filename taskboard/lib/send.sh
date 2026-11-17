@@ -13,7 +13,7 @@ SEND_MAX=${TB_SEND_MAX:-4000}
 # 宛先が tb の台帳で停止中(agent-stop 済み、または herdr の一覧から消えた)か。
 # 停止中の宛先には送らず queued のまま残す(revive 後の flush で届く)。agent_sync のあとでだけ使う
 outbox_target_stopped() {  # $1=宛先
-  [[ -n $(sql "SELECT 1 FROM agents WHERE herdr_session=$SQS AND name=$(q "$1") AND state='stopped' LIMIT 1;" 2>/dev/null) ]]
+  [[ -n $(sql "SELECT 1 FROM agents WHERE name=$(q "$1") AND state='stopped' LIMIT 1;" 2>/dev/null) ]]
 }
 
 # 指揮官として扱う名前: 既定の宛先と projects.conf の値
@@ -127,7 +127,7 @@ cmd_send() {
   else
     outbox_deliver "$oid" >/dev/null || rc=$?
   fi
-  if ((json)); then sql -json "SELECT * FROM outbox WHERE herdr_session=$SQS AND id=$oid;" | jq -c '.[0] | .id = "O-\(.id)"'
+  if ((json)); then sql -json "SELECT * FROM outbox WHERE id=$oid;" | jq -c '.[0] | .id = "O-\(.id)"'
   else
     case $rc in 0) echo "O-$oid sent to $target";; 4) echo "O-$oid denied";; 20) echo "O-$oid pending-approval";; *) echo "O-$oid queued";; esac
   fi
@@ -140,7 +140,7 @@ cmd_send() {
 cmd_flush() {
   [[ $# -eq 0 ]] || usage "flush(引数なし)"
   local oid target rc=0 r busy=" " held=" " synced=0
-  [[ -n $(sql "SELECT 1 FROM outbox WHERE herdr_session=$SQS AND status='queued' LIMIT 1;") ]] || return 0
+  [[ -n $(sql "SELECT 1 FROM outbox WHERE status='queued' LIMIT 1;") ]] || return 0
   # 台帳を herdr の一覧と突き合わせる(台帳の stopped が古いままのことがある)。herdr に届かなければ判定せず、今までどおり送ってみる
   agent_sync >/dev/null 2>&1 && synced=1
   while IFS=$'\t' read -r oid target; do
@@ -153,7 +153,7 @@ cmd_flush() {
     fi
     r=0; outbox_deliver "$oid" || r=$?
     if ((r)); then busy+="$target "; ((r > rc)) && rc=$r; fi
-  done < <(sql -separator $'\t' "SELECT id, target FROM outbox WHERE herdr_session=$SQS AND status='queued' ORDER BY id;")
+  done < <(sql -separator $'\t' "SELECT id, target FROM outbox WHERE status='queued' ORDER BY id;")
   return $rc
 }
 
@@ -167,8 +167,8 @@ cmd_outbox() {
     esac
   done
   if [[ -n $st ]]; then [[ $st =~ ^(pending|queued|sent|denied)$ ]] || usage "outbox: --status は pending|queued|sent|denied"; where="status=$(q "$st")"; fi
-  if ((json)); then sql -json "SELECT * FROM outbox WHERE herdr_session=$SQS AND ($where) ORDER BY id DESC LIMIT 100;" | jq -c '(. // [])[] | .id = "O-\(.id)"'
+  if ((json)); then sql -json "SELECT * FROM outbox WHERE ($where) ORDER BY id DESC LIMIT 100;" | jq -c '(. // [])[] | .id = "O-\(.id)"'
   else sql -nullvalue - -separator $'\t' "SELECT 'O-'||id, status, from_name, target, kind, COALESCE(task_id,'-'), created_at,
-         substr(replace(replace(text, char(10), ' '), char(9), ' '),1,80) FROM outbox WHERE herdr_session=$SQS AND ($where) ORDER BY id DESC LIMIT 100;"
+         substr(replace(replace(text, char(10), ' '), char(9), ' '),1,80) FROM outbox WHERE ($where) ORDER BY id DESC LIMIT 100;"
   fi
 }

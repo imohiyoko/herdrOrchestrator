@@ -12,8 +12,8 @@ sql_all() { sqlite3 -bail -batch -cmd ".timeout ${SQL_TIMEOUT:-5000}" "$DB" "$@"
 q()   { local s=${1//\'/\'\'}; printf "'%s'" "$s"; }          # SQL 文字列リテラル化
 
 # 1 つの DB を複数の herdr セッションで共有し、行は herdr_session 列で分ける(012)。
-# tb は今のセッション(SESS)の行だけを読み書きする。SQL には SQS(リテラル化済み)を埋める。
-# 例外(全セッションを見る)は、タスク ID の採番(ID は DB 全体で一意)と、人が明示した --all-sessions だけ。
+# tb は今のセッション(SESS)の行だけを読み書きする。読みは表の名前のまま書けば下のビューがこのセッションに絞る。
+# 書きは main.<表> に、INSERT は herdr_session に SQS(リテラル化済み)を、UPDATE / DELETE は WHERE herdr_session=$SQS を書く(見張りが別セッションの行を止める)。
 SESS=$(herdr_session_name)
 SQS=$(q "$SESS")
 
@@ -45,10 +45,8 @@ session_setup() {
 }
 SESSION_SETUP=
 session_setup_load() { SESSION_SETUP=$(session_setup); SESSION_SETUP=${SESSION_SETUP:-SELECT 1 WHERE 0;}; }
-# このセッションの 1 行(JSON。無ければ空)。$1=表 $2=列 $3=値(リテラル化する)
-session_row() { sql -json "SELECT * FROM $1 WHERE herdr_session=$SQS AND $2=$(q "$3");" | jq -c '.[0] // empty'; }
-# 表の名前を変えずにこのセッションの行だけを読む WITH 句(表の名前のまま書かれた共有の SQL の前に置く)。$@=表の名前
-session_cte() { local t w="WITH "; for t; do w+="$t AS (SELECT * FROM main.$t WHERE herdr_session=$SQS),"; done; printf '%s' "${w%,}"; }
+# このセッションの 1 行(JSON。無ければ空)。$1=表 $2=列 $3=値(リテラル化する)。表の名前はこのセッションのビュー
+session_row() { sql -json "SELECT * FROM $1 WHERE $2=$(q "$3");" | jq -c '.[0] // empty'; }
 
 schema_files() { local f; for f in "${TB_SCHEMA_DIR:-$HERDR_SCHEMA_DIR}"/[0-9][0-9][0-9]_*.sql; do [[ -f $f ]] && printf '%s\n' "$f"; done; }
 schema_latest() { local f n=0; f=$(schema_files | tail -n 1); [[ -n $f ]] && n=$((10#$(basename "$f" | cut -c1-3))); echo "$n"; }

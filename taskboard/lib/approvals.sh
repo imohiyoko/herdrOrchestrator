@@ -17,7 +17,7 @@ valid_action() { [[ $1 =~ ^[A-Za-z0-9._:*?@-]{1,128}$ ]] || usage "操作名に�
 GRANTS=${TB_GRANTS:-$TB_ROOT/config/grants.conf}
 GRANT_RULE=""
 grant_parent_of() {  # $1=agent 名 → spawned_by(同じセッションの agent だけ)。読めなければ 1
-  sql "SELECT COALESCE(spawned_by,'') FROM agents WHERE herdr_session=$SQS AND name=$(q "$1");"
+  sql "SELECT COALESCE(spawned_by,'') FROM agents WHERE name=$(q "$1");"
 }
 grant_relation() {  # $1=主体 $2=対象 $3=~関係 → 当たれば 0
   local p x i
@@ -185,7 +185,7 @@ cmd_reject() {
   [[ $# -eq 1 && $1 =~ ^O-[0-9]+$ ]] || usage "reject O-<n>"
   local oid=${1#O-}
   require_human "tb reject"
-  [[ $(sql "SELECT status FROM outbox WHERE herdr_session=$SQS AND id=$oid;") == pending ]] || die "O-$oid は承認待ちではありません"
+  [[ $(sql "SELECT status FROM outbox WHERE id=$oid;") == pending ]] || die "O-$oid は承認待ちではありません"
   sql "UPDATE main.outbox SET status='denied', reason=reason||' / 人が却下 $(now)' WHERE herdr_session=$SQS AND id=$oid;"
   echo "O-$oid rejected"
 }

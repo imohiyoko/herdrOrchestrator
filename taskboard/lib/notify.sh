@@ -249,7 +249,7 @@ notify_enqueue() {
   local key="$type:$ref" win dup
   win=$(ncfg dedupe_sec)
   if [[ -n $ref ]] && ((win > 0)); then
-    dup=$(sql "SELECT 1 FROM notify_events WHERE herdr_session=$SQS AND dedupe_key=$(q "$key") AND (julianday('now') - julianday(created_at)) * 86400 < $win LIMIT 1;")
+    dup=$(sql "SELECT 1 FROM notify_events WHERE dedupe_key=$(q "$key") AND (julianday('now') - julianday(created_at)) * 86400 < $win LIMIT 1;")
     [[ -z $dup ]] || return 0
   fi
   local all blocked=0 reason="" a b c d text hash sinks slack=none
@@ -318,8 +318,8 @@ notify_record_send() { sql "INSERT INTO main.notify_sends (herdr_session, event_
 notify_budget() {
   local pm ph um uh b1 b2
   pm=$(ncfg rate_per_min); ph=$(ncfg rate_per_hour)
-  um=$(sql "SELECT COUNT(*) FROM notify_sends WHERE herdr_session=$SQS AND (julianday('now') - julianday(at)) * 86400 < 60;")
-  uh=$(sql "SELECT COUNT(*) FROM notify_sends WHERE herdr_session=$SQS AND (julianday('now') - julianday(at)) * 86400 < 3600;")
+  um=$(sql "SELECT COUNT(*) FROM notify_sends WHERE (julianday('now') - julianday(at)) * 86400 < 60;")
+  uh=$(sql "SELECT COUNT(*) FROM notify_sends WHERE (julianday('now') - julianday(at)) * 86400 < 3600;")
   b1=$((pm - um)); b2=$((ph - uh))
   if ((b1 < b2)); then echo "$b1"; else echo "$b2"; fi
 }
@@ -382,7 +382,7 @@ notify_slack_send() {  # $1=event id
 notify_make_digest() {  # $@=event id
   local ids=("$@") n=$# line="" t i s did
   for i in "${ids[@]}"; do
-    t=$(sql "SELECT text FROM notify_events WHERE herdr_session=$SQS AND id=$i;")
+    t=$(sql "SELECT text FROM notify_events WHERE id=$i;")
     s="N-$i $(nclip "$t" 50)"
     line+="${line:+ | }$s"
     if ((${#line} > $(ncfg max_len) - 100)); then line+=" ..."; break; fi
@@ -405,10 +405,10 @@ notify_flush_slack() {
     ((budget > 0)) || continue
     rc=0; notify_slack_send "$id" || rc=$?
     if ((rc == 0)); then budget=$((budget - 1)); fi
-  done < <(sql -separator $'\t' "SELECT id, slack_attempts FROM notify_events WHERE herdr_session=$SQS AND slack_status='awaiting-ack' AND blocked=0
+  done < <(sql -separator $'\t' "SELECT id, slack_attempts FROM notify_events WHERE slack_status='awaiting-ack' AND blocked=0
            AND (julianday('now') - julianday(slack_sent_at)) * 1440 >= $timeout ORDER BY id;")
   # 2. 新しいもの。枠が足りなければ、残りを 1 通にまとめる
-  while IFS= read -r id; do [[ -n $id ]] && ids+=("$id"); done < <(sql "SELECT id FROM notify_events WHERE herdr_session=$SQS AND slack_status='pending' AND blocked=0 ORDER BY id;")
+  while IFS= read -r id; do [[ -n $id ]] && ids+=("$id"); done < <(sql "SELECT id FROM notify_events WHERE slack_status='pending' AND blocked=0 ORDER BY id;")
   n=${#ids[@]}
   ((n > 0 && budget > 0)) || return 0
   if ((n <= budget)); then
@@ -425,15 +425,15 @@ notify_flush_slack() {
 }
 
 # ---------- 定期のイベント(承認待ち・まとめ) ----------
-notify_seen_get() { sql "SELECT value FROM notify_seen WHERE herdr_session=$SQS AND key=$(q "$1");"; }
+notify_seen_get() { sql "SELECT value FROM notify_seen WHERE key=$(q "$1");"; }
 notify_seen_set() { sql "INSERT INTO main.notify_seen (herdr_session, key, value, updated_at) VALUES ($SQS, $(q "$1"), $(q "$2"), $(q "$(now)"))
                          ON CONFLICT(herdr_session, key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at;"; }
 
 notify_periodic() {
   local ids o l cur last n iv age run al hu tk
   # 承認待ち(L-/O- の番号と件数だけ)。どちらもこのセッションの行だけ
-  o=$(sql "SELECT 'O-'||id FROM outbox WHERE herdr_session=$SQS AND status='pending' ORDER BY id;" | paste -sd' ' -)
-  l=$(sql "SELECT 'L-'||id FROM agent_ops WHERE herdr_session=$SQS AND status='pending' ORDER BY id;" | paste -sd' ' -)
+  o=$(sql "SELECT 'O-'||id FROM outbox WHERE status='pending' ORDER BY id;" | paste -sd' ' -)
+  l=$(sql "SELECT 'L-'||id FROM agent_ops WHERE status='pending' ORDER BY id;" | paste -sd' ' -)
   ids=$(printf '%s %s' "$o" "$l" | tr -s ' ' | sed 's/^ //; s/ $//')
   last=$(notify_seen_get approvals-last)
   if [[ $ids != "$last" ]]; then
@@ -446,12 +446,12 @@ notify_periodic() {
   # 定期まとめ: 間隔がたち、かつ件数が前回から変わったときだけ
   iv=$(ncfg summary_interval_min)
   ((iv > 0)) || return 0
-  age=$(sql "SELECT CAST((julianday('now') - julianday(updated_at)) * 1440 AS INTEGER) FROM notify_seen WHERE herdr_session=$SQS AND key='summary-at';")
+  age=$(sql "SELECT CAST((julianday('now') - julianday(updated_at)) * 1440 AS INTEGER) FROM notify_seen WHERE key='summary-at';")
   [[ -z $age || $age -ge $iv ]] || return 0
-  run=$(sql "SELECT COUNT(*) FROM agents WHERE herdr_session=$SQS AND state='running';")
-  al=$(sql "SELECT COUNT(*) FROM alerts WHERE herdr_session=$SQS AND status NOT IN ('closed');")
-  hu=$(sql "SELECT COUNT(*) FROM comments WHERE herdr_session=$SQS AND kind IN ('question','blocked') AND resolved_at IS NULL;")
-  tk=$(sql "SELECT COUNT(*) FROM tasks WHERE herdr_session=$SQS AND status IN ('in_progress','review');")
+  run=$(sql "SELECT COUNT(*) FROM agents WHERE state='running';")
+  al=$(sql "SELECT COUNT(*) FROM alerts WHERE status NOT IN ('closed');")
+  hu=$(sql "SELECT COUNT(*) FROM comments WHERE kind IN ('question','blocked') AND resolved_at IS NULL;")
+  tk=$(sql "SELECT COUNT(*) FROM tasks WHERE status IN ('in_progress','review');")
   cur="動作中 agent ${run} / 進行中タスク ${tk} / 未クローズのアラート ${al} / 人の対応待ち ${hu}"
   notify_seen_set summary-at "$(now)"
   if [[ $cur != "$(notify_seen_get summary-last)" ]]; then
@@ -463,7 +463,7 @@ notify_periodic() {
 # ---------- hook(既存の経路から呼ぶ。失敗しても元のコマンドは変わらない) ----------
 notify_hook_comment() {  # $1=comments.id
   local row kind
-  row=$(sql -json "SELECT c.* FROM comments c WHERE c.herdr_session=$SQS AND c.id=$1;" | jq -c '.[0] // empty')
+  row=$(sql -json "SELECT c.* FROM comments c WHERE c.id=$1;" | jq -c '.[0] // empty')
   [[ -n $row ]] || return 0
   kind=$(jq -r .kind <<<"$row")
   case $kind in
@@ -575,8 +575,8 @@ cmd_notify() {
       NOTIFY_FORCE=1 notify_enqueue test "test-$(date +%s)-$$" "" || true
       local id=$NOTIFY_LAST_ID
       [[ -n $id ]] || die "test: イベントを作れませんでした"
-      if [[ $(sql "SELECT slack_status FROM notify_events WHERE herdr_session=$SQS AND id=$id;") == pending ]]; then notify_slack_send "$id" >/dev/null 2>&1 || true; fi
-      echo "N-$id $(sql "SELECT slack_status FROM notify_events WHERE herdr_session=$SQS AND id=$id;") $(sql "SELECT text FROM notify_events WHERE herdr_session=$SQS AND id=$id;")"
+      if [[ $(sql "SELECT slack_status FROM notify_events WHERE id=$id;") == pending ]]; then notify_slack_send "$id" >/dev/null 2>&1 || true; fi
+      echo "N-$id $(sql "SELECT slack_status FROM notify_events WHERE id=$id;") $(sql "SELECT text FROM notify_events WHERE id=$id;")"
       return 0;;
     dry-run) notify_dry_run "$@";;
     tail) notify_tail "$@";;
@@ -615,7 +615,7 @@ notify_event_cmd() {
 notify_status() {
   local json=0 t sinks counts
   [[ ${1:-} == --json ]] && json=1
-  counts=$(sql -separator ' ' "SELECT slack_status, COUNT(*) FROM notify_events WHERE herdr_session=$SQS GROUP BY slack_status ORDER BY 1;" | paste -sd, -)
+  counts=$(sql -separator ' ' "SELECT slack_status, COUNT(*) FROM notify_events GROUP BY slack_status ORDER BY 1;" | paste -sd, -)
   if ((json)); then
     jq -nc --arg en "$(ncfg enabled)" --arg via "$(ncfg slack_via)" --arg tgt "$([[ -n $(ncfg slack_target) ]] && echo set || echo unset)" \
       --arg agent "$(ncfg notifier_agent)" --arg wh "$(notify_webhook_state)" --arg sinks "$(ncfg sinks_default)" \
@@ -650,11 +650,11 @@ notify_dry_run() {
   while IFS=$'\t' read -r id hash text; do
     [[ -n $id ]] || continue
     n=$((n + 1)); echo "would send N-$id [$hash] $text"
-  done < <(sql -separator $'\t' "SELECT id, hash, text FROM notify_events WHERE herdr_session=$SQS AND slack_status='pending' AND blocked=0 ORDER BY id;")
+  done < <(sql -separator $'\t' "SELECT id, hash, text FROM notify_events WHERE slack_status='pending' AND blocked=0 ORDER BY id;")
   if ((n > budget)); then echo "# 枠を超える分は 1 通にまとめます(個別に送るのは最大 $((budget > 0 ? budget - 1 : 0)) 件)"; fi
   while IFS=$'\t' read -r id text; do
     [[ -n $id ]] || continue; echo "blocked N-$id(外へは送りません) $text"
-  done < <(sql -separator $'\t' "SELECT id, text FROM notify_events WHERE herdr_session=$SQS AND blocked=1 ORDER BY id DESC LIMIT 20;")
+  done < <(sql -separator $'\t' "SELECT id, text FROM notify_events WHERE blocked=1 ORDER BY id DESC LIMIT 20;")
   if ((n == 0)); then echo "(送るものはありません)"; fi
   return 0
 }
@@ -683,8 +683,8 @@ notify_events() {
     esac
   done
   if [[ -n $st ]]; then [[ $st =~ ^[a-z-]+$ ]] || usage "events: --status が不正"; where="slack_status=$(q "$st")"; fi
-  if ((json)); then sql -json "SELECT * FROM notify_events WHERE herdr_session=$SQS AND ($where) ORDER BY id DESC LIMIT $lim;" | jq -c '(. // [])[] | .id = "N-\(.id)"'
-  else sql -nullvalue - -separator $'\t' "SELECT 'N-'||id, type, slack_status, CASE WHEN blocked=1 THEN 'blocked' ELSE '-' END, created_at, text FROM notify_events WHERE herdr_session=$SQS AND ($where) ORDER BY id DESC LIMIT $lim;"; fi
+  if ((json)); then sql -json "SELECT * FROM notify_events WHERE ($where) ORDER BY id DESC LIMIT $lim;" | jq -c '(. // [])[] | .id = "N-\(.id)"'
+  else sql -nullvalue - -separator $'\t' "SELECT 'N-'||id, type, slack_status, CASE WHEN blocked=1 THEN 'blocked' ELSE '-' END, created_at, text FROM notify_events WHERE ($where) ORDER BY id DESC LIMIT $lim;"; fi
 }
 
 # notifier agent(または人)が、投稿の結果を返す。本文の hash が合わなければ警告

@@ -80,7 +80,7 @@ agent_sync() {
 # 台帳はセッションごとに分かれているので、別のセッションの agent には触らない。ここで見るのはヒントのためだけ
 other_session() {  # $1=名前
   local s; s=$(sql "SELECT herdr_session FROM main.agents WHERE name=$(q "$1") AND herdr_session!=$SQS
-    AND NOT EXISTS (SELECT 1 FROM agents WHERE herdr_session=$SQS AND name=$(q "$1")) ORDER BY updated_at DESC LIMIT 1;")
+    AND NOT EXISTS (SELECT 1 FROM agents WHERE name=$(q "$1")) ORDER BY updated_at DESC LIMIT 1;")
   [[ -n $s ]] || return 1
   OP_OUT="$1 は herdr セッション '$s' の agent です。HERDR_SESSION=$s を付けて実行してください"
 }
@@ -91,7 +91,7 @@ killable_of() {
       WHEN killable_session IS NOT NULL AND session_id IS NOT NULL AND killable_session!=session_id THEN 'stale'
       WHEN EXISTS (SELECT 1 FROM main.agent_activity aa WHERE (aa.session_id=agents.session_id OR (aa.pane_id=agents.pane_id AND aa.herdr_session=agents.herdr_session))
                    AND julianday(aa.last_prompt_at) > julianday(agents.killable_at)) THEN 'stale'
-      ELSE 'yes' END FROM agents WHERE herdr_session=$SQS AND name=$(q "$1");"
+      ELSE 'yes' END FROM agents WHERE name=$(q "$1");"
 }
 
 # 呼び出し元: 人なら REQ_BY=human。agent の pane なら REQ_BY=<agent 名>
@@ -179,7 +179,7 @@ do_agent_new() {  # name cwd model role prompt killable by [spawned_by spawn_tas
   ! role_conflict "$name" "$role" || { OP_OUT=$ROLE_CONFLICT_WHY; return 1; }
   agent_sync || { OP_OUT="herdr agent list に失敗しました"; return 11; }
   [[ -z $(live_row "$name") ]] || { OP_OUT="$name はすでに動いています"; return 1; }
-  [[ $(sql "SELECT state FROM agents WHERE herdr_session=$SQS AND name=$(q "$name");") != stopped ]] \
+  [[ $(sql "SELECT state FROM agents WHERE name=$(q "$name");") != stopped ]] \
     || { OP_OUT="停止中の $name が台帳にあります。tb agent-revive $name で再開するか、別の名前にしてください"; return 1; }
   [[ -d $cwd ]] || { OP_OUT="ディレクトリがありません: $cwd"; return 1; }
   cwd=$(cd "$cwd" && pwd)
@@ -207,14 +207,14 @@ do_agent_stop() {  # name force by
   [[ -n $pane ]] || { OP_OUT="$name の pane が分かりません"; return 1; }
   if [[ $force != 1 ]]; then
     k=$(killable_of "$name")
-    open=$(sql "SELECT group_concat(id, ' ') FROM tasks WHERE herdr_session=$SQS AND owner_agent=$(q "$name") AND status IN ($OPEN_TASK_STATUSES);")
+    open=$(sql "SELECT group_concat(id, ' ') FROM tasks WHERE owner_agent=$(q "$name") AND status IN ($OPEN_TASK_STATUSES);")
     if [[ $k != yes || -n $open ]]; then
       OP_OUT="$name は止めてよいと判定されていません(killable=$k${open:+、未完了タスク $open})。判定役に付けてもらうか(tb agent-flag)、人が --force で止めます"
       return 1
     fi
   fi
   agent_close_pane "$name" "$pane" "$sess" || return $?
-  sess=$(sql "SELECT COALESCE(session_id,'') FROM agents WHERE herdr_session=$SQS AND name=$(q "$name");")
+  sess=$(sql "SELECT COALESCE(session_id,'') FROM agents WHERE name=$(q "$name");")
   OP_OUT="$name stopped${sess:+ (session ${sess}。tb agent-revive $name で同じ会話から再開できます)}"
 }
 
@@ -269,14 +269,14 @@ do_agent_restart() {  # name prompt by
   status=$(jq -r '.agent_status // ""' <<<"$row")
   [[ -n $pane ]] || { OP_OUT="$name の pane が分かりません"; return 1; }
   case $status in idle|done) ;; *) OP_OUT="$name は ${status:-状態不明} のため再起動しません(idle か done のときだけ)"; return 1;; esac
-  open=$(sql "SELECT group_concat(id, ' ') FROM tasks WHERE herdr_session=$SQS AND owner_agent=$(q "$name") AND status='in_progress';")
+  open=$(sql "SELECT group_concat(id, ' ') FROM tasks WHERE owner_agent=$(q "$name") AND status='in_progress';")
   if [[ -n $open ]] && blank "$prompt"; then
     OP_OUT="$name は in_progress のタスク($open)を持っています。再開メモを --prompt で渡したときだけ再起動できます"; return 1
   fi
-  [[ -n $old_sess ]] || old_sess=$(sql "SELECT COALESCE(session_id,'') FROM agents WHERE herdr_session=$SQS AND name=$(q "$name");")
-  cwd=$(sql "SELECT COALESCE(cwd,'') FROM agents WHERE herdr_session=$SQS AND name=$(q "$name");")
+  [[ -n $old_sess ]] || old_sess=$(sql "SELECT COALESCE(session_id,'') FROM agents WHERE name=$(q "$name");")
+  cwd=$(sql "SELECT COALESCE(cwd,'') FROM agents WHERE name=$(q "$name");")
   # 閉じてから再開できないと困るので、再開できることを先に確かめる(だめなら何も止めない)
-  kind_require "$(sql "SELECT COALESCE(kind,'$KIND_DEFAULT') FROM agents WHERE herdr_session=$SQS AND name=$(q "$name");")" resume "同じ会話に戻れないので止めません" || { OP_OUT=$KIND_ERR; return 12; }
+  kind_require "$(sql "SELECT COALESCE(kind,'$KIND_DEFAULT') FROM agents WHERE name=$(q "$name");")" resume "同じ会話に戻れないので止めません" || { OP_OUT=$KIND_ERR; return 12; }
   [[ -n $old_sess ]] || { OP_OUT="$name の session id が台帳にありません。同じ会話に戻れないので止めません"; return 1; }
   [[ -n $cwd && -d $cwd ]] || { OP_OUT="$name の作業ディレクトリがありません(${cwd:-未記録})。同じ会話に戻れないので止めません"; return 1; }
   blank "$prompt" && prompt=$RESTART_DEFAULT_PROMPT
@@ -471,7 +471,7 @@ cmd_agent-flag() {
     [[ $REQ_BY != "$name" ]] || die "自分自身の判定は付けられません"
   fi
   agent_sync || die "herdr agent list に失敗しました"
-  [[ $(sql "SELECT state FROM agents WHERE herdr_session=$SQS AND name=$(q "$name");") == running ]] || die "$name は動いていません"
+  [[ $(sql "SELECT state FROM agents WHERE name=$(q "$name");") == running ]] || die "$name は動いていません"
   local ts; ts=$(now)
   sql "UPDATE main.agents SET killable=$(q "$kill"), killable_reason=NULLIF($(q "$(oneline "$why" 300)"),''),
          killable_by=$(q "$REQ_BY"), killable_at=$(q "$ts"), killable_session=session_id, updated_at=$(q "$ts") WHERE herdr_session=$SQS AND name=$(q "$name");"
@@ -484,7 +484,7 @@ EDGES_SQL=$TB_ROOT/sql/agent_edges.sql
 agent_edges() {
   local rows projects map="{}" p
   # 共有の SQL は表の名前のまま書いてあるので、同じ名前の CTE(このセッションの行だけ)を前に置いて絞る(Web UI は一時ビューで同じことをする)
-  rows=$(sql -json "$(session_cte agents tasks outbox comments alerts role_changes read_log) $(grep -v '^--' "$EDGES_SQL");") || return 1
+  rows=$(sql -json "$(grep -v '^--' "$EDGES_SQL");")   # 表の名前はこのセッションのビュー || return 1
   [[ -n $rows ]] || rows="[]"
   projects=$(jq -r '[.[] | .project // empty] | unique[]' <<<"$rows")
   while IFS= read -r p; do
@@ -522,14 +522,14 @@ cmd_agents() {
   local rows name k status
   rows=$(sql -json "SELECT a.name, a.state, a.pane_id, a.session_id, a.cwd, a.model, a.role, a.killable_reason, a.killable_by, a.killable_at,
       a.created_by, a.created_at, a.stopped_at, a.spawned_by, a.spawn_task,
-      (SELECT COUNT(*) FROM tasks t WHERE t.herdr_session=a.herdr_session AND t.owner_agent=a.name AND t.status IN ($OPEN_TASK_STATUSES)) AS open_tasks,
-      (SELECT COUNT(*) FROM comments c LEFT JOIN tasks t ON t.id=c.task_id AND t.herdr_session=c.herdr_session WHERE c.herdr_session=a.herdr_session AND c.from_name=a.name AND c.kind IN ('question','blocked')
+      (SELECT COUNT(*) FROM tasks t WHERE t.owner_agent=a.name AND t.status IN ($OPEN_TASK_STATUSES)) AS open_tasks,
+      (SELECT COUNT(*) FROM comments c LEFT JOIN tasks t ON t.id=c.task_id WHERE c.from_name=a.name AND c.kind IN ('question','blocked')
          AND c.resolved_at IS NULL AND COALESCE(t.status,'')!='done') AS open_questions,
       aa.last_prompt_at, aa.last_stop_at,
       CASE WHEN aa.last_stop_at IS NOT NULL AND (aa.last_prompt_at IS NULL OR aa.last_stop_at >= aa.last_prompt_at)
            THEN CAST((julianday('now') - julianday(aa.last_stop_at)) * 1440 AS INTEGER) END AS idle_min
     FROM agents a LEFT JOIN main.agent_activity aa ON aa.session_id=a.session_id
-    WHERE a.herdr_session=$SQS AND $where ORDER BY a.state, a.name;")
+    WHERE $where ORDER BY a.state, a.name;")
   [[ -n $rows ]] || rows="[]"
   # 実効の判定フラグと herdr の状態を足す
   local out="[]" r
@@ -614,9 +614,9 @@ cmd_agent-ops() {
       *) usage "agent-ops: 不明な引数 $1";;
     esac
   done
-  local where="herdr_session=$SQS"; [[ -z $st ]] || where+=" AND status=$(q "$st")"
-  if ((json)); then sql -json "SELECT * FROM agent_ops WHERE herdr_session=$SQS AND ($where) ORDER BY id DESC LIMIT 100;" | jq -c '(. // [])[] | .id = "L-\(.id)"'
-  else sql -nullvalue - -separator $'\t' "SELECT 'L-'||id, op, target, requested_by, status, created_at, COALESCE(result,'') FROM agent_ops WHERE herdr_session=$SQS AND ($where) ORDER BY id DESC LIMIT 100;"; fi
+  local where="1=1"; [[ -z $st ]] || where="status=$(q "$st")"
+  if ((json)); then sql -json "SELECT * FROM agent_ops WHERE ($where) ORDER BY id DESC LIMIT 100;" | jq -c '(. // [])[] | .id = "L-\(.id)"'
+  else sql -nullvalue - -separator $'\t' "SELECT 'L-'||id, op, target, requested_by, status, created_at, COALESCE(result,'') FROM agent_ops WHERE ($where) ORDER BY id DESC LIMIT 100;"; fi
 }
 
 # 人が承認待ちの操作を実行する。--always なら agent:<op>:<対象> を allow に
@@ -646,7 +646,7 @@ cmd_agent-reject() {
   [[ $# -eq 1 ]] || usage "agent-reject L-<n>"
   valid_lid "$1"; local id=${1#L-}
   require_human "tb agent-reject"
-  [[ $(sql "SELECT status FROM agent_ops WHERE herdr_session=$SQS AND id=$id;") == pending ]] || die "L-$id は承認待ちではありません"
+  [[ $(sql "SELECT status FROM agent_ops WHERE id=$id;") == pending ]] || die "L-$id は承認待ちではありません"
   sql "UPDATE main.agent_ops SET status='rejected', result=COALESCE(result,'')||' / 人が却下', decided_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$id;"
   echo "L-$id rejected"
 }

@@ -1655,6 +1655,8 @@ check("auth: 別のプロセスでのログアウトも効く", _a1.session_hash
 # ================= DB は全セッション共有。各セッションの Web UI は自分のセッションの行だけを読む(app/data.py の一時ビュー)
 sys.path.insert(0, os.path.dirname(HERE))
 from app import data as _data  # noqa: E402
+check("data: 一時ビューを作る表は taskboard/sql/session_tables(tb と同じ一覧)",
+      "tasks" in _data.session_tables() and "config" in _data.session_tables() and all(re.fullmatch(r"[a-z_]+", t) for t in _data.session_tables()))
 _sdb = os.path.join(TMP, "sessions.db")
 make_db(_sdb)
 _c = sqlite3.connect(_sdb)

@@ -16,15 +16,28 @@ from .herdr import agent_key, agent_session, cached, get_agents
 _TABLE_RE = re.compile(r"[a-z_]{1,64}")
 
 
+SESSION_TABLES = os.path.join(HERDR_ROOT, "taskboard", "sql", "session_tables")
+
+
+def session_tables():
+    """herdr_session 列を持つ表の一覧(taskboard/sql/session_tables。tb の sql() と同じものを読む)。"""
+    try:
+        with open(SESSION_TABLES, encoding="utf-8") as f:
+            return [t for t in (x.strip() for x in f) if t and not t.startswith("#") and _TABLE_RE.fullmatch(t)]
+    except OSError:
+        return []
+
+
 def session_views(c, session):
     """1 つの DB を複数の herdr セッションで共有する(行は herdr_session 列で分ける。taskboard/schema/012)。
-    herdr_session 列のある表ごとに、同じ名前の一時ビュー(このセッションの行だけ)を作る。
+    一覧の表のうち DB に herdr_session 列つきで今あるものごとに、同じ名前の一時ビュー(このセッションの行だけ)を作る(tb の sql() と同じ)。
     一時ビューは main の表より先に名前解決されるので、画面側の SQL は表の名前のまま、このセッションの行だけを見る。
-    列が無い古い DB(tb の移行前)はビューを作らず、そのまま読む。"""
+    全セッションを見る読み(共通の設定 '*' など)は main.<表> と書く。列が無い古い DB(tb の移行前)はビューを作らず、そのまま読む。"""
     lit = "'" + session.replace("'", "''") + "'"
+    want = set(session_tables())
     for (t,) in c.execute("SELECT m.name FROM main.sqlite_master m WHERE m.type='table' AND EXISTS "
                           "(SELECT 1 FROM pragma_table_info(m.name) p WHERE p.name='herdr_session')").fetchall():
-        if _TABLE_RE.fullmatch(t):
+        if t in want:
             c.execute(f"CREATE TEMP VIEW {t} AS SELECT * FROM main.{t} WHERE herdr_session={lit}")
 
 
