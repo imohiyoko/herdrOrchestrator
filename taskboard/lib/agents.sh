@@ -563,6 +563,42 @@ cmd_agents() {
      "idle:\(.idle_min // "-")m", (.role_file // "-"), (.killable_reason // "")] | join("\t")' <<<"$out"
 }
 
+# agent の中身(pane の直近の出力)を読む。読むのは tb 経由に絞る(agent の設定で Bash(herdr agent read:*) を deny する。README)。
+# 人と本人はそのまま。ほかの agent からは approvals の read:<対象>(@<役割> も使える)が allow のときだけ。記録は read_log
+# 終了コード: 0 / 1 読めない / 20 許可されていない(人の承認が要る)
+cmd_peek() {
+  [[ $# -ge 1 ]] || usage "peek <agent 名> [--lines N]"
+  local name=$1 lines=40 row pane out rule=""; shift
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --lines) need_arg "$@"; [[ $2 =~ ^[0-9]{1,3}$ && $2 -ge 1 && $2 -le 200 ]] || usage "peek: --lines は 1〜200"; lines=$2; shift 2;;
+      *) usage "peek: 不明な引数 $1";;
+    esac
+  done
+  valid_agent_name "$name"
+  requester
+  if [[ $REQ_BY != human && $REQ_BY != "$name" ]]; then
+    approval_of "read:$name"; rule=$APPROVAL_RULE
+    if [[ $APPROVAL_VALUE != allow ]]; then
+      sql "INSERT INTO read_log (reader, target, lines, status, rule, created_at) VALUES ($(q "$REQ_BY"), $(q "$name"), $lines, 'denied', $(q "$rule"), $(q "$(now)"));"
+      echo "tb: $REQ_BY は $name の中身を読めません($rule)。必要なら人が approvals に read:$name か read:@<役割> を allow で足す" >&2
+      return 20
+    fi
+  fi
+  load_live || die "herdr agent list に失敗しました"
+  row=$(live_row "$name"); pane=$(jq -r '.pane_id // empty' <<<"$row")
+  if [[ -z $pane ]]; then
+    sql "INSERT INTO read_log (reader, target, lines, status, rule, created_at) VALUES ($(q "$REQ_BY"), $(q "$name"), $lines, 'failed', NULLIF($(q "$rule"),''), $(q "$(now)"));"
+    die "$name は herdr で動いていません"
+  fi
+  if ! out=$(herdr_call agent read "$pane" --source recent --lines "$lines" --format text 2>/dev/null); then
+    sql "INSERT INTO read_log (reader, target, lines, status, rule, created_at) VALUES ($(q "$REQ_BY"), $(q "$name"), $lines, 'failed', NULLIF($(q "$rule"),''), $(q "$(now)"));"
+    die "herdr agent read に失敗しました($name)"
+  fi
+  sql "INSERT INTO read_log (reader, target, lines, status, rule, created_at) VALUES ($(q "$REQ_BY"), $(q "$name"), $lines, 'ok', NULLIF($(q "$rule"),''), $(q "$(now)"));"
+  printf '%s\n' "$out"
+}
+
 cmd_agent-ops() {
   local json=0 st=""
   while [[ $# -gt 0 ]]; do
