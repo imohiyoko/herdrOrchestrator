@@ -7,14 +7,15 @@ HERDR_DEFAULT_BIN=herdr                                   # PATH から探す(sc
 HERDR_DEFAULT_TB_DB=$HERDR_ROOT/taskboard/data/tasks.db   # tb / webui / setup が読み書きする DB
 HERDR_SCHEMA_DIR=$HERDR_ROOT/taskboard/schema             # NNN_*.sql。PRAGMA user_version で順に流す
 
-# herdr のセッション名。herdr の CLI と同じ優先順で、HERDR_SOCKET_PATH > HERDR_SESSION > default。
+# herdr のセッション名。herdr の CLI と同じ優先順で、HERDR_SOCKET_PATH > HERDR_SESSION > herdr-session ファイル > default。
 # socket の配置は <config>/herdr/sessions/<名前>/herdr.sock(default は <config>/herdr/herdr.sock)。
 # パスから名前を導けない(配置が違う・使えない文字を含む)ときは HERDR_SESSION に落とす。herdr は呼ばない。
 herdr_session_name() {
   local p=${HERDR_SOCKET_PATH:-} named='/sessions/([A-Za-z0-9_][A-Za-z0-9._-]*)/herdr\.sock$' dflt='/herdr/herdr\.sock$'
   if [[ $p =~ $named ]]; then printf '%s\n' "${BASH_REMATCH[1]}"; return 0; fi
   if [[ $p =~ $dflt ]]; then echo default; return 0; fi
-  echo "${HERDR_SESSION:-default}"
+  if [[ -n ${HERDR_SESSION:-} ]]; then echo "$HERDR_SESSION"; return 0; fi
+  herdr_session_file_value || echo default
 }
 
 # herdr_session_name の答えがどこから決まったか: socket(HERDR_SOCKET_PATH から名前を導けた) / env(HERDR_SESSION) / default。
@@ -22,7 +23,28 @@ herdr_session_name() {
 herdr_session_source() {
   local p=${HERDR_SOCKET_PATH:-} named='/sessions/([A-Za-z0-9_][A-Za-z0-9._-]*)/herdr\.sock$' dflt='/herdr/herdr\.sock$'
   if [[ $p =~ $named || $p =~ $dflt ]]; then echo socket; return 0; fi
-  if [[ -n ${HERDR_SESSION:-} ]]; then echo env; else echo default; fi
+  # herdr_session_apply がファイルの値を HERDR_SESSION に入れたものは、ファイルで決まったものとして扱う
+  if [[ -n ${HERDR_SESSION:-} && ${HERDR_SESSION_FROM_FILE:-} == "$HERDR_SESSION" ]]; then echo file
+  elif [[ -n ${HERDR_SESSION:-} ]]; then echo env; elif herdr_session_file_value >/dev/null; then echo file; else echo default; fi
+}
+
+# checkout ごとにセッション名を固定するファイル(既定は checkout 直下の herdr-session。git 管理外)。
+# 1 行目の名前だけを読む(# 以降と前後の空白は無視)。名前に使えない文字があれば無いものとして扱う。
+# 優先順は HERDR_SOCKET_PATH > HERDR_SESSION > このファイル > default(環境変数を付けたときだけ上書きされる)
+herdr_session_file() { echo "${HERDR_SESSION_FILE:-$HERDR_ROOT/herdr-session}"; }
+herdr_session_file_value() {
+  local f v=""; f=$(herdr_session_file)
+  [[ -f $f && -r $f ]] || return 1
+  IFS= read -r v <"$f" || [[ -n $v ]] || return 1
+  v=${v%%#*}; v=${v#"${v%%[![:space:]]*}"}; v=${v%"${v##*[![:space:]]}"}   # 前後の空白だけ落とす
+  [[ $v =~ ^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$ ]] || return 1
+  printf '%s\n' "$v"
+}
+# herdr の CLI は herdr-session ファイルを知らないので、ファイルで決まったときだけ HERDR_SESSION に入れて渡す。
+# 各部品(tb / scheduler / herdr-up)が起動時に 1 回呼ぶ(このファイル自体は source されても何も export しない)
+herdr_session_apply() {
+  [[ $(herdr_session_source) == file ]] || return 0
+  HERDR_SESSION=$(herdr_session_file_value); HERDR_SESSION_FROM_FILE=$HERDR_SESSION; export HERDR_SESSION HERDR_SESSION_FROM_FILE
 }
 
 # launchd ラベルの接頭辞。TB_INSTANCE 未設定(空)なら従来の "local.herdr-"、設定すれば "local.herdr-<instance>-"。
