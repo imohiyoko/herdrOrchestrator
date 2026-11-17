@@ -457,6 +457,8 @@ check("resume コマンドは出さず、使わないよう注意する", "claud
 check("attach 欄にインラインのスクリプトがない", "onfocus" not in b)
 check("名前に HTML を含む agent も安全", "&lt;img src=x onerror=alert(2)&gt;" in cl.get("/agents")[2])
 check("pane_id フォールバックの URL", cl.get("/agents/w1%3Ap3")[0] == 200)
+_ab = cl.get("/agents")[2]
+check("agent 一覧に指揮系統ツリー", '<h2 id="tree">' in _ab and "<ul class=tree><li>人(human)<ul>" in _ab and _ab.count('<a href="/agents/alpha">') >= 2)
 check("未知の agent は 404", cl.get("/agents/nope")[0] == 404)
 check("未知のタスクは 404", cl.get("/tasks/nope")[0] == 404)
 check("未知の URL は 404", cl.get("/nope")[0] == 404)
@@ -1609,6 +1611,42 @@ if portu:
     check("TB_INSTANCE=Alpha は小文字に正規化(run は instance-alpha)", os.path.isdir(os.path.join(env["WEBUI_RUN_BASE"], "instance-alpha")) and "instance-Alpha" not in os.listdir(env["WEBUI_RUN_BASE"]))
     check("TB_INSTANCE=Alpha の画面表示も小文字", ">alpha<" in cu_.get("/tasks")[2])
 stop(pu_)
+
+# ================= 指揮系統ツリー(app/tree.py。tb agents --tree と同じ規則)
+sys.path.insert(0, os.path.dirname(HERE))
+import app.tree as _tree  # noqa: E402
+_rd = os.path.join(TMP, "tree-roles")
+os.makedirs(_rd, exist_ok=True)
+for _r in ("conductor", "worker", "watcher"):
+    open(os.path.join(_rd, _r + ".md"), "w").write("x")
+open(os.path.join(_rd, "map.conf"), "w").write("*-conductor = conductor\nworker* = worker\nwatch* = watcher\n")
+_pc = os.path.join(TMP, "tree-projects.conf")
+open(_pc, "w").write("# c\nprojb = b-conductor\n")
+_old = {k: os.environ.get(k) for k in ("TB_ROLES", "TB_CONFIG")}
+os.environ.update(TB_ROLES=_rd, TB_CONFIG=_pc)
+check("tree: 役割は名前の .md > 台帳の role > map.conf", [_tree.role_of(n, r) for n, r in
+      (("conductor", None), ("b-conductor", None), ("worker1", None), ("helper", "worker"), ("helper", None), ("_x", None))]
+      == ["conductor", "conductor", "worker", "worker", None, None])
+_nodes = [{"name": n, "role": _tree.role_of(n), "spawned_by": sb, "task_project": tp} for n, sb, tp in (
+    ("conductor", None, None), ("b-conductor", None, None), ("worker1", None, None), ("worker2", None, "projb"),
+    ("worker3", "worker1", None), ("watcher", None, None), ("worker4", "gone", None))]
+_tree.build(_nodes)
+check("tree: spawn > project の指揮官 > 既定の指揮官 > 最上位",
+      {n["name"]: (n["parent"], n["parent_via"]) for n in _nodes} == {
+          "conductor": (None, None), "b-conductor": (None, None), "worker1": ("conductor", "default"),
+          "worker2": ("b-conductor", "project"), "worker3": ("worker1", "spawn"), "watcher": (None, None),
+          "worker4": ("conductor", "default")})
+_cyc = [{"name": "a", "role": None, "spawned_by": "b"}, {"name": "b", "role": None, "spawned_by": "a"}]
+_tree.build(_cyc)
+check("tree: 循環は最上位へ", [n["parent"] for n in _cyc] == [None, None])
+_h = _v2.agent_tree_html([dict(n, agent={"name": n["name"]}) for n in _nodes])
+check("tree: 入れ子の ul で描く", "<a href=\"/agents/worker1\">worker1</a>" in _h
+      and _h.index("worker1") < _h.index("worker3") and "spawn した子" in _h)
+for _k, _v in _old.items():
+    if _v is None:
+        os.environ.pop(_k, None)
+    else:
+        os.environ[_k] = _v
 
 print()
 print("FAILED: " + ", ".join(fails) if fails else "all passed")

@@ -9,6 +9,7 @@ from urllib.parse import quote, unquote, urlencode
 
 from .config import HERDR_ROOT, INSTANCE, JOB_RE, REFRESH_SEC, SCHED_LOGS, STALL_MIN, TASK_STALE_HOURS
 from .sanitize import clean, e
+from . import tree
 from .herdr import agent_key, agent_session, get_agents, read_agent, workspace_label
 from .data import has_resolution, parse_ts, NOTIFY_POLL_SEC, QUEUED_WARN_SEC, outbox_rows, activity_for, agent_ops, agent_registry, stopped_agents, db_conn, needs_human, parse_jsonl, q, stalled, tail_lines, tasks_for_agent, urgent_items, LEDGER_MAX, LEDGER_RESULTS, approval_history, ledger_kinds, ledger_rows, ledger_summary
 from .actions import NOTE_MAX
@@ -35,6 +36,8 @@ pre{background:#fff;border:1px solid #d0d7de;padding:8px;overflow:auto;white-spa
 code{background:#eaeef2;padding:1px 4px;border-radius:3px}
 .st-working{color:#9a6700}.st-blocked,.warn{color:#cf222e;font-weight:bold}.st-idle{color:#6e7781}.st-done{color:#1a7f37}
 .note{color:#6e7781;font-size:12px}
+ul.tree{background:#fff;border:1px solid #d0d7de;margin:0;padding:8px 8px 8px 28px}ul.tree ul{padding-left:20px;margin:0;border-left:1px dotted #d0d7de}
+ul.tree li{margin:2px 0}.via{color:#6e7781;font-size:12px}
 .inst{padding:2px 10px;border-radius:4px;font-weight:bold;background:#d0d7de;color:#1f2328}.inst-warn{background:#8a5a00;color:#fff;border:1px solid #fff}
 .doc{background:#fff;border:1px solid #d0d7de;padding:8px 24px;overflow-wrap:anywhere}
 .doc table{width:auto}.doc pre{background:#f6f8fa}.doc blockquote{border-left:4px solid #d0d7de;margin:0;padding:0 12px;color:#57606a}
@@ -179,14 +182,39 @@ def stop_cell(ctx, name, r):
     return op_form(ctx, "force-stop", name, "強制停止", confirm=True)
 
 
+TREE_VIA = {"spawn": "spawn した子", "project": "タスクの project の指揮官", "default": "既定の指揮官"}
+
+
+def agent_tree_html(nodes):
+    """agent 一覧の論理ツリー(tree.build 済みの nodes)。親子は ul の入れ子で表す。"""
+    kids = tree.children(nodes)
+
+    def li(n):
+        a = n["agent"]
+        via = n.get("parent_via")
+        extra = (f' <span class=via>({e(TREE_VIA[via])}' + (f': {e(n.get("spawn_task"))}' if via == "spawn" and n.get("spawn_task") else "")
+                 + ')</span>') if via else ""
+        sub = "".join(li(c) for c in kids.get(n.get("name"), [])) if n.get("name") else ""
+        return (f'<li>{alink(a)} {state_html(a.get("agent_status"))} <span class=via>{e(n.get("role") or "-")}</span>{extra}'
+                + (f"<ul>{sub}</ul>" if sub else "") + "</li>")
+
+    top = kids.get(None, [])
+    return f'<ul class=tree><li>人(human)<ul>{"".join(li(n) for n in top)}</ul></li></ul>' if top else "<p class=note>(なし)</p>"
+
+
 def page_agents(qs, ctx=None):
     ctx = {} if ctx is None else ctx
     agents, err = get_agents()
     reg = agent_registry()
-    rows = []
+    rows, nodes = [], []
     for a in agents:
         act = activity_for(a)
         tasks = tasks_for_agent(a)
+        r0 = reg.get(a.get("name") or "") or {}
+        open_t = [t for t in tasks if t.get("status") in tree.OPEN_TASK_STATUSES]
+        nodes.append({"agent": a, "name": a.get("name") or "", "role": tree.role_of(a.get("name") or "", r0.get("role")),
+                      "spawned_by": r0.get("spawned_by"), "spawn_task": r0.get("spawn_task"),
+                      "task_project": open_t[0].get("project") if open_t else None})
         warn = ""
         if a.get("agent_status") == "blocked":
             warn = "blocked(人の対応待ち)"
@@ -200,6 +228,9 @@ def page_agents(qs, ctx=None):
     st = (qs.get("op") or [""])[0]
     body = (f"<p class=note>{e(OP_MSG[st])}</p>" if st in OP_MSG else "") + err_html(err) + table(
         ["名前", "状態", "workspace", "いま何を", "最終入力 / 停止", "警告", "止めてよいか", "操作"], rows)
+    body += ('<h2 id="tree">指揮系統ツリー</h2>' + agent_tree_html(tree.build(nodes)) +
+             '<p class=note>親は spawn の記録(tb agent-spawn)> 指揮官は最上位 > 未完了タスクの project の指揮官(projects.conf)'
+             ' > worker は既定の指揮官、の順で決めます。手元では tb agents --tree で同じものを出せます。</p>')
     body += ('<p class=note>「止めてよいか」は判定役(roles/sweeper.md)か人が付けます。止めてよい印があり、未完了タスクが無いものは「停止」、'
              'それ以外は確認つきの「強制停止」。止めても台帳に会話が残り、下から同じ会話で復活できます。 '
              '<a href="/agent-new">新しい agent を作る</a></p>')

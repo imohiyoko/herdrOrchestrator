@@ -213,6 +213,7 @@ tb alert-close A-<n>                # 人が閉じる
 
 ```bash
 tb agents [--json] [--all]          # 台帳と判定材料: 状態・killable・未完了タスク数・未対応の質問数・idle 分・役割ファイル
+tb agents --tree                    # 指揮系統の論理ツリー(下の「agent の論理ツリー」)
 tb agent-new <名前> [--cwd D] [--kind K] [--model M] [--role R] [--prompt P] [--killable yes|no]
 tb agent-stop <名前> [--force]
 tb agent-revive <名前> [--fresh] [--model M] [--prompt P]
@@ -243,6 +244,26 @@ tb agent-approve L-<n> [--always] / tb agent-reject L-<n>      # 人だけ
   `ask` なら `L-<n>` として人の承認待ちに積む(終了コード 20。Web UI の緊急通知と agent 一覧に出る)。`allow` ならそのまま実行する(停止の前提はそれでも確かめる)。`--force` は人だけ
 - herdr のセッション(`HERDR_SESSION`、プリセットの `# session:`)ごとに台帳を分けて扱う。別セッションの agent は同期で「止まった」扱いにせず、操作するときは `HERDR_SESSION=<名前>` を付けるよう案内する
 - 実行したもの・断ったもの・承認待ちは `agent_ops` にすべて残る。終了コード: 0 実行済み / 1 拒否・前提違い / 11 herdr の失敗 / 20 承認待ち
+
+### agent の論理ツリー(`tb agents --tree`)
+
+`tb agents --tree` は、一覧を指揮系統の木で出す(Web UI の /agents にも「指揮系統ツリー」として同じものが出る)。親は次の順で決める。
+
+1. `tb agent-spawn` で立てた子は、台帳の `spawned_by`(親)の下
+2. 役割が conductor の agent は最上位(人の直下)
+3. 未完了タスク(in_progress / review / blocked)の project の指揮官(`config/projects.conf`)の下
+4. 役割が worker なら、既定の指揮官(conductor)の下
+5. それ以外(watcher / sweeper / auditor など)は最上位
+
+親が一覧に居ないとき・循環するときは最上位に置く。`--json` の各行にも `parent` と `parent_via`(spawn / project / default)が付く。
+
+```
+human
+├─ conductor  running/idle  conductor  tasks:0 q:0
+│  └─ worker1  running/working  worker  tasks:1 q:0
+│     └─ worker3  running/idle  worker  tasks:0 q:0  (spawn: T-a-001)
+└─ watcher  running/idle  watcher  tasks:0 q:0
+```
 
 ### 規則つきの子 agent 作成(`tb agent-spawn`)
 

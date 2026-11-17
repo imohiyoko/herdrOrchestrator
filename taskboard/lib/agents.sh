@@ -468,21 +468,52 @@ cmd_agent-flag() {
   echo "$name killable=$kill"
 }
 
-# 台帳 + 判定に使う材料(判定役はこれを読んで決める)
+# 論理ツリーの親(指揮系統)を決める。入力は cmd_agents の配列(lead = タスクの project の指揮官)。
+# 優先: spawned_by(tb agent-spawn の親) > 役割が conductor なら最上位 > 未完了タスクの project の指揮官 > worker は既定の指揮官 > 最上位。
+# 親が一覧に居ないとき・循環するときは最上位(人の直下)に置く。parent / parent_via を足して返す
+AGENT_TREE_JQ='
+  (map(.name)) as $names
+  | map(. as $a
+      | if ($a.spawned_by // "") != "" and ($names | index($a.spawned_by)) and $a.spawned_by != $a.name then . + {parent:$a.spawned_by, parent_via:"spawn"}
+        elif $a.role_file == "conductor.md" then . + {parent:null, parent_via:null}
+        elif ($a.lead // "") != "" and ($names | index($a.lead)) and $a.lead != $a.name then . + {parent:$a.lead, parent_via:"project"}
+        elif $a.role_file == "worker.md" and ($names | index($dflt)) and $dflt != $a.name then . + {parent:$dflt, parent_via:"default"}
+        else . + {parent:null, parent_via:null} end)
+  | (map({key:.name, value:.parent}) | from_entries) as $p
+  | def top($n; $k): if $n == null then true elif $k == 0 then false else top($p[$n]; $k - 1) end;
+    map(if top(.parent; length) then . else . + {parent:null, parent_via:null} end)'
+
+# ツリーを罫線つきで描く(入力は AGENT_TREE_JQ の結果)
+AGENT_TREE_RENDER_JQ='
+  . as $all
+  | def node_label: "\(.name)  \(.state)/\(.agent_status // "-")  \(.role_file // "-" | sub("\\.md$"; ""))  tasks:\(.open_tasks) q:\(.open_questions)"
+      + (if .parent_via == "spawn" then "  (spawn" + (if (.spawn_task // "") != "" then ": \(.spawn_task)" else "" end) + ")" else "" end)
+      + (if .killable == "yes" then "  killable" else "" end);
+    def walk_tree($parent; $prefix):
+      [$all[] | select(.parent == $parent)] as $kids | ($kids | length) as $n
+      | range(0; $n) as $i | $kids[$i] as $k | ($i == $n - 1) as $last
+      | ($prefix + (if $last then "└─ " else "├─ " end) + ($k | node_label)),
+        walk_tree($k.name; $prefix + (if $last then "   " else "│  " end));
+    "human", walk_tree(null; "")'
+
+# 台帳 + 判定に使う材料(判定役はこれを読んで決める)。--tree は指揮系統の論理ツリーで出す
 cmd_agents() {
-  local json=0 all=0
+  local json=0 all=0 tree=0
   while [[ $# -gt 0 ]]; do
     case $1 in
       --json) json=1; shift;;
       --all) all=1; shift;;
+      --tree) tree=1; shift;;
       *) usage "agents: 不明な引数 $1";;
     esac
   done
   agent_sync || echo "tb: herdr agent list に失敗しました(台帳の内容だけを出します)" >&2
   local where="1=1"; ((all)) || where="(a.state='running' OR a.stopped_at > strftime('%Y-%m-%dT%H:%M:%SZ','now','-7 days'))"
-  local rows name k status
+  local rows name k status lead
   rows=$(sql -json "SELECT a.name, a.state, a.pane_id, a.session_id, a.cwd, a.model, a.role, a.killable_reason, a.killable_by, a.killable_at,
-      a.created_by, a.created_at, a.stopped_at,
+      a.created_by, a.created_at, a.stopped_at, a.spawned_by, a.spawn_task,
+      (SELECT t.project FROM tasks t WHERE t.owner_agent=a.name AND t.status IN ($OPEN_TASK_STATUSES)
+         ORDER BY t.updated_at DESC LIMIT 1) AS task_project,
       (SELECT COUNT(*) FROM tasks t WHERE t.owner_agent=a.name AND t.status IN ($OPEN_TASK_STATUSES)) AS open_tasks,
       (SELECT COUNT(*) FROM comments c LEFT JOIN tasks t ON t.id=c.task_id WHERE c.from_name=a.name AND c.kind IN ('question','blocked')
          AND c.resolved_at IS NULL AND COALESCE(t.status,'')!='done') AS open_questions,
@@ -499,10 +530,14 @@ cmd_agents() {
     name=$(jq -r .name <<<"$r"); k=$(killable_of "$name")
     status=$(jq -r --arg n "$name" '[.[] | select(.name==$n)][0].agent_status // ""' <<<"$LIVE_AGENTS")
     load_role "$name" >/dev/null 2>&1 || true
-    out=$(jq -c --argjson r "$r" --arg k "$k" --arg s "$status" --arg f "${ROLE_FILE#"$ROLES_DIR"/}" \
-      '. + [$r + {killable:$k, agent_status:(if $s=="" then null else $s end), role_file:(if $f=="" then null else $f end)}]' <<<"$out")
+    lead=""; [[ -z $(jq -r '.task_project // ""' <<<"$r") ]] || lead=$(target_for "$(jq -r .task_project <<<"$r")")
+    out=$(jq -c --argjson r "$r" --arg k "$k" --arg s "$status" --arg f "${ROLE_FILE#"$ROLES_DIR"/}" --arg l "$lead" \
+      '. + [$r + {killable:$k, agent_status:(if $s=="" then null else $s end), role_file:(if $f=="" then null else $f end),
+                  lead:(if $l=="" then null else $l end)}]' <<<"$out")
   done < <(jq -c '.[]' <<<"$rows")
+  out=$(jq -c --arg dflt "$(target_for "")" "$AGENT_TREE_JQ" <<<"$out")
   if ((json)); then jq -c '.[]' <<<"$out"; return 0; fi
+  if ((tree)); then jq -r "$AGENT_TREE_RENDER_JQ" <<<"$out"; return 0; fi
   jq -r '.[] | [.name, .state, (.agent_status // "-"), .killable, "tasks:\(.open_tasks)", "q:\(.open_questions)",
      "idle:\(.idle_min // "-")m", (.role_file // "-"), (.killable_reason // "")] | join("\t")' <<<"$out"
 }
