@@ -83,8 +83,7 @@ def make_env(name, **extra):
         WEBUI_RUN_DIR=os.path.join(d, "run"), WEBUI_TB_DB=os.path.join(d, "tasks.db"),
         WEBUI_SCHED_LOGS=os.path.join(d, "logs"), WEBUI_APPROVALS=os.path.join(d, "approvals.conf"),
         WEBUI_SCHED_JOBS=os.path.join(d, "jobs"), WEBUI_SCHED_SETTINGS=os.path.join(d, "settings"),
-        WEBUI_REGISTRY_DIR=os.path.join(TMP, "registry"))
-    env.pop("TB_UI_GATEWAY", None)
+        WEBUI_REGISTRY_DIR=os.path.join(TMP, "registry"), WEBUI_AUTH_DIR=os.path.join(d, "run"))
     env.update(extra)
     return env, d
 
@@ -115,17 +114,48 @@ def stop(p):
         p.kill()
 
 
-def req(port, method, path, cookie=None, host=None):
+def base_for(port):
+    """そのポートで動いているインスタンスの置き場所(/s/<名前>)。インスタンスの一覧(テストでは TMP/registry)から引く。無ければ ""(入口など)。"""
+    best = None
+    for f in glob.glob(os.path.join(TMP, "registry", "*.json")):
+        try:
+            d = json.load(open(f))
+            os.kill(d["pid"], 0)
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        if d.get("port") == port and (best is None or os.path.getmtime(f) > best[0]):
+            best = (os.path.getmtime(f), d.get("base") or "")
+    return best[1] if best else ""
+
+
+def unbase(base, r):
+    """ページは /s/<名前>/ の下にあるので、既存の検査はその下からの相対で見る(Location と HTML の絶対パスから base を外す)。
+    BASE の付け外しそのものは「入口」の節で生のまま検査する。"""
+    if not base:
+        return r
+    code, h, body = r
+    if h.get("Location", "").startswith(base + "/"):
+        h = dict(h, Location=h["Location"][len(base):])
+    body = re.sub(r'(\s(?:href|action|src)=")' + re.escape(base) + "/", r"\1/", body)
+    return code, h, body
+
+
+def with_base(base, path):
+    return base + path if base and path.startswith("/") and not path.startswith("/s/") else path
+
+
+def req(port, method, path, cookie=None, host=None, raw=False):
+    base = "" if raw else base_for(port)
     c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
     h = {"Host": host or f"127.0.0.1:{port}"}
     if cookie:
         h["Cookie"] = cookie
-    c.request(method, path, headers=h)
+    c.request(method, with_base(base, path), headers=h)
     r = c.getresponse()
     body = r.read().decode("utf-8", "replace")
     out = (r.status, dict(r.getheaders()), body)
     c.close()
-    return out
+    return unbase(base, out)
 
 
 # ---- fixtures
@@ -164,39 +194,18 @@ def make_db(path):
     c.close()
 
 
-# ================= ポート探索
-base = free_range(3)
-occupy(base)
-env, _ = make_env("collide", HERDR_WEBUI_RANGE=f"{base}-{base + 2}")
+# ================= 待ち受け: 外から開くのは入口だけなので、各インスタンスは OS が選ぶ空きポート
+env, _ = make_env("ephemeral")
 p = start(env)
 port = wait_port(env, p)
-check("ポート衝突で +1", port == base + 1, f"port={port}")
-if port:
-    check("run/port に書く", open(os.path.join(env["WEBUI_RUN_DIR"], "port")).read().strip() == str(port))
+check("インスタンスは空きポートで起動し run/port に書く", bool(port) and open(os.path.join(env["WEBUI_RUN_DIR"], "port")).read().strip() == str(port), f"port={port}")
+_reg_e = json.load(open(os.path.join(TMP, "registry", "default.json"))) if port else {}
+check("インスタンスの一覧にも同じポート(port ファイルより先に書く)", _reg_e.get("port") == port and _reg_e.get("base") == "/s/default", str(_reg_e))
+ss_ = subprocess.run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN"], capture_output=True, text=True).stdout if port and shutil.which("lsof") else ""
+check("bind はループバックだけ", (not ss_) or ("127.0.0.1:" in ss_ and "*:" not in ss_ and "0.0.0.0" not in ss_), ss_)
 stop(p)
-check("終了時に run/port を消す", not os.path.exists(os.path.join(env["WEBUI_RUN_DIR"], "port")))
-
-occupy(base + 1)
-occupy(base + 2)
-env, _ = make_env("full", HERDR_WEBUI_RANGE=f"{base}-{base + 2}")
-p = start(env)
-try:
-    rc = p.wait(5)
-except subprocess.TimeoutExpired:
-    rc = None
-check("全部埋まっていればエラー終了", rc not in (None, 0), f"rc={rc}")
-check("エラー文に使用中と出る", "使用中" in (p.stderr.read() if rc else ""))
-
-env, _ = make_env("fixed", TB_UI_PORT=str(base), HERDR_WEBUI_RANGE=f"{base}-{base + 2}")
-p = start(env)
-try:
-    rc = p.wait(5)
-except subprocess.TimeoutExpired:
-    rc = None
-check("TB_UI_PORT 固定は探索しない(使用中ならエラー)", rc not in (None, 0), f"rc={rc}")
-for s in socks:
-    s.close()
-socks.clear()
+check("終了時に run/port と一覧の行を消す", not os.path.exists(os.path.join(env["WEBUI_RUN_DIR"], "port"))
+      and not os.path.exists(os.path.join(TMP, "registry", "default.json")))
 
 # ================= 認証つき本体
 USER, PW = "tester", "correct-horse-battery-9"
@@ -207,7 +216,9 @@ class Client:
     def __init__(self, port):
         self.port, self.cookie = port, None
 
-    def raw(self, method, path, data=None, origin="default", cookie="default", host=None):
+    def raw(self, method, path, data=None, origin="default", cookie="default", host=None, raw=False):
+        base = "" if raw else base_for(self.port)
+        path = with_base(base, path)
         c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
         h = {"Host": host or f"127.0.0.1:{self.port}"}
         ck = self.cookie if cookie == "default" else cookie
@@ -226,7 +237,7 @@ class Client:
         text = r.read().decode("utf-8", "replace")
         out = (r.status, dict(r.getheaders()), text)
         c.close()
-        return out
+        return unbase(base, out)
 
     def get(self, path, **kw):
         return self.raw("GET", path, **kw)
@@ -375,7 +386,7 @@ check("拒否の間は auth.json が作られない", not os.path.exists(os.path
 r = cl.raw("POST", "/setup", {"csrf": cs, "username": USER, "password": PW, "confirm": PW})
 check("初回設定が成功(302 + Cookie)", r[0] == 302 and "Set-Cookie" in r[1], str(r[:2]))
 ck = r[1].get("Set-Cookie", "")
-check("Cookie が HttpOnly / SameSite=Strict / Path=/", "HttpOnly" in ck and "SameSite=Strict" in ck and "Path=/" in ck, ck.split("=")[0])
+check("Cookie が HttpOnly / SameSite=Strict / Path=/(ログインは全セッション共通)", "HttpOnly" in ck and "SameSite=Strict" in ck and "Path=/;" in ck, ck.split("=")[0])
 check("Cookie の有効期間が 12 時間", "Max-Age=43200" in ck, ck.split(";")[-1])
 check("auth.json が 0600", mode(os.path.join(RUN, "auth.json")) == "0o600", mode(os.path.join(RUN, "auth.json")))
 check("sessions.json が 0600", mode(os.path.join(RUN, "sessions.json")) == "0o600")
@@ -1356,6 +1367,8 @@ def inst_env(name, inst=None, **extra):
         env["TB_INSTANCE"] = inst
     # 既定の run を使うテストでも、checkout の run/ を汚さないよう ROOT を差し替える口は無いので WEBUI_RUN_DIR の親だけ指定する
     env["WEBUI_RUN_BASE"] = os.path.join(d, "runbase")
+    if "WEBUI_AUTH_DIR" not in extra:
+        env["WEBUI_AUTH_DIR"] = os.path.join(d, "auth")
     return env, d
 
 
@@ -1385,7 +1398,7 @@ env, pa, porta = inst_boot("inst-a", "alpha")
 check("TB_INSTANCE=alpha: 起動できる", porta is not None)
 if porta:
     ca, nm = inst_cookie_name(porta)
-    check("TB_INSTANCE=alpha: Cookie 名にインスタンス名が入る", nm == "herdr_webui_session_alpha", str(nm))
+    check("TB_INSTANCE=alpha: Cookie 名は全セッション共通", nm == "herdr_webui_session", str(nm))
     check("TB_INSTANCE=alpha: そのセッションで入れる", ca.cookie and ca.get("/tasks")[0] == 200)
     # (3) 取り違え表示
     pg = ca.get("/tasks")[2]
@@ -1400,20 +1413,26 @@ if porta:
 out_a = stop_out(pa)
 check("起動ログにポートとインスタンス名", f"instance=alpha" in out_a and f"port={porta}" in out_a, out_a[:200])
 
-env, pb, portb = inst_boot("inst-b", "beta")
+# ログインは共通: 同じログイン情報の置き場(AUTH_DIR)を見るほかのインスタンスにも、同じ Cookie で入れる
+env, pb, portb = inst_boot("inst-b", "beta", WEBUI_AUTH_DIR=os.path.join(TMP, "inst-a", "auth"))
 if portb and porta:
-    cb, nmb = inst_cookie_name(portb)
-    check("別インスタンスの Cookie 名は別", nmb == "herdr_webui_session_beta" and nmb != nm, str(nmb))
-    # 同じ host の別ポートでも、他方の Cookie では入れない
-    foreign = Client(portb)
-    foreign.cookie = ca.cookie
-    check("他インスタンスの Cookie ではログインにならない", foreign.get("/tasks")[0] == 302)
+    shared = Client(portb)
+    shared.cookie = ca.cookie
+    check("ログイン共通: alpha のログインで beta にも入れる", shared.get("/tasks")[0] == 200)
+    check("ログイン共通: beta では /setup は開かない(設定済み)", shared.get("/setup", cookie=None)[0] == 404)
+    r = shared.raw("POST", "/logout", {"csrf": re.search(r'name=csrf value="([^"]+)"', shared.get("/tasks")[2]).group(1)})
+    check("ログイン共通: beta でログアウトすると、その Cookie は使えなくなる", r[0] == 302 and Client(portb).get("/tasks", cookie=ca.cookie)[0] == 302)
 stop(pb)
+# 別の置き場のインスタンスには入れない(置き場が別なら別のログイン)
+env, pb2, portb2 = inst_boot("inst-b2", "beta2")
+if portb2 and porta:
+    check("ログイン情報の置き場が別なら、その Cookie では入れない", Client(portb2).get("/tasks", cookie=ca.cookie)[0] == 302)
+stop(pb2)
 
 env, pd, portd = inst_boot("inst-def", None)
 if portd:
     cd_, nmd = inst_cookie_name(portd)
-    check("TB_INSTANCE 未設定: Cookie 名は従来のまま", nmd == "herdr_webui_session", str(nmd))
+    check("TB_INSTANCE 未設定: Cookie 名も同じ", nmd == "herdr_webui_session", str(nmd))
     pg = cd_.get("/tasks")[2]
     check("TB_INSTANCE 未設定: 表示は従来どおり(帯なし)", 'class="inst' not in pg and "<title>タスク - herdr</title>" in pg)
     check("TB_INSTANCE 未設定: run/ 直下に port", os.path.exists(os.path.join(env["WEBUI_RUN_BASE"], "port")))
@@ -1434,147 +1453,6 @@ for bad in ("a/b", "../x", "a b", "-x", "x" * 65):
     except subprocess.TimeoutExpired:
         rc = None
     check(f"不正な TB_INSTANCE({bad[:12]!r})は起動しない", rc not in (None, 0), f"rc={rc}")
-
-# (2) ポート固定: 使用中なら逃げずにエラー。ログに指定ポートと理由
-base = free_range(3)
-occupy(base)
-env, _ = inst_env("inst-fixed", "gamma", TB_UI_PORT=str(base), HERDR_WEBUI_RANGE=f"{base}-{base + 2}")
-pf_ = start(env)
-try:
-    rc = pf_.wait(5)
-except subprocess.TimeoutExpired:
-    rc = None
-err = (pf_.stderr.read() or "") if rc else ""
-check("TB_UI_PORT 使用中: 別ポートへ逃げずエラー終了", rc not in (None, 0), f"rc={rc}")
-check("TB_UI_PORT 使用中: エラーに指定ポートと instance", str(base) in err and "gamma" in err, err[:200])
-check("TB_UI_PORT 使用中: 隣のポートで待ち受けていない", all(
-    socket.socket().connect_ex(("127.0.0.1", q)) != 0 for q in (base + 1, base + 2)))
-env, _ = inst_env("inst-fixed-bad", "gamma", TB_UI_PORT="abc")
-pf_ = start(env)
-try:
-    rc = pf_.wait(5)
-except subprocess.TimeoutExpired:
-    rc = None
-check("TB_UI_PORT が数値でない: エラー終了(範囲探索に落ちない)", rc not in (None, 0), f"rc={rc}")
-for s in socks:
-    s.close()
-socks.clear()
-# 固定ポートが空いていればそのポートで起動し、run ファイルに残す
-base = free_range(1)
-env, _ = inst_env("inst-fixed-ok", "gamma", TB_UI_PORT=str(base))
-pf_ = start(env)
-pfile = os.path.join(env["WEBUI_RUN_BASE"], "instance-gamma", "port")
-end = time.time() + 5
-while time.time() < end and not os.path.exists(pfile) and pf_.poll() is None:
-    time.sleep(0.05)
-check("TB_UI_PORT 空き: そのポートで起動し run に残す", os.path.exists(pfile) and open(pfile).read().strip() == str(base))
-# (5) bind はループバックのまま
-ss_ = subprocess.run(["lsof", "-nP", f"-iTCP:{base}", "-sTCP:LISTEN"], capture_output=True, text=True).stdout if shutil.which("lsof") else ""
-check("bind はループバックだけ", (not ss_) or ("127.0.0.1:" in ss_ and "*:" not in ss_ and "0.0.0.0" not in ss_), ss_)
-stop(pf_)
-check("終了時にインスタンスの run ファイルを消す", not os.path.exists(pfile) and not os.path.exists(os.path.join(os.path.dirname(pfile), "instance")))
-
-# ---- 追加: 既存運用の移行(旧い run/auth.json は読み取りだけ引き継ぐ)
-base_ = free_range(1)
-env, d_ = inst_env("inst-mig", "mig", HERDR_WEBUI_RANGE=f"{base_}-{base_}", WEBUI_LEGACY_AUTH="1")
-old_run = env["WEBUI_RUN_BASE"]
-os.makedirs(old_run, exist_ok=True)
-# 先に旧い場所で /setup して auth.json を作る(TB_INSTANCE なしの起動)
-env0 = dict(env); env0.pop("TB_INSTANCE"); env0["WEBUI_RUN_DIR"] = old_run
-p0 = start(env0)
-for _ in range(100):
-    if os.path.exists(os.path.join(old_run, "port")):
-        break
-    time.sleep(0.05)
-port0 = int(open(os.path.join(old_run, "port")).read())
-c0 = Client(port0)
-c0.raw("POST", "/setup", {"csrf": c0.csrf("/setup"), "username": USER, "password": PW, "confirm": PW})
-stop(p0)
-old_auth = os.path.join(old_run, "auth.json")
-before = open(old_auth).read()
-p1 = start(env)
-newport = wait_port({"WEBUI_RUN_DIR": os.path.join(old_run, "instance-mig")}, p1)
-check("移行: TB_INSTANCE 付きで起動できる", newport is not None)
-if newport:
-    cm = Client(newport)
-    check("移行: /setup は開かない(旧い auth.json を読む)", cm.get("/setup")[0] != 200 or "初回設定" not in cm.get("/setup")[2])
-    rr = cm.login()
-    check("移行: 旧いユーザー名・パスワードでログインできる", rr[0] == 302 and cm.get("/tasks")[0] == 200, str(rr[0]))
-    check("移行: 旧い auth.json は消えず変わらない(読み取りのみ)", open(old_auth).read() == before)
-    check("移行: 新しい場所には auth.json を作らない", not os.path.exists(os.path.join(old_run, "instance-mig", "auth.json")))
-out1 = stop_out(p1)
-check("移行: 起動ログに旧い場所を読んでいる旨", "読み取りで使います" in out1, out1[:200])
-# 明示(WEBUI_LEGACY_AUTH=1)が無ければ、旧い auth.json があっても引き継がず /setup が開く(別インスタンスに default の認証を持ち込まない)
-envn = dict(env); envn.pop("WEBUI_LEGACY_AUTH")
-envn["TB_INSTANCE"] = "training"
-pn = start(envn)
-npn = wait_port({"WEBUI_RUN_DIR": os.path.join(old_run, "instance-training")}, pn)
-check("既定は引き継がない: まだ動かしていない別名インスタンスで /setup が開く", npn is not None and "confirm" in Client(npn).get("/setup")[2])
-if npn:
-    cn = Client(npn)
-    check("既定は引き継がない: default の認証では入れない", cn.login()[0] != 302)
-stop(pn)
-# 引き継ぎがあっても、新しい場所の auth.json が優先(インスタンスごとのパスワード)
-newdir = os.path.join(old_run, "instance-prio"); os.makedirs(newdir, exist_ok=True)
-import shutil as _sh
-envp = dict(env); envp["TB_INSTANCE"] = "prio"
-pq0 = start(dict(envp, WEBUI_LEGACY_AUTH=""))
-npq0 = wait_port({"WEBUI_RUN_DIR": newdir}, pq0)
-cq0 = Client(npq0)
-cq0.raw("POST", "/setup", {"csrf": cq0.csrf("/setup"), "username": "userb", "password": "another-long-pass-77", "confirm": "another-long-pass-77"})
-stop(pq0)
-pq = start(envp)   # WEBUI_LEGACY_AUTH=1 でも、新しい場所にあれば新しい方
-npq = wait_port({"WEBUI_RUN_DIR": newdir}, pq)
-cq = Client(npq)
-check("新しい場所の auth.json が優先(旧い認証では入れない)", cq.login(USER, PW)[0] != 302)
-check("新しい場所の auth.json が優先(新しい認証で入れる)", Client(npq).login("userb", "another-long-pass-77")[0] == 302)
-stop(pq)
-# WEBUI_RUN_DIR を明示したら、WEBUI_LEGACY_AUTH=1 でも引き継がない
-envr = dict(env); envr["WEBUI_RUN_DIR"] = os.path.join(old_run, "explicit-run"); envr["TB_INSTANCE"] = "expl"
-pr_ = start(envr)
-npr = wait_port({"WEBUI_RUN_DIR": envr["WEBUI_RUN_DIR"]}, pr_)
-check("WEBUI_RUN_DIR 明示は引き継がない(/setup が開く)", npr is not None and "confirm" in Client(npr).get("/setup")[2])
-stop(pr_)
-# 旧い auth.json が安全でない(group 書込可・リンク)なら引き継がない
-os.chmod(old_auth, 0o666)
-envu = dict(env); envu["TB_INSTANCE"] = "unsafe"
-pu = start(envu)
-npu = wait_port({"WEBUI_RUN_DIR": os.path.join(old_run, "instance-unsafe")}, pu)
-check("旧い auth.json が 0666 なら引き継がない(/setup)", npu is not None and "confirm" in Client(npu).get("/setup")[2])
-outu = stop_out(pu)
-check("引き継げないときは起動ログで知らせる", "引き継げる旧い auth.json がありません" in outu, outu[:200])
-os.chmod(old_auth, 0o600)
-# 旧い auth.json が無ければ、従来どおり /setup が開く
-env2, _ = inst_env("inst-mig2", "mig2", HERDR_WEBUI_RANGE=f"{base_}-{base_}")
-p2 = start(env2)
-np2 = wait_port({"WEBUI_RUN_DIR": os.path.join(env2["WEBUI_RUN_BASE"], "instance-mig2")}, p2)
-check("移行: 旧い auth.json が無ければ /setup が開く", np2 is not None and "confirm" in Client(np2).get("/setup")[2])
-stop(p2)
-
-# ---- 追加: ワイルドカード(0.0.0.0)で待ち受け中の固定ポートは使用中として扱う
-ws = socket.socket()
-ws.bind(("0.0.0.0", 0)); ws.listen(1); socks.append(ws)
-wport = ws.getsockname()[1]
-env, _ = inst_env("inst-wild", "wild", TB_UI_PORT=str(wport))
-pw_ = start(env)
-try:
-    rc = pw_.wait(5)
-except subprocess.TimeoutExpired:
-    rc = None
-check("TB_UI_PORT が 0.0.0.0 で使用中: エラー終了", rc not in (None, 0), f"rc={rc}")
-check("TB_UI_PORT が 0.0.0.0 で使用中: 理由を出す", "待ち受け" in ((pw_.stderr.read() or "") if rc else ""))
-ws.close(); socks.remove(ws)
-
-# ---- 追加: TB_UI_PORT の範囲(1〜65535)
-for badp in ("0", "99999", "-1", "65536"):
-    env, _ = inst_env("inst-portrange", "pr", TB_UI_PORT=badp)
-    pp = start(env)
-    try:
-        rc = pp.wait(5)
-    except subprocess.TimeoutExpired:
-        rc = None
-    err = (pp.stderr.read() or "") if rc else ""
-    check(f"TB_UI_PORT={badp}: 説明つきでエラー終了(トレースバックなし)", rc not in (None, 0) and "Traceback" not in err and "herdr-webui" in err, f"rc={rc} {err[:120]}")
 
 # ---- 追加: 表示にインスタンス名の生の HTML 特殊文字が出ない(多層防御の確認)
 sys.path.insert(0, os.path.dirname(HERE))
@@ -1621,6 +1499,17 @@ try:
           _docs2.denied(os.path.join(os.path.dirname(_rb), os.path.basename(_rb) + "-x", "a.md")) is None)
     os.environ["WEBUI_RUN_DIR"] = _ex
     check("docs: WEBUI_RUN_DIR 明示でも、その場所は開かない", _docs2.denied(os.path.realpath(os.path.join(_ex, "auth.json"))) is not None)
+    _sd = os.path.join(TMP, "docs-state"); os.makedirs(os.path.join(_sd, "instances"), exist_ok=True)
+    _oa = {k: os.environ.get(k) for k in ("WEBUI_STATE_DIR", "WEBUI_AUTH_DIR", "WEBUI_REGISTRY_DIR")}
+    os.environ["WEBUI_STATE_DIR"] = _sd
+    os.environ.pop("WEBUI_AUTH_DIR", None); os.environ.pop("WEBUI_REGISTRY_DIR", None)
+    check("docs: 共通のログイン情報・インスタンスの一覧(ホームの置き場)は開かない",
+          _docs2.denied(os.path.join(_sd, "auth.json")) is not None and _docs2.denied(os.path.join(_sd, "instances", "x.json")) is not None)
+    for _k, _v in _oa.items():
+        if _v is None:
+            os.environ.pop(_k, None)
+        else:
+            os.environ[_k] = _v
 finally:
     for _k, _v in zip(("WEBUI_RUN_BASE", "WEBUI_RUN_DIR"), _old[:2]):
         if _v is None:
@@ -1634,7 +1523,7 @@ env, pu_, portu = inst_boot("inst-upper", "Alpha")
 check("TB_INSTANCE=Alpha の起動", portu is not None)
 if portu:
     cu_, nmu = inst_cookie_name(portu)
-    check("TB_INSTANCE=Alpha は小文字に正規化(Cookie 名)", nmu == "herdr_webui_session_alpha", str(nmu))
+    check("TB_INSTANCE=Alpha は小文字に正規化(置き場所)", cu_.get("/tasks", raw=True)[0] == 404 and cu_.get("/s/alpha/tasks", raw=True)[0] == 200)
     check("TB_INSTANCE=Alpha は小文字に正規化(run は instance-alpha)", os.path.isdir(os.path.join(env["WEBUI_RUN_BASE"], "instance-alpha")) and "instance-Alpha" not in os.listdir(env["WEBUI_RUN_BASE"]))
     check("TB_INSTANCE=Alpha の画面表示も小文字", ">alpha<" in cu_.get("/tasks")[2])
 stop(pu_)
@@ -1708,9 +1597,9 @@ for _k, _v in _old.items():
 # ================= 入口(gateway): 1 ポートで受けて /s/<名前>/ を各インスタンスへ中継する
 GW = os.path.join(os.path.dirname(HERE), "gateway.py")
 _gb = free_range(3)
-env_a, _ = make_env("gw-alpha", TB_INSTANCE="alpha", TB_UI_GATEWAY="1", TB_UI_PORT=str(_gb))
+env_a, _ = make_env("gw-alpha", TB_INSTANCE="alpha")
 make_db(env_a["WEBUI_TB_DB"])
-env_b, _ = make_env("gw-beta", TB_INSTANCE="beta", TB_UI_PORT=str(_gb + 1))
+env_b, _ = make_env("gw-beta", TB_INSTANCE="beta", WEBUI_AUTH_DIR=env_a["WEBUI_AUTH_DIR"])   # ログインは共通
 make_db(env_b["WEBUI_TB_DB"])
 pa, pb = start(env_a), start(env_b)
 pa_port, pb_port = wait_port(env_a, pa), wait_port(env_b, pb)
@@ -1723,18 +1612,27 @@ while time.time() < _end:
         if _s.connect_ex(("127.0.0.1", _gb + 2)) == 0:
             break
     time.sleep(0.05)
-check("gateway: インスタンス 2 つと入口が起動", pa_port == _gb and pb_port == _gb + 1 and pg.poll() is None)
+check("gateway: インスタンス 2 つと入口が起動", pa_port and pb_port and pg.poll() is None)
+GWJ = os.path.join(TMP, "gateway.json")
+check("gateway: 入口のポートを記録する(600)", os.path.exists(GWJ) and json.load(open(GWJ))["port"] == _gb + 2 and mode(GWJ) == "0o600")
+pg2 = subprocess.Popen([sys.executable, GW], env=env_g, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+procs.append(pg2)
+try:
+    _rc2 = pg2.wait(5)
+except subprocess.TimeoutExpired:
+    _rc2 = None
+check("gateway: 入口が動いていれば 2 つ目は起動しない(ずれたポートで重ねて動かない)", _rc2 not in (None, 0) and "既にポート" in pg2.stderr.read(), f"rc={_rc2}")
 REG = env_a["WEBUI_REGISTRY_DIR"]
 check("gateway: インスタンス一覧はディレクトリ 700・ファイル 600、base 付き",
       mode(REG) == "0o700" and mode(os.path.join(REG, "alpha.json")) == "0o600"
       and json.load(open(os.path.join(REG, "alpha.json")))["base"] == "/s/alpha"
-      and json.load(open(os.path.join(REG, "beta.json")))["base"] == "")
+      and json.load(open(os.path.join(REG, "beta.json")))["base"] == "/s/beta")
 # インスタンス直接: BASE の外は 404、BASE ちょうどは BASE/ へ
-r = req(pa_port, "GET", "/")
-check("gateway: TB_UI_GATEWAY=1 のインスタンスは BASE の外を 404", r[0] == 404, str(r[0]))
-r = req(pa_port, "GET", "/s/alpha?x=1")
+r = req(pa_port, "GET", "/", raw=True)
+check("gateway: インスタンスは BASE(/s/<名前>/)の外を 404(ポートを直接開いても)", r[0] == 404, str(r[0]))
+r = req(pa_port, "GET", "/s/alpha?x=1", raw=True)
 check("gateway: /s/alpha は /s/alpha/ へ(クエリを残す)", r[0] == 302 and r[1]["Location"] == "/s/alpha/?x=1", str(r[:2]))
-r = req(pa_port, "GET", "/s/alphabet/")
+r = req(pa_port, "GET", "/s/alphabet/", raw=True)
 check("gateway: 似た名前(/s/alphabet/)は 404", r[0] == 404, str(r[0]))
 gc = Client(_gb + 2)
 r = gc.get("/s/alpha/")
@@ -1746,8 +1644,8 @@ r = gc.raw("POST", "/s/alpha/setup", {"csrf": gc.csrf("/s/alpha/setup"), "userna
 check("gateway: 外の Origin の POST はインスタンスが拒む(403)", r[0] == 403, str(r[0]))
 r = gc.raw("POST", "/s/alpha/setup", {"csrf": gc.csrf("/s/alpha/setup"), "username": USER, "password": PW, "confirm": PW})
 ck = r[1].get("Set-Cookie", "")
-check("gateway: 入口の Origin の POST は通り、Cookie の Path は /s/alpha/", r[0] == 302 and r[1]["Location"] == "/s/alpha/"
-      and "Path=/s/alpha/;" in ck and ck.startswith("herdr_webui_session_alpha="), str(r[:2]))
+check("gateway: 入口の Origin の POST は通り、Cookie は全セッション共通(Path=/)", r[0] == 302 and r[1]["Location"] == "/s/alpha/"
+      and "Path=/;" in ck and ck.startswith("herdr_webui_session="), str(r[:2]))
 gc.cookie = re.match(r"([^;]+)", ck).group(1) if ck else None
 r = gc.get("/s/alpha/")
 check("gateway: ページのリンク・スクリプトは BASE の下", r[0] == 200 and 'href="/s/alpha/inbox"' in r[2] and 'src="/s/alpha/notify.js"' in r[2]
@@ -1758,12 +1656,13 @@ r = gc.get("/s/alpha/inbox", cookie=None)
 check("gateway: 未ログインは BASE 付きのログインへ(next は BASE を外したパス)",
       r[0] == 302 and r[1]["Location"] == "/s/alpha/login?next=%2Finbox", str(r[:2]))
 r = gc.get("/s/alpha/sessions")
-check("gateway: セッション一覧に自分と beta(beta は入口の外なので直接のリンク)、入口へのリンク",
-      r[0] == 200 and "(この画面)" in r[2] and f'href="http://127.0.0.1:{pb_port}/"' in r[2] and 'href="../../"' in r[2], r[2][-1500:])
+check("gateway: セッション一覧に自分と beta(入口の上の相対リンクと件数の読み取り)、入口へのリンク。ポート番号は出さない",
+      r[0] == 200 and "(この画面)" in r[2] and 'href="../beta/"' in r[2] and 'data-api="../beta/api/notifications"' in r[2]
+      and str(pb_port) not in r[2] and 'href="../../"' in r[2] and 'src="/s/alpha/sessions.js"' in r[2], r[2][-1500:])
 r = gc.get("/s/alpha/sessions.js")
 check("gateway: sessions.js を配る", r[0] == 200 and "data-api" in r[2])
 r = gc.get("/s/beta/")
-check("gateway: 入口の外で動くインスタンス(beta)へは中継しない(502 と直接のリンク)", r[0] == 502 and f"127.0.0.1:{pb_port}/" in r[2], str(r[0]))
+check("gateway: beta へも中継し、alpha でのログインのまま入れる(ログイン共通)", r[0] == 200 and 'href="/s/beta/inbox"' in r[2], str(r[0]))
 r = gc.get("/s/nope/")
 check("gateway: 一覧に無い名前は 502", r[0] == 502, str(r[0]))
 r = gc.get("/s/Alpha/inbox?x=1")
@@ -1777,11 +1676,12 @@ check("gateway: Host が自分以外は 403", r[0] == 403, str(r[0]))
 r = gc.get("/", host=f"localhost:{_gb + 2}")
 check("gateway: 一覧に alpha(件数はログインで読む)と beta",
       r[0] == 200 and 'href="/s/alpha/"' in r[2] and 'data-api="/s/alpha/api/notifications"' in r[2] and ">beta</a>" in r[2], r[2][-800:])
-bc, _bck = inst_cookie_name(pb_port)
+bc = Client(pb_port)
+bc.cookie = gc.cookie
 r = bc.get("/sessions")
-check("sessions: 入口の外のインスタンスでも一覧(alpha へは直接のリンク、件数は読まない)",
-      r[0] == 200 and f'href="http://127.0.0.1:{pa_port}/s/alpha/"' in r[2] and "data-api" not in r[2] and "sessions.js" not in r[2]
-      and 'href="/sessions" class=on' in r[2] and "../../" not in r[2], r[2][-1200:])
+check("sessions: beta の一覧にも alpha(相対リンク・件数)",
+      r[0] == 200 and 'href="../alpha/"' in r[2] and 'data-api="../alpha/api/notifications"' in r[2]
+      and 'href="/sessions" class=on' in r[2], r[2][-1200:])
 r = gc.get("/gateway.js")
 check("gateway: gateway.js を配る", r[0] == 200 and r[1]["Content-Type"].startswith("text/javascript"))
 if shutil.which("node"):
@@ -1799,8 +1699,8 @@ r = _c.getresponse()
 check("gateway: chunked の本文は中継しない(411)", r.status == 411, str(r.status))
 _c.close()
 r = gc.raw("POST", "/s/alpha/logout", {"csrf": re.search(r'name=csrf value="([^"]+)"', gc.get("/s/alpha/")[2]).group(1)})
-check("gateway: ログアウトは BASE 付きのログインへ・Cookie も Path=/s/alpha/ で消す",
-      r[0] == 302 and r[1]["Location"] == "/s/alpha/login" and "Path=/s/alpha/;" in r[1].get("Set-Cookie", "") and "Max-Age=0" in r[1].get("Set-Cookie", ""), str(r[:2]))
+check("gateway: ログアウトは BASE 付きのログインへ・Cookie も Path=/ で消す",
+      r[0] == 302 and r[1]["Location"] == "/s/alpha/login" and "Path=/;" in r[1].get("Set-Cookie", "") and "Max-Age=0" in r[1].get("Set-Cookie", ""), str(r[:2]))
 r = gc.get("/s/alpha/login", cookie=None)
 check("gateway: HEAD/GET のログイン画面は BASE の下のフォーム", r[0] == 200 and 'action="/s/alpha/login"' in r[2] and 'href="/s/alpha/reset"' in r[2])
 stop(pa)
@@ -1814,13 +1714,13 @@ os.environ["WEBUI_REGISTRY_DIR"] = os.path.join(TMP, "reg2")
 os.makedirs(os.environ["WEBUI_REGISTRY_DIR"], mode=0o700)
 _rp = lambda n: os.path.join(os.environ["WEBUI_REGISTRY_DIR"], n + ".json")  # noqa: E731
 for _n, _d in (("bad1", {"name": "bad1", "port": "80", "base": ""}), ("bad2", {"name": "other", "port": 80, "base": ""}),
-               ("bad3", {"name": "bad3", "port": 80, "base": "/s/x"}), ("bad4", {"name": "bad4", "port": True, "base": ""}),
+               ("bad3", {"name": "bad3", "port": 80, "base": "/s/x"}), ("bad5", {"name": "bad5", "port": 80, "base": ""}), ("bad4", {"name": "bad4", "port": True, "base": ""}),
                ("ok1", {"name": "ok1", "port": 80, "base": "/s/ok1"})):
     json.dump(_d, open(_rp(_n), "w"))
 os.symlink(_rp("ok1"), _rp("lnk"))
-check("registry: 形式どおりのものだけ読む(ポートは数・名前一致・base は /s/<名前> か空・リンクは読まない)",
+check("registry: 形式どおりのものだけ読む(ポートは数・名前一致・base は /s/<名前>(空の旧い形は読まない)・リンクは読まない)",
       [x["name"] for x in _reg.entries()] == ["ok1"], str(_reg.entries()))
-_reg.register("ok2", 81, "")
+_reg.register("ok2", 81, "/s/ok2")
 _reg.unregister("ok2")
 check("registry: 自分の書いたものは消せる", not os.path.exists(_rp("ok2")))
 json.dump({"name": "ok3", "port": 82, "base": "", "pid": 1}, open(_rp("ok3"), "w"))
@@ -1836,6 +1736,40 @@ check("gateway: 書いたプロセスが居ない行には中継しない(502)",
 stop(pb)
 pg.send_signal(signal.SIGTERM)
 pg.wait(3)
+check("gateway: 止めると記録を消す", not os.path.exists(GWJ))
+# 既定のポートがほかのアプリで埋まっていれば +1 ずつずらす
+_sb = free_range(3)
+occupy(_sb)
+env_s, _ = make_env("gw-shift", TB_UI_GATEWAY_PORT=str(_sb))
+ps_ = subprocess.Popen([sys.executable, GW], env=env_s, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+procs.append(ps_)
+_end = time.time() + 5
+while time.time() < _end and not os.path.exists(GWJ) and ps_.poll() is None:
+    time.sleep(0.05)
+check("gateway: 既定のポートが使用中なら次のポートで待ち受ける", os.path.exists(GWJ) and json.load(open(GWJ))["port"] == _sb + 1)
+ps_.send_signal(signal.SIGTERM)
+ps_.wait(3)
+
+# ================= ログイン情報は複数のプロセスで共有する(失敗回数のロックも共有。渡り歩いて回数を稼げない)
+import auth as _auth2  # noqa: E402
+_ad = os.path.join(TMP, "shared-auth")
+_a1, _a2 = _auth2.Auth(_ad), _auth2.Auth(_ad)
+_a1.setup("u", "long-enough-pass-1")
+_ol = os.environ.get("WEBUI_LOCK_MAX")
+os.environ["WEBUI_LOCK_MAX"] = "3"
+for _i in range(3):
+    (_a1 if _i % 2 == 0 else _a2).attempt("u", "wrong-wrong-wrong")
+check("auth: 失敗回数は置き場で共有(別のプロセスで数えてもロックする)", _a1.locked_for() > 0 and _a2.locked_for() > 0)
+check("auth: ロックの記録は 0600", mode(os.path.join(_ad, "lockout.json")) == "0o600" and mode(_ad) == "0o700")
+if _ol is None:
+    os.environ.pop("WEBUI_LOCK_MAX")
+else:
+    os.environ["WEBUI_LOCK_MAX"] = _ol
+_t1 = _a1.create_session()
+_t2 = _a2.create_session()
+check("auth: 別のプロセスで作ったセッションも有効(書き込みが互いを消さない)", _a2.session_hash(_t1) and _a1.session_hash(_t2))
+_a2.destroy_session(_t1)
+check("auth: 別のプロセスでのログアウトも効く", _a1.session_hash(_t1) is None and _a1.session_hash(_t2))
 
 print()
 print("FAILED: " + ", ".join(fails) if fails else "all passed")

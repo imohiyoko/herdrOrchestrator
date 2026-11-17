@@ -1,7 +1,7 @@
 #!/bin/bash
 # 使い方: bin/gen-gateway-plist.sh   -> generated/local.herdr-webui-gateway.plist を生成して lint する。
 # 入口(gateway.py)は checkout・セッションをまたいで 1 つだけ動かす(ラベルは TB_INSTANCE によらず固定)。
-# TB_UI_GATEWAY_PORT が設定されていれば plist に渡す(未設定なら 8790)。
+# TB_UI_GATEWAY_PORT が設定されていれば plist に渡す(未設定なら 8800)。
 # launchctl への登録はしない(人が行う。README の「入口」を参照)。
 set -eu
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

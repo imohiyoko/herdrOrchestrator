@@ -15,7 +15,7 @@ import os
 import re
 import stat
 
-from .config import LEGACY_RUN_DIR, RUN_DIR, cfg
+from .config import AUTH_DIR, REGISTRY_DIR, RUN_BASE, RUN_DIR, STATE_DIR, cfg
 from .data import q
 
 MAX_BYTES = 1024 * 1024        # これより大きいファイルは先頭だけ出す
@@ -75,7 +75,7 @@ def denied(path):
     # 自分の run と、run の置き場そのもの(旧 run/ と他インスタンスの run/instance-<名>/ を含む)
     # 文字列の前方一致ではなく実体(os.path.samefile)で比べる: path とその祖先のどれかが run と同じディレクトリなら拒否。
     # 綴り違い(大文字小文字を区別しないボリューム)・symlink・存在しないパス(存在する祖先まで遡る)でも通さない
-    for r in (RUN_DIR(), LEGACY_RUN_DIR()):
+    for r in (RUN_DIR(), RUN_BASE(), AUTH_DIR(), STATE_DIR(), REGISTRY_DIR()):
         if _under(path, r):
             return "Web UI のログイン情報なので開きません"
     return None
