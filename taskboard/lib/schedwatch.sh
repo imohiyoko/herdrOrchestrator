@@ -24,16 +24,15 @@ SW_SHOW=${TB_SCHED_SHOW:-$TB_ROOT/../scheduler/bin/show.sh}
 
 # 設定値: 環境変数 TB_SCHEDWATCH_<キー大文字> > sched-watch.conf > .example > 既定。$1=キー $2=既定
 sw_cfg() {
-  local key=$1 def=$2 up f line k v ev
+  local key=$1 def=$2 up line k v ev
   up=$(tr '[:lower:]' '[:upper:]' <<<"$key"); ev="TB_SCHEDWATCH_$up"
   [[ -z ${!ev:-} ]] || { printf '%s' "${!ev}"; return; }
-  f=$SW_CONF; [[ -f $f ]] || f="$SW_CONF.example"
-  if [[ -f $f ]]; then
+  if config_has sched-watch; then
     while IFS= read -r line || [[ -n $line ]]; do
       line=$(trim "${line%%#*}"); [[ $line == *=* ]] || continue
       k=$(trim "${line%%=*}"); v=$(trim "${line#*=}")
       [[ $k == "$key" ]] && { printf '%s' "$v"; return; }
-    done <"$f"
+    done < <(config_text sched-watch)
   fi
   printf '%s' "$def"
 }

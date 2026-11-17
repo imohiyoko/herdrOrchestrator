@@ -149,9 +149,9 @@ _conf_unknown() {  # stdin=conf の本文 → 未知の規則を空白区切り�
   done
   printf '%s' "$out"
 }
-ex=$(git -C "$REPO" show HEAD:taskboard/config/approvals.conf 2>/dev/null) || ex=$(cat "$TBROOT/config/approvals.conf")
-eq "catalog: 既定の approvals.conf(コミット済み)の規則がすべてカタログに載っている" "$(printf '%s\n' "$ex" | _conf_unknown)" ""
-# 手元の approvals.conf(人が書き換えたもの)は、未知の規則を警告するだけ(テストは落とさない)
-w=$(_conf_unknown <"$TBROOT/config/approvals.conf")
+ex=$(cat "$TBROOT/config/approvals.conf.example")
+eq "catalog: 既定の approvals(approvals.conf.example)の規則がすべてカタログに載っている" "$(printf '%s\n' "$ex" | _conf_unknown)" ""
+# 手元の approvals.conf(取り込み前に人が書いたもの)は、未知の規則を警告するだけ(テストは落とさない)
+w=""; [[ ! -f $TBROOT/config/approvals.conf ]] || w=$(_conf_unknown <"$TBROOT/config/approvals.conf")
 [[ -z $w ]] && ok "catalog: 手元の approvals.conf に未知の規則は無い" || echo "warn catalog: 手元の approvals.conf にカタログに無い規則: $w"
 eq "catalog: 未知の規則の検出が働く(自己テスト)" "$(printf 'zzz:unknown = allow\nsend:task:dd-* = allow\n* = ask\n' | _conf_unknown)" "zzz:unknown "

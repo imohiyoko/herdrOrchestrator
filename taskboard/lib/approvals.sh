@@ -37,7 +37,7 @@ grant_relation() {  # $1=主体 $2=対象 $3=~関係 → 当たれば 0
 grant_of() {
   local who=$1 op=$2 target=$3 line s o t rest m
   GRANT_RULE=""
-  [[ -n $who && $who != human && -f $GRANTS ]] || return 1
+  [[ -n $who && $who != human ]] && config_has grants || return 1
   while IFS= read -r line || [[ -n $line ]]; do
     line=$(trim "${line%%#*}"); [[ -n $line ]] || continue
     read -r s o t rest <<<"$line"
@@ -48,7 +48,7 @@ grant_of() {
     if [[ $t == '~'* ]]; then grant_relation "$who" "$target" "$t" || continue
     else m=0; name_matches "$target" "$t" || m=$?; ((m == 0)) || continue; fi
     GRANT_RULE="grants.conf: $s $o $t"; return 0
-  done <"$GRANTS"
+  done < <(config_text grants)
   return 1
 }
 
@@ -66,7 +66,7 @@ _approval_rules() {
   local act=$1 line k v
   APPROVAL_RULE="(一致なし: 既定 ask)"; APPROVAL_VALUE=ask
   if [[ -n ${2:-} && $act == *:* ]] && grant_of "$2" "${act%:*}" "${act##*:}"; then APPROVAL_RULE=$GRANT_RULE; APPROVAL_VALUE=allow; return 0; fi
-  if [[ -f $APPROVALS ]]; then
+  if config_has approvals; then
     while IFS= read -r line || [[ -n $line ]]; do
       line=$(trim "${line%%#*}"); [[ $line == *=* ]] || continue
       k=$(trim "${line%%=*}"); v=$(trim "${line#*=}")
@@ -85,7 +85,7 @@ _approval_rules() {
       fi
       # shellcheck disable=SC2053  # glob として比べる
       if [[ $act == $k ]]; then APPROVAL_RULE="$k = $v"; APPROVAL_VALUE=$v; return 0; fi
-    done <"$APPROVALS"
+    done < <(config_text approvals)
   fi
 }
 
@@ -135,28 +135,25 @@ cmd_approval() {
 
 # tb allow|ask <パターン>: 人が「今後は許可/承認制に戻す」を決める。同じパターンの行を書き換え、無ければ先頭に足す
 set_approval() {  # $1=allow|ask $2=パターン
-  local val=$1 pat=$2 tmp found=0 line k
+  local val=$1 pat=$2 body found=0 line k
   valid_action "$pat"
   require_human "tb $val"
-  mkdir -p "$(dirname "$APPROVALS")"; touch "$APPROVALS"
-  [[ -f $APPROVALS && ! -L $APPROVALS ]] || die "approvals.conf が通常ファイルではありません"
-  tmp=$(mktemp "$APPROVALS.XXXXXX")
-  {
-    while IFS= read -r line || [[ -n $line ]]; do
-      k=$(trim "${line%%#*}"); k=$(trim "${k%%=*}")
-      if [[ $line != \#* && $line == *=* && $k == "$pat" ]]; then
-        ((found)) || printf '%s = %s   # %s に人が変更\n' "$pat" "$val" "$(now)"
-        found=1
-      else
-        printf '%s\n' "$line"
-      fi
-    done <"$APPROVALS"
-  } >"$tmp"
+  body=""
+  while IFS= read -r line || [[ -n $line ]]; do
+    k=$(trim "${line%%#*}"); k=$(trim "${k%%=*}")
+    if [[ $line != \#* && $line == *=* && $k == "$pat" ]]; then
+      ((found)) || body+="$pat = $val   # $(now) に人が変更"$'\n'
+      found=1
+    else
+      body+="$line"$'\n'
+    fi
+  done < <(config_text approvals)
+  body=${body%$'\n'}
   if ((!found)); then   # コメントの直後(最初のルールの前)に足す: 先に一致させるため
-    awk -v rule="$pat = $val   # $(now) に人が追加" 'BEGIN{d=0} !d && $0 !~ /^#/ && $0 !~ /^[[:space:]]*$/ {print rule; d=1} {print} END{if(!d) print rule}' "$tmp" >"$tmp.2"
-    mv "$tmp.2" "$tmp"
+    if [[ -z $body ]]; then body="$pat = $val   # $(now) に人が追加"
+    else body=$(awk -v rule="$pat = $val   # $(now) に人が追加" 'BEGIN{d=0} !d && $0 !~ /^#/ && $0 !~ /^[[:space:]]*$/ {print rule; d=1} {print} END{if(!d) print rule}' <<<"$body"); fi
   fi
-  mv "$tmp" "$APPROVALS"
+  config_put approvals "$body" "$val"
   sql "INSERT INTO approval_changes (herdr_session, pattern, value, created_at) VALUES ($SQS, $(q "$pat"), $(q "$val"), $(q "$(now)"));" >/dev/null
   echo "$pat = $val"
 }

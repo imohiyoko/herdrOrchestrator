@@ -28,12 +28,12 @@ require_task() { local r; r=$(task_row "$1"); [[ -n $r ]] || die "タスクが�
 
 target_for() {  # $1=project → 指示役の名前
   local t=$DEFAULT_TARGET k v
-  if [[ -f $CONF ]]; then
+  if config_has projects; then
     while IFS='=' read -r k v || [[ -n $k ]]; do
       k=${k//[[:space:]]/}; v=${v//[[:space:]]/}
       [[ -z $k || $k == \#* ]] && continue
       [[ $k == "$1" && -n $v ]] && t=$v
-    done <"$CONF"
+    done < <(config_text projects)
   fi
   printf '%s' "$t"
 }

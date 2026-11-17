@@ -70,10 +70,9 @@ LIMITS_LOADED=0; LIMIT_MODE=normal; LIMIT_ERR=""; LIMIT_NORM=""; LIMIT_SRC=defau
 # 設定ファイルを読む(source しない。既知のキーだけ)。LIMC_<キー>=値、LIMC_SET_<キー>=1
 limits_load() {
   ((LIMITS_LOADED)) && return 0
-  local f=$LIMITS_CONF line k v
-  [[ -f $f ]] || f=$LIMITS_CONF.example
+  local line k v
   LIMIT_MODE=normal
-  if [[ -f $f ]]; then
+  if config_has limits; then
     while IFS= read -r line || [[ -n $line ]]; do
       line=$(trim "${line%%#*}"); [[ $line == *=* ]] || continue
       k=$(trim "${line%%=*}"); v=$(trim "${line#*=}")
@@ -81,7 +80,7 @@ limits_load() {
       [[ " $LIMIT_KEYS " == *" $k "* ]] || continue
       limit_norm "$k" "$v" || continue
       printf -v "LIMC_$k" '%s' "$LIMIT_NORM"; printf -v "LIMC_SET_$k" '%s' 1
-    done <"$f"
+    done < <(config_text limits)
   fi
   LIMITS_LOADED=1
 }
@@ -206,14 +205,12 @@ limits_send_gate() {  # $1=宛先
 # limits.conf を書き換える。引数は <キー> <値> の組。値が @unset ならその行を消す
 limits_edit() {
   local -a ks=() vs=() dn=()
-  local f=$LIMITS_CONF tmp line k i hit n
+  local body line k i hit n
   while (($#)); do ks+=("$1"); vs+=("$2"); dn+=(0); shift 2; done
   n=${#ks[@]}
-  [[ ! -L $f ]] || die "limits.conf がシンボリックリンクです: $f"
-  mkdir -p "$(dirname "$f")"
-  tmp=$(mktemp "$f.XXXXXX")
-  {
-    if [[ -f $f ]]; then
+  body=$(
+    # 例のファイル(既定値)は書き換えの元にしない
+    if config_has limits && [[ $CFG_SRC != example:* ]]; then
       while IFS= read -r line || [[ -n $line ]]; do
         hit=-1
         if [[ $line != \#* && $line == *=* ]]; then
@@ -226,16 +223,15 @@ limits_edit() {
         else
           printf '%s\n' "$line"
         fi
-      done <"$f"
+      done < <(config_text limits)
     else
       printf '%s\n' "# tb limits が書いた制限の設定。編集するのは人だけ(項目は limits.conf.example)。環境変数 TB_LIMIT_<キー大文字> が優先。"
     fi
     for ((i = 0; i < n; i++)); do
       if [[ ${dn[i]} == 0 && ${vs[i]} != @unset ]]; then printf '%s = %s\n' "${ks[i]}" "${vs[i]}"; fi
     done
-  } >"$tmp"
-  chmod 644 "$tmp"
-  mv "$tmp" "$f"
+  )
+  config_put limits "$body" limits
   LIMITS_LOADED=0
 }
 

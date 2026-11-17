@@ -21,7 +21,7 @@ tb は <TASKBOARD_DIR>/bin/tb。
 ```
 
 ## 仕組み(指揮官・人向け)
-- 先に `comments` に保存する。`question` / `blocked` はすぐ指揮官へ `herdr agent prompt` で送り、`done` / `progress` は `tb digest`(README の「まとめ送信」)がまとめて送る。宛先は `config/projects.conf`(既定 `conductor`)
+- 先に `comments` に保存する。`question` / `blocked` はすぐ指揮官へ `herdr agent prompt` で送り、`done` / `progress` は `tb digest`(README の「まとめ送信」)がまとめて送る。宛先は設定 `projects`(`tb config show projects`。既定 `conductor`)
 - 送る文面は固定: `[from: <名前> / <pane> / <task-id> / <kind>] <本文の先頭 200 字> (詳細: tb comments <task-id>)`
 - 報告者(名前・pane・session)は `HERDR_PANE_ID` と `herdr agent list` から引く。**自己申告ではない。** 引けない(pane なし・herdr 失敗・該当 agent なし・名前なし・session なし)ときは保存せず終了コード 3
 - 本文の改行は空白にし、`[from:` と読める並びは `(from:` に置き換える(ラベルの偽装防止)。全文は `tb comments <task-id>` で読む

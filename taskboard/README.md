@@ -21,7 +21,7 @@ tb report T-<project>-NNN
 | --- | --- | --- |
 | 0 | 送信済み(または報告済み) | 終了してよい |
 | 10 | 宛先の指示役が working / blocked 等で**未送信** | 何もしない。`pending` に残り、あとで回収される(必要なら少し待って再実行) |
-| 11 | 送信または宛先の状態取得に失敗 | 同上。繰り返し 11 なら指示役の名前(`config/projects.conf`)を確認 |
+| 11 | 送信または宛先の状態取得に失敗 | 同上。繰り返し 11 なら指示役の名前(設定 `projects`。`tb config show projects`)を確認 |
 
 `reported_at` は `report` が成功したときだけ入る。10 / 11 のときは空のまま `tb pending` に出る。
 
@@ -164,7 +164,7 @@ tb outbox [--status queued|sent|denied] [--json]
 
 ## 人の承認(approvals)
 
-人の承認が要るかどうかは `config/approvals.conf` で操作ごとに決める(`<操作のパターン> = ask|allow`、上から最初に一致した行、無一致は `ask`)。
+人の承認が要るかどうかは設定 `approvals`(「設定」の順で引く。既定値は `config/approvals.conf.example`)で操作ごとに決める(`<操作のパターン> = ask|allow`、上から最初に一致した行、無一致は `ask`)。
 
 ```bash
 tb approval <操作>              # ask|allow と根拠の行。終了コード 0=allow / 20=ask
@@ -177,7 +177,7 @@ tb reject O-<n>
 - 操作の名前: `send:<kind>:<宛先>`(tb send)、`role:change`(人事の roles/ 変更)、`setup:<step>` など。`proxy:<effect>` は操作名としては定義があるが、**承認判定(`approval_of`)には渡らない**(代行依頼は `proxy_requests` の別の仕組み)ので、approvals.conf の `proxy:*` の行は何も効かない。既定では `send:task:*` が `ask`、`send:info:*` / `send:answer:*` が `allow`
 - `tb send` は `ask` の送信を届けず、`outbox` に `pending`(人の承認待ち)で置く(終了コード 20)。Web UI の緊急通知に出る
 - `tb allow` / `tb ask` / `tb approve` / `tb reject` は**人の端末から**だけ実行できる(agent の pane からは拒否)。履歴は `approval_changes`
-- agent には `approvals.conf` を編集させない(Claude Code の `permissions.deny` で `Edit(//<ORCH_DIR>/taskboard/config/approvals.conf)` などを拒否し、
+- agent には承認ルールを書き換えさせない(DB の `config` 表への直接の書き込みと `tb config` を拒否し、取り込み前のファイルも Claude Code の `permissions.deny` で `Edit(//<ORCH_DIR>/taskboard/config/approvals.conf)` などを拒否し、
   `Bash(tb allow:*)` なども拒否しておくとより確実。権限カタログ `approvals-catalog.conf` も同じ扱いにする: 書き換えられると `/perms` の警告が消える)
 - 操作の候補と性質(種別・副作用・リスク階層・allow の候補・状態)は `config/approvals-catalog.conf` に定義している(判定には使わない。Web UI の `/perms` が approvals.conf と突き合わせて見せる)。状態は active(承認判定に渡す箇所がある)・unwired(操作名はあるが承認判定には渡らない)・reserved(将来用)。
   tb が承認判定に渡す操作名を増やしたら、カタログにも足す(`test/cases/82_catalog.sh` が、コード中の操作名の載り漏れと、既定の approvals.conf の未知の規則を検出する)
@@ -255,7 +255,7 @@ agent 同士の関係は 1 本の木ではなく、`主体 -動詞→ 対象` �
 | 動詞 | 元の記録 | 意味 |
 |---|---|---|
 | spawn | 台帳 `agents.spawned_by` | 親が `tb agent-spawn` で子を立てた |
-| lead | 未完了タスク(in_progress / review / blocked)の project | その project の指揮官(`config/projects.conf`)→ 担当 agent |
+| lead | 未完了タスク(in_progress / review / blocked)の project | その project の指揮官(設定 `projects`)→ 担当 agent |
 | send:task / send:info / send:answer | `tb send` の outbox(直近 7 日) | 依頼・連絡・回答。routes.conf で拒否された試みは `[denied]` |
 | report | `tb comment`(直近 7 日) | 担当 agent → タスクの project の指揮官 |
 | analyze | アラート(直近 7 日) | 報告した見張り役 → 解析役 |
@@ -281,7 +281,7 @@ agent 同士の関係は 1 本の木ではなく、`主体 -動詞→ 対象` �
 「どのロールがどのロールに何をしてよいか」を書けるように、次の規則では名前の glob の代わりに `@<役割の glob>` が使える。
 
 - `config/routes.conf`: `@conductor -> @worker`、`!@worker -> @conductor`(送信者・宛先の両方)
-- `config/approvals.conf`: 末尾の宛先を `@<役割>` にする(例 `send:task:@worker = allow`、`agent:stop:@analyst = allow`)
+- 設定 `approvals`: 末尾の宛先を `@<役割>` にする(例 `send:task:@worker = allow`、`agent:stop:@analyst = allow`)
 - `config/spawn-policy.conf` の `denied_parents`(例 `@watcher`)
 
 役割は上の決まり方で引くので、役割を変えられる操作(`tb agent-new --role`、`roles/` や `map.conf` の書き換え)は、そのまま権限の変更になる。agent からのそれらは従来どおり人の承認が要る(`agent:new:*` と `role:change` は ask のまま)。
@@ -496,10 +496,41 @@ tb が `herdr agent prompt` で送ろうとしたものは、結果にかかわ�
 
 ## 宛先の設定
 
-`config/projects.conf` に `project=指示役の agent 名` を書く。書いていない project は `conductor` に送る。
+設定 `projects`(`project=指示役の agent 名` の行。下の「設定」の順で引く)に書く。書いていない project は `conductor` に送る。
 
 `report` は宛先の状態を `herdr agent get` で見て、`idle` / `done` のときだけ送る。
 `working` / `blocked` のほか、`unknown` や取得失敗でも送らない(既定は「割り込まずに pending に積む」)。
+
+## 設定(`tb config`)
+
+運用の設定は DB の `config` 表に置き、キーで引く(schema/013)。シングルポート・マルチセッションでも、セッションごとに違う設定を持てる。
+本文は今までの conf ファイルの中身そのまま(書式は各節のとおり)。キーは `projects` / `approvals` / `grants` / `routes` / `limits` / `notify` / `compact` / `sched-watch` / `spawn-policy`。
+
+引く順(最初に見つかったもの):
+
+1. 環境変数で明示したファイル(`TB_CONFIG` / `TB_APPROVALS` / `TB_GRANTS` / `TB_ROUTES` / `TB_LIMITS` / `TB_NOTIFY_CONF` / `TB_COMPACT_CONF` / `TB_SCHEDWATCH_CONF` / `TB_SPAWN_POLICY`。テストや一時の差し替え)
+2. DB の**このセッション**の行
+3. DB の**全セッション共通**の行(`herdr_session='*'`)
+4. checkout の `taskboard/config/<名前>.conf`(DB に取り込むまでの移行用。git 管理外)
+5. `<名前>.conf.example`(projects / approvals / limits / compact / sched-watch / spawn-policy。コードと一緒に版を合わせる既定値)
+
+```bash
+tb config                          # キーごとの出どころ(db:<セッション> / db:* / file:<パス> / example:<パス> / none)
+tb config show approvals           # 今効いている本文
+tb config import [--dry-run]       # checkout の config/*.conf を共通の行として取り込み、checkout から退かす(最初に 1 回。共通の行があるキーは飛ばす)
+tb config edit approvals           # このセッションの行を $EDITOR で編集(--shared で共通の行)
+tb config set routes < routes.conf # 標準入力の本文で置き換える(--shared で共通の行)
+tb config unset routes             # このセッションの行を消す(共通の行・ファイルに戻る)
+tb config history approvals        # 変更の履歴(config_changes)
+```
+
+- `tb allow` / `tb ask` / `tb notify set` / `tb limits` も、今効いている本文を元に、このセッションの行を書く(環境変数でファイルを明示していればそのファイル)
+- 書くのは人の端末だけ。ファイルだったときと同じく、agent には DB を直接書かせない(`permissions.deny` で `sqlite3` での DB への書き込みや `tb config` を拒否しておく)
+- **agent は設定を `tb config show <キー>` で読む**(agent の pane は自分の herdr セッションで動くので、自分のセッションの本文だけが返る)。
+  ファイルを直接読むと、別のセッション向けや古い本文を読みかねない。そのため `tb config import` は取り込んだファイルを `~/.local/state/herdr/config-imported/<日時>/` へ退かす(戻すときはそこからコピー)。
+  念のため `permissions.deny` に `Read(//<ORCH_DIR>/taskboard/config/*.conf)` を入れておくとよい
+- ファイルに残す設定: この Mac 全体を守るもの(gate 系・risk-rules・pr-queue・proxy-allowlist・repos.md・spawn-rules)と、コードと版を合わせる既定値(`approvals-catalog.conf`・`*.example`)。役割(roles/)は今は `roles/sessions/<セッション>/` で分ける
+- Web UI も同じ順で引く(`webui/app/data.py` の `config_text`。今は projects と approvals)
 
 ## ファイルの構成
 
@@ -508,6 +539,7 @@ tb が `herdr agent prompt` で送ろうとしたものは、結果にかかわ�
 | ファイル | 中身 |
 |---|---|
 | `lib/db.sh` | `sql` / `q` / スキーマの移行(`schema/NNN_*.sql`) |
+| `lib/config.sh` | 設定をキーで引く(`config_text` / `config_has`)・書く(`config_put`)・`tb config` |
 | `lib/core.sh` | エラー終了・入力の検査・タスク行の取得・project ごとの指示役 |
 | `lib/transport.sh` | herdr との境界。herdr を実行するのはここの `herdr_call` だけ。送信と `messages` への記録(`herdr_send`)、`system-send` |
 | `lib/tasks.sh` | add / list / show / claim / update / done / block / report / pending |

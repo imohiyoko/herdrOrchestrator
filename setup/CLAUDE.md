@@ -78,6 +78,11 @@ DB は全セッションで 1 つ(`~/.local/state/herdr/tasks.db`)になった�
 - 承認後に `--dry-run` を外して実行する。元の DB は書き換えない(戻すときは共有の DB をバックアップから戻す。実行前に `cp ~/.local/state/herdr/tasks.db{,.bak-$(date +%Y%m%d%H%M%S)}` を提案する)。
 - 旧 DB を消すのは利用者の判断。
 
+### 5c. 設定を DB へ(`taskboard:config`)
+運用の設定(projects / approvals / routes / limits / notify など)は DB の `config` 表に置き、セッションごとに変えられる。checkout の `taskboard/config/*.conf` が残っていて DB に取り込んでいないと warn が出る。
+- `bash taskboard/bin/tb config import --dry-run` の結果(取り込むキー)を見せ、承認後に `--dry-run` を外して実行する。ファイルは消さない(取り込んだ後は DB の行が使われる)。
+- 取り込んだ後の確認は `bash taskboard/bin/tb config`(キーごとの出どころ)。セッションごとに変えたいときは `HERDR_SESSION=<名前> tb config edit <キー>`。
+
 ### 6. 仕上げ
 `bash setup/check.sh` が `summary: ... warn=0 missing=0` になったら、何を設定したかを箇条書きでまとめ、
 元に戻す方法(バックアップの場所、`install.sh uninstall` など)を添えて終わる。
