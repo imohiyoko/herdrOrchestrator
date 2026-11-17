@@ -89,6 +89,9 @@ conf="$DIR/presets/$1.conf"
 # herdr のペイン内から実行しても、意図したセッションを向くよう環境変数を整理する
 unset HERDR_SESSION HERDR_SOCKET_PATH
 session=$(session_of "$1")
+# プリセットに書いていなければ、checkout の herdr-session ファイルの名前(lib/herdr-env.sh)
+# shellcheck source=lib/herdr-env.sh
+[[ -n $session ]] || session=$(source "$DIR/lib/herdr-env.sh" && herdr_session_file_value) || session=""
 [[ -n $session ]] && export HERDR_SESSION=$session
 # launchd ラベルの instance 名も既定はセッション名(TB_INSTANCE で上書き可。default セッションは従来のラベルのまま)
 [[ -n $session && $session != default ]] && export TB_INSTANCE=${TB_INSTANCE:-$session}

@@ -14,6 +14,7 @@ TB_ROOT=$(cd "$(dirname "$_src")/.." && pwd)
 unset _src _d
 # shellcheck source=../../lib/herdr-env.sh
 source "$TB_ROOT/../lib/herdr-env.sh"
+herdr_session_apply   # checkout の herdr-session ファイルでセッションを固定していれば、herdr にも渡す
 DB=${TB_DB:-$HERDR_DEFAULT_TB_DB}
 CONF=${TB_CONFIG:-$TB_ROOT/config/projects.conf}
 HERDR_BIN=${HERDR_BIN:-$HERDR_DEFAULT_BIN}

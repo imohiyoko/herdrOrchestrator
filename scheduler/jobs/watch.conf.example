@@ -4,7 +4,7 @@ TARGET=watch
 # 見張りを絞れるようにするには(tb limits の watchers。人が tb limits set watchers '...' で変える): プロンプト型は agent に本文を
 # 送るだけなので、ガードは COMMAND 型にする。次のように書くと、watchers に名前が無いとき何もせず(終了コード 0 で)終わる。
 # TARGET / PROMPT の代わりに:
-#   COMMAND='cd /path/to/taskboard && bin/tb limits watcher-enabled watch || exit 0; HERDR_SESSION=default bin/tb system-send watch --text "..." --job watch'
+#   COMMAND='cd /path/to/taskboard && bin/tb limits watcher-enabled watch || exit 0; bin/tb system-send watch --text "..." --job watch'
 #   COMMAND_TIMEOUT=60
 # (tb limits watcher-enabled <名前>: watchers にその名前があれば終了コード 0、無ければ 1。)
 # 先頭を / にしないこと(スラッシュコマンドと解釈される)

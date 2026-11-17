@@ -89,4 +89,7 @@ DRY_RUN=1 NOW="2026-11-05 12:00:30" bash bin/tick.sh <job>   # 秒まで指定
 - 複数の herdr セッションを別の checkout で動かすときは、`gen-plist.sh` / `install.sh` に `TB_INSTANCE=<名前>` を付ける。
   ラベルが `local.herdr-<名前>-sched-<job>` になり、checkout 同士で衝突しない(未設定なら従来の `local.herdr-sched-<job>`)。
   `HERDR_SESSION` を付けて生成すると plist の環境変数に渡り、tick.sh がそのセッションの agent を見る。
+- セッション名は checkout 直下の `herdr-session` ファイル(1 行目に名前。git 管理外)でも固定できる。
+  優先順は `HERDR_SOCKET_PATH` > `HERDR_SESSION` > `herdr-session` > `default`。ファイルで決めておけば、
+  jobs の COMMAND に `HERDR_SESSION=…` を書かなくてよい(tick.sh も tb も Web UI もファイルを読む)。今どれで決まったかは `tb whoami`。
 - launchd 自体の出力は `logs/launchd-<job>.out / .err`。
