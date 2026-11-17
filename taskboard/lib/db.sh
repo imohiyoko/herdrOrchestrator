@@ -61,14 +61,19 @@ migration_sql() {  # $1=番号 $2=ファイル
   echo "PRAGMA user_version=$1; COMMIT;"
 }
 
-# 最新なら PRAGMA 1 回で戻る(hook から毎回呼ばれるので軽くしておく)
+# 最新なら SELECT 1 回で戻る(hook から毎回呼ばれるので軽くしておく)
 init_db() {
-  local v latest f n err
+  local v jm latest f n err
   # スキーマが無ければ DB に触る前に止める(sqlite3 は開いただけで空の DB ファイルを作る)
   latest=$(schema_latest)
   ((latest > 0)) || { echo "tb: スキーマのファイルが見つかりません: ${TB_SCHEMA_DIR:-$HERDR_SCHEMA_DIR}" >&2; return 1; }
   mkdir -p "$(dirname "$DB")"
-  v=$(sql_all "PRAGMA user_version;") || return 1
+  IFS='|' read -r v jm < <(sql_all "SELECT (SELECT user_version FROM pragma_user_version) || '|' || (SELECT journal_mode FROM pragma_journal_mode);") || return 1
+  [[ $v =~ ^[0-9]+$ ]] || return 1
+  # (版と journal_mode は 1 列にまとめて読む: ~/.sqliterc の区切り文字に左右されない)
+  # WAL にする(DB ファイルに残るので 1 回だけ)。全セッションが同じ DB を使うので、読みと書きが互いを待たないようにする。
+  # 切り替えには一瞬の排他ロックが要る。取れなければ今回は諦め、次の tb で切り替える(失敗しても動作は変わらない)
+  [[ $jm == wal ]] || sql_all "PRAGMA journal_mode=WAL;" >/dev/null 2>&1 || true
   ((v >= latest)) && return 0
   while IFS= read -r f; do
     n=$((10#$(basename "$f" | cut -c1-3)))

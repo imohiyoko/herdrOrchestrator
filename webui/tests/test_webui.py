@@ -1582,17 +1582,20 @@ os.makedirs(os.path.join(_rd, "sessions", "s2"), exist_ok=True)
 open(os.path.join(_rd, "sessions", "s2", "auditor.md"), "w").write("a")
 open(os.path.join(_rd, "sessions", "s2", "map.conf"), "w").write("worker* = auditor\n")
 _hs = os.environ.get("HERDR_SESSION")
+_hsock = os.environ.get("HERDR_SOCKET_PATH")   # session_name() は HERDR_SESSION より先にこちらを見る
 
 
 def _in_session(s, f):
     os.environ["HERDR_SESSION"] = s
+    os.environ.pop("HERDR_SOCKET_PATH", None)
     try:
         return f()
     finally:
-        if _hs is None:
-            os.environ.pop("HERDR_SESSION", None)
-        else:
-            os.environ["HERDR_SESSION"] = _hs
+        for k, v in (("HERDR_SESSION", _hs), ("HERDR_SOCKET_PATH", _hsock)):
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
 
 
 check("graph: ロールは herdr セッション固有(このセッションの roles/sessions/<s>/ があればそこだけ)",
