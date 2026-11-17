@@ -67,3 +67,22 @@ eq "allow: @ is accepted in a pattern" "$(rc $TB allow 'send:answer:@worker') $(
 export TB_CONFIG=$_saved_conf TB_APPROVALS=$_saved_appr
 if [[ -n $_saved_routes ]]; then export TB_ROUTES=$_saved_routes; else unset TB_ROUTES; fi
 unset FAKE_AGENTS; export HERDR_PANE_ID=$_saved_pane
+
+# --- tb role-set(ロール変更は人と人事役だけ)/ role-log / 関係グラフの role の辺
+_saved_pane=${HERDR_PANE_ID-}; unset HERDR_PANE_ID
+export TB_DB=$TMP/graph.db TB_APPROVALS=$TMP/graph-appr2.conf
+printf '* = ask\n' >"$TB_APPROVALS"
+export FAKE_AGENTS="[$(ag conductor),$(ag worker1),$(ag worker2),$(ag hr1),$(ag watcher)]"
+$TB agents >/dev/null 2>&1
+eq "role-set: unknown role → 2" "$(rc $TB role-set worker1 nosuch)" "2"
+eq "role-set: not from a non-hr agent" "$(HERDR_PANE_ID=wworker1:p1 $TB role-set worker2 watcher 2>&1 | grep -c '人と人事役')" "1"
+eq "role-set: hr needs role:change = allow (20)" "$(HERDR_PANE_ID=whr1:p1 rc $TB role-set worker2 watcher)" "20"
+printf 'role:change = allow\n* = ask\n' >"$TB_APPROVALS"
+eq "role-set: hr cannot change itself or grant hr" "$(HERDR_PANE_ID=whr1:p1 rc $TB role-set hr1 worker) $(HERDR_PANE_ID=whr1:p1 rc $TB role-set worker2 hr)" "1 1"
+eq "role-set: hr with allow" "$(HERDR_PANE_ID=whr1:p1 $TB role-set worker2 watcher --reason 'ログ番に' | cut -d' ' -f1-5)" "worker2 role worker -> watcher"
+eq "role-set: the new role is used by rules" "$($TB approval agent:stop:worker2 >/dev/null; printf 'agent:stop:@watcher = allow\n* = ask\n' >"$TB_APPROVALS"; $TB approval agent:stop:worker2 | head -1)" "allow"
+eq "role-set: a human can grant hr" "$($TB role-set worker1 hr | cut -d' ' -f1-5)" "worker1 role worker -> hr"
+eq "role-set: a name with its own roles file is refused" "$(rc $TB role-set watcher worker)" "1"
+eq "role-log: newest first, with who and why" "$($TB role-log | cut -f2-5 | tr '\t\n' '| ')" "worker1|worker -> hr|human| worker2|worker -> watcher|hr1|ログ番に "
+eq "agents --graph: hr's change is a role edge (a human's is not)" "$($TB agents --graph --json | jq -r '[.edges[] | select(.verb=="role") | "\(.from)>\(.to)"] | join(",")')" "hr1>worker2"
+unset FAKE_AGENTS; export TB_APPROVALS=$_saved_appr HERDR_PANE_ID=$_saved_pane

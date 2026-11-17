@@ -1,4 +1,5 @@
 -- agent の関係エッジ(主体 -動詞→ 対象)。tb agents --graph と Web UI の /agent-graph が同じこの SQL を読む。
+-- role は人事役が tb role-set でロールを変えた記録(人の操作は辺にしない)。
 -- 列: verb, src, dst, project, status, n(件数), last_at
 -- src / dst が NULL の行は project の指揮官(config/projects.conf、無ければ conductor)で埋める(lead は src、report は dst)。
 -- status は記録時点の判定(send の denied = routes.conf で拒否された試み)。期間は直近 7 日(lead と spawn は今の状態)
@@ -26,3 +27,8 @@ SELECT 'analyze', source, analyst, NULL, 'ok', COUNT(*), MAX(COALESCE(analysis_s
   FROM alerts
   WHERE analyst IS NOT NULL AND analyst != '' AND last_seen > strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-7 days')
   GROUP BY source, analyst
+UNION ALL
+SELECT 'role', changed_by, agent, NULL, 'ok', COUNT(*), MAX(created_at)
+  FROM role_changes
+  WHERE changed_by != 'human' AND created_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-7 days')
+  GROUP BY changed_by, agent

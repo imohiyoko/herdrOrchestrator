@@ -116,6 +116,50 @@ cmd_role-broadcast() {
   return $rc
 }
 
+# ロールを変える(台帳 agents.role)。ロールは許可ルール(@<役割>)の主語・目的語なので、これは権限の変更でもある。
+# 人の端末からはそのまま。agent からは人事役(@hr、TB_ROLE_ADMIN で変えられる)だけで、approvals の role:change が allow のときだけ。
+# agent は自分のロールと、人事役のロールを付けることはできない(権限の自己拡大を防ぐ)。記録は role_changes に残る
+ROLE_ADMIN=${TB_ROLE_ADMIN:-hr}
+cmd_role-set() {
+  [[ $# -ge 2 ]] || usage "role-set <agent 名> <ロール> [--reason R]"
+  local name=$1 role=$2 why="" old new; shift 2
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --reason) need_arg "$@"; why=$2; shift 2;;
+      *) usage "role-set: 不明な引数 $1";;
+    esac
+  done
+  [[ $name =~ ^[a-z][a-z0-9_-]{0,31}$ ]] || usage "agent 名は英小文字で始まり、英小文字・数字・_・- の 32 字以内: $name"
+  [[ $role =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ && $role != README && -f $ROLES_DIR/$role.md ]] || usage "ロールは roles/<ロール>.md がある名前: $role"
+  requester
+  if [[ $REQ_BY != human ]]; then
+    name_matches "$REQ_BY" "@$ROLE_ADMIN" || die "ロールを変えられるのは人と人事役(@$ROLE_ADMIN)だけです($REQ_BY)"
+    [[ $REQ_BY != "$name" ]] || die "自分のロールは変えられません"
+    [[ $role != "$ROLE_ADMIN" ]] || die "人事役のロール($ROLE_ADMIN)を付けられるのは人だけです"
+    approval_of "role:change"
+    if [[ $APPROVAL_VALUE != allow ]]; then
+      echo "tb: role:change は人の承認が要ります($APPROVAL_RULE)。人が自分の端末で実行してください: tb role-set $name $role" >&2
+      return 20
+    fi
+  fi
+  agent_sync >/dev/null 2>&1 || true
+  [[ -n $(sql "SELECT 1 FROM agents WHERE name=$(q "$name");") ]] || die "台帳に無い agent です: $name(tb agents で確かめる)"
+  [[ ! -f $ROLES_DIR/$name.md ]] || die "roles/$name.md があるため、台帳のロールは効きません(そのファイルを人事役の手順で直す)"
+  old=$(role_name_of "$name")
+  sql "UPDATE agents SET role=$(q "$role"), updated_at=$(q "$(now)") WHERE name=$(q "$name");
+    INSERT INTO role_changes (agent, old_role, new_role, changed_by, reason, created_at)
+    VALUES ($(q "$name"), NULLIF($(q "$old"),''), $(q "$role"), $(q "$REQ_BY"), NULLIF($(q "$(oneline "$why" 300)"),''), $(q "$(now)"));"
+  new=$(role_name_of "$name")
+  echo "$name role ${old:--} -> $new (by $REQ_BY)。本人に配るには: tb role-broadcast $name"
+}
+
+# ロール変更の記録
+cmd_role-log() {
+  local json=0; [[ ${1:-} == --json ]] && json=1
+  if ((json)); then sql -json "SELECT * FROM role_changes ORDER BY id DESC LIMIT 100;" | jq -c '(. // [])[]'
+  else sql -nullvalue - -separator $'\t' "SELECT created_at, agent, COALESCE(old_role,'-')||' -> '||new_role, changed_by, COALESCE(reason,'') FROM role_changes ORDER BY id DESC LIMIT 100;"; fi
+}
+
 # agent ごとの役割ファイルと、渡した版が最新か
 cmd_roles() {
   local json=0 list name pane sess last at state

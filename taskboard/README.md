@@ -258,6 +258,7 @@ agent 同士の関係は 1 本の木ではなく、`主体 -動詞→ 対象` �
 | send:task / send:info / send:answer | `tb send` の outbox(直近 7 日) | 依頼・連絡・回答。routes.conf で拒否された試みは `[denied]` |
 | report | `tb comment`(直近 7 日) | 担当 agent → タスクの project の指揮官 |
 | analyze | アラート(直近 7 日) | 報告した見張り役 → 解析役 |
+| role | `tb role-set` の記録(直近 7 日) | 人事役 → ロールを変えられた agent(人の操作は辺にしない) |
 
 ```
 [conductor]
@@ -282,6 +283,16 @@ agent 同士の関係は 1 本の木ではなく、`主体 -動詞→ 対象` �
 - `config/spawn-policy.conf` の `denied_parents`(例 `@watcher`)
 
 役割は上の決まり方で引くので、役割を変えられる操作(`tb agent-new --role`、`roles/` や `map.conf` の書き換え)は、そのまま権限の変更になる。agent からのそれらは従来どおり人の承認が要る(`agent:new:*` と `role:change` は ask のまま)。
+
+#### ロール変更は人事役の専用操作(`tb role-set`)
+
+agent ごとのロールを変える入口は `tb role-set <agent 名> <ロール> [--reason R]` に絞る(台帳の role を書き換え、`role_changes` に記録する)。
+
+- 人の端末からはそのまま実行できる
+- agent から実行できるのは人事役(`@hr`。`TB_ROLE_ADMIN` で変えられる)だけ。`approvals.conf` の `role:change` が allow でなければ終了コード 20 で止まり、人の実行を求める
+- agent は自分のロールを変えられず、人事役のロールを付けることもできない(権限の自己拡大を防ぐ)
+- `roles/<名前>.md` がある agent は台帳のロールが効かないので拒否する
+- 記録は `tb role-log`。人事役による変更は関係グラフに `role` の辺として出る。会計役(auditor)は提案するだけで、変えない
 
 ### 規則つきの子 agent 作成(`tb agent-spawn`)
 

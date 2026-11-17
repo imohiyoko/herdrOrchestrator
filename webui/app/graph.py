@@ -15,7 +15,7 @@ EDGES_SQL = os.path.join(HERDR_ROOT, "taskboard", "sql", "agent_edges.sql")
 NAME_RE = re.compile(r"[A-Za-z0-9._-]{1,64}")
 ROLE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 VERB_LABEL = {"spawn": "spawn", "lead": "指揮", "report": "報告", "analyze": "解析",
-              "send:task": "依頼", "send:info": "連絡", "send:answer": "回答"}
+              "role": "ロール変更", "send:task": "依頼", "send:info": "連絡", "send:answer": "回答"}
 
 
 def roles_dir():
