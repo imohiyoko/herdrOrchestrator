@@ -181,9 +181,15 @@ def stop_cell(ctx, name, r):
     return op_form(ctx, "force-stop", name, "強制停止", confirm=True)
 
 
+def reg_role(reg, name):
+    """台帳の行(role と herdr_session)から役割。ロールはセッション固有なので、その agent のセッションの役割ファイルで決める。"""
+    r = reg.get(name) or {}
+    return graph.role_of(name, r.get("role"), session=r.get("herdr_session"))
+
+
 def role_groups_html(agents, reg):
     """動いている agent をロールごとにまとめた一覧。"""
-    nodes = [{"agent": a, "role": graph.role_of(a.get("name") or "", (reg.get(a.get("name") or "") or {}).get("role"))} for a in agents]
+    nodes = [{"agent": a, "role": reg_role(reg, a.get("name") or "")} for a in agents]
     rows = [[e(role) if role else "(役割なし)", ", ".join(f'{alink(n["agent"])} {state_html(n["agent"].get("agent_status"))}' for n in ns)]
             for role, ns in graph.by_role(nodes)]
     return table(["ロール", "agent"], rows)
@@ -200,11 +206,11 @@ def page_agent_graph(qs, ctx=None):
         n = agent_key(a)   # 名前が無ければ pane_id(一覧・リンクと同じ)
         if n and n not in seen:
             seen.add(n)
-            nodes.append({"name": n, "role": graph.role_of(a.get("name") or "", (reg.get(a.get("name") or "") or {}).get("role")), "agent": a})
+            nodes.append({"name": n, "role": reg_role(reg, a.get("name") or ""), "agent": a})
     for x in [v for ed in es for v in (ed["from"], ed["to"])]:
         if x not in seen:   # 関係の端に居るが今は動いていない名前(止まった agent・cli など)
             seen.add(x)
-            nodes.append({"name": x, "role": graph.role_of(x, (reg.get(x) or {}).get("role")), "agent": None})
+            nodes.append({"name": x, "role": reg_role(reg, x), "agent": None})
     ctx["scripts"] = ["/static/mermaid.min.js", "/docs.js"]
     body = err_html(err) + (
         '<p class=note>直近 7 日の「誰が誰に何をしたか」(spawn と指揮は今の状態)。1 体が複数の上流を持つこともあります。'

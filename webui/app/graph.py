@@ -18,8 +18,17 @@ VERB_LABEL = {"spawn": "spawn", "lead": "指揮", "report": "報告", "analyze":
               "role": "ロール変更", "read": "中身を読む", "send:task": "依頼", "send:info": "連絡", "send:answer": "回答"}
 
 
-def roles_dir():
-    return os.environ.get("TB_ROLES") or os.path.join(HERDR_ROOT, "roles")
+SESSION_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]*")
+
+
+def roles_dir(session=None):
+    """役割ファイルの場所。ロールは herdr セッション固有: roles/sessions/<セッション>/ があればそこだけ(tb と同じ)。"""
+    base = os.environ.get("TB_ROLES") or os.path.join(HERDR_ROOT, "roles")
+    if session and SESSION_RE.fullmatch(session):
+        d = os.path.join(base, "sessions", session)
+        if os.path.isdir(d):
+            return d
+    return base
 
 
 def projects_conf():
@@ -43,9 +52,10 @@ def _role_list(text, rdir):
     return out
 
 
-def roles_of(name, reg_role=None, rdir=None):
-    """役割名のリスト(複数可。tb の role_files_for と同じ順: roles/<名前>.md > 台帳の role > map.conf)。"""
-    rdir = rdir or roles_dir()
+def roles_of(name, reg_role=None, rdir=None, session=None):
+    """役割名のリスト(複数可。tb の role_files_for と同じ順: roles/<名前>.md > 台帳の role > map.conf)。
+    session はその agent の herdr セッション(役割ファイルの場所が変わる)。"""
+    rdir = rdir or roles_dir(session)
     if not name or not NAME_RE.fullmatch(name) or name.startswith("_") or name == "README":
         return []
     if os.path.isfile(os.path.join(rdir, name + ".md")):
@@ -63,15 +73,15 @@ def roles_of(name, reg_role=None, rdir=None):
     return []
 
 
-def role_of(name, reg_role=None, rdir=None):
+def role_of(name, reg_role=None, rdir=None, session=None):
     """役割名をカンマ区切りで(例 hr,manager)。無ければ None。グループ化はこの組み合わせ単位。"""
-    return ",".join(roles_of(name, reg_role, rdir)) or None
+    return ",".join(roles_of(name, reg_role, rdir, session)) or None
 
 
-def name_matches(name, pat, reg_role=None):
+def name_matches(name, pat, reg_role=None, session=None):
     """規則のパターンと名前を比べる(tb の name_matches と同じ)。@a は a を持つ、@a+b は両方を持つ。"""
     if pat.startswith("@"):
-        have = roles_of(name, reg_role)
+        have = roles_of(name, reg_role, session=session)
         return bool(have) and all(any(fnmatchcase(r, w) for r in have) for w in pat[1:].split("+"))
     return fnmatchcase(name, pat)
 
