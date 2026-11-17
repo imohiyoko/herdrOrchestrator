@@ -34,30 +34,45 @@ def _read_lines(path):
         return []
 
 
-def role_of(name, reg_role=None, rdir=None):
-    """役割名(.md を除く)。無ければ None。"""
+def _role_list(text, rdir):
+    out = []
+    for x in (text or "").split(","):
+        x = x.strip()
+        if x and ROLE_RE.fullmatch(x) and x != "README" and os.path.isfile(os.path.join(rdir, x + ".md")):
+            out.append(x)
+    return out
+
+
+def roles_of(name, reg_role=None, rdir=None):
+    """役割名のリスト(複数可。tb の role_files_for と同じ順: roles/<名前>.md > 台帳の role > map.conf)。"""
     rdir = rdir or roles_dir()
     if not name or not NAME_RE.fullmatch(name) or name.startswith("_") or name == "README":
-        return None
+        return []
     if os.path.isfile(os.path.join(rdir, name + ".md")):
-        return name
-    if reg_role and ROLE_RE.fullmatch(reg_role) and os.path.isfile(os.path.join(rdir, reg_role + ".md")):
-        return reg_role
+        return [name]
+    found = _role_list(reg_role, rdir)
+    if found:
+        return found
     for line in _read_lines(os.path.join(rdir, "map.conf")):
         k, sep, v = line.partition("=")
         pat, v = k.split("#", 1)[0].strip(), v.split("#", 1)[0].strip()
-        if not sep or not pat or not v or not re.fullmatch(r"[A-Za-z0-9._-]+", v):
+        if not sep or not pat or not v or not re.fullmatch(r"[A-Za-z0-9._, -]+", v):
             continue
         if fnmatchcase(name, pat):
-            return v if os.path.isfile(os.path.join(rdir, v + ".md")) else None
-    return None
+            return _role_list(v, rdir)
+    return []
+
+
+def role_of(name, reg_role=None, rdir=None):
+    """役割名をカンマ区切りで(例 hr,manager)。無ければ None。グループ化はこの組み合わせ単位。"""
+    return ",".join(roles_of(name, reg_role, rdir)) or None
 
 
 def name_matches(name, pat, reg_role=None):
-    """規則のパターンと名前を比べる(tb の name_matches と同じ)。@<役割の glob> なら役割で比べる。"""
+    """規則のパターンと名前を比べる(tb の name_matches と同じ)。@a は a を持つ、@a+b は両方を持つ。"""
     if pat.startswith("@"):
-        r = role_of(name, reg_role)
-        return bool(r) and fnmatchcase(r, pat[1:])
+        have = roles_of(name, reg_role)
+        return bool(have) and all(any(fnmatchcase(r, w) for r in have) for w in pat[1:].split("+"))
     return fnmatchcase(name, pat)
 
 
@@ -100,7 +115,7 @@ def by_role(nodes):
 
 
 def _safe(s):
-    return re.sub(r"[^A-Za-z0-9._:@-]", "_", str(s or ""))[:64] or "_"
+    return re.sub(r"[^A-Za-z0-9._:@,-]", "_", str(s or ""))[:64] or "_"
 
 
 def mermaid(nodes, es):

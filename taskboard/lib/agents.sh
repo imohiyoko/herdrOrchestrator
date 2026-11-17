@@ -535,9 +535,9 @@ cmd_agents() {
     name=$(jq -r .name <<<"$r"); k=$(killable_of "$name")
     status=$(jq -r --arg n "$name" '[.[] | select(.name==$n)][0].agent_status // ""' <<<"$LIVE_AGENTS")
     load_role "$name" >/dev/null 2>&1 || true
-    out=$(jq -c --argjson r "$r" --arg k "$k" --arg s "$status" --arg f "${ROLE_FILE#"$ROLES_DIR"/}" \
+    out=$(jq -c --argjson r "$r" --arg k "$k" --arg s "$status" --arg f "$ROLE_LABEL" \
       '. + [$r + {killable:$k, agent_status:(if $s=="" then null else $s end), role_file:(if $f=="" then null else $f end),
-                  role_name:(if $f=="" then null else ($f | sub("\\.md$"; "")) end)}]' <<<"$out")
+                  role_name:(if $f=="" then null else ($f | gsub("\\.md"; "")) end)}]' <<<"$out")
   done < <(jq -c '.[]' <<<"$rows")
   if ((graph)); then
     local edges extra g n f
@@ -564,7 +564,7 @@ cmd_agents() {
 }
 
 # agent の中身(pane の直近の出力)を読む。読むのは tb 経由に絞る(agent の設定で Bash(herdr agent read:*) を deny する。README)。
-# 人と本人はそのまま。ほかの agent からは approvals の read:<対象>(@<役割> も使える)が allow のときだけ。記録は read_log
+# 人と本人はそのまま。ほかの agent からは approvals の agent:read:<対象>(@<役割> も使える)が allow のときだけ。記録は read_log
 # 終了コード: 0 / 1 読めない / 20 許可されていない(人の承認が要る)
 cmd_peek() {
   [[ $# -ge 1 ]] || usage "peek <agent 名> [--lines N]"
@@ -578,10 +578,10 @@ cmd_peek() {
   valid_agent_name "$name"
   requester
   if [[ $REQ_BY != human && $REQ_BY != "$name" ]]; then
-    approval_of "read:$name"; rule=$APPROVAL_RULE
+    approval_of "agent:read:$name"; rule=$APPROVAL_RULE
     if [[ $APPROVAL_VALUE != allow ]]; then
       sql "INSERT INTO read_log (reader, target, lines, status, rule, created_at) VALUES ($(q "$REQ_BY"), $(q "$name"), $lines, 'denied', $(q "$rule"), $(q "$(now)"));"
-      echo "tb: $REQ_BY は $name の中身を読めません($rule)。必要なら人が approvals に read:$name か read:@<役割> を allow で足す" >&2
+      echo "tb: $REQ_BY は $name の中身を読めません($rule)。必要なら人が approvals に agent:read:$name か agent:read:@<役割> を allow で足す" >&2
       return 20
     fi
   fi
