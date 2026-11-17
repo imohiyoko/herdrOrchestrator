@@ -1,4 +1,4 @@
-"""Web UI(handler.py)と入口(gateway.py)で共通の HTTP 応答: 安全のためのヘッダと、中身を残さないアクセスログ。"""
+"""Web UI の HTTP 応答で共通のもの: 安全のためのヘッダと、中身を残さないアクセスログ。"""
 
 import sys
 from urllib.parse import urlsplit

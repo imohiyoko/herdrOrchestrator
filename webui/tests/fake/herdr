@@ -4,6 +4,7 @@
 # pane close した pane は $d/closed に足し、以後の agent list から消える
 d="${FAKE_HERDR_DIR:?}"
 [ -f "$d/fail" ] && { echo "boom" >&2; exit 3; }
+[ -n "${FAKE_HERDR_SESSION_LOG:-}" ] && echo "$1 $2 ${HERDR_SESSION:-}" >>"$FAKE_HERDR_SESSION_LOG"   # どのセッションとして呼ばれたか
 case "$1 $2" in
   "agent list")
     if [ -f "$d/closed" ]; then jq -c --rawfile c "$d/closed" '($c | split("\n")) as $x | .result.agents |= map(select(.pane_id as $p | $x | index($p) | not))' "$d/list.json"

@@ -1,25 +1,22 @@
 #!/bin/bash
 # 使い方: bin/gen-plist.sh   -> generated/local.herdr-webui.plist を生成して lint する。
-# TB_INSTANCE があれば local.herdr-<instance>-webui(複数セッションを別 checkout で動かすとき)。
-# TB_INSTANCE / HERDR_SESSION が設定されていれば plist の環境変数に渡す(未設定なら何も足さない)。
-# 外から開くのは入口(gen-gateway-plist.sh)のポートだけ。このインスタンスは空きポートで待ち受ける。
-# launchctl への登録はしない(人が行う。README 参照)。
+# Web UI は 1 プロセスで全 herdr セッションの画面を返す(/s/<セッション名>/)。checkout・セッションをまたいで 1 つだけ動かすので、
+# ラベルは TB_INSTANCE によらず固定。TB_UI_GATEWAY_PORT が設定されていれば plist に渡す(未設定なら 8800)。
+# launchctl への登録はしない(人が行う。README の「常駐」を参照)。
 set -eu
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# shellcheck source=../../lib/herdr-env.sh
-source "$ROOT/../lib/herdr-env.sh"
-LABEL="$(herdr_label_prefix)webui" || exit 2
+LABEL="local.herdr-webui"
 EXTRA_ENV=""
-for v in TB_INSTANCE HERDR_SESSION; do
-  [ -n "${!v:-}" ] || continue
-  herdr_plist_value_ok "${!v}" || { echo "error: $v は英数字と . _ - だけ: ${!v}" >&2; exit 2; }
-  EXTRA_ENV="$EXTRA_ENV    <key>$v</key>
-    <string>${!v}</string>
+if [ -n "${TB_UI_GATEWAY_PORT:-}" ]; then
+  { [[ $TB_UI_GATEWAY_PORT =~ ^[0-9]{1,5}$ ]] && ((10#$TB_UI_GATEWAY_PORT >= 1 && 10#$TB_UI_GATEWAY_PORT <= 65535)); } \
+    || { echo "error: TB_UI_GATEWAY_PORT は 1〜65535 の数字: $TB_UI_GATEWAY_PORT" >&2; exit 2; }
+  EXTRA_ENV="    <key>TB_UI_GATEWAY_PORT</key>
+    <string>$((10#$TB_UI_GATEWAY_PORT))</string>
 "
-done
+fi
 OUT_DIR="${OUT_DIR:-$ROOT/generated}"
 LOG_DIR="$ROOT/logs"
-LOG_NAME="launchd-webui"; [ -z "${TB_INSTANCE:-}" ] || LOG_NAME="launchd-webui-$TB_INSTANCE"   # 同じ checkout で複数動かしてもログが混ざらない
+LOG_NAME="launchd-webui"
 PY="${PYTHON3:-$(command -v python3)}"
 mkdir -p "$OUT_DIR" "$LOG_DIR"
 OUT="$OUT_DIR/$LABEL.plist"

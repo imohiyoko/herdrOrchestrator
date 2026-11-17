@@ -93,7 +93,7 @@ session=$(session_of "$1")
 # shellcheck source=lib/herdr-env.sh
 [[ -n $session ]] || session=$(source "$DIR/lib/herdr-env.sh" && herdr_session_file_value) || session=""
 [[ -n $session ]] && export HERDR_SESSION=$session
-# launchd ラベルの instance 名も既定はセッション名(TB_INSTANCE で上書き可。default セッションは従来のラベルのまま)
+# scheduler の launchd ラベルの instance 名も既定はセッション名(TB_INSTANCE で上書き可。default セッションは従来のラベルのまま。Web UI は 1 つで全セッション)
 [[ -n $session && $session != default ]] && export TB_INSTANCE=${TB_INSTANCE:-$session}
 
 ensure_server

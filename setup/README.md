@@ -34,8 +34,8 @@ bash setup/check.sh --project ~/work/app  # 確認するプロジェクトを指
 | `taskboard:db` | 共有の DB(`~/.local/state/herdr/tasks.db`、`TB_DB` があればそれ)の有無と版(情報のみ) |
 | `taskboard:legacy-db` | 旧形式の DB(checkout の `taskboard/data/tasks.db`)が残っていて、まだ取り込んでいない(warn) |
 | `job:<job>` | `scheduler/jobs/*.conf.example` に対応する `*.conf` があるか、`/path/to/` が残っていないか。`taskboard-digest` だけ必須 |
-| `launchd:<job>` / `launchd:webui` / `launchd:webui-gateway` | `~/Library/LaunchAgents/` の plist と、`launchctl print` で読み込まれているか。時刻を焼き込んだ古い plist は warn。macOS 以外は skip |
-| `webui:auth` / `webui:old-auth` / `webui:token` / `webui:port` | `~/.local/state/herdr-webui/auth.json`(全セッション共通)の有無と権限 600(中身は読まない)、旧い置き場 `webui/run/auth.json` と廃止された `run/token` の残り、入口のポート |
+| `launchd:<job>` / `launchd:webui` | `~/Library/LaunchAgents/` の plist と、`launchctl print` で読み込まれているか。時刻を焼き込んだ古い plist は warn。macOS 以外は skip |
+| `webui:auth` / `webui:old-auth` / `webui:token` / `webui:port` / `webui:old-plist` | `~/.local/state/herdr-webui/auth.json`(全セッション共通)の有無と権限 600(中身は読まない)、旧い置き場 `webui/run/auth.json` と廃止された `run/token` の残り、待ち受けたポート |
 | `presets` | `example.conf` / `setup.conf` 以外のプリセットがあるか |
 
 出力は 1 項目 1 行(`ok` / `warn` / `missing` / `skip` / `info`)で、対処が要るものには `next:` 行が付く。

@@ -5,6 +5,7 @@ import os
 import re
 import shlex
 import signal
+import socket
 import sys
 import threading
 import time
@@ -13,14 +14,14 @@ from urllib.parse import parse_qs, unquote, urlencode, urlsplit
 
 import auth
 
-from . import registry, reqctx
+from . import registry, reqctx, sessions
 from .httpbase import host_ok, log_request_line, origins, send
-from .config import AUTH_DIR, BASE, COOKIE, HOST, INSTANCE, herdr_env, JOB_RE, ROOT, RUN_DIR
+from .config import AUTH_DIR, COOKIE, HOST, herdr_env, JOB_RE, ROOT, RUN_DIR, SESSION_RE
 from .sanitize import clean, e
 from .actions import agent_decide, agent_new, agent_op, resolve_comment
 from .data import NOTIFY_POLL_SEC, badge_count, urgent_items
 from .jobs import job_names, save_job_settings
-from .scripts import DOCS_JS, SESSIONS_JS, notify_js
+from .scripts import DOCS_JS, notify_js
 from .views import CSS, err_html, inst_label, page, page_agent_new, page_job, route, title_suffix
 
 
@@ -158,7 +159,7 @@ class Handler(BaseHTTPRequestHandler):
         return self.auth.session_hash(self._session_token())
 
     def _cookie(self, value, max_age):
-        # ログインは全セッションで共通なので Path=/(入口の上のどの /s/<名前>/ にも付く)
+        # ログインは全セッションで共通なので Path=/(どの /s/<セッション名>/ にも付く)
         return ("Set-Cookie", f"{COOKIE}={value}; Path=/; HttpOnly; SameSite=Strict; Max-Age={max_age}")
 
     def _body(self):
@@ -218,8 +219,6 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, notify_js(reqctx.base(), NOTIFY_POLL_SEC * 1000), "text/javascript; charset=utf-8")
         if path == "/docs.js":
             return self._send(200, DOCS_JS, "text/javascript; charset=utf-8")
-        if path == "/sessions.js":
-            return self._send(200, SESSIONS_JS, "text/javascript; charset=utf-8")
         if path == "/static/mermaid.min.js":
             return self._send_static("mermaid.min.js", "text/javascript; charset=utf-8")
         try:
@@ -359,23 +358,28 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(401, login_page(a, nx, LOGIN_FAIL + ("(ロックしました)" if wait else "")))
 
     def _handle(self):
-        # このプロセスが返すのは自分の 1 セッションだけ(名前は TB_INSTANCE、DB の行と herdr は herdr のセッション)
-        with reqctx.use(INSTANCE, herdr_env.session_name()):
-            self._handle_in_session()
-
-    def _handle_in_session(self):
+        """/s/<セッション名>/… を、そのセッションの画面として扱う(セッションはリクエストごと。app/reqctx.py)。"""
         if not self._host_ok():
             return self._text(403, "Forbidden")
         u = urlsplit(self.path)
-        path = u.path
-        # /s/<名前>/… だけを受け、BASE を外してから扱う
-        base = reqctx.base()
-        if path == base:
-            return self._send(302, "", "text/plain", [("Location", base + "/" + ("?" + u.query if u.query else ""))])
-        if not path.startswith(base + "/"):
+        if u.scheme or u.netloc:
+            return self._text(400, "Bad Request")
+        q = "?" + u.query if u.query else ""
+        if u.path == "/":   # このプロセスの herdr セッションへ
+            return self._send(302, "", "text/plain", [("Location", f"/s/{herdr_env.session_name()}/")])
+        m = re.fullmatch(r"/s/([^/]+)(/.*)?", u.path)
+        if not m:
             return self._text(404, "Not Found")
-        path = path[len(base):]
-        self.path = path + ("?" + u.query if u.query else "")
+        name = m.group(1)
+        if not SESSION_RE.fullmatch(name) or not sessions.is_known(name):
+            return self._text(404, "Not Found(その herdr セッションはありません。/ からこのプロセスのセッションへ)")
+        with reqctx.use(name, name):
+            if not m.group(2):   # /s/<名前> → /s/<名前>/
+                return self._send(302, "", "text/plain", [("Location", reqctx.base() + "/" + q)])
+            self._dispatch(m.group(2), q)
+
+    def _dispatch(self, path, q):
+        self.path = path + q
         if self.command == "POST" and (path in ("/login", "/setup", "/logout", "/reset", "/resolve", "/agent-op", "/agent-new")
                                        or re.fullmatch(r"/jobs/[A-Za-z0-9][A-Za-z0-9_-]{0,63}", path)):
             return self._post(path)
@@ -386,41 +390,52 @@ class Handler(BaseHTTPRequestHandler):
     do_GET = do_HEAD = do_POST = do_PUT = do_DELETE = do_PATCH = do_OPTIONS = _handle
 
 
-def bind_server():
-    """(server, port)。外から開くのは入口(gateway.py)のポートだけなので、各インスタンスは OS が選ぶ空きポート(127.0.0.1)で待ち受ける。"""
-    srv = ThreadingHTTPServer((HOST, 0), Handler)
-    return srv, srv.server_address[1]
+DEFAULT_PORT = 8800
+SHIFT = 19   # 既定のポートが埋まっていれば、+1 ずつ最大この数だけずらす
+
+
+def start_port():
+    v = os.environ.get("TB_UI_GATEWAY_PORT") or str(DEFAULT_PORT)
+    if not v.isdigit() or not 1 <= int(v) <= 65535:
+        raise SystemExit(f"herdr-webui: TB_UI_GATEWAY_PORT は 1〜65535 の数字: {v}")
+    return int(v)
+
+
+def bind_server(start):
+    """(server, port)。start から空いているポートを探す(ほかのアプリが使っていればずらす)。127.0.0.1 だけ。"""
+    last = None
+    for p in range(start, min(start + SHIFT, 65535) + 1):
+        with socket.socket() as probe:   # macOS では SO_REUSEADDR の bind が待ち受け中のポートにも通るので、先に接続を試す
+            probe.settimeout(0.5)
+            if probe.connect_ex((HOST, p)) == 0:
+                last = "使用中"
+                continue
+        try:
+            return ThreadingHTTPServer((HOST, p), Handler), p
+        except OSError as ex:
+            last = ex
+    raise SystemExit(f"herdr-webui: ポート {start}〜{min(start + SHIFT, 65535)} がすべて使えません: {last}")
 
 
 def main():
-    herdr_env.apply_session()   # checkout の herdr-session ファイルでセッションを固定していれば、herdr にも渡す
+    herdr_env.apply_session()   # checkout の herdr-session ファイルでセッションを固定していれば、herdr にも渡す(/ の行き先)
+    running = registry.read_gateway()
+    if running:
+        raise SystemExit(f"herdr-webui: 既にポート {running['port']} で動いています(pid {running['pid']}): http://{HOST}:{running['port']}/")
     run_dir = RUN_DIR()
     os.makedirs(run_dir, exist_ok=True)
     Handler.auth = auth.Auth(AUTH_DIR())
-    srv, port = bind_server()
+    srv, port = bind_server(start_port())
     Handler.port = port
-    # 一覧は port ファイルより先に書く(port ファイルが「起動済み」の合図)
-    reg_name = INSTANCE or "default"
     try:
-        old = registry.read_entry(reg_name)
-        if old and old.get("pid") != os.getpid() and old["port"] != port and registry.alive(old):
-            print(f"herdr-webui: 同じ名前 {reg_name} のインスタンスがポート {old['port']} で動いています。一覧はこちら(ポート {port})に置き換えます"
-                  "(別の checkout なら TB_INSTANCE を分けてください)", flush=True)
-        registry.register(reg_name, port, BASE)
+        registry.write_gateway(port)
     except OSError as ex:
-        print(f"herdr-webui: インスタンス一覧({registry.REGISTRY_DIR()})に書けません。セッション一覧・入口には出ません: {type(ex).__name__}", flush=True)
+        print(f"herdr-webui: 待ち受けたポートを記録できません: {type(ex).__name__}", flush=True)
     port_file = os.path.join(run_dir, "port")
-    inst_file = os.path.join(run_dir, "instance")
     with open(port_file, "w") as f:
         f.write(f"{port}\n")
-    with open(inst_file, "w") as f:
-        f.write(f"{INSTANCE or 'default'}\n")
-    print(f"herdr-webui: listening on http://{HOST}:{port}{BASE}/(内部用。開くのは入口から)", flush=True)
-    print(f"herdr-webui: instance={INSTANCE or 'default'} port={port}", flush=True)
-    gw = registry.read_gateway()
-    url = f"http://{HOST}:{gw['port'] if gw else '<入口のポート、既定 8800>'}{BASE}"
-    if not gw:
-        print("herdr-webui: 入口(webui/gateway.py)が動いていません。ブラウザで開くには入口を起動してください", flush=True)
+    url = f"http://{HOST}:{port}/s/{herdr_env.session_name()}"
+    print(f"herdr-webui: listening on http://{HOST}:{port}/(全 herdr セッション。/s/<セッション名>/)", flush=True)
     if Handler.auth.configured():
         print(f"herdr-webui: 開く {url}/(ログインは全セッション共通)", flush=True)
     else:
@@ -434,9 +449,8 @@ def main():
         srv.serve_forever()
     finally:
         srv.server_close()
-        registry.unregister(reg_name)
-        for fn in (port_file, inst_file):
-            try:
-                os.remove(fn)
-            except OSError:
-                pass
+        registry.clear_gateway()
+        try:
+            os.remove(port_file)
+        except OSError:
+            pass

@@ -61,7 +61,7 @@ done
 JOBS=$TMP/jobs; mkdir -p "$JOBS"
 printf "TARGET=dummy\nPROMPT='x'\nWINDOW=09:00-21:00\nINTERVAL_MIN=5\n" >"$JOBS/t.conf"
 sched() { clean env JOBS_DIR="$JOBS" LOG_DIR="$TMP/logs" OUT_DIR="$TMP/gen-$1" "${@:2}" bash "$ROOT/scheduler/bin/gen-plist.sh" t >/dev/null 2>&1; }
-web() { clean env OUT_DIR="$TMP/gen-$1" "${@:2}" bash "$ROOT/webui/bin/gen-plist.sh" >/dev/null 2>&1; }
+web() { clean env OUT_DIR="$TMP/genw-$1" "${@:2}" bash "$ROOT/webui/bin/gen-plist.sh" >/dev/null 2>&1; }
 label_of() { grep -A1 '<key>Label</key>' "$1" | sed -n 's/.*<string>\(.*\)<\/string>.*/\1/p'; }
 
 sched a; eq "sched plist: legacy file name" "$(ls "$TMP/gen-a")" "local.herdr-sched-t.plist"
@@ -75,21 +75,15 @@ eq "sched plist: PATH kept" "$(grep -c '<key>PATH</key>' "$TMP/gen-b"/*.plist)" 
 sched c TB_INSTANCE='a b'; eq "sched plist: bad instance writes nothing" "$(ls "$TMP/gen-c" 2>/dev/null | wc -l | tr -d ' ')" "0"
 sched d HERDR_SESSION='a<b'; eq "sched plist: bad HERDR_SESSION writes nothing" "$(ls "$TMP/gen-d" 2>/dev/null | wc -l | tr -d ' ')" "0"
 
-web a; eq "webui plist: legacy file name" "$(ls "$TMP/gen-a" 2>/dev/null | grep -c '^local.herdr-webui.plist$')" "1"
-eq "webui plist: legacy label" "$(label_of "$TMP/gen-a/local.herdr-webui.plist")" "local.herdr-webui"
-OUT_DIR="$TMP/gen-gw" TB_INSTANCE=x bash "$ROOT/webui/bin/gen-gateway-plist.sh" >/dev/null 2>&1
-eq "gateway plist: ラベルは TB_INSTANCE によらず固定" "$(label_of "$TMP/gen-gw/local.herdr-webui-gateway.plist")" "local.herdr-webui-gateway"
-OUT_DIR="$TMP/gen-gw2" TB_UI_GATEWAY_PORT=80x bash "$ROOT/webui/bin/gen-gateway-plist.sh" >/dev/null 2>&1
-eq "gateway plist: 数字でないポートは書かない" "$(ls "$TMP/gen-gw2" 2>/dev/null | wc -l | tr -d ' ')" "0"
-eq "webui plist: no HERDR_SESSION by default" "$(grep -c -e HERDR_SESSION -e TB_UI_PORT "$TMP/gen-a/local.herdr-webui.plist")" "0"
-web b TB_INSTANCE=training HERDR_SESSION=training TB_UI_PORT=8811
-eq "webui plist: instance label" "$(label_of "$TMP/gen-b/local.herdr-training-webui.plist")" "local.herdr-training-webui"
-eq "webui plist: HERDR_SESSION passed" "$(grep -A1 '<key>HERDR_SESSION</key>' "$TMP/gen-b"/*.plist | grep -c '<string>training</string>')" "1"
-eq "webui plist: TB_UI_PORT は渡さない(外から開くのは入口だけ)" "$(grep -c TB_UI_PORT "$TMP/gen-b/local.herdr-training-webui.plist")" "0"
-eq "webui plist: TB_INSTANCE passed(Cookie 名・表示に要る)" "$(grep -A1 "<key>TB_INSTANCE</key>" "$TMP/gen-b/local.herdr-training-webui.plist" | grep -c '<string>training</string>')" "1"
-eq "webui plist: instance log names differ" "$(grep -c "launchd-webui-training\\." "$TMP/gen-b/local.herdr-training-webui.plist")" "2"
-eq "webui plist: 未設定は TB_INSTANCE を足さず従来のログ名" "$(grep -c -e TB_INSTANCE -e 'launchd-webui-' "$TMP/gen-a/local.herdr-webui.plist")" "0"
-web c TB_INSTANCE='a/b'; eq "webui plist: bad instance writes nothing" "$(ls "$TMP/gen-c" 2>/dev/null | wc -l | tr -d ' ')" "0"
+web a TB_INSTANCE=training HERDR_SESSION=training
+eq "webui plist: 1 つだけ(ラベルは TB_INSTANCE によらず固定)" "$(ls "$TMP/genw-a" 2>/dev/null | tr '\n' ' ')" "local.herdr-webui.plist "
+eq "webui plist: label" "$(label_of "$TMP/genw-a/local.herdr-webui.plist")" "local.herdr-webui"
+eq "webui plist: セッションは渡さない(全セッションを返す)" "$(grep -c -e HERDR_SESSION -e TB_INSTANCE -e TB_UI_GATEWAY_PORT "$TMP/genw-a/local.herdr-webui.plist")" "0"
+eq "webui plist: server.py を動かす" "$(grep -c '/server.py<' "$TMP/genw-a/local.herdr-webui.plist")" "1"
+web b TB_UI_GATEWAY_PORT=08811
+eq "webui plist: ポートの起点を渡す" "$(grep -A1 '<key>TB_UI_GATEWAY_PORT</key>' "$TMP/genw-b/local.herdr-webui.plist" | grep -c '<string>8811</string>')" "1"
+web c TB_UI_GATEWAY_PORT=80x; eq "webui plist: 数字でないポートは書かない" "$(ls "$TMP/genw-c" 2>/dev/null | wc -l | tr -d ' ')" "0"
+eq "旧版の入口(gateway.py)は無い" "$([[ -e $ROOT/webui/gateway.py || -e $ROOT/webui/bin/gen-gateway-plist.sh ]] && echo left || echo gone)" "gone"
 
 # --- tb のセッション(lib/db.sh の SESS。DB の行の分け方)は socket パスを見る(tb 本体を source せず、定義行だけ評価)
 eq "tb SESS follows the socket" "$(clean env HERDR_SESSION=staging HERDR_SOCKET_PATH=/h/.config/herdr/sessions/training/herdr.sock bash -c "source '$ROOT/lib/herdr-env.sh'; $(grep '^SESS=' "$ROOT/taskboard/lib/db.sh" | sed 's/ *#.*//'); echo \$SESS")" "training"
