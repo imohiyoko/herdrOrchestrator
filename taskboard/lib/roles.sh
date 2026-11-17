@@ -39,11 +39,12 @@ role_name_of() {  # $1=agent 名
 
 # 規則のパターンと agent 名を比べる。@<役割の glob> なら役割で、それ以外は名前の glob で比べる。一致すれば 0
 # (routes.conf / approvals.conf の宛先 / spawn-policy の denied_parents が使う。役割の決まり方は role_file_for と同じ)
+# 一致しなければ 1。台帳を読めず役割を確かめられないときは 2(呼び出し側は、そこで許可側に倒さず止める)
 name_matches() {  # $1=agent 名 $2=パターン
   if [[ $2 == @* ]]; then
     local r
     # 台帳を読めないときは一致させない(map.conf の役割に落ちて許可側に倒れるのを防ぐ)。役割を引く照会そのものの失敗で判定する
-    r=$(ROLE_STRICT=1 role_name_of "$1") || return 1
+    r=$(ROLE_STRICT=1 role_name_of "$1") || return 2
     # shellcheck disable=SC2053  # glob として比べる
     [[ -n $r && $r == ${2#@} ]]
   else

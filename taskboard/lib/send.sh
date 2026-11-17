@@ -60,7 +60,11 @@ route_allowed() {
     neg=0; [[ $line == \!* ]] && { neg=1; line=$(trim "${line#!}"); }
     [[ $line == *"->"* ]] || continue
     l=$(trim "${line%%->*}"); r=$(trim "${line#*->}")
-    if name_matches "$from" "$l" && name_matches "$to" "$r"; then
+    local m1=0 m2=1
+    name_matches "$from" "$l" || m1=$?
+    if ((m1 == 0)); then m2=0; name_matches "$to" "$r" || m2=$?; fi
+    if ((m1 == 2 || m2 == 2)); then ROUTE_REASON="routes.conf: ${line} の役割を確かめられません(台帳を読めない)"; return 1; fi
+    if ((m1 == 0 && m2 == 0)); then
       if ((neg)); then ROUTE_REASON="routes.conf: !$l -> $r"; return 1; fi
       ROUTE_REASON="routes.conf: $l -> $r"; return 0
     fi

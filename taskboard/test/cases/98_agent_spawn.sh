@@ -36,6 +36,10 @@ eq "agent-spawn: parent without an in_progress task → 4" "$(FAKE_AGENTS="[$SP_
 eq "agent-spawn: task not in_progress (todo) → 4" "$(HERDR_PANE_ID=wP:p1 rc $TB agent-spawn worker --task "$T3" --brief x)" "4"
 INC=$(sp_ag inc42-fixer wF:p1); INC_T=$(sp_task inc42-fixer in_progress)
 printf 'denied_parents = inc*-*\n' >"$TMP/spawn-deny.conf"
+printf 'denied_parents = @nosuchrole\n' >"$TMP/spawn-deny-role.conf"
+spsql "ALTER TABLE agents RENAME COLUMN role TO role_x;"
+eq "agent-spawn: denied_parents by role fails closed when the role cannot be read → 4" "$(TB_SPAWN_POLICY=$TMP/spawn-deny-role.conf HERDR_PANE_ID=wP:p1 $TB agent-spawn worker --task "$T1" --brief x 2>&1 >/dev/null | grep -c '確かめられません')" "1"
+spsql "ALTER TABLE agents RENAME COLUMN role_x TO role;"
 eq "agent-spawn: parent matching denied_parents cannot spawn → 4" "$(TB_SPAWN_POLICY=$TMP/spawn-deny.conf FAKE_AGENTS="[$SP_C,$INC]" HERDR_PANE_ID=wF:p1 rc $TB agent-spawn worker --task "$INC_T" --brief x)" "4"
 eq "agent-spawn: nothing created by any refusal" "$(ws_count) $(spsql "SELECT COUNT(*) FROM agents WHERE spawned_by IS NOT NULL;") $(spsql "SELECT COUNT(*) FROM agent_ops;")" "0 0 0"
 

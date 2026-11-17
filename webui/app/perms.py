@@ -6,7 +6,7 @@ from fnmatch import fnmatchcase
 import shlex
 
 from .config import APPROVALS, CATALOG
-from .graph import name_matches
+from .graph import name_matches, roles_dir
 from .sanitize import clean
 
 # tb の valid_action と同じ文字種
@@ -58,8 +58,11 @@ def matches(op, pat):
         oh, _, on = op.rpartition(":")
         if not fnmatchcase(oh, head):
             return False
-        from .data import q   # tb と同じく台帳の role を先に見る(循環 import を避けてここで読む)
-        reg = q("SELECT role FROM agents WHERE name=?", (on,))
+        from . import data   # tb と同じく台帳の role を先に見る(循環 import を避けてここで読む)
+        reg, ok = data.q_checked("SELECT role FROM agents WHERE name=?", (on,))
+        if not ok:
+            # 台帳を読めないときは map.conf に落とさない(tb の ROLE_STRICT と同じ)。名前そのものの役割ファイルだけは台帳なしで決まる
+            return os.path.isfile(os.path.join(roles_dir(), on + ".md")) and name_matches(on, last)
         return name_matches(on, last, reg[0]["role"] if reg else None)
     return fnmatchcase(op, pat)
 

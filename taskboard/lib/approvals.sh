@@ -22,7 +22,12 @@ approval_of() {
         # 末尾が @<役割>(例: send:task:@worker)なら、操作の末尾の名前を役割で比べる
         [[ $act == *:* ]] || continue
         # shellcheck disable=SC2053  # glob として比べる
-        if [[ ${act%:*} == ${k%:*} ]] && name_matches "${act##*:}" "${k##*:}"; then APPROVAL_RULE="$k = $v"; APPROVAL_VALUE=$v; return 0; fi
+        [[ ${act%:*} == ${k%:*} ]] || continue
+        local m=0; name_matches "${act##*:}" "${k##*:}" || m=$?
+        case $m in
+          0) APPROVAL_RULE="$k = $v"; APPROVAL_VALUE=$v; return 0;;
+          2) APPROVAL_RULE="$k(台帳を読めず役割を確かめられないため ask)"; APPROVAL_VALUE=ask; return 0;;   # 下の行の allow に進まない
+        esac
         continue
       fi
       # shellcheck disable=SC2053  # glob として比べる

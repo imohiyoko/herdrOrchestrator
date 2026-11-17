@@ -58,6 +58,11 @@ HERDR_PANE_ID=wconductor:p1 $TB send worker2 --text hi --kind info >/dev/null 2>
 eq "routes: @conductor -> @worker allows by role" "$(grsql "SELECT (status!='denied')||' '||reason FROM outbox WHERE text='hi';" | cut -d" " -f1-5)" "1 routes.conf: @conductor -> @worker"
 HERDR_PANE_ID=wworker1:p1 $TB send b-conductor --text up --kind info >/dev/null 2>&1
 eq "routes: !@worker -> @conductor denies by role" "$(grsql "SELECT status||' '||reason FROM outbox WHERE text='up';")" "denied routes.conf: !@worker -> @conductor"
+printf '!@worker -> @conductor\n* -> *\n' >"$TB_ROUTES"
+grsql "ALTER TABLE agents RENAME COLUMN role TO role_x;"
+HERDR_PANE_ID=wworker1:p1 $TB send b-conductor --text up2 --kind info >/dev/null 2>&1
+grsql "ALTER TABLE agents RENAME COLUMN role_x TO role;"
+eq "routes: a ! rule whose role cannot be read stops (does not fall through to * -> *)" "$(grsql "SELECT status FROM outbox WHERE text='up2';") $(grsql "SELECT reason FROM outbox WHERE text='up2';" | grep -c '確かめられません')" "denied 1"
 export TB_APPROVALS=$TMP/graph-appr.conf
 printf 'send:info:@conductor = ask\nsend:*:@worker = allow\nagent:stop:@watch* = allow\n* = ask\n' >"$TB_APPROVALS"
 eq "approvals: send:*:@worker matches by the target's role" "$($TB approval send:task:worker3 | tr '\n' ' ')" "allow rule: send:*:@worker = allow "
