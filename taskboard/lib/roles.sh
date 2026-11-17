@@ -9,13 +9,15 @@ ROLE_FILE=""; ROLE_HASH=""; ROLE_TEXT=""
 
 sha256() { if command -v sha256sum >/dev/null; then sha256sum | cut -c1-64; else shasum -a 256 | cut -c1-64; fi; }
 
-role_file_for() {  # $1=agent 名 → 役割ファイルのパス(無ければ空)
+role_file_for() {  # $1=agent 名 [$2=台帳の role(渡せば台帳を読まずにこれで決める)] → 役割ファイルのパス(無ければ空)
   local name=$1 k v pat
   [[ $name =~ ^[A-Za-z0-9._-]{1,64}$ && $name != _* && $name != README ]] || return 0
   if [[ -f $ROLES_DIR/$name.md ]]; then printf '%s' "$ROLES_DIR/$name.md"; return 0; fi
   # tb agent-new --role で決めた役割(台帳 agents.role)
   # ROLE_STRICT=1(許可判定の経路)では照会の失敗を 1 で返し、map.conf に進まない。それ以外(load_role など)は未登録扱い
-  local reg; reg=$(sql "SELECT COALESCE(role,'') FROM agents WHERE name=$(q "$name");" 2>/dev/null) || { [[ -n ${ROLE_STRICT:-} ]] && return 1; reg=""; }
+  local reg
+  if [[ -n ${2+x} ]]; then reg=$2
+  else reg=$(sql "SELECT COALESCE(role,'') FROM agents WHERE name=$(q "$name");" 2>/dev/null) || { [[ -n ${ROLE_STRICT:-} ]] && return 1; reg=""; }; fi
   if [[ $reg =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && -f $ROLES_DIR/$reg.md ]]; then printf '%s' "$ROLES_DIR/$reg.md"; return 0; fi
   [[ -f $ROLES_DIR/map.conf ]] || return 0
   while IFS='=' read -r k v || [[ -n $k ]]; do
@@ -161,7 +163,7 @@ cmd_role-set() {
   # (読んでから書くまでに別の変更が入ったら、履歴の old_role がずれるので何もせずやり直しを促す)
   local reg n
   reg=$(sql "SELECT COALESCE(role,'') FROM agents WHERE name=$(q "$name");") || die "台帳を読めません"
-  old=$(role_name_of "$name")
+  old=$(role_file_for "$name" "$reg"); old=${old##*/}; old=${old%.md}   # 読んだ台帳の値から実効の役割を決める(もう一度は読まない)
   n=$(sql "BEGIN IMMEDIATE;
     INSERT INTO role_changes (agent, old_role, new_role, changed_by, reason, created_at)
     SELECT $(q "$name"), NULLIF($(q "$old"),''), $(q "$role"), $(q "$REQ_BY"), NULLIF($(q "$(oneline "$why" 300)"),''), $(q "$(now)")

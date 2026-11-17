@@ -112,6 +112,8 @@ printf 'agent:stop:@worker = allow\n* = ask\n' >"$TB_APPROVALS"
 eq "approvals: @worker matches a worker by map.conf" "$($TB approval agent:stop:worker3 | head -1)" "allow"
 eq "approvals: @role does not match when the registry cannot be read" "$(sqlite3 "$TB_DB" "ALTER TABLE agents RENAME TO agents_x;"; $TB approval agent:stop:worker3 2>/dev/null | head -1; sqlite3 "$TB_DB" "ALTER TABLE agents_x RENAME TO agents;")" "ask"
 eq "approvals: @role does not match when only the role lookup fails" "$(sqlite3 "$TB_DB" "ALTER TABLE agents RENAME COLUMN role TO role_x;"; $TB approval agent:stop:worker3 2>/dev/null | head -1; sqlite3 "$TB_DB" "ALTER TABLE agents RENAME COLUMN role_x TO role;")" "ask"
+printf 'agent:stop:@nosuch = ask\n* = allow\n' >"$TB_APPROVALS"
+eq "approvals: a role rule that cannot be checked stops at ask (does not fall through to * = allow)" "$(sqlite3 "$TB_DB" "ALTER TABLE agents RENAME COLUMN role TO role_x;"; $TB approval agent:stop:worker3 2>/dev/null | head -1; sqlite3 "$TB_DB" "ALTER TABLE agents RENAME COLUMN role_x TO role;") $($TB approval agent:stop:worker3 | head -1)" "ask allow"
 eq "role-set: old_role is the effective role (registry role without a file falls back to map.conf)" "$(sqlite3 "$TB_DB" "UPDATE agents SET role='gone' WHERE name='worker1';"; $TB role-set worker1 watcher >/dev/null; sqlite3 "$TB_DB" "SELECT old_role FROM role_changes ORDER BY id DESC LIMIT 1;")" "worker"
 eq "role-set: change and history are written together" "$($TB role-set worker1 watcher >/dev/null; sqlite3 "$TB_DB" "SELECT (SELECT role FROM agents WHERE name='worker1')||' '||(SELECT new_role FROM role_changes ORDER BY id DESC LIMIT 1);")" "watcher watcher"
 export TB_APPROVALS=$_saved_appr

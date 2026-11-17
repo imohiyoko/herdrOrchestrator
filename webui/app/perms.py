@@ -50,7 +50,8 @@ def has_bracket(r):
 
 
 def matches(op, pat):
-    """tb の approval_of と同じ照合。末尾が @<役割> の行は、操作の末尾の名前を役割で比べる。"""
+    """tb の approval_of と同じ照合。末尾が @<役割> の行は、操作の末尾の名前を役割で比べる。
+    台帳を読めず役割を確かめられないときは None(tb と同じく、その行で ask にして下へ進まない)。"""
     head, _, last = pat.rpartition(":")
     if last.startswith("@"):
         if ":" not in op:
@@ -62,7 +63,9 @@ def matches(op, pat):
         reg, ok = data.q_checked("SELECT role FROM agents WHERE name=?", (on,))
         if not ok:
             # 台帳を読めないときは map.conf に落とさない(tb の ROLE_STRICT と同じ)。名前そのものの役割ファイルだけは台帳なしで決まる
-            return os.path.isfile(os.path.join(roles_dir(), on + ".md")) and name_matches(on, last)
+            if os.path.isfile(os.path.join(roles_dir(), on + ".md")):
+                return name_matches(on, last)
+            return None
         return name_matches(on, last, reg[0]["role"] if reg else None)
     return fnmatchcase(op, pat)
 
@@ -73,7 +76,10 @@ def decide(rules, op):
     for r in rules:
         if has_bracket(r):
             return "unknown", r
-        if matches(op, r["raw"]):
+        m = matches(op, r["raw"])
+        if m is None:
+            return "ask", r
+        if m:
             return r["value"], r
     return "ask", None
 

@@ -1662,8 +1662,9 @@ check("perms: 末尾 @役割 の行を役割で照合", [_perms2.decide(_rules, 
 _data2.q_checked = lambda *a, **k: ([], False)
 check("perms: 台帳を読めないときは @役割 を map.conf で一致させない(名前の役割ファイルは使う)",
       [_perms2.decide(_rules, "send:task:worker1")[0],
-       _perms2.decide([{"raw": "send:*:@conductor", "value": "allow"}, {"raw": "*", "value": "ask"}], "send:task:conductor")[0]]
-      == ["ask", "allow"])
+       _perms2.decide([{"raw": "send:*:@conductor", "value": "allow"}, {"raw": "*", "value": "ask"}], "send:task:conductor")[0],
+       _perms2.decide([{"raw": "send:task:@worker", "value": "ask"}, {"raw": "*", "value": "allow"}], "send:task:worker1")[0]]
+      == ["ask", "allow", "ask"])
 _data2.q_checked = _qc
 for _k, _v in _old.items():
     if _v is None:
