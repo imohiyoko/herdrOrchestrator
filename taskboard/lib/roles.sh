@@ -3,7 +3,12 @@
 # bin/tb から source される。単体では実行しない。
 
 # ---------- roles(agent ごとの役割の配布。SessionStart hook と一括送信) ----------
-ROLES_DIR=${TB_ROLES:-$TB_ROOT/../roles}
+# ロールは herdr セッション固有。roles/sessions/<セッション>/ があれば、そのセッションではそこだけを使う(共有の roles/ は見ない)。
+# 無ければ共有の roles/。台帳の役割(agents.role)も、同じセッションの agent のものだけを使う
+ROLES_BASE=${TB_ROLES:-$TB_ROOT/../roles}
+ROLES_SESSION=$(herdr_session_name)
+if [[ $ROLES_SESSION =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ && -d $ROLES_BASE/sessions/$ROLES_SESSION ]]; then ROLES_DIR=$ROLES_BASE/sessions/$ROLES_SESSION
+else ROLES_DIR=$ROLES_BASE; fi
 ROLE_MAX=${TB_ROLE_MAX:-12000}
 ROLE_FILE=""; ROLE_HASH=""; ROLE_TEXT=""
 
@@ -27,9 +32,14 @@ role_files_for() {  # $1=agent 名 [$2=台帳の role]
     done
     printf '%s' "$out"
   }
-  local reg
+  local reg row
   if [[ -n ${2+x} ]]; then reg=$2
-  else reg=$(sql "SELECT COALESCE(role,'') FROM agents WHERE name=$(q "$name");" 2>/dev/null) || { [[ -n ${ROLE_STRICT:-} ]] && return 1; reg=""; }; fi
+  else
+    row=$(sql -separator $'\x1f' "SELECT herdr_session, COALESCE(role,'') FROM agents WHERE name=$(q "$name");" 2>/dev/null) || { [[ -n ${ROLE_STRICT:-} ]] && return 1; row=""; }
+    # 別の herdr セッションの agent には、このセッションの役割を付けない(ロールはセッション固有)
+    if [[ -n $row && ${row%%$'\x1f'*} != "$ROLES_SESSION" ]]; then return 0; fi
+    reg=${row#*$'\x1f'}
+  fi
   if [[ -n $reg ]]; then found=$(_role_list "$reg"); [[ -z $found ]] || { printf '%s\n' "$found"; return 0; }; fi
   [[ -f $ROLES_DIR/map.conf ]] || return 0
   while IFS='=' read -r k v || [[ -n $k ]]; do
@@ -198,7 +208,9 @@ cmd_role-set() {
     fi
   fi
   agent_sync >/dev/null 2>&1 || true
-  [[ -n $(sql "SELECT 1 FROM agents WHERE name=$(q "$name");") ]] || die "台帳に無い agent です: $name(tb agents で確かめる)"
+  local sess; sess=$(sql "SELECT herdr_session FROM agents WHERE name=$(q "$name");")
+  [[ -n $sess ]] || die "台帳に無い agent です: $name(tb agents で確かめる)"
+  [[ $sess == "$ROLES_SESSION" ]] || die "$name は herdr セッション '$sess' の agent です。ロールはセッション固有なので、HERDR_SESSION=$sess で実行してください"
   [[ ! -f $ROLES_DIR/$name.md ]] || die "roles/$name.md があるため、台帳のロールは効きません(そのファイルを人事役の手順で直す)"
   # 旧ロールは実効の役割(台帳の役割ファイルが無ければ map.conf)。台帳の値を先に読み、変更はその値が変わっていないときだけ行う
   # (読んでから書くまでに別の変更が入ったら、履歴の old_role がずれるので何もせずやり直しを促す)
@@ -206,8 +218,8 @@ cmd_role-set() {
   reg=$(sql "SELECT COALESCE(role,'') FROM agents WHERE name=$(q "$name");") || die "台帳を読めません"
   old=$(role_name_of "$name" "$reg")   # 読んだ台帳の値から実効の役割を決める(もう一度は読まない)
   n=$(sql "BEGIN IMMEDIATE;
-    INSERT INTO role_changes (agent, old_role, new_role, changed_by, reason, created_at)
-    SELECT $(q "$name"), NULLIF($(q "$old"),''), $(q "$role"), $(q "$REQ_BY"), NULLIF($(q "$(oneline "$why" 300)"),''), $(q "$(now)")
+    INSERT INTO role_changes (agent, old_role, new_role, changed_by, reason, created_at, herdr_session)
+    SELECT $(q "$name"), NULLIF($(q "$old"),''), $(q "$role"), $(q "$REQ_BY"), NULLIF($(q "$(oneline "$why" 300)"),''), $(q "$(now)"), $(q "$ROLES_SESSION")
     WHERE (SELECT COALESCE(role,'') FROM agents WHERE name=$(q "$name"))=$(q "$reg");
     UPDATE agents SET role=$(q "$role"), updated_at=$(q "$(now)") WHERE name=$(q "$name") AND COALESCE(role,'')=$(q "$reg");
     SELECT changes();
@@ -217,11 +229,12 @@ cmd_role-set() {
   echo "$name role ${old:--} -> $new (by $REQ_BY)。本人に配るには: tb role-broadcast $name"
 }
 
-# ロール変更の記録
+# ロール変更の記録(このセッションのもの。セッションを記録する前の行も出す)
+role_log_where() { printf "herdr_session IS NULL OR herdr_session=%s" "$(q "$ROLES_SESSION")"; }
 cmd_role-log() {
   local json=0; [[ ${1:-} == --json ]] && json=1
-  if ((json)); then sql -json "SELECT * FROM role_changes ORDER BY id DESC LIMIT 100;" | jq -c '(. // [])[]'
-  else sql -nullvalue - -separator $'\t' "SELECT created_at, agent, COALESCE(old_role,'-')||' -> '||new_role, changed_by, COALESCE(reason,'') FROM role_changes ORDER BY id DESC LIMIT 100;"; fi
+  if ((json)); then sql -json "SELECT * FROM role_changes WHERE $(role_log_where) ORDER BY id DESC LIMIT 100;" | jq -c '(. // [])[]'
+  else sql -nullvalue - -separator $'\t' "SELECT created_at, agent, COALESCE(old_role,'-')||' -> '||new_role, changed_by, COALESCE(reason,'') FROM role_changes WHERE $(role_log_where) ORDER BY id DESC LIMIT 100;"; fi
 }
 
 # agent ごとの役割ファイルと、渡した版が最新か

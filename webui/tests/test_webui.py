@@ -1670,6 +1670,13 @@ check("perms: 台帳を読めないときは @役割 を map.conf で一致さ�
        _perms2.decide([{"raw": "send:task:@worker", "value": "ask"}, {"raw": "*", "value": "allow"}], "send:task:worker1")[0]]
       == ["ask", "allow", "ask"])
 _data2.q_checked = _qc
+os.makedirs(os.path.join(_rd, "sessions", "s2"), exist_ok=True)
+open(os.path.join(_rd, "sessions", "s2", "auditor.md"), "w").write("a")
+open(os.path.join(_rd, "sessions", "s2", "map.conf"), "w").write("worker* = auditor\n")
+check("graph: ロールは herdr セッション固有(roles/sessions/<s>/ があればそこだけ)",
+      [_graph.role_of("worker1"), _graph.role_of("worker1", session="s2"), _graph.role_of("worker1", "worker", session="s2"),
+       _graph.role_of("worker1", session="s9"), _graph.name_matches("worker1", "@auditor", session="s2")]
+      == ["worker", "auditor", "auditor", "worker", True])
 for _k, _v in _old.items():
     if _v is None:
         os.environ.pop(_k, None)

@@ -306,6 +306,15 @@ agent ごとのロールを変える入口は `tb role-set <agent 名> <ロー�
 - 記録は `tb role-log`。人事役による変更は関係グラフに `role` の辺として出る。会計役(auditor)は提案するだけで、変えない
 - 人事役のロールは、複数のうちの 1 つとしても agent からは付けられない(人だけ)
 
+#### ロールは herdr セッション固有
+
+ロールの定義と割り当ては herdr セッション(`HERDR_SESSION` / `HERDR_SOCKET_PATH`)ごとに独立している。
+
+- `roles/sessions/<セッション>/` があれば、そのセッションではそこだけを使う(`_common.md`・各ロール・`map.conf` を丸ごと置く。共有の `roles/` は見ない)。無ければ共有の `roles/` を使う
+- 台帳の役割(`tb role-set` / `agent-new --role`)は、同じセッションの agent にだけ効く。別のセッションの agent には、このセッションでは役割が付かない(`@<役割>` の規則にも一致しない)
+- `tb role-set` は別のセッションの agent を拒否する(`HERDR_SESSION=<そのセッション>` で実行する)。`role_changes` にセッションを残し、`tb role-log` はそのセッションの分だけ出す
+- Web UI は agent ごとに、その agent のセッションの役割ファイルで表示・判定する
+
 #### agent の中身を読むのは `tb peek` だけ
 
 `tb peek <agent> [--lines N]` は pane の直近の出力を読む。人と本人はそのまま、ほかの agent からは `approvals.conf` の `agent:read:<名前>`(`agent:read:@<役割>` も可)が allow のときだけ(既定は ask = 読めない。終了コード 20)。誰がいつ誰を読んだかは `read_log` に残り、agent 同士の読み取りは関係グラフに `read` の辺として出る(拒否は denied)。
