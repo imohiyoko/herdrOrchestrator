@@ -88,14 +88,23 @@ notify_load() {
       printf -v "NC_$k" '%s' "$NOTIFY_NORM"; printf -v "NC_SET_$k" '%s' 1
     done < <(config_text notify)
   fi
+  # 環境変数の名前(TB_NOTIFY_<キー大文字>)はここで 1 回だけ作る。ncfg は $(...) の中から呼ばれることが多く、
+  # そこで覚えても呼び出し元に残らないため、親のシェルで済ませておく(tr を値 1 つごとに起動しない)
+  local keys=$NOTIFY_KEYS t i ka ua
+  for t in $NOTIFY_TYPES; do keys+=" sinks_$t"; done
+  ka=($keys); ua=($(printf '%s\n' $keys | tr '[:lower:]' '[:upper:]'))
+  for i in "${!ka[@]}"; do printf -v "NCU_${ka[i]}" '%s' "TB_NOTIFY_${ua[i]}"; done
   NOTIFY_LOADED=1
 }
+# 設定を親のシェルで読み込んでおく(以降の $(ncfg …) は変数を引くだけになる)。失敗しても止めない
+notify_preload() { { notify_load; } >/dev/null 2>&1 || true; }
 
 # 設定値(env > notify.conf > 既定)。出どころは notify_source
 ncfg() {  # $1=キー
   notify_load
   local ev sv="NC_SET_$1" cv="NC_$1"
-  ev="TB_NOTIFY_$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"
+  ev="NCU_$1"; ev=${!ev:-}   # 上書きの環境変数の名前(notify_load が作る。未知のキーだけ tr で作る)
+  [[ -n $ev ]] || ev="TB_NOTIFY_$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"
   if [[ -n ${!ev+x} ]] && notify_norm "$1" "${!ev}"; then printf '%s' "$NOTIFY_NORM"; return 0; fi
   if [[ -n ${!sv:-} ]]; then printf '%s' "${!cv}"; return 0; fi
   notify_default "$1"
@@ -103,7 +112,8 @@ ncfg() {  # $1=キー
 notify_source() {
   notify_load
   local ev sv="NC_SET_$1"
-  ev="TB_NOTIFY_$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"
+  ev="NCU_$1"; ev=${!ev:-}   # 上書きの環境変数の名前(notify_load が作る。未知のキーだけ tr で作る)
+  [[ -n $ev ]] || ev="TB_NOTIFY_$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"
   if [[ -n ${!ev+x} ]] && notify_norm "$1" "${!ev}"; then echo env; elif [[ -n ${!sv:-} ]]; then echo conf; else echo default; fi
 }
 notify_on() { [[ $(ncfg enabled) == on ]]; }
@@ -242,6 +252,7 @@ NOTIFY_LAST_ID=""
 # notify_enqueue <種別> <ref> <重大度> <項目a> [b c d]  → NOTIFY_LAST_ID。off・重複のときは何もせず 0
 # NOTIFY_FORCE=1 のときは off でも積む(tb notify test / まとめ用)
 notify_enqueue() {
+  notify_preload
   local type=$1 ref=$2 sev=$3 ra=${4:-} rb=${5:-} rc=${6:-} rd=${7:-}
   NOTIFY_LAST_ID=""
   [[ " $NOTIFY_TYPES " == *" $type "* ]] || return 1
@@ -287,7 +298,7 @@ notify_enqueue() {
 }
 
 # hook 用の入口。どんな失敗でも、呼んだ元のコマンドを止めず、出力も出さない(set -e の中でも安全)
-notify_emit() { ( notify_enqueue "$@" ) >/dev/null 2>&1 || true; return 0; }
+notify_emit() { notify_preload; ( notify_enqueue "$@" ) >/dev/null 2>&1 || true; return 0; }
 
 notify_day() { date +%F; }
 notify_ensure_dir() { mkdir -p "$NOTIFY_DIR" && chmod 700 "$NOTIFY_DIR" 2>/dev/null || true; }
@@ -395,6 +406,7 @@ notify_make_digest() {  # $@=event id
 }
 
 notify_flush_slack() {
+  notify_preload
   local budget id rc ids=() n att timeout retries
   budget=$(notify_budget)
   timeout=$(ncfg ack_timeout_min); retries=$(ncfg ack_retries)
@@ -426,16 +438,27 @@ notify_flush_slack() {
 
 # ---------- 定期のイベント(承認待ち・まとめ) ----------
 notify_seen_get() { sql "SELECT value FROM notify_seen WHERE key=$(q "$1");"; }
-notify_seen_set() { sql "INSERT INTO main.notify_seen (herdr_session, key, value, updated_at) VALUES ($SQS, $(q "$1"), $(q "$2"), $(q "$(now)"))
-                         ON CONFLICT(herdr_session, key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at;"; }
+notify_seen_sql() {  # $1=キー $2=値 $3=時刻 → 1 行を書く SQL 文(まとめて 1 回で流す用)
+  printf '%s' "INSERT INTO main.notify_seen (herdr_session, key, value, updated_at) VALUES ($SQS, $(q "$1"), $(q "$2"), $(q "$3"))
+    ON CONFLICT(herdr_session, key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at;"
+}
+notify_seen_set() { sql "$(notify_seen_sql "$1" "$2" "$(now)")"; }
 
 notify_periodic() {
-  local ids o l cur last n iv age run al hu tk
-  # 承認待ち(L-/O- の番号と件数だけ)。どちらもこのセッションの行だけ
-  o=$(sql "SELECT 'O-'||id FROM outbox WHERE status='pending' ORDER BY id;" | paste -sd' ' -)
-  l=$(sql "SELECT 'L-'||id FROM agent_ops WHERE status='pending' ORDER BY id;" | paste -sd' ' -)
-  ids=$(printf '%s %s' "$o" "$l" | tr -s ' ' | sed 's/^ //; s/ $//')
-  last=$(notify_seen_get approvals-last)
+  notify_preload
+  local ids last age run al hu tk slast cur n iv
+  # 判定に使う値を 1 回の問い合わせでまとめて読む(区切りは \x1f: 空の列があってもずれない)。どれもこのセッションの行だけ
+  IFS=$'\x1f' read -r ids last age run al hu tk slast < <(sql -separator $'\x1f' "SELECT
+      trim(COALESCE((SELECT group_concat(x, ' ') FROM (SELECT 'O-'||id AS x FROM outbox WHERE status='pending' ORDER BY id)), '') || ' ' ||
+           COALESCE((SELECT group_concat(x, ' ') FROM (SELECT 'L-'||id AS x FROM agent_ops WHERE status='pending' ORDER BY id)), '')),
+      COALESCE((SELECT value FROM notify_seen WHERE key='approvals-last'), ''),
+      COALESCE((SELECT CAST((julianday('now') - julianday(updated_at)) * 1440 AS INTEGER) FROM notify_seen WHERE key='summary-at'), ''),
+      (SELECT COUNT(*) FROM agents WHERE state='running'),
+      (SELECT COUNT(*) FROM alerts WHERE status NOT IN ('closed')),
+      (SELECT COUNT(*) FROM comments WHERE kind IN ('question','blocked') AND resolved_at IS NULL),
+      (SELECT COUNT(*) FROM tasks WHERE status IN ('in_progress','review')),
+      COALESCE((SELECT value FROM notify_seen WHERE key='summary-last'), '');") || return 1
+  # 承認待ち(L-/O- の番号と件数だけ)
   if [[ $ids != "$last" ]]; then
     notify_seen_set approvals-last "$ids"
     if [[ -n $ids ]]; then
@@ -446,15 +469,10 @@ notify_periodic() {
   # 定期まとめ: 間隔がたち、かつ件数が前回から変わったときだけ
   iv=$(ncfg summary_interval_min)
   ((iv > 0)) || return 0
-  age=$(sql "SELECT CAST((julianday('now') - julianday(updated_at)) * 1440 AS INTEGER) FROM notify_seen WHERE key='summary-at';")
   [[ -z $age || $age -ge $iv ]] || return 0
-  run=$(sql "SELECT COUNT(*) FROM agents WHERE state='running';")
-  al=$(sql "SELECT COUNT(*) FROM alerts WHERE status NOT IN ('closed');")
-  hu=$(sql "SELECT COUNT(*) FROM comments WHERE kind IN ('question','blocked') AND resolved_at IS NULL;")
-  tk=$(sql "SELECT COUNT(*) FROM tasks WHERE status IN ('in_progress','review');")
   cur="動作中 agent ${run} / 進行中タスク ${tk} / 未クローズのアラート ${al} / 人の対応待ち ${hu}"
   notify_seen_set summary-at "$(now)"
-  if [[ $cur != "$(notify_seen_get summary-last)" ]]; then
+  if [[ $cur != "$slast" ]]; then
     notify_seen_set summary-last "$cur"
     notify_enqueue summary "$(date +%s)" "" "$cur"
   fi
@@ -484,7 +502,7 @@ notify_hook_task_done() {  # $1=task id
   notify_enqueue done "$1" "" "$1" "$(jq -r '.summary // ""' <<<"$row")" "$(jq -r '.deliverables | fromjson | join(", ")' <<<"$row")"
 }
 # 失敗・終了(die を含む)しても呼び出し元を止めない入口
-notify_hook() { ( "$@" ) >/dev/null 2>&1 || true; return 0; }
+notify_hook() { notify_preload; ( "$@" ) >/dev/null 2>&1 || true; return 0; }
 
 # ---------- tb pr-watch(読み取りだけ。scheduler の COMMAND ジョブから) ----------
 # 許可リスト(taskboard/config/repos.md の "- <org>/<repo>"。TB_REPOS_FILE で変更可)のリポジトリの PR を gh で読み、前回との差から作成・approve・変更依頼・マージを積む。
@@ -492,7 +510,7 @@ notify_hook() { ( "$@" ) >/dev/null 2>&1 || true; return 0; }
 # 初めて見るリポジトリは基準線として記録するだけ(既存の PR を全部「新規」にしない)。許可リストが無い・空なら何もせず 0
 cmd_pr-watch() {
   [[ $# -eq 0 ]] || usage "pr-watch(引数なし)"
-  local repos r gh=${TB_GH_BIN:-gh} out row num title state dec draft author merger seen prev tid pstate pdec
+  local repos r gh=${TB_GH_BIN:-gh} out seen prev_json num title state dec draft author merger hasprev prev tid pstate pdec stmts ts
   repos=$(notify_repos); [[ -n $repos ]] || return 0
   notify_on || return 0
   command -v "$gh" >/dev/null 2>&1 || return 0
@@ -500,19 +518,23 @@ cmd_pr-watch() {
     [[ -n $r ]] || continue
     out=$("$gh" pr list --repo "$r" --state all --limit 30 --json number,title,state,isDraft,reviewDecision,author,mergedBy 2>/dev/null) || continue
     jq -e 'type=="array"' <<<"$out" >/dev/null 2>&1 || continue
-    seen=$(notify_seen_get "prbase:$r")
-    while IFS= read -r row; do
-      [[ -n $row ]] || continue
-      num=$(jq -r .number <<<"$row"); [[ $num =~ ^[0-9]+$ ]] || continue
-      title=$(jq -r '.title // ""' <<<"$row"); state=$(jq -r '.state // ""' <<<"$row")
-      dec=$(jq -r '.reviewDecision // ""' <<<"$row"); draft=$(jq -r 'if .isDraft then "draft" else "" end' <<<"$row")
-      author=$(jq -r '.author.login // ""' <<<"$row"); merger=$(jq -r '.mergedBy.login // ""' <<<"$row")
+    # 前回の状態(このリポジトリの pr:<repo>#<番号> の行)は 1 回で読み、PR ごとに DB を開かない
+    seen=""; prev_json=""
+    {
+      IFS= read -r seen || true
+      IFS= read -r prev_json || true   # 行が無い(初回)ときの read の失敗で set -e に止められないように
+    } < <(sql "SELECT COALESCE((SELECT value FROM notify_seen WHERE key=$(q "prbase:$r")), '');" \
+          && sql -json "SELECT key, value FROM notify_seen WHERE substr(key, 1, $((${#r} + 4)))=$(q "pr:$r#");" | jq -c '. // []')
+    [[ -n $prev_json ]] || prev_json='[]'
+    stmts=""; ts=$(now)
+    # PR 1 件 = 1 行(区切りは \x1f)。jq は 1 回だけ通す。最後の 2 列は前回の状態の有無と値
+    while IFS=$'\x1f' read -r num title state dec draft author merger hasprev prev; do
+      [[ $num =~ ^[0-9]+$ ]] || continue
       [[ $author =~ ^[A-Za-z0-9._-]{1,64}$ ]] || author=""
       [[ $merger =~ ^[A-Za-z0-9._-]{1,64}$ ]] || merger=""
-      prev=$(notify_seen_get "pr:$r#$num")
-      tid=$(printf '%s' "$title" | grep -oE 'T-[A-Za-z0-9_]+-[0-9]{3,}' | head -n 1 || true)
+      tid=""; [[ $title =~ T-[A-Za-z0-9_]+-[0-9]{3,} ]] && tid=${BASH_REMATCH[0]}
       if [[ -n $seen ]]; then
-        if [[ -z $prev ]]; then
+        if [[ $hasprev != 1 ]]; then
           if [[ $state == MERGED ]]; then notify_emit pr_merged "$r#$num" "" "$title" "" "$merger"
           elif [[ $state == OPEN ]]; then notify_emit pr_opened "$r#$num" "" "$title" "$draft" "$author" "${tid:+タスク ${tid}}"; fi
         else
@@ -526,9 +548,18 @@ cmd_pr-watch() {
           fi
         fi
       fi
-      notify_seen_set "pr:$r#$num" "$state|$dec"
-    done < <(jq -c '.[]' <<<"$out")
-    notify_seen_set "prbase:$r" "$(now)"
+      # 変わった PR だけ書く(変わらなければ DB に触らない)
+      [[ $hasprev == 1 && $prev == "$state|$dec" ]] || stmts+=$(notify_seen_sql "pr:$r#$num" "$state|$dec" "$ts")
+    done < <(jq -r --arg r "$r" --argjson prev "$prev_json" '
+        ($prev | map({(.key): .value}) | add // {}) as $p
+        | .[] | select(type == "object")
+        | ("pr:\($r)#\(.number)") as $k
+        | [(.number // ""), (.title // ""), (.state // ""), (.reviewDecision // ""), (if .isDraft then "draft" else "" end),
+           (.author.login? // ""), (.mergedBy.login? // ""), (if $p | has($k) then 1 else 0 end), ($p[$k] // "")]
+        | map(tostring | gsub("[[:cntrl:]]"; " ")) | join("\u001f")' <<<"$out" 2>/dev/null)
+    # 初めて見たリポジトリは基準線の印を付ける(以後は変えない)
+    [[ -n $seen ]] || stmts+=$(notify_seen_sql "prbase:$r" "$ts" "$ts")
+    [[ -z $stmts ]] || sql "BEGIN IMMEDIATE; $stmts COMMIT;" >/dev/null || true
   done <<<"$repos"
   return 0
 }
@@ -561,6 +592,7 @@ notify_webhook_state() {
 
 cmd_notify() {
   local sub=${1:-status}; shift || true
+  notify_preload
   case $sub in
     status) notify_status "$@";;
     on|off)
