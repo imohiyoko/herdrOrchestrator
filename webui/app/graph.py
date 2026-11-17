@@ -1,7 +1,8 @@
 """agent の関係グラフ(主体 -動詞→ 対象)とロールの解決。tb agents --graph と同じ SQL(taskboard/sql/agent_edges.sql)を読む。
 
 1 体が複数の上流(spawn の親・複数 project の指揮官・送信者など)を持つメッシュをそのまま表す。読み取りだけ。
-ロールは taskboard/lib/roles.sh の role_file_for と同じ順(roles/<名前>.md > 台帳の role > roles/map.conf)。
+ロールは taskboard/lib/roles.sh の role_files_for と同じ順(役割 <名前> > 台帳の role > 名前と役割の対応(map))。
+役割の定義は DB の config 表(role:<名前> / role-map)> roles/ のファイル(tb の role_lookup と同じ)。
 """
 
 import os
@@ -42,11 +43,49 @@ def _read_lines(path):
         return []
 
 
+def _role_db():
+    """DB の役割の定義(config 表の role:<名前> / role-map)。{キー: 本文}。このセッションの行が共通の行(*)より勝つ。
+    tb の role_lookup と同じ順(DB のこのセッションの行 > 共通の行 > ファイル)。短い間キャッシュする(セッションごと)。"""
+    from . import data
+    from .herdr import cached
+
+    def load():
+        rows, _ok = data.q_checked("SELECT herdr_session AS s, key, body FROM main.config "
+                                   "WHERE (key LIKE 'role:%' OR key='role-map') AND herdr_session IN (?, '*')", (reqctx.session(),))
+        out = {}
+        for r in sorted(rows, key=lambda r: r["s"] != "*"):   # 共通の行を先に入れ、このセッションの行で上書きする
+            out[r["key"]] = r["body"]
+        return out
+    return cached("role-db", load)
+
+
+def role_exists(x, rdir=None):
+    """役割 x の定義があるか(DB の行か roles/<x>.md)。"""
+    return ("role:" + x) in _role_db() or os.path.isfile(os.path.join(rdir or roles_dir(), x + ".md"))
+
+
+def role_names():
+    """役割名の一覧(_ で始まるもの・README を除く)。DB の行とファイル。"""
+    names = {k[5:] for k in _role_db() if k.startswith("role:")}
+    try:
+        names |= {n[:-3] for n in os.listdir(roles_dir()) if n.endswith(".md")}
+    except OSError:
+        pass
+    return sorted(n for n in names if ROLE_RE.fullmatch(n) and not n.startswith("_") and n != "README")
+
+
+def _map_lines(rdir):
+    db = _role_db()
+    if "role-map" in db:
+        return db["role-map"].splitlines()
+    return _read_lines(os.path.join(rdir, "map.conf"))
+
+
 def _role_list(text, rdir):
     out = []
     for x in (text or "").split(","):
         x = x.strip()
-        if x and ROLE_RE.fullmatch(x) and x != "README" and os.path.isfile(os.path.join(rdir, x + ".md")):
+        if x and ROLE_RE.fullmatch(x) and x != "README" and role_exists(x, rdir):
             out.append(x)
     return out
 
@@ -56,12 +95,12 @@ def roles_of(name, reg_role=None, rdir=None):
     rdir = rdir or roles_dir()
     if not name or not NAME_RE.fullmatch(name) or name.startswith("_") or name == "README":
         return []
-    if os.path.isfile(os.path.join(rdir, name + ".md")):
+    if role_exists(name, rdir):
         return [name]
     found = _role_list(reg_role, rdir)
     if found:
         return found
-    for line in _read_lines(os.path.join(rdir, "map.conf")):
+    for line in _map_lines(rdir):
         k, sep, v = line.partition("=")
         pat, v = k.split("#", 1)[0].strip(), v.split("#", 1)[0].strip()
         if not sep or not pat or not v or not re.fullmatch(r"[A-Za-z0-9._, -]+", v):

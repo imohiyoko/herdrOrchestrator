@@ -277,11 +277,8 @@ def page_agents(qs, ctx=None):
 def page_agent_new(csrf, error="", form=None):
     """新しい agent を作るフォーム(入力欄があるので自動更新しない)。"""
     f = form or {}
-    try:   # 選べる役割は tb と同じ場所(このセッションの roles/sessions/<セッション>/ があればそこ)
-        roles = sorted(n[:-3] for n in os.listdir(graph.roles_dir()) if n.endswith(".md") and not n.startswith("_") and n != "README.md")
-    except OSError:
-        roles = []
-    opts = '<option value="">(名前と roles/map.conf で決める)</option>' + "".join(
+    roles = graph.role_names()   # 選べる役割は tb と同じ(DB の役割の定義と roles/ のファイル)
+    opts = '<option value="">(名前と役割の対応(map)で決める)</option>' + "".join(
         f'<option value="{e(r)}"{" selected" if f.get("role") == r else ""}>{e(r)}</option>' for r in roles)
     kopts = "".join(f'<option value="{v}"{" selected" if f.get("killable", "unknown") == v else ""}>{lab}</option>'
                     for v, lab in (("unknown", "判定役に任せる"), ("yes", "止めてよい(使い捨て)"), ("no", "止めない(常駐)")))

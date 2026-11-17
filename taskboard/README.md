@@ -423,16 +423,23 @@ tb proposal-resolve P-<n> --status applied|rejected [--note N]   # 設定役か�
 
 ## 役割の配布(roles)
 
-`roles/` の役割ファイルを各 agent に渡す(詳細は `roles/README.md`)。
+役割の定義を各 agent に渡す(詳細は `roles/README.md`)。定義は DB の `config` 表(キー `role:<役割名>` と `role-map`)に置き、
+このセッションの行 > 全セッション共通の行 > `roles/` のファイル(`roles/sessions/<セッション>/` があればそこ)の順で引く。
+`roles/*.md` は既定値(git 管理)。セッションごとに変えるものは DB に書く(`roles/sessions/<セッション>/` は `tb config import` で DB に取り込み、checkout から退かす)。
 
 ```bash
 tb role-context --source startup|resume|clear|compact --session-id S   # SessionStart hook 用(bin/tb-role-hook 経由)
-tb role-broadcast [agent 名 ...]   # 動いている agent に「役割が更新された・このファイルを読め」と送る
-tb roles [--json]                  # agent ごとの役割ファイル・版・状態(current|outdated|never|no-role)
+tb role-show [agent 名]            # その agent に渡す本文(省略時は自分)。agent は役割をファイルではなくこれで読む
+tb role-list                       # 役割名と出どころ(db:<セッション> / db:* / file:<パス>)
+tb role-write <役割名|@map> [--shared] < 本文   # 定義を書く(role-edit は $EDITOR)。人と人事役(role:change が allow のとき)
+tb role-broadcast [agent 名 ...]   # 動いている agent に「役割が更新された・tb role-show で読み直せ」と送る
+tb roles [--json]                  # agent ごとの役割・版・状態(current|outdated|never|no-role)
 ```
 
+- 人事役(agent)は、人事役の役割そのものと、map で人事役を付ける行は書けない(権限の自己拡大を防ぐ)。履歴は `tb config history` と同じ `config_changes`(書いた agent 名が残る)
+
 - 同じセッションに同じ版(`_common.md` + 役割ファイルの SHA-256)を渡し済みなら、`resume` と `role-broadcast` では送らない。compact の後は渡し直す
-- 一括送信は `[role-update / tb] ...` で始まる 1 行(ファイルの絶対パス)。宛先が使用中なら送らず、終了コード 10
+- 一括送信は `[role-update / tb] ...` で始まる 1 行(版と役割名。ファイルのパスは送らない)。宛先が使用中なら送らず、終了コード 10
 
 ## 外への通知(notify / pr-watch)
 

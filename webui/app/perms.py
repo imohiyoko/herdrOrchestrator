@@ -7,7 +7,7 @@ import shlex
 
 from .config import CATALOG
 from . import data
-from .graph import name_matches, roles_dir
+from .graph import name_matches, role_exists
 from .sanitize import clean
 
 # tb の valid_action と同じ文字種
@@ -62,7 +62,7 @@ def matches(op, pat):
         reg, ok = data.q_checked("SELECT role FROM agents WHERE name=?", (on,))
         if not ok:
             # 台帳を読めないときは map.conf に落とさない(tb の ROLE_STRICT と同じ)。名前そのものの役割ファイルだけは台帳なしで決まる
-            if os.path.isfile(os.path.join(roles_dir(), on + ".md")):
+            if role_exists(on):
                 return name_matches(on, last)
             return None
         # ロールは herdr セッション固有: 台帳もこのセッションの行だけ(app/data.py)。役割ファイルもこのセッションの場所

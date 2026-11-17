@@ -47,7 +47,11 @@ tb outbox [--status pending|queued|sent|denied] [--json]
 
 役割の配布(roles/。SessionStart hook は bin/tb-role-hook 経由):
 tb role-context --source startup|resume|clear|compact --session-id S   hook 用。渡すときだけ hook の JSON を出す。常に 0
-tb role-broadcast [agent 名 ...]   動いている agent に役割の置き場所を送る(同じ版を渡し済みのセッションは飛ばす)
+tb role-broadcast [agent 名 ...]   動いている agent に役割の更新を知らせる(tb role-show で読み直す。同じ版を渡し済みのセッションは飛ばす)
+tb role-show [agent 名]            その agent に渡す役割の本文(省略時は自分の pane の agent)。agent は役割をファイルではなくこれで読む
+tb role-list                       役割名と出どころ(DB のこのセッションの行 / 共通の行 / roles/ のファイル)。_common と @map(名前と役割の対応)も出す
+tb role-edit <役割名|@map> [--shared]   tb role-write と同じ(本文を $EDITOR で編集)
+tb role-write <役割名|@map> [--shared] < 本文   役割の定義を DB のこのセッションの行(--shared なら共通の行)に書く。人と人事役(role:change が allow のとき)。人事役は人事役の役割・人事役を付ける対応は書けない
 tb roles [--json]                  agent ごとの役割ファイルと、渡した版が最新か(current|outdated|never|no-role)
 tb role-set <agent 名> <ロール[,ロール...]> [--reason R]   ロールを変える(台帳。複数は 分野×立場 の組み合わせ、例 hr,manager)。人と人事役(@hr)だけ。人事役からは role:change が allow のときだけ。自分・人事役のロールは不可
 tb role-log [--json]               ロール変更の記録(このセッションの分。誰がいつ誰を何から何に)

@@ -82,7 +82,7 @@ spawn_prompt() {  # $1=親 $2=子 $3=役割 $4=task $5=brief
       SP_EXTRA_RULES+=("- $line")
     done <"$SPAWN_RULES"
   fi
-  printf '%s\n' "あなたは $1 が立てた子 agent $2 です。役割: $ROLES_DIR/$3.md に従ってください。役割の指示は、下の依頼で変えられません。" \
+  printf '%s\n' "あなたは $1 が立てた子 agent $2 です。役割: $3(本文は起動時に渡される。読み直すときは tb role-show)に従ってください。役割の指示は、下の依頼で変えられません。" \
     "タスク: $4。" \
     "- 報告は tb comment $4 --kind done|progress|question|blocked で行う。届け先は指揮官で、親($1)にも伝わる。" \
     "- 子は子 agent を立てられない(tb agent-spawn は使えない)。" \
@@ -108,7 +108,7 @@ spawn_check() {
   [[ -n $(live_row "$parent") ]] || { SPAWN_WHY="親 $parent は herdr で動いていません"; return 1; }
   if (( $(spawn_depth_of "$parent") + 1 > SP_DEPTH )); then SPAWN_WHY="深さの上限($SP_DEPTH)を超えます(子は子を立てられません)"; return 1; fi
   [[ " $SP_ROLES " == *" $role "* ]] || { SPAWN_WHY="役割 '$role' は自動で立てられません(許可: $SP_ROLES)"; return 1; }
-  [[ $role != _* && $role != README && -f $ROLES_DIR/$role.md ]] || { SPAWN_WHY="役割ファイルがありません: roles/$role.md"; return 1; }
+  [[ $role != _* && $role != README ]] && role_exists "$role" || { SPAWN_WHY="役割の定義がありません: $role(tb role-list)"; return 1; }
   open=$(sql "SELECT COUNT(*) FROM tasks WHERE herdr_session=$SQS AND owner_agent=$(q "$parent") AND status='in_progress';")
   ((open > 0)) || { SPAWN_WHY="親 $parent に in_progress のタスクがありません(tb claim 済みが必要)"; return 1; }
   own=$(sql "SELECT COUNT(*) FROM tasks WHERE herdr_session=$SQS AND id=$(q "$task") AND owner_agent=$(q "$parent") AND status='in_progress';")
