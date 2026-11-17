@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, unquote, urlencode, urlsplit
 
 import auth
 
-from . import registry
+from . import registry, reqctx
 from .httpbase import host_ok, log_request_line, origins, send
 from .config import AUTH_DIR, BASE, COOKIE, HOST, INSTANCE, herdr_env, JOB_RE, ROOT, RUN_DIR
 from .sanitize import clean, e
@@ -22,8 +22,6 @@ from .data import NOTIFY_POLL_SEC, badge_count, urgent_items
 from .jobs import job_names, save_job_settings
 from .scripts import DOCS_JS, SESSIONS_JS, notify_js
 from .views import CSS, err_html, inst_label, page, page_agent_new, page_job, route, title_suffix
-
-NOTIFY_JS = notify_js(BASE, NOTIFY_POLL_SEC * 1000)
 
 
 def plain_page(title, body):
@@ -95,7 +93,8 @@ _ABS_ATTR = re.compile(r'(\s(?:href|action|src)=")/(?![/\\])')
 
 
 def with_base(html):
-    return _ABS_ATTR.sub(lambda m: m.group(1) + BASE + "/", html)
+    base = reqctx.base()
+    return _ABS_ATTR.sub(lambda m: m.group(1) + base + "/", html)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -131,7 +130,7 @@ class Handler(BaseHTTPRequestHandler):
     def _redirect(self, loc, extra=()):
         # loc はこのサーバー内の絶対パス(safe_next 済みなど)。BASE を付ける
         if loc.startswith("/") and not loc.startswith("//"):
-            loc = BASE + loc
+            loc = reqctx.base() + loc
         self._send(302, "", "text/plain", [("Location", loc), *extra])
 
     def _origins(self):
@@ -216,7 +215,7 @@ class Handler(BaseHTTPRequestHandler):
         logout = (f'<form method=post action="/logout"><input type=hidden name=csrf value="{e(a.form_token("s:" + sh))}">'
                   '<button type=submit>ログアウト</button></form>')
         if path == "/notify.js":
-            return self._send(200, NOTIFY_JS, "text/javascript; charset=utf-8")
+            return self._send(200, notify_js(reqctx.base(), NOTIFY_POLL_SEC * 1000), "text/javascript; charset=utf-8")
         if path == "/docs.js":
             return self._send(200, DOCS_JS, "text/javascript; charset=utf-8")
         if path == "/sessions.js":
@@ -360,16 +359,22 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(401, login_page(a, nx, LOGIN_FAIL + ("(ロックしました)" if wait else "")))
 
     def _handle(self):
+        # このプロセスが返すのは自分の 1 セッションだけ(名前は TB_INSTANCE、DB の行と herdr は herdr のセッション)
+        with reqctx.use(INSTANCE, herdr_env.session_name()):
+            self._handle_in_session()
+
+    def _handle_in_session(self):
         if not self._host_ok():
             return self._text(403, "Forbidden")
         u = urlsplit(self.path)
         path = u.path
         # /s/<名前>/… だけを受け、BASE を外してから扱う
-        if path == BASE:
-            return self._send(302, "", "text/plain", [("Location", BASE + "/" + ("?" + u.query if u.query else ""))])
-        if not path.startswith(BASE + "/"):
+        base = reqctx.base()
+        if path == base:
+            return self._send(302, "", "text/plain", [("Location", base + "/" + ("?" + u.query if u.query else ""))])
+        if not path.startswith(base + "/"):
             return self._text(404, "Not Found")
-        path = path[len(BASE):]
+        path = path[len(base):]
         self.path = path + ("?" + u.query if u.query else "")
         if self.command == "POST" and (path in ("/login", "/setup", "/logout", "/reset", "/resolve", "/agent-op", "/agent-new")
                                        or re.fullmatch(r"/jobs/[A-Za-z0-9][A-Za-z0-9_-]{0,63}", path)):

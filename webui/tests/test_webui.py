@@ -1466,13 +1466,10 @@ for bad in ("a/b", "../x", "a b", "-x", "x" * 65):
 # ---- 追加: 表示にインスタンス名の生の HTML 特殊文字が出ない(多層防御の確認)
 sys.path.insert(0, os.path.dirname(HERE))
 import app.views as _v2  # noqa: E402
-_orig = _v2.INSTANCE
-try:
-    _v2.INSTANCE = "a<b>&\"x"
+import app.reqctx as _rc2  # noqa: E402
+with _rc2.use("a<b>&\"x", "default"):
     check("インスタンス名はエスケープされて出る(ヘッダ)", "<b>" not in _v2.inst_label() and "&lt;b&gt;" in _v2.inst_label())
     check("インスタンス名はエスケープされて出る(タイトル)", "<b>" not in _v2.page("t", "", "/", 0) )
-finally:
-    _v2.INSTANCE = _orig
 
 # ---- CR-2: TB_INSTANCE 時も、旧 run/ と他インスタンスの run を /docs から読めない
 import app.config as _cfg2  # noqa: E402
@@ -1815,6 +1812,23 @@ _o_ids = [r["id"] for r in _data.q("SELECT id FROM tasks ORDER BY id")]
 check("sessions: default の Web UI に別のセッションの行は出ない", _d_ids == ["T-1"] and _d_cm == 1, f"{_d_ids} {_d_cm}")
 check("sessions: other の Web UI は other の行だけ", _o_ids == ["T-o-001"], str(_o_ids))
 check("sessions: 読み取り専用のまま(書き込めない)", not _data.q("INSERT INTO tasks (id,project,title,created_at,updated_at) VALUES ('x','x','x','t','t') RETURNING id"))
+# セッションはリクエストの文脈(app/reqctx.py)から読む。プロセスの環境(ここでは other)より文脈が勝つ
+from app import reqctx as _rc, herdr as _hd, handler as _hdl  # noqa: E402
+with _rc.use("default", "default"):
+    _ctx_ids = [r["id"] for r in _data.q("SELECT id FROM tasks ORDER BY id")]
+    _ctx_base, _ctx_link = _rc.base(), _hdl.with_base('<a href="/tasks">')
+    _ctx_env = _rc.child_env({"HERDR_SOCKET_PATH": "/h/.config/herdr/sessions/other/herdr.sock", "HERDR_PANE_ID": "p"})
+check("reqctx: 文脈のセッションの行を読む(プロセスの環境は other)", _ctx_ids == ["T-1"], str(_ctx_ids))
+check("reqctx: BASE とリンクは文脈の名前", (_ctx_base, _ctx_link) == ("/s/default", '<a href="/s/default/tasks">'), f"{_ctx_base} {_ctx_link}")
+check("reqctx: 子プロセスには文脈のセッションを HERDR_SESSION で渡し、socket のパスは外す",
+      _ctx_env.get("HERDR_SESSION") == "default" and "HERDR_SOCKET_PATH" not in _ctx_env and _ctx_env.get("HERDR_PANE_ID") == "p", str(_ctx_env))
+check("reqctx: プロセスと同じセッションなら環境はそのまま", _rc.child_env({"X": "1"}) == {"X": "1"})
+_calls = []
+for _s in ("sa", "sb", "sa"):
+    with _rc.use(_s, _s):
+        _hd.cached("t-key", lambda s=_s: _calls.append(s) or s)
+check("reqctx: herdr の結果キャッシュはセッションごと", _calls == ["sa", "sb"], str(_calls))
+check("reqctx: 文脈の外はプロセスの設定に落ちる", _rc.session() == "other")
 for _k, _v in (("WEBUI_TB_DB", _old_db), ("HERDR_SESSION", _old_hs)):
     if _v is None:
         os.environ.pop(_k, None)

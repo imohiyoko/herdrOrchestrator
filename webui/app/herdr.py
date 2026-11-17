@@ -5,6 +5,7 @@ import subprocess
 import threading
 import time
 
+from . import reqctx
 from .config import CACHE_TTL, HERDR_BIN
 
 
@@ -13,6 +14,8 @@ _cache_lock = threading.Lock()
 
 
 def cached(key, fn):
+    """キーはセッションごと(1 プロセスが複数セッションの画面を返しても混ざらない)。"""
+    key = (reqctx.session(), key)
     now = time.monotonic()
     with _cache_lock:
         hit = _cache.get(key)
@@ -31,7 +34,7 @@ def run_herdr(args):
     """(出力, エラー文)。herdr が無い・失敗・タイムアウトでも例外にしない。"""
     try:
         p = subprocess.run([HERDR_BIN(), *args], capture_output=True, text=True,
-                           timeout=5, stdin=subprocess.DEVNULL, errors="replace")
+                           timeout=5, stdin=subprocess.DEVNULL, errors="replace", env=reqctx.child_env())
     except (OSError, subprocess.SubprocessError) as ex:
         return None, f"herdr を実行できません: {type(ex).__name__}"
     if p.returncode != 0:

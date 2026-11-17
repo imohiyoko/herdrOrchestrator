@@ -7,7 +7,7 @@ import shlex
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote, unquote, urlencode
 
-from .config import INSTANCE, JOB_RE, REFRESH_SEC, SCHED_LOGS, STALL_MIN, TASK_STALE_HOURS
+from .config import JOB_RE, REFRESH_SEC, SCHED_LOGS, STALL_MIN, TASK_STALE_HOURS
 from .sanitize import clean, e
 from . import graph
 from .herdr import agent_key, agent_session, get_agents, read_agent, workspace_label
@@ -15,7 +15,7 @@ from .data import badge_count, has_resolution, parse_ts, NOTIFY_POLL_SEC, QUEUED
 from .actions import NOTE_MAX
 from .jobview import agent_state, command_summary, job_about, job_defs, job_summary, mask, next_runs, prompt_file, send_task_decision
 from .jobs import DAY_PRESETS, DAY_TOKENS, INTERVAL_UNITS, interval_sec, interval_text, job_info, job_last, job_names
-from . import docs, perms, registry
+from . import docs, perms, registry, reqctx
 from .markdown import render as render_md
 
 
@@ -49,13 +49,15 @@ NAV = [("/", "概要"), ("/notifications", "緊急通知"), ("/agents", "agent")
 
 def inst_label():
     """TB_INSTANCE があるときだけ、名前を出す(default 以外は色の帯)。未設定なら空 = 従来の表示。"""
-    if not INSTANCE:
+    name = reqctx.name()
+    if not name:
         return ""
-    return f'<span class="inst{"" if INSTANCE == "default" else " inst-warn"}" title="TB_INSTANCE">{e(INSTANCE)}</span>'
+    return f'<span class="inst{"" if name == "default" else " inst-warn"}" title="TB_INSTANCE">{e(name)}</span>'
 
 
 def title_suffix():
-    return f" [{INSTANCE}]" if INSTANCE else ""
+    name = reqctx.name()
+    return f" [{name}]" if name else ""
 
 
 def page(title, body, path, badge, logout="", refresh=True, scripts=()):
@@ -1224,7 +1226,7 @@ STATIC = {"/": page_overview, "/notifications": page_notifications, "/inbox": pa
 
 def page_sessions(_qs, ctx):
     """動いている Web UI インスタンス(= herdr セッション)の一覧。各インスタンスは自分のセッションだけを見るので、ここは行き先の案内。"""
-    me = INSTANCE or "default"
+    me = reqctx.name() or "default"
     rows, here_api = [], False
     for x in registry.entries():
         up = registry.alive(x)
