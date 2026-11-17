@@ -14,12 +14,13 @@ from urllib.parse import parse_qs, unquote, urlencode, urlsplit
 
 import auth
 
-from .config import COOKIE, HOST, INSTANCE, herdr_env, JOB_RE, LEGACY_RUN_DIR, ROOT, RUN_DIR, cfg
+from . import registry
+from .config import BASE, COOKIE, HOST, INSTANCE, herdr_env, JOB_RE, LEGACY_RUN_DIR, ROOT, RUN_DIR, cfg
 from .sanitize import clean, e
 from .actions import agent_decide, agent_new, agent_op, resolve_comment
 from .data import NOTIFY_POLL_SEC, badge_count, urgent_items
 from .jobs import job_names, save_job_settings
-from .views import CSS, DOCS_JS, NOTIFY_JS, err_html, inst_label, page, page_agent_new, page_job, route, title_suffix
+from .views import CSS, DOCS_JS, NOTIFY_JS, SESSIONS_JS, err_html, inst_label, page, page_agent_new, page_job, route, title_suffix
 
 
 def plain_page(title, body):
@@ -60,6 +61,13 @@ def reset_page(a, state, error=""):
 
 
 LOGIN_FAIL = "ユーザー名またはパスワードが違います"
+# gateway の後ろ(BASE=/s/<名前>)では、HTML のサーバー内の絶対パス(href="/…" など)を BASE の下に付け替える。
+# 外部 URL(http:)・// 始まり・相対パスはそのまま。属性値は e() で " を逃がしているので、本文の中の文字列は当たらない
+_ABS_ATTR = re.compile(r'(\s(?:href|action|src)=")/(?![/\\])')
+
+
+def with_base(html):
+    return _ABS_ATTR.sub(lambda m: m.group(1) + BASE + "/", html) if BASE else html
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -90,6 +98,8 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(200, data, ctype)
 
     def _send(self, code, body, ctype="text/html; charset=utf-8", extra=()):
+        if BASE and isinstance(body, str) and ctype.startswith("text/html"):
+            body = with_base(body)
         data = body.encode("utf-8") if isinstance(body, str) else body
         self.send_response(code)
         self.send_header("Content-Type", ctype)
@@ -112,6 +122,9 @@ class Handler(BaseHTTPRequestHandler):
         self._send(code, msg + "\n", "text/plain; charset=utf-8", extra)
 
     def _redirect(self, loc, extra=()):
+        # loc はこのサーバー内の絶対パス(safe_next 済みなど)。gateway の後ろでは BASE を付ける
+        if BASE and loc.startswith("/") and not loc.startswith("//"):
+            loc = BASE + loc
         self._send(302, "", "text/plain", [("Location", loc), *extra])
 
     def _origins(self):
@@ -141,7 +154,7 @@ class Handler(BaseHTTPRequestHandler):
         return self.auth.session_hash(self._session_token())
 
     def _cookie(self, value, max_age):
-        return ("Set-Cookie", f"{COOKIE}={value}; Path=/; HttpOnly; SameSite=Strict; Max-Age={max_age}")
+        return ("Set-Cookie", f"{COOKIE}={value}; Path={BASE}/; HttpOnly; SameSite=Strict; Max-Age={max_age}")
 
     def _body(self):
         try:
@@ -208,6 +221,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, NOTIFY_JS, "text/javascript; charset=utf-8")
         if path == "/docs.js":
             return self._send(200, DOCS_JS, "text/javascript; charset=utf-8")
+        if path == "/sessions.js":
+            return self._send(200, SESSIONS_JS, "text/javascript; charset=utf-8")
         if path == "/static/mermaid.min.js":
             return self._send_static("mermaid.min.js", "text/javascript; charset=utf-8")
         try:
@@ -372,7 +387,15 @@ class Handler(BaseHTTPRequestHandler):
     def _handle(self):
         if not self._host_ok():
             return self._text(403, "Forbidden")
-        path = urlsplit(self.path).path
+        u = urlsplit(self.path)
+        path = u.path
+        if BASE:  # gateway の後ろ: /s/<名前>/… だけを受け、BASE を外してから今までどおり扱う
+            if path == BASE:
+                return self._send(302, "", "text/plain", [("Location", BASE + "/" + ("?" + u.query if u.query else ""))])
+            if not path.startswith(BASE + "/"):
+                return self._text(404, "Not Found")
+            path = path[len(BASE):]
+            self.path = path + ("?" + u.query if u.query else "")
         if self.command == "POST" and (path in ("/login", "/setup", "/logout", "/reset", "/resolve", "/agent-op", "/agent-new")
                                        or re.fullmatch(r"/jobs/[A-Za-z0-9][A-Za-z0-9_-]{0,63}", path)):
             return self._post(path)
@@ -434,12 +457,23 @@ def main():
         f.write(f"{port}\n")
     with open(inst_file, "w") as f:
         f.write(f"{INSTANCE or 'default'}\n")
-    print(f"herdr-webui: listening on http://{HOST}:{port}/", flush=True)
+    reg_name = INSTANCE or "default"
+    try:
+        old = registry.read_entry(reg_name)
+        if old and old.get("pid") != os.getpid() and old["port"] != port and registry.alive(old):
+            print(f"herdr-webui: 同じ名前 {reg_name} のインスタンスがポート {old['port']} で動いています。一覧はこちら(ポート {port})に置き換えます"
+                  "(別の checkout なら TB_INSTANCE を分けてください)", flush=True)
+        registry.register(reg_name, port, BASE)
+    except OSError as ex:
+        print(f"herdr-webui: インスタンス一覧({registry.REGISTRY_DIR()})に書けません。セッション一覧・入口には出ません: {type(ex).__name__}", flush=True)
+    print(f"herdr-webui: listening on http://{HOST}:{port}{BASE}/", flush=True)
     print(f"herdr-webui: instance={INSTANCE or 'default'} port={port}", flush=True)
+    if BASE:
+        print(f"herdr-webui: 入口(gateway)経由で開く: http://{HOST}:<入口のポート>{BASE}/", flush=True)
     if Handler.auth.configured():
-        print(f"herdr-webui: ログイン http://{HOST}:{port}/login", flush=True)
+        print(f"herdr-webui: ログイン http://{HOST}:{port}{BASE}/login", flush=True)
     else:
-        print(f"herdr-webui: 初回設定(ユーザー名とパスワードを作る) http://{HOST}:{port}/setup", flush=True)
+        print(f"herdr-webui: 初回設定(ユーザー名とパスワードを作る) http://{HOST}:{port}{BASE}/setup", flush=True)
 
     def stop(*_):
         threading.Thread(target=srv.shutdown, daemon=True).start()
@@ -449,6 +483,7 @@ def main():
         srv.serve_forever()
     finally:
         srv.server_close()
+        registry.unregister(reg_name)
         for fn in (port_file, inst_file):
             try:
                 os.remove(fn)

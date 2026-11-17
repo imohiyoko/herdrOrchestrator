@@ -52,3 +52,12 @@ SCHED_JOBS = lambda: cfg("WEBUI_SCHED_JOBS", os.path.join(SCHED_ROOT, "jobs"))  
 SCHED_SETTINGS = lambda: cfg("WEBUI_SCHED_SETTINGS", os.path.join(SCHED_ROOT, "settings"))  # noqa: E731
 
 JOB_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")  # ジョブ名(scheduler/jobs/<名前>.conf)
+
+# ---- 入口(gateway)の後ろで動かすとき: 1 つのポートで受け、/s/<インスタンス名>/ でこのインスタンスへ振り分ける
+# 各インスタンスは今までどおり別プロセス・別ポートで、自分のセッションだけを見る(gateway は中継するだけ)。
+# TB_UI_GATEWAY=1 のとき、このインスタンスのページは /s/<名前>/ の下に置く(名前は TB_INSTANCE、未設定なら default)
+GATEWAY = os.environ.get("TB_UI_GATEWAY") == "1"
+BASE = f"/s/{INSTANCE or 'default'}" if GATEWAY else ""
+# 動いているインスタンスの一覧(gateway と「セッション一覧」が読む)。checkout をまたいで共有するのでホームに置く
+REGISTRY_DIR = lambda: os.environ.get("WEBUI_REGISTRY_DIR") or os.path.join(  # noqa: E731
+    os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state"), "herdr-webui", "instances")

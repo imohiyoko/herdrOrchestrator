@@ -82,7 +82,9 @@ def make_env(name, **extra):
         WEBUI_FAIL_DELAY="0", TB_PROMPT_VERIFY_SEC="0", HERDR_BIN=os.path.join(HERE, "fake", "herdr"), FAKE_HERDR_DIR=os.path.join(TMP, "fake"),
         WEBUI_RUN_DIR=os.path.join(d, "run"), WEBUI_TB_DB=os.path.join(d, "tasks.db"),
         WEBUI_SCHED_LOGS=os.path.join(d, "logs"), WEBUI_APPROVALS=os.path.join(d, "approvals.conf"),
-        WEBUI_SCHED_JOBS=os.path.join(d, "jobs"), WEBUI_SCHED_SETTINGS=os.path.join(d, "settings"))
+        WEBUI_SCHED_JOBS=os.path.join(d, "jobs"), WEBUI_SCHED_SETTINGS=os.path.join(d, "settings"),
+        WEBUI_REGISTRY_DIR=os.path.join(TMP, "registry"))
+    env.pop("TB_UI_GATEWAY", None)
     env.update(extra)
     return env, d
 
@@ -1702,6 +1704,138 @@ for _k, _v in _old.items():
         os.environ.pop(_k, None)
     else:
         os.environ[_k] = _v
+
+# ================= 入口(gateway): 1 ポートで受けて /s/<名前>/ を各インスタンスへ中継する
+GW = os.path.join(os.path.dirname(HERE), "gateway.py")
+_gb = free_range(3)
+env_a, _ = make_env("gw-alpha", TB_INSTANCE="alpha", TB_UI_GATEWAY="1", TB_UI_PORT=str(_gb))
+make_db(env_a["WEBUI_TB_DB"])
+env_b, _ = make_env("gw-beta", TB_INSTANCE="beta", TB_UI_PORT=str(_gb + 1))
+make_db(env_b["WEBUI_TB_DB"])
+pa, pb = start(env_a), start(env_b)
+pa_port, pb_port = wait_port(env_a, pa), wait_port(env_b, pb)
+env_g, _ = make_env("gw", TB_UI_GATEWAY_PORT=str(_gb + 2))
+pg = subprocess.Popen([sys.executable, GW], env=env_g, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+procs.append(pg)
+_end = time.time() + 5
+while time.time() < _end:
+    with socket.socket() as _s:
+        if _s.connect_ex(("127.0.0.1", _gb + 2)) == 0:
+            break
+    time.sleep(0.05)
+check("gateway: インスタンス 2 つと入口が起動", pa_port == _gb and pb_port == _gb + 1 and pg.poll() is None)
+REG = env_a["WEBUI_REGISTRY_DIR"]
+check("gateway: インスタンス一覧はディレクトリ 700・ファイル 600、base 付き",
+      mode(REG) == "0o700" and mode(os.path.join(REG, "alpha.json")) == "0o600"
+      and json.load(open(os.path.join(REG, "alpha.json")))["base"] == "/s/alpha"
+      and json.load(open(os.path.join(REG, "beta.json")))["base"] == "")
+# インスタンス直接: BASE の外は 404、BASE ちょうどは BASE/ へ
+r = req(pa_port, "GET", "/")
+check("gateway: TB_UI_GATEWAY=1 のインスタンスは BASE の外を 404", r[0] == 404, str(r[0]))
+r = req(pa_port, "GET", "/s/alpha?x=1")
+check("gateway: /s/alpha は /s/alpha/ へ(クエリを残す)", r[0] == 302 and r[1]["Location"] == "/s/alpha/?x=1", str(r[:2]))
+r = req(pa_port, "GET", "/s/alphabet/")
+check("gateway: 似た名前(/s/alphabet/)は 404", r[0] == 404, str(r[0]))
+gc = Client(_gb + 2)
+r = gc.get("/s/alpha/")
+check("gateway: 未設定なら /s/alpha/setup へ", r[0] == 302 and r[1]["Location"] == "/s/alpha/setup", str(r[:2]))
+r = gc.get("/s/alpha/setup")
+check("gateway: 中継した HTML のフォーム先に BASE が付く", r[0] == 200 and 'action="/s/alpha/setup"' in r[2] and 'action="/setup"' not in r[2], r[2][:300])
+r = gc.raw("POST", "/s/alpha/setup", {"csrf": gc.csrf("/s/alpha/setup"), "username": USER, "password": PW, "confirm": PW},
+           origin=f"http://evil.example:{_gb + 2}")
+check("gateway: 外の Origin の POST はインスタンスが拒む(403)", r[0] == 403, str(r[0]))
+r = gc.raw("POST", "/s/alpha/setup", {"csrf": gc.csrf("/s/alpha/setup"), "username": USER, "password": PW, "confirm": PW})
+ck = r[1].get("Set-Cookie", "")
+check("gateway: 入口の Origin の POST は通り、Cookie の Path は /s/alpha/", r[0] == 302 and r[1]["Location"] == "/s/alpha/"
+      and "Path=/s/alpha/;" in ck and ck.startswith("herdr_webui_session_alpha="), str(r[:2]))
+gc.cookie = re.match(r"([^;]+)", ck).group(1) if ck else None
+r = gc.get("/s/alpha/")
+check("gateway: ページのリンク・スクリプトは BASE の下", r[0] == 200 and 'href="/s/alpha/inbox"' in r[2] and 'src="/s/alpha/notify.js"' in r[2]
+      and 'href="/inbox"' not in r[2] and 'href="/s/alpha/sessions"' in r[2], r[2][:300])
+r = gc.get("/s/alpha/notify.js")
+check("gateway: notify.js は BASE を知る(取得先・保存キー・通知のタグ)", r[0] == 200 and 'var BASE = "/s/alpha"' in r[2], r[2][:200])
+r = gc.get("/s/alpha/inbox", cookie=None)
+check("gateway: 未ログインは BASE 付きのログインへ(next は BASE を外したパス)",
+      r[0] == 302 and r[1]["Location"] == "/s/alpha/login?next=%2Finbox", str(r[:2]))
+r = gc.get("/s/alpha/sessions")
+check("gateway: セッション一覧に自分と beta(beta は入口の外なので直接のリンク)、入口へのリンク",
+      r[0] == 200 and "(この画面)" in r[2] and f'href="http://127.0.0.1:{pb_port}/"' in r[2] and 'href="../../"' in r[2], r[2][-1500:])
+r = gc.get("/s/alpha/sessions.js")
+check("gateway: sessions.js を配る", r[0] == 200 and "data-api" in r[2])
+r = gc.get("/s/beta/")
+check("gateway: 入口の外で動くインスタンス(beta)へは中継しない(502 と直接のリンク)", r[0] == 502 and f"127.0.0.1:{pb_port}/" in r[2], str(r[0]))
+r = gc.get("/s/nope/")
+check("gateway: 一覧に無い名前は 502", r[0] == 502, str(r[0]))
+r = gc.get("/s/Alpha/inbox?x=1")
+check("gateway: 大文字の名前は小文字へ", r[0] == 302 and r[1]["Location"] == "/s/alpha/inbox?x=1", str(r[:2]))
+r = gc.get("/s/alpha")
+check("gateway: /s/alpha は /s/alpha/ へ", r[0] == 302 and r[1]["Location"] == "/s/alpha/", str(r[:2]))
+r = gc.get("/x")
+check("gateway: /s/ の外は 404", r[0] == 404, str(r[0]))
+r = gc.get("/", host="evil.example")
+check("gateway: Host が自分以外は 403", r[0] == 403, str(r[0]))
+r = gc.get("/", host=f"localhost:{_gb + 2}")
+check("gateway: 一覧に alpha(件数はログインで読む)と beta",
+      r[0] == 200 and 'href="/s/alpha/"' in r[2] and 'data-api="/s/alpha/api/notifications"' in r[2] and ">beta</a>" in r[2], r[2][-800:])
+bc, _bck = inst_cookie_name(pb_port)
+r = bc.get("/sessions")
+check("sessions: 入口の外のインスタンスでも一覧(alpha へは直接のリンク、件数は読まない)",
+      r[0] == 200 and f'href="http://127.0.0.1:{pa_port}/s/alpha/"' in r[2] and "data-api" not in r[2] and "sessions.js" not in r[2]
+      and 'href="/sessions" class=on' in r[2] and "../../" not in r[2], r[2][-1200:])
+r = gc.get("/gateway.js")
+check("gateway: gateway.js を配る", r[0] == 200 and r[1]["Content-Type"].startswith("text/javascript"))
+if shutil.which("node"):
+    for _n, _js in (("gateway.js", r[2]), ("sessions.js", gc.get("/s/alpha/sessions.js")[2])):
+        _f = os.path.join(TMP, _n)
+        open(_f, "w").write(_js)
+        check(f"{_n} の構文(node --check)", subprocess.run(["node", "--check", _f], capture_output=True).returncode == 0)
+_c = http.client.HTTPConnection("127.0.0.1", _gb + 2, timeout=5)
+_c.putrequest("POST", "/s/alpha/logout")
+_c.putheader("Host", f"127.0.0.1:{_gb + 2}")
+_c.putheader("Transfer-Encoding", "chunked")
+_c.endheaders()
+_c.send(b"0\r\n\r\n")
+r = _c.getresponse()
+check("gateway: chunked の本文は中継しない(411)", r.status == 411, str(r.status))
+_c.close()
+r = gc.raw("POST", "/s/alpha/logout", {"csrf": re.search(r'name=csrf value="([^"]+)"', gc.get("/s/alpha/")[2]).group(1)})
+check("gateway: ログアウトは BASE 付きのログインへ・Cookie も Path=/s/alpha/ で消す",
+      r[0] == 302 and r[1]["Location"] == "/s/alpha/login" and "Path=/s/alpha/;" in r[1].get("Set-Cookie", "") and "Max-Age=0" in r[1].get("Set-Cookie", ""), str(r[:2]))
+r = gc.get("/s/alpha/login", cookie=None)
+check("gateway: HEAD/GET のログイン画面は BASE の下のフォーム", r[0] == 200 and 'action="/s/alpha/login"' in r[2] and 'href="/s/alpha/reset"' in r[2])
+stop(pa)
+check("gateway: 止めたインスタンスは一覧から消える(自分の書いたものだけ)", not os.path.exists(os.path.join(REG, "alpha.json"))
+      and os.path.exists(os.path.join(REG, "beta.json")))
+r = gc.get("/s/alpha/")
+check("gateway: 止まったインスタンスは 502", r[0] == 502, str(r[0]))
+# 一覧のファイルの検査: 他人の・形式違いのもの・リンクは読まない
+import app.registry as _reg  # noqa: E402
+os.environ["WEBUI_REGISTRY_DIR"] = os.path.join(TMP, "reg2")
+os.makedirs(os.environ["WEBUI_REGISTRY_DIR"], mode=0o700)
+_rp = lambda n: os.path.join(os.environ["WEBUI_REGISTRY_DIR"], n + ".json")  # noqa: E731
+for _n, _d in (("bad1", {"name": "bad1", "port": "80", "base": ""}), ("bad2", {"name": "other", "port": 80, "base": ""}),
+               ("bad3", {"name": "bad3", "port": 80, "base": "/s/x"}), ("bad4", {"name": "bad4", "port": True, "base": ""}),
+               ("ok1", {"name": "ok1", "port": 80, "base": "/s/ok1"})):
+    json.dump(_d, open(_rp(_n), "w"))
+os.symlink(_rp("ok1"), _rp("lnk"))
+check("registry: 形式どおりのものだけ読む(ポートは数・名前一致・base は /s/<名前> か空・リンクは読まない)",
+      [x["name"] for x in _reg.entries()] == ["ok1"], str(_reg.entries()))
+_reg.register("ok2", 81, "")
+_reg.unregister("ok2")
+check("registry: 自分の書いたものは消せる", not os.path.exists(_rp("ok2")))
+json.dump({"name": "ok3", "port": 82, "base": "", "pid": 1}, open(_rp("ok3"), "w"))
+_reg.unregister("ok3")
+check("registry: 他のプロセスのものは消さない", os.path.exists(_rp("ok3")))
+check("registry: 書いたプロセスが居ない行は動いていない扱い(ポートの使い回しへつながない)",
+      not _reg.alive({"name": "x", "port": pb_port, "pid": 2 ** 22 + 12345}) and not _reg.alive({"name": "x", "port": pb_port, "pid": None})
+      and _reg.alive({"name": "x", "port": pb_port, "pid": pb.pid}))
+os.environ.pop("WEBUI_REGISTRY_DIR")
+json.dump({"name": "ghost", "port": pb_port, "base": "/s/ghost", "pid": 2 ** 22 + 12345}, open(os.path.join(REG, "ghost.json"), "w"))
+r = gc.get("/s/ghost/")
+check("gateway: 書いたプロセスが居ない行には中継しない(502)", r[0] == 502 and "古い行" in r[2], str(r[0]))
+stop(pb)
+pg.send_signal(signal.SIGTERM)
+pg.wait(3)
 
 print()
 print("FAILED: " + ", ".join(fails) if fails else "all passed")
