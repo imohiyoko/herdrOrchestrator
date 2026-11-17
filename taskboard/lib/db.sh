@@ -11,6 +11,8 @@ q()   { local s=${1//\'/\'\'}; printf "'%s'" "$s"; }          # SQL 文字列リ
 # 例外(全セッションを見る)は、タスク ID の採番(ID は DB 全体で一意)と、人が明示した --all-sessions だけ。
 SESS=$(herdr_session_name)
 SQS=$(q "$SESS")
+# このセッションの 1 行(JSON。無ければ空)。$1=表 $2=列 $3=値(リテラル化する)
+session_row() { sql -json "SELECT * FROM $1 WHERE herdr_session=$SQS AND $2=$(q "$3");" | jq -c '.[0] // empty'; }
 # 表の名前を変えずにこのセッションの行だけを読む WITH 句(表の名前のまま書かれた共有の SQL の前に置く)。$@=表の名前
 session_cte() { local t w="WITH "; for t; do w+="$t AS (SELECT * FROM main.$t WHERE herdr_session=$SQS),"; done; printf '%s' "${w%,}"; }
 

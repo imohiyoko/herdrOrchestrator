@@ -61,14 +61,14 @@ def matches(op, pat):
         if not fnmatchcase(oh, head):
             return False
         from . import data   # tb と同じく台帳の role を先に見る(循環 import を避けてここで読む)
-        reg, ok = data.q_checked("SELECT role, herdr_session FROM agents WHERE name=?", (on,))
+        reg, ok = data.q_checked("SELECT role FROM agents WHERE name=?", (on,))
         if not ok:
             # 台帳を読めないときは map.conf に落とさない(tb の ROLE_STRICT と同じ)。名前そのものの役割ファイルだけは台帳なしで決まる
             if os.path.isfile(os.path.join(roles_dir(), on + ".md")):
                 return name_matches(on, last)
             return None
-        # ロールは herdr セッション固有: その agent のセッションの役割ファイルと台帳の役割で決める
-        return name_matches(on, last, reg[0]["role"] if reg else None, reg[0]["herdr_session"] if reg else None)
+        # ロールは herdr セッション固有: 台帳もこのセッションの行だけ(app/data.py)。役割ファイルもこのセッションの場所
+        return name_matches(on, last, reg[0]["role"] if reg else None)
     return fnmatchcase(op, pat)
 
 

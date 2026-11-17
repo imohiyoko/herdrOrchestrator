@@ -6,8 +6,8 @@
 # ロールは herdr セッション固有。roles/sessions/<セッション>/ があれば、そのセッションではそこだけを使う(共有の roles/ は見ない)。
 # 無ければ共有の roles/。台帳の役割(agents.role)も、同じセッションの agent のものだけを使う
 ROLES_BASE=${TB_ROLES:-$TB_ROOT/../roles}
-ROLES_SESSION=$SESS   # このセッション(lib/db.sh)
-if [[ $ROLES_SESSION =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ && -d $ROLES_BASE/sessions/$ROLES_SESSION ]]; then ROLES_DIR=$ROLES_BASE/sessions/$ROLES_SESSION
+# このセッション(lib/db.sh の SESS)の roles/sessions/<セッション>/ があればそこだけ
+if [[ $SESS =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ && -d $ROLES_BASE/sessions/$SESS ]]; then ROLES_DIR=$ROLES_BASE/sessions/$SESS
 else ROLES_DIR=$ROLES_BASE; fi
 ROLE_MAX=${TB_ROLE_MAX:-12000}
 ROLE_FILE=""; ROLE_HASH=""; ROLE_TEXT=""
@@ -32,12 +32,11 @@ role_files_for() {  # $1=agent 名 [$2=台帳の role]
     done
     printf '%s' "$out"
   }
-  local reg row
+  local reg
   if [[ -n ${2+x} ]]; then reg=$2
   else
     # 台帳はこのセッションの行だけ。別の herdr セッションの agent は台帳に無いものとして map.conf で決める
-    row=$(sql "SELECT COALESCE(role,'') FROM agents WHERE herdr_session=$SQS AND name=$(q "$name");" 2>/dev/null) || { [[ -n ${ROLE_STRICT:-} ]] && return 1; row=""; }
-    reg=$row
+    reg=$(sql "SELECT COALESCE(role,'') FROM agents WHERE herdr_session=$SQS AND name=$(q "$name");" 2>/dev/null) || { [[ -n ${ROLE_STRICT:-} ]] && return 1; reg=""; }
   fi
   if [[ -n $reg ]]; then found=$(_role_list "$reg"); [[ -z $found ]] || { printf '%s\n' "$found"; return 0; }; fi
   [[ -f $ROLES_DIR/map.conf ]] || return 0

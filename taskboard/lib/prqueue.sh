@@ -58,7 +58,7 @@ pq_ref() {  # "PQ-12" か "12" → 数字
   local r=${1#PQ-}; [[ $r =~ ^[0-9]+$ ]] || usage "pr-queue: ID は PQ-<数字>: $1"; printf '%s' "$r"
 }
 
-pq_row() { sql -json "SELECT * FROM pr_queue WHERE herdr_session=$SQS AND id=$1;" | jq -c '.[0] // empty'; }
+pq_row() { session_row pr_queue id "$1"; }
 
 # ブランチの接頭辞(英数字と . _ - の後に / )。config/pr-queue.conf の branch_prefixes(空白かカンマ区切り。例: agent/ feat/ fix/)。
 # 無ければ branch_prefix(1 つ。従来の書き方)、それも無ければ agent/ だけ。不正な要素は捨てる(狭める側に倒す)。全部不正なら agent/。広げるのは人が conf に書く

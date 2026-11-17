@@ -99,7 +99,7 @@ cmd_proxy-check() {
   [[ $# -eq 1 ]] || usage "proxy-check <id>"
   valid_pid "$1"
   local row c effect status
-  row=$(sql -json "SELECT * FROM proxy_requests WHERE herdr_session=$SQS AND id=$1;" | jq -c '.[0] // empty')
+  row=$(session_row proxy_requests id "$1")
   [[ -n $row ]] || die "代行依頼が見つかりません: $1"
   c=$(jq -r .cmd <<<"$row"); effect=$(jq -r .effect <<<"$row"); status=$(jq -r .status <<<"$row")
 

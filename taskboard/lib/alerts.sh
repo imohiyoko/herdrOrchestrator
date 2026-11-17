@@ -8,7 +8,7 @@ ANALYST_MAX=${TB_ANALYST_MAX:-2}
 ANALYST_CWD=${TB_ANALYST_CWD:-$TB_ROOT/..}
 ANALYST_MODEL=${TB_ANALYST_MODEL:-}
 valid_aid() { [[ $1 =~ ^A-[0-9]+$ ]] || usage "アラート ID は A-<数字>: $1"; }
-alert_row() { sql -json "SELECT * FROM alerts WHERE herdr_session=$SQS AND id=${1#A-};" | jq -c '.[0] // empty'; }
+alert_row() { session_row alerts id "${1#A-}"; }
 
 # tb alert: 登録。見張り役は「何が起きたか」だけを書く(緊急度は解析役が決める)。
 # 同じ指紋(--key、無ければ題名)の未解決アラートがあれば件数を増やすだけ

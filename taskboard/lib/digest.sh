@@ -226,7 +226,7 @@ cmd_digests() {
     esac
   done
   if [[ -n $did ]]; then
-    local row; row=$(sql -json "SELECT * FROM digests WHERE herdr_session=$SQS AND id=$did;" | jq -c '.[0] // empty')
+    local row; row=$(session_row digests id "$did")
     [[ -n $row ]] || die "digest が見つかりません: D-$did"
     if ((json)); then jq -c '.id = "D-\(.id)"' <<<"$row"; else jq -r '"D-\(.id) → \(.target) (\(.item_count) 件, \(.created_at))\n\(.body)"' <<<"$row"; fi
   elif ((json)); then

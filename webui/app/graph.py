@@ -8,7 +8,7 @@ import os
 import re
 from fnmatch import fnmatchcase
 
-from .config import HERDR_ROOT
+from .config import HERDR_ROOT, herdr_env
 
 DEFAULT_TARGET = "conductor"   # taskboard/lib/core.sh の DEFAULT_TARGET
 EDGES_SQL = os.path.join(HERDR_ROOT, "taskboard", "sql", "agent_edges.sql")
@@ -21,10 +21,12 @@ VERB_LABEL = {"spawn": "spawn", "lead": "指揮", "report": "報告", "analyze":
 SESSION_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]*")
 
 
-def roles_dir(session=None):
-    """役割ファイルの場所。ロールは herdr セッション固有: roles/sessions/<セッション>/ があればそこだけ(tb と同じ)。"""
+def roles_dir():
+    """役割ファイルの場所。ロールは herdr セッション固有: このセッションの roles/sessions/<セッション>/ があればそこだけ(tb と同じ)。
+    台帳もこのセッションの行だけなので(app/data.py)、どの agent の役割もこのセッションの場所で決める。"""
     base = os.environ.get("TB_ROLES") or os.path.join(HERDR_ROOT, "roles")
-    if session and SESSION_RE.fullmatch(session):
+    session = herdr_env.session_name()
+    if SESSION_RE.fullmatch(session):
         d = os.path.join(base, "sessions", session)
         if os.path.isdir(d):
             return d
@@ -52,10 +54,9 @@ def _role_list(text, rdir):
     return out
 
 
-def roles_of(name, reg_role=None, rdir=None, session=None):
-    """役割名のリスト(複数可。tb の role_files_for と同じ順: roles/<名前>.md > 台帳の role > map.conf)。
-    session はその agent の herdr セッション(役割ファイルの場所が変わる)。"""
-    rdir = rdir or roles_dir(session)
+def roles_of(name, reg_role=None, rdir=None):
+    """役割名のリスト(複数可。tb の role_files_for と同じ順: roles/<名前>.md > 台帳の role > map.conf)。"""
+    rdir = rdir or roles_dir()
     if not name or not NAME_RE.fullmatch(name) or name.startswith("_") or name == "README":
         return []
     if os.path.isfile(os.path.join(rdir, name + ".md")):
@@ -73,15 +74,15 @@ def roles_of(name, reg_role=None, rdir=None, session=None):
     return []
 
 
-def role_of(name, reg_role=None, rdir=None, session=None):
+def role_of(name, reg_role=None, rdir=None):
     """役割名をカンマ区切りで(例 hr,manager)。無ければ None。グループ化はこの組み合わせ単位。"""
-    return ",".join(roles_of(name, reg_role, rdir, session)) or None
+    return ",".join(roles_of(name, reg_role, rdir)) or None
 
 
-def name_matches(name, pat, reg_role=None, session=None):
+def name_matches(name, pat, reg_role=None):
     """規則のパターンと名前を比べる(tb の name_matches と同じ)。@a は a を持つ、@a+b は両方を持つ。"""
     if pat.startswith("@"):
-        have = roles_of(name, reg_role, session=session)
+        have = roles_of(name, reg_role)
         return bool(have) and all(any(fnmatchcase(r, w) for r in have) for w in pat[1:].split("+"))
     return fnmatchcase(name, pat)
 

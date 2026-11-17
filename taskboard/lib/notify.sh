@@ -294,7 +294,7 @@ notify_ensure_dir() { mkdir -p "$NOTIFY_DIR" && chmod 700 "$NOTIFY_DIR" 2>/dev/n
 
 notify_local_sinks() {  # $1=event id。file と stdout だけ(外には出ない)
   local id=$1 row sinks text ts type blocked mark=""
-  row=$(sql -json "SELECT * FROM notify_events WHERE herdr_session=$SQS AND id=$id;" | jq -c '.[0] // empty'); [[ -n $row ]] || return 0
+  row=$(session_row notify_events id "$id"); [[ -n $row ]] || return 0
   sinks=$(jq -r .sinks <<<"$row"); text=$(jq -r .text <<<"$row"); type=$(jq -r .type <<<"$row"); blocked=$(jq -r .blocked <<<"$row")
   [[ $blocked == 1 ]] && mark=" [外へは出していない: 秘密を検出]"
   ts=$(now); notify_ensure_dir
@@ -351,7 +351,7 @@ notify_webhook_post() {  # $1=本文 → 0 成功 / 1 失敗(NOTIFY_ERR に理�
 # 1 件を slack へ出す。0 送った / 10 宛先が使用中(未送信) / 1 失敗(記録済み)
 notify_slack_send() {  # $1=event id
   local id=$1 row text hash att via target agent msg rc=0 retries
-  row=$(sql -json "SELECT * FROM notify_events WHERE herdr_session=$SQS AND id=$id;" | jq -c '.[0] // empty'); [[ -n $row ]] || return 1
+  row=$(session_row notify_events id "$id"); [[ -n $row ]] || return 1
   [[ $(jq -r .blocked <<<"$row") == 0 ]] || return 1   # 防御: blocked は外へ出さない
   text=$(jq -r .text <<<"$row"); hash=$(jq -r .hash <<<"$row"); att=$(jq -r .slack_attempts <<<"$row")
   via=$(ncfg slack_via); retries=$(ncfg ack_retries)
@@ -472,11 +472,11 @@ notify_hook_comment() {  # $1=comments.id
   esac
 }
 notify_hook_alert_raised() {  # $1=alerts.id
-  local row; row=$(sql -json "SELECT * FROM alerts WHERE herdr_session=$SQS AND id=$1;" | jq -c '.[0] // empty'); [[ -n $row ]] || return 0
+  local row; row=$(session_row alerts id "$1"); [[ -n $row ]] || return 0
   notify_enqueue alert_raised "A-$1" "" "$(jq -r .title <<<"$row")" "$(jq -r .source <<<"$row")" "$(jq -r '.body // ""' <<<"$row")"
 }
 notify_hook_alert_result() {  # $1=alerts.id
-  local row; row=$(sql -json "SELECT * FROM alerts WHERE herdr_session=$SQS AND id=$1;" | jq -c '.[0] // empty'); [[ -n $row ]] || return 0
+  local row; row=$(session_row alerts id "$1"); [[ -n $row ]] || return 0
   notify_enqueue alert_result "A-$1" "$(jq -r '.severity // ""' <<<"$row")" "$(jq -r .title <<<"$row")" "$(jq -r '.result_summary // ""' <<<"$row")" "$(jq -r '.result_path // ""' <<<"$row")"
 }
 notify_hook_task_done() {  # $1=task id
@@ -705,7 +705,7 @@ notify_ack() {
     resolve_label || return 3
     [[ $LABEL_NAME == "$(ncfg notifier_agent)" ]] || die "ack は notifier agent($(ncfg notifier_agent))か人だけが使えます($LABEL_NAME)"
   fi
-  row=$(sql -json "SELECT * FROM notify_events WHERE herdr_session=$SQS AND id=$id;" | jq -c '.[0] // empty'); [[ -n $row ]] || die "イベントが見つかりません: N-$id"
+  row=$(session_row notify_events id "$id"); [[ -n $row ]] || die "イベントが見つかりません: N-$id"
   st=$(jq -r .slack_status <<<"$row"); exp=$(jq -r .hash <<<"$row")
   [[ $st == awaiting-ack || $st == failed || $st == acked || $st == mismatch ]] || die "N-$id は ack を待っていません($st)"
   if nflag hash_check && [[ $hash != "$exp" ]]; then

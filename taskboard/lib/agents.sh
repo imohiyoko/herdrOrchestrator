@@ -22,7 +22,7 @@ OPEN_TASK_STATUSES="'in_progress','review','blocked'"
 
 valid_agent_name() { [[ $1 != human && $1 =~ $AGENT_NAME_RE ]] || usage "agent 名は英小文字で始まり、英小文字・数字・_・- の 32 字以内(human は予約名): $1"; }
 valid_lid() { [[ $1 =~ ^L-[0-9]+$ ]] || usage "操作 ID は L-<数字>: $1"; }
-agent_reg_row() { sql -json "SELECT * FROM agents WHERE herdr_session=$SQS AND name=$(q "$1");" | jq -c '.[0] // empty'; }
+agent_reg_row() { session_row agents name "$1"; }
 
 # 今動いている agent の一覧(JSON 配列)を LIVE_AGENTS に入れる。取れなければ 1
 LIVE_AGENTS="[]"
@@ -625,7 +625,7 @@ cmd_agent-approve() {
   valid_lid "$1"; local id=${1#L-} always=0 row op target args by r=0; shift
   [[ ${1:-} == --always ]] && always=1
   require_human "tb agent-approve"
-  row=$(sql -json "SELECT * FROM agent_ops WHERE herdr_session=$SQS AND id=$id;" | jq -c '.[0] // empty')
+  row=$(session_row agent_ops id "$id")
   [[ -n $row ]] || die "操作が見つかりません: L-$id"
   [[ $(jq -r .status <<<"$row") == pending ]] || die "L-$id は承認待ちではありません($(jq -r .status <<<"$row"))"
   op=$(jq -r .op <<<"$row"); target=$(jq -r .target <<<"$row"); args=$(jq -r .args <<<"$row"); by=$(jq -r .requested_by <<<"$row")

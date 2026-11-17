@@ -169,13 +169,13 @@ cmd_approve() {
   local oid=${1#O-} always=0 row kind target; shift
   [[ ${1:-} == --always ]] && always=1
   require_human "tb approve"
-  row=$(sql -json "SELECT * FROM outbox WHERE herdr_session=$SQS AND id=$oid;" | jq -c '.[0] // empty')
+  row=$(session_row outbox id "$oid")
   [[ -n $row ]] || die "outbox が見つかりません: O-$oid"
   [[ $(jq -r .status <<<"$row") == pending ]] || die "O-$oid は承認待ちではありません($(jq -r .status <<<"$row"))"
   kind=$(jq -r .kind <<<"$row"); target=$(jq -r .target <<<"$row")
   sql "UPDATE outbox SET status='queued', reason=reason||' / 人が承認 $(now)' WHERE herdr_session=$SQS AND id=$oid;"
   ((always)) && set_approval allow "send:$kind:$target" >/dev/null && echo "send:$kind:$target = allow(今後は承認なし)"
-  local r=0; outbox_deliver_default "$oid" >/dev/null || r=$?
+  local r=0; outbox_deliver "$oid" >/dev/null || r=$?
   case $r in
     0) echo "O-$oid approved and sent to $target";;
     11) echo "tb: O-$oid は承認済みですが宛先 '$target' に届けられません(上の理由を見てください。queued のまま。直したら tb flush)" >&2
