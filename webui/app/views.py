@@ -13,7 +13,7 @@ from . import graph
 from .herdr import agent_key, agent_session, get_agents, read_agent, workspace_label
 from .data import has_resolution, parse_ts, NOTIFY_POLL_SEC, QUEUED_WARN_SEC, outbox_rows, activity_for, agent_ops, agent_registry, stopped_agents, db_conn, needs_human, parse_jsonl, q, stalled, tail_lines, tasks_for_agent, urgent_items, LEDGER_MAX, LEDGER_RESULTS, approval_history, ledger_kinds, ledger_rows, ledger_summary
 from .actions import NOTE_MAX
-from .jobview import agent_state, job_defs, mask, next_runs, prompt_file, send_task_decision
+from .jobview import agent_state, command_summary, job_about, job_defs, job_summary, mask, next_runs, prompt_file, send_task_decision
 from .jobs import DAY_PRESETS, DAY_TOKENS, INTERVAL_UNITS, interval_sec, interval_text, job_info, job_last, job_names
 from . import docs, perms
 from .markdown import render as render_md
@@ -612,14 +612,21 @@ def page_jobs(_qs):
             sched = (f'{e(interval_text(info))}おき / {e(info["start"])}-{e(info["end"])} / {e(info["days"])}'
                      + (" <span class=note>(Web UI で変更済み)</span>" if info.get("overridden") else ""))
             st = "有効" if info.get("enabled") else '<span class=warn>一時停止</span>'
-            what = (f'<b>agent</b> {e(info["target"])}' if info["kind"] == "prompt" else "<b>コマンド</b>を実行")
+            if info["kind"] == "prompt":
+                what = f'<b>agent</b> <code>{e(info["target"])}</code> に送る'
+            else:
+                cs = command_summary((job_defs(n) or {}).get("COMMAND", ""))
+                what = "<b>コマンド</b> " + (" ".join(f"<code>{e(c)}</code>" for c, _ in cs) if cs else "を実行")
+            summ = job_summary(n, info)
+            if summ:
+                what += f'<br><span class=note>{e(summ)}</span>'
         else:
             sched, st, what = f'<span class=warn>{e(err)}</span>', "-", "-"
         rows.append([f'<a href="/jobs/{quote(n)}">{e(n)}</a>' if n in names else e(n), what, sched, st,
                      (f'{e(last.get("ts"))} {e(last.get("action"))} {e(last.get("reason"))}' if last else "-"),
                      (f'{e(lr.get("ts"))} / {e(lr.get("action"))}' + (f' (exit {e(lr.get("exit"))})' if "exit" in lr else "")
                       if lr else "-")])
-    note = ("<p class=note>job 名を開くと、型(agent に送る / コマンドを実行)・宛先と今の状態・送られる本文やコマンド・次回の予定・承認の扱いを読めます。"
+    note = ("<p class=note>「何をする」の 2 行目は conf の先頭のコメント(無ければコマンドから推した説明)です。job 名を開くと、型(agent に送る / コマンドを実行)・宛先と今の状態・送られる本文やコマンド・次回の予定・承認の扱いを読めます。"
             "スケジュール(間隔・時間帯・曜日・一時停止)だけ変更できます(次の分から反映)。</p>")
     return "定期実行", note + table(["job", "何をする(宛先)", "間隔 / 時間帯 / 曜日", "状態", "最終記録", "最後の実行"], rows)
 
@@ -641,6 +648,9 @@ def _job_overview(name, info):
     is_prompt = info["kind"] == "prompt"
     if defs.get("_truncated"):
         rows.append(("注意", '<span class=warn>conf が 64 KiB を超えているため、後半は読んでいません(表示は不完全)</span>'))
+    about = job_about(name)
+    if about:
+        rows.append(("説明", "<br>".join(e(x) for x in about) + '<br><span class=note>(conf の先頭のコメント)</span>'))
     rows.append(("型", "<b>PROMPT 型</b>: agent にプロンプトを送る" if is_prompt else "<b>COMMAND 型</b>: コマンドを実行する(agent は介さない)"))
     warn = []
     if is_prompt:
@@ -686,6 +696,10 @@ def _job_overview(name, info):
                          + (f'<p class=note>トークンらしい文字列 {nmask} 件をマスクしました</p>' if nmask else "")))
     else:
         cmd = defs.get("COMMAND", "")
+        cs = command_summary(cmd)
+        if cs:
+            rows.append(("中身(推定)", "<br>".join(f"<code>{e(c)}</code>: {e(d)}" for c, d in cs)
+                         + '<br><span class=note>(コマンドの中の tb のサブコマンドから推した説明。実際の動きは下の本文)</span>'))
         masked, nmask = mask(clean(cmd))
         rows.append(("何が実行されるか", "<code>bash -c</code> でそのまま実行(展開前の記述そのまま。タイムアウト "
                      + e(defs.get("COMMAND_TIMEOUT") or "既定") + " 秒)" + (inexact if "COMMAND" in cx else "") + _fold(masked, "コマンド")

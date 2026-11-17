@@ -685,7 +685,7 @@ check("定期実行が出る", "job1" in cl.get("/jobs")[2])
 
 # ---- 定期実行の詳細: 何が・誰に・いつ・承認は(読み取りのみ)
 _L = cl.get("/jobs")[2]
-check("ジョブ一覧: 型と宛先が分かる", "<b>agent</b> alpha" in _L and "<b>コマンド</b>を実行" in _L)
+check("ジョブ一覧: 型と宛先が分かる", "<b>agent</b> <code>alpha</code> に送る" in _L and "<b>コマンド</b>" in _L, _L[_L.find("<table"):][:600])
 _pj = cl.get("/jobs/pj")
 _pjh = _pj[2]
 check("ジョブ詳細: 型(PROMPT 型)", _pj[0] == 200 and "PROMPT 型" in _pjh and "agent にプロンプトを送る" in _pjh)
@@ -765,6 +765,18 @@ _d = _jd("PROMPT=abc\\\nPROMPT_FILE=/x/y\nSKIP_IF=working\n")
 check("conf: 行末 \\ の継続行の中の代入は読まず、引用符の外の次の代入は読む", "PROMPT_FILE" not in _d and _d["SKIP_IF"] == "working", str(_d))
 _d = _jd("PROMPT='a'\nPROMPT_FILE=/repo/scheduler/b.txt\n")
 check("conf: 引用符が閉じたあとの行の代入は読む", _d["PROMPT_FILE"] == "/repo/scheduler/b.txt", str(_d))
+# 説明(conf の先頭コメント)と、COMMAND からの推定
+_jd("# 1 行目の説明\n# 2 行目\n# 注意: COMMAND は bash -c でそのまま実行される\n# token=ghp_abcdefghijklmnopqrstuvwxyz0123\nCOMMAND='cd /x && bin/tb flush'\n# 後ろのコメントは説明に入れない\n")
+_ab = _jv.job_about("unit")
+check("説明: 先頭のコメントだけ、注意書きは省き、トークンはマスク", _ab[:2] == ["1 行目の説明", "2 行目"] and len(_ab) == 3 and "ghp_" not in _ab[2], str(_ab))
+check("説明: 一覧の 1 行は先頭コメントの 1 行目", _jv.job_summary("unit", {"kind": "command"}) == "1 行目の説明")
+_jd("# 鍵の例\n# -----BEGIN RSA PRIVATE KEY-----\n# MIIEowIBAAKCAQEAsecretbody1234567890\n# -----END RSA PRIVATE KEY-----\nCOMMAND=true\n")
+_ab = _jv.job_about("unit")
+check("説明: 行をまたぐ秘密鍵のブロックは中身ごと伏せる", "MIIEow" not in " ".join(_ab) and "[マスク]" in " ".join(_ab), str(_ab))
+_jd("COMMAND='cd /x && HERDR_SESSION=default bin/tb notify flush; bin/tb digest'\n")
+check("説明: コメントが無ければ tb のサブコマンドから推す(notify flush は flush と取り違えない)",
+      [c for c, _ in _jv.command_summary(_jv.job_defs("unit")["COMMAND"])] == ["tb notify flush", "tb digest"]
+      and "通知" in _jv.job_summary("unit", {"kind": "command"}))
 os.remove(os.path.join(_J, "unit.conf"))
 
 # ---- 権限カタログ × approvals.conf(読み取りのみ)
