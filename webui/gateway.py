@@ -2,7 +2,7 @@
 """herdr Web UI の入口(gateway)。1 つのポートで受け、/s/<インスタンス名>/… をそのインスタンスへ中継する。標準ライブラリだけ。
 
 - 各インスタンス(server.py)は今までどおり別プロセス・別ポート・別ログインで、自分の herdr セッションだけを見る。
-  入口の後ろに置くインスタンスは TB_UI_GATEWAY=1 で起動する(ページを /s/<名前>/ の下に置く)。
+  インスタンスはページを常に /s/<名前>/ の下に置く。入口の既定ポートは 8800、インスタンスは 8801〜8819。
 - 行き先はホームのインスタンス一覧(app/registry.py)だけ。127.0.0.1 の、そこに書かれたポートにしかつながない。
 - 入口自身はログインを持たない。/ はインスタンスの名前とポートの一覧だけを出す(中身は各インスタンスのログインの後ろ)。
 - 127.0.0.1 だけで待ち受け、Host が自分自身のときだけ応える(DNS リバインディング対策)。
@@ -23,7 +23,7 @@ from app.config import HOST
 from app.sanitize import e
 from app.scripts import GATEWAY_JS
 
-DEFAULT_PORT = 8790
+DEFAULT_PORT = 8800
 MAX_BODY = 64 * 1024
 TIMEOUT = 60
 # 中継しないヘッダ(hop-by-hop)。Connection に並んだ名前も落とす
@@ -46,17 +46,11 @@ def index_html():
     rows = []
     for x in registry.entries():
         up = registry.alive(x)
-        if x["base"]:
-            link = f'<a href="{e(x["base"])}/">{e(x["name"])}</a>'
-            cnt = f'<td data-api="{e(x["base"])}/api/notifications">…</td>' if up else "<td>-</td>"
-            where = "この入口の後ろ"
-        else:
-            link = f'<a href="http://127.0.0.1:{x["port"]}/">{e(x["name"])}</a>'
-            cnt = "<td>-</td>"
-            where = "直接(TB_UI_GATEWAY=1 で起動すると入口の後ろに入る)"
+        link = f'<a href="{e(x["base"])}/">{e(x["name"])}</a>'
+        cnt = f'<td data-api="{e(x["base"])}/api/notifications">…</td>' if up else "<td>-</td>"
         rows.append(f"<tr><td>{link}</td>{cnt}<td>{'動いている' if up else '<span class=bad>応答なし</span>'}</td>"
-                    f"<td>{x['port']}</td><td>{e(where)}</td></tr>")
-    table = ("<table><tr><th>セッション</th><th>緊急通知</th><th>状態</th><th>ポート</th><th>開き方</th></tr>" + "".join(rows) + "</table>"
+                    f"<td>{x['port']}</td></tr>")
+    table = ("<table><tr><th>セッション</th><th>緊急通知</th><th>状態</th><th>ポート</th></tr>" + "".join(rows) + "</table>"
              if rows else f"<p class=note>(動いているインスタンスがありません。一覧の置き場所: {e(registry.REGISTRY_DIR())})</p>")
     return ("<!doctype html><html lang=ja><head><meta charset=utf-8><meta name=referrer content=same-origin>"
             '<meta name=viewport content="width=device-width,initial-scale=1"><title>herdr セッション一覧</title>'
@@ -104,9 +98,6 @@ class Gateway(BaseHTTPRequestHandler):
         ent = registry.read_entry(name)
         if not ent:
             return self._send(502, f"<p>セッション <strong>{e(name)}</strong> の Web UI は動いていません(一覧にありません)。<a href=\"/\">一覧へ</a></p>")
-        if ent["base"] != f"/s/{name}":
-            return self._send(502, f"<p>セッション <strong>{e(name)}</strong> の Web UI は入口の後ろで動いていません"
-                                   f"(TB_UI_GATEWAY=1 を付けて起動し直すか、<a href=\"http://127.0.0.1:{ent['port']}/\">直接開く</a>)。</p>")
         if not registry.pid_ok(ent):   # 強制終了で残った古い行。そのポートを今は別のプロセスが使っているかもしれないので、つながない
             return self._send(502, f"<p>セッション <strong>{e(name)}</strong> の Web UI は止まっています(一覧に古い行が残っています)。<a href=\"/\">一覧へ</a></p>")
         self._proxy(ent)

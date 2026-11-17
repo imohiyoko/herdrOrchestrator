@@ -84,7 +84,6 @@ def make_env(name, **extra):
         WEBUI_SCHED_LOGS=os.path.join(d, "logs"), WEBUI_APPROVALS=os.path.join(d, "approvals.conf"),
         WEBUI_SCHED_JOBS=os.path.join(d, "jobs"), WEBUI_SCHED_SETTINGS=os.path.join(d, "settings"),
         WEBUI_REGISTRY_DIR=os.path.join(TMP, "registry"))
-    env.pop("TB_UI_GATEWAY", None)
     env.update(extra)
     return env, d
 
@@ -115,17 +114,48 @@ def stop(p):
         p.kill()
 
 
-def req(port, method, path, cookie=None, host=None):
+def base_for(port):
+    """そのポートで動いているインスタンスの置き場所(/s/<名前>)。インスタンスの一覧(テストでは TMP/registry)から引く。無ければ ""(入口など)。"""
+    best = None
+    for f in glob.glob(os.path.join(TMP, "registry", "*.json")):
+        try:
+            d = json.load(open(f))
+            os.kill(d["pid"], 0)
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        if d.get("port") == port and (best is None or os.path.getmtime(f) > best[0]):
+            best = (os.path.getmtime(f), d.get("base") or "")
+    return best[1] if best else ""
+
+
+def unbase(base, r):
+    """ページは /s/<名前>/ の下にあるので、既存の検査はその下からの相対で見る(Location と HTML の絶対パスから base を外す)。
+    BASE の付け外しそのものは「入口」の節で生のまま検査する。"""
+    if not base:
+        return r
+    code, h, body = r
+    if h.get("Location", "").startswith(base + "/"):
+        h = dict(h, Location=h["Location"][len(base):])
+    body = re.sub(r'(\s(?:href|action|src)=")' + re.escape(base) + "/", r"\1/", body)
+    return code, h, body
+
+
+def with_base(base, path):
+    return base + path if base and path.startswith("/") and not path.startswith("/s/") else path
+
+
+def req(port, method, path, cookie=None, host=None, raw=False):
+    base = "" if raw else base_for(port)
     c = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
     h = {"Host": host or f"127.0.0.1:{port}"}
     if cookie:
         h["Cookie"] = cookie
-    c.request(method, path, headers=h)
+    c.request(method, with_base(base, path), headers=h)
     r = c.getresponse()
     body = r.read().decode("utf-8", "replace")
     out = (r.status, dict(r.getheaders()), body)
     c.close()
-    return out
+    return unbase(base, out)
 
 
 # ---- fixtures
@@ -207,7 +237,9 @@ class Client:
     def __init__(self, port):
         self.port, self.cookie = port, None
 
-    def raw(self, method, path, data=None, origin="default", cookie="default", host=None):
+    def raw(self, method, path, data=None, origin="default", cookie="default", host=None, raw=False):
+        base = "" if raw else base_for(self.port)
+        path = with_base(base, path)
         c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
         h = {"Host": host or f"127.0.0.1:{self.port}"}
         ck = self.cookie if cookie == "default" else cookie
@@ -226,7 +258,7 @@ class Client:
         text = r.read().decode("utf-8", "replace")
         out = (r.status, dict(r.getheaders()), text)
         c.close()
-        return out
+        return unbase(base, out)
 
     def get(self, path, **kw):
         return self.raw("GET", path, **kw)
@@ -375,7 +407,7 @@ check("拒否の間は auth.json が作られない", not os.path.exists(os.path
 r = cl.raw("POST", "/setup", {"csrf": cs, "username": USER, "password": PW, "confirm": PW})
 check("初回設定が成功(302 + Cookie)", r[0] == 302 and "Set-Cookie" in r[1], str(r[:2]))
 ck = r[1].get("Set-Cookie", "")
-check("Cookie が HttpOnly / SameSite=Strict / Path=/", "HttpOnly" in ck and "SameSite=Strict" in ck and "Path=/" in ck, ck.split("=")[0])
+check("Cookie が HttpOnly / SameSite=Strict / Path=/s/default/", "HttpOnly" in ck and "SameSite=Strict" in ck and "Path=/s/default/;" in ck, ck.split("=")[0])
 check("Cookie の有効期間が 12 時間", "Max-Age=43200" in ck, ck.split(";")[-1])
 check("auth.json が 0600", mode(os.path.join(RUN, "auth.json")) == "0o600", mode(os.path.join(RUN, "auth.json")))
 check("sessions.json が 0600", mode(os.path.join(RUN, "sessions.json")) == "0o600")
@@ -1708,7 +1740,7 @@ for _k, _v in _old.items():
 # ================= 入口(gateway): 1 ポートで受けて /s/<名前>/ を各インスタンスへ中継する
 GW = os.path.join(os.path.dirname(HERE), "gateway.py")
 _gb = free_range(3)
-env_a, _ = make_env("gw-alpha", TB_INSTANCE="alpha", TB_UI_GATEWAY="1", TB_UI_PORT=str(_gb))
+env_a, _ = make_env("gw-alpha", TB_INSTANCE="alpha", TB_UI_PORT=str(_gb))
 make_db(env_a["WEBUI_TB_DB"])
 env_b, _ = make_env("gw-beta", TB_INSTANCE="beta", TB_UI_PORT=str(_gb + 1))
 make_db(env_b["WEBUI_TB_DB"])
@@ -1728,13 +1760,13 @@ REG = env_a["WEBUI_REGISTRY_DIR"]
 check("gateway: インスタンス一覧はディレクトリ 700・ファイル 600、base 付き",
       mode(REG) == "0o700" and mode(os.path.join(REG, "alpha.json")) == "0o600"
       and json.load(open(os.path.join(REG, "alpha.json")))["base"] == "/s/alpha"
-      and json.load(open(os.path.join(REG, "beta.json")))["base"] == "")
+      and json.load(open(os.path.join(REG, "beta.json")))["base"] == "/s/beta")
 # インスタンス直接: BASE の外は 404、BASE ちょうどは BASE/ へ
-r = req(pa_port, "GET", "/")
-check("gateway: TB_UI_GATEWAY=1 のインスタンスは BASE の外を 404", r[0] == 404, str(r[0]))
-r = req(pa_port, "GET", "/s/alpha?x=1")
+r = req(pa_port, "GET", "/", raw=True)
+check("gateway: インスタンスは BASE(/s/<名前>/)の外を 404(ポートを直接開いても)", r[0] == 404, str(r[0]))
+r = req(pa_port, "GET", "/s/alpha?x=1", raw=True)
 check("gateway: /s/alpha は /s/alpha/ へ(クエリを残す)", r[0] == 302 and r[1]["Location"] == "/s/alpha/?x=1", str(r[:2]))
-r = req(pa_port, "GET", "/s/alphabet/")
+r = req(pa_port, "GET", "/s/alphabet/", raw=True)
 check("gateway: 似た名前(/s/alphabet/)は 404", r[0] == 404, str(r[0]))
 gc = Client(_gb + 2)
 r = gc.get("/s/alpha/")
@@ -1758,12 +1790,13 @@ r = gc.get("/s/alpha/inbox", cookie=None)
 check("gateway: 未ログインは BASE 付きのログインへ(next は BASE を外したパス)",
       r[0] == 302 and r[1]["Location"] == "/s/alpha/login?next=%2Finbox", str(r[:2]))
 r = gc.get("/s/alpha/sessions")
-check("gateway: セッション一覧に自分と beta(beta は入口の外なので直接のリンク)、入口へのリンク",
-      r[0] == 200 and "(この画面)" in r[2] and f'href="http://127.0.0.1:{pb_port}/"' in r[2] and 'href="../../"' in r[2], r[2][-1500:])
+check("gateway: セッション一覧に自分と beta(入口経由の相対リンクと件数の読み取り、直接開くリンク)、入口へのリンク",
+      r[0] == 200 and "(この画面)" in r[2] and 'href="../beta/"' in r[2] and 'data-api="../beta/api/notifications"' in r[2]
+      and f'href="http://127.0.0.1:{pb_port}/s/beta/"' in r[2] and 'href="../../"' in r[2] and 'src="/s/alpha/sessions.js"' in r[2], r[2][-1500:])
 r = gc.get("/s/alpha/sessions.js")
 check("gateway: sessions.js を配る", r[0] == 200 and "data-api" in r[2])
 r = gc.get("/s/beta/")
-check("gateway: 入口の外で動くインスタンス(beta)へは中継しない(502 と直接のリンク)", r[0] == 502 and f"127.0.0.1:{pb_port}/" in r[2], str(r[0]))
+check("gateway: beta へも中継する(未設定なら beta の /setup へ)", r[0] == 302 and r[1]["Location"] == "/s/beta/setup", str(r[:2]))
 r = gc.get("/s/nope/")
 check("gateway: 一覧に無い名前は 502", r[0] == 502, str(r[0]))
 r = gc.get("/s/Alpha/inbox?x=1")
@@ -1779,9 +1812,9 @@ check("gateway: 一覧に alpha(件数はログインで読む)と beta",
       r[0] == 200 and 'href="/s/alpha/"' in r[2] and 'data-api="/s/alpha/api/notifications"' in r[2] and ">beta</a>" in r[2], r[2][-800:])
 bc, _bck = inst_cookie_name(pb_port)
 r = bc.get("/sessions")
-check("sessions: 入口の外のインスタンスでも一覧(alpha へは直接のリンク、件数は読まない)",
-      r[0] == 200 and f'href="http://127.0.0.1:{pa_port}/s/alpha/"' in r[2] and "data-api" not in r[2] and "sessions.js" not in r[2]
-      and 'href="/sessions" class=on' in r[2] and "../../" not in r[2], r[2][-1200:])
+check("sessions: beta の一覧にも alpha(相対リンク・件数・直接開くリンク)",
+      r[0] == 200 and 'href="../alpha/"' in r[2] and f'href="http://127.0.0.1:{pa_port}/s/alpha/"' in r[2] and 'data-api="../alpha/api/notifications"' in r[2]
+      and 'href="/sessions" class=on' in r[2], r[2][-1200:])
 r = gc.get("/gateway.js")
 check("gateway: gateway.js を配る", r[0] == 200 and r[1]["Content-Type"].startswith("text/javascript"))
 if shutil.which("node"):
@@ -1814,13 +1847,13 @@ os.environ["WEBUI_REGISTRY_DIR"] = os.path.join(TMP, "reg2")
 os.makedirs(os.environ["WEBUI_REGISTRY_DIR"], mode=0o700)
 _rp = lambda n: os.path.join(os.environ["WEBUI_REGISTRY_DIR"], n + ".json")  # noqa: E731
 for _n, _d in (("bad1", {"name": "bad1", "port": "80", "base": ""}), ("bad2", {"name": "other", "port": 80, "base": ""}),
-               ("bad3", {"name": "bad3", "port": 80, "base": "/s/x"}), ("bad4", {"name": "bad4", "port": True, "base": ""}),
+               ("bad3", {"name": "bad3", "port": 80, "base": "/s/x"}), ("bad5", {"name": "bad5", "port": 80, "base": ""}), ("bad4", {"name": "bad4", "port": True, "base": ""}),
                ("ok1", {"name": "ok1", "port": 80, "base": "/s/ok1"})):
     json.dump(_d, open(_rp(_n), "w"))
 os.symlink(_rp("ok1"), _rp("lnk"))
-check("registry: 形式どおりのものだけ読む(ポートは数・名前一致・base は /s/<名前> か空・リンクは読まない)",
+check("registry: 形式どおりのものだけ読む(ポートは数・名前一致・base は /s/<名前>(空の旧い形は読まない)・リンクは読まない)",
       [x["name"] for x in _reg.entries()] == ["ok1"], str(_reg.entries()))
-_reg.register("ok2", 81, "")
+_reg.register("ok2", 81, "/s/ok2")
 _reg.unregister("ok2")
 check("registry: 自分の書いたものは消せる", not os.path.exists(_rp("ok2")))
 json.dump({"name": "ok3", "port": 82, "base": "", "pid": 1}, open(_rp("ok3"), "w"))

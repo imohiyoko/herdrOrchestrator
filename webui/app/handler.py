@@ -16,7 +16,7 @@ import auth
 
 from . import registry
 from .httpbase import host_ok, log_request_line, origins, send
-from .config import BASE, COOKIE, HOST, INSTANCE, herdr_env, JOB_RE, LEGACY_RUN_DIR, ROOT, RUN_DIR, cfg
+from .config import BASE, COOKIE, DEFAULT_RANGE, HOST, INSTANCE, herdr_env, JOB_RE, LEGACY_RUN_DIR, ROOT, RUN_DIR, cfg
 from .sanitize import clean, e
 from .actions import agent_decide, agent_new, agent_op, resolve_comment
 from .data import NOTIFY_POLL_SEC, badge_count, urgent_items
@@ -90,13 +90,13 @@ def reset_page(a, state, error=""):
 
 
 LOGIN_FAIL = "ユーザー名またはパスワードが違います"
-# gateway の後ろ(BASE=/s/<名前>)では、HTML のサーバー内の絶対パス(href="/…" など)を BASE の下に付け替える。
+# ページは BASE(/s/<名前>)の下に置くので、HTML のサーバー内の絶対パス(href="/…" など)を BASE の下に付け替える。
 # 外部 URL(http:)・// 始まり・相対パスはそのまま。属性値は e() で " を逃がしているので、本文の中の文字列は当たらない
 _ABS_ATTR = re.compile(r'(\s(?:href|action|src)=")/(?![/\\])')
 
 
 def with_base(html):
-    return _ABS_ATTR.sub(lambda m: m.group(1) + BASE + "/", html) if BASE else html
+    return _ABS_ATTR.sub(lambda m: m.group(1) + BASE + "/", html)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -122,7 +122,7 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(200, data, ctype)
 
     def _send(self, code, body, ctype="text/html; charset=utf-8", extra=()):
-        if BASE and isinstance(body, str) and ctype.startswith("text/html"):
+        if isinstance(body, str) and ctype.startswith("text/html"):
             body = with_base(body)
         send(self, code, body.encode("utf-8") if isinstance(body, str) else body, ctype, extra)
 
@@ -130,8 +130,8 @@ class Handler(BaseHTTPRequestHandler):
         self._send(code, msg + "\n", "text/plain; charset=utf-8", extra)
 
     def _redirect(self, loc, extra=()):
-        # loc はこのサーバー内の絶対パス(safe_next 済みなど)。gateway の後ろでは BASE を付ける
-        if BASE and loc.startswith("/") and not loc.startswith("//"):
+        # loc はこのサーバー内の絶対パス(safe_next 済みなど)。BASE を付ける
+        if loc.startswith("/") and not loc.startswith("//"):
             loc = BASE + loc
         self._send(302, "", "text/plain", [("Location", loc), *extra])
 
@@ -364,13 +364,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._text(403, "Forbidden")
         u = urlsplit(self.path)
         path = u.path
-        if BASE:  # gateway の後ろ: /s/<名前>/… だけを受け、BASE を外してから今までどおり扱う
-            if path == BASE:
-                return self._send(302, "", "text/plain", [("Location", BASE + "/" + ("?" + u.query if u.query else ""))])
-            if not path.startswith(BASE + "/"):
-                return self._text(404, "Not Found")
-            path = path[len(BASE):]
-            self.path = path + ("?" + u.query if u.query else "")
+        # /s/<名前>/… だけを受け、BASE を外してから扱う
+        if path == BASE:
+            return self._send(302, "", "text/plain", [("Location", BASE + "/" + ("?" + u.query if u.query else ""))])
+        if not path.startswith(BASE + "/"):
+            return self._text(404, "Not Found")
+        path = path[len(BASE):]
+        self.path = path + ("?" + u.query if u.query else "")
         if self.command == "POST" and (path in ("/login", "/setup", "/logout", "/reset", "/resolve", "/agent-op", "/agent-new")
                                        or re.fullmatch(r"/jobs/[A-Za-z0-9][A-Za-z0-9_-]{0,63}", path)):
             return self._post(path)
@@ -390,7 +390,7 @@ def bind_server():
             if not 1 <= lo <= 65535:
                 raise SystemExit(f"herdr-webui: TB_UI_PORT は 1〜65535 の数字: {fixed}")
         else:
-            lo, hi = (int(x) for x in cfg("HERDR_WEBUI_RANGE", "8800-8819").split("-"))
+            lo, hi = (int(x) for x in cfg("HERDR_WEBUI_RANGE", DEFAULT_RANGE).split("-"))
     except ValueError:
         raise SystemExit("herdr-webui: ポート指定が数値ではありません")
     last = None
@@ -426,12 +426,7 @@ def main():
               f"{run_dir}/auth.json に移す(コピーする)か、パスワード再設定で新しい場所に作ると、この表示は消えます", flush=True)
     srv, port = bind_server()
     Handler.port = port
-    port_file = os.path.join(run_dir, "port")
-    inst_file = os.path.join(run_dir, "instance")
-    with open(port_file, "w") as f:
-        f.write(f"{port}\n")
-    with open(inst_file, "w") as f:
-        f.write(f"{INSTANCE or 'default'}\n")
+    # 一覧は port ファイルより先に書く(port ファイルが「起動済み」の合図)
     reg_name = INSTANCE or "default"
     try:
         old = registry.read_entry(reg_name)
@@ -441,10 +436,15 @@ def main():
         registry.register(reg_name, port, BASE)
     except OSError as ex:
         print(f"herdr-webui: インスタンス一覧({registry.REGISTRY_DIR()})に書けません。セッション一覧・入口には出ません: {type(ex).__name__}", flush=True)
+    port_file = os.path.join(run_dir, "port")
+    inst_file = os.path.join(run_dir, "instance")
+    with open(port_file, "w") as f:
+        f.write(f"{port}\n")
+    with open(inst_file, "w") as f:
+        f.write(f"{INSTANCE or 'default'}\n")
     print(f"herdr-webui: listening on http://{HOST}:{port}{BASE}/", flush=True)
     print(f"herdr-webui: instance={INSTANCE or 'default'} port={port}", flush=True)
-    if BASE:
-        print(f"herdr-webui: 入口(gateway)経由で開く: http://{HOST}:<入口のポート>{BASE}/", flush=True)
+    print(f"herdr-webui: 入口(gateway.py)経由で開く: http://{HOST}:<入口のポート、既定 8800>{BASE}/", flush=True)
     if Handler.auth.configured():
         print(f"herdr-webui: ログイン http://{HOST}:{port}{BASE}/login", flush=True)
     else:

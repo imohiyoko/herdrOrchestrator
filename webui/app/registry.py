@@ -1,6 +1,6 @@
 """動いている Web UI インスタンスの一覧(ホームの REGISTRY_DIR に 1 インスタンス 1 ファイル)。
 
-インスタンスは起動時に自分の名前・ポート・置き場所(base)を書き、終了時に消す。gateway と「セッション一覧」が読む。
+インスタンスは起動時に自分の名前・ポート・置き場所(base = /s/<名前>)を書き、終了時に消す。gateway と「セッション一覧」が読む。
 同じユーザーだけが読み書きする(ディレクトリ 700・ファイル 600)。読むときも、自分の所有の通常ファイルで、
 中身が形式どおりのものだけを使う(ポートは 127.0.0.1 にだけつなぐので、外へは向かない)。
 """
@@ -56,7 +56,7 @@ def read_entry(name):
     port, base = d.get("port"), d.get("base")
     if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
         return None
-    if base not in ("", f"/s/{name}"):
+    if base != f"/s/{name}":   # 入口の後ろに置かない旧い形(base が空)は扱わない
         return None
     return {"name": name, "port": port, "base": base, "pid": d.get("pid") if isinstance(d.get("pid"), int) and not isinstance(d.get("pid"), bool) else None}
 
