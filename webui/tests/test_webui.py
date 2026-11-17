@@ -770,6 +770,9 @@ _jd("# 1 行目の説明\n# 2 行目\n# 注意: COMMAND は bash -c でそのま
 _ab = _jv.job_about("unit")
 check("説明: 先頭のコメントだけ、注意書きは省き、トークンはマスク", _ab[:2] == ["1 行目の説明", "2 行目"] and len(_ab) == 3 and "ghp_" not in _ab[2], str(_ab))
 check("説明: 一覧の 1 行は先頭コメントの 1 行目", _jv.job_summary("unit", {"kind": "command"}) == "1 行目の説明")
+_jd("# 鍵の例\n# -----BEGIN RSA PRIVATE KEY-----\n# MIIEowIBAAKCAQEAsecretbody1234567890\n# -----END RSA PRIVATE KEY-----\nCOMMAND=true\n")
+_ab = _jv.job_about("unit")
+check("説明: 行をまたぐ秘密鍵のブロックは中身ごと伏せる", "MIIEow" not in " ".join(_ab) and "[マスク]" in " ".join(_ab), str(_ab))
 _jd("COMMAND='cd /x && HERDR_SESSION=default bin/tb notify flush; bin/tb digest'\n")
 check("説明: コメントが無ければ tb のサブコマンドから推す(notify flush は flush と取り違えない)",
       [c for c, _ in _jv.command_summary(_jv.job_defs("unit")["COMMAND"])] == ["tb notify flush", "tb digest"]

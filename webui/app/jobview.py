@@ -121,21 +121,20 @@ def job_about(name):
             text = f.read(CONF_MAX)
     except OSError:
         return []
-    out = []
+    block = []
     for line in text.splitlines():
         t = line.strip()
         if not t:
-            if out:
+            if block:
                 break   # 空行で説明は終わり
             continue
         if not t.startswith("#"):
             break
-        t = t.lstrip("#").strip()
-        if t and not _BOILER.match(t):
-            out.append(mask(clean(t))[0])
-        if len(out) >= 12:
-            break
-    return out
+        block.append(t.lstrip("#").strip())
+    # 行をまたぐ秘密(秘密鍵のブロックなど)も伏せるよう、ブロック全体をマスクしてから行に分ける
+    masked = mask(clean("\n".join(block)))[0]
+    out = [t.strip() for t in masked.splitlines() if t.strip() and not _BOILER.match(t.strip())]
+    return out[:12]
 
 
 # COMMAND 型でよく使う tb のサブコマンドの説明(conf に説明が無いときの補い)
@@ -145,7 +144,7 @@ TB_CMDS = (
     (r"\btb\s+digest\b", "tb digest", "worker から指揮官への報告をまとめて送る"),
     (r"\btb\s+pr-watch\b", "tb pr-watch", "許可したリポジトリの PR の動き(新規・approve・変更依頼・マージ)を通知に積む"),
     (r"\btb\s+compact-check\b", "tb compact-check", "文脈が大きくなった待機中の agent に /compact を送る"),
-    (r"\btb\s+pending\b", "tb pending", "未報告の完了・未配送の報告を再送する"),
+    (r"\btb\s+pending\b", "tb pending", "未報告のタスクと未配送の報告(C-<n>)を一覧する(再送は続く tb report が行う)"),
     (r"\btb\s+system-send\b", "tb system-send", "agent に本文を送る(scheduler からの送信)"),
     (r"\btb\s+review-pack\b", "tb review-pack", "レビュー用の集計を作る"),
 )
