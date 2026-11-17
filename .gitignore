@@ -14,6 +14,13 @@ scheduler/jobs/*.conf
 scheduler/settings/
 taskboard/config/spawn-rules.txt
 taskboard/config/limits.conf
+taskboard/config/approvals.conf
+taskboard/config/projects.conf
+taskboard/config/grants.conf
+taskboard/config/routes.conf
+taskboard/config/compact.conf
+taskboard/config/sched-watch.conf
+taskboard/config/spawn-policy.conf
 taskboard/config/notify.conf
 taskboard/config/repos.md
 taskboard/config/pr-queue.conf

@@ -17,6 +17,10 @@ tb proxy-check <id>   1 行目が allow(自動代行可)か human(人に回す)�
 
 agent の活動記録(hook から。bin/tb-hook 経由が基本):
 tb db-import <旧 DB> [--session <名前>] [--dry-run]   旧形式(checkout ごと)の DB を、共有の DB の 1 セッション(既定は今のセッション)の行として取り込む。人の端末だけ。元の DB は読むだけ
+tb config [list]   設定(projects / approvals / grants / routes / limits / notify / compact / sched-watch / spawn-policy)の出どころを出す。引く順: 環境変数で明示したファイル > DB のこのセッションの行 > DB の共通の行(*) > checkout の taskboard/config/<名前> > .example
+tb config show <キー> | history <キー>   今効いている本文 / 変更の履歴
+tb config set <キー> [--shared] < 本文 | edit <キー> [--shared] | unset <キー> [--shared]   DB のこのセッションの行(--shared なら全セッション共通の行)を書く・消す。人の端末だけ
+tb config import [--dry-run]   checkout の taskboard/config/*.conf を、全セッション共通の行として DB に取り込む(共通の行が既にあるキーは飛ばす)。人の端末だけ
 tb whoami [--short]   今の向き先(checkout・DB・herdr セッション・TB_INSTANCE・launchd ラベルの接頭辞・agent のペインか)と決まり方を出す。DB を開かず、何も書かない。--short はセッション名だけ
 tb touch --event UserPromptSubmit|Stop --session-id S [--pane-id P] [--tab-id T] [--workspace-id W] [--cwd D] [--prompt-id I]
          常に終了コード 0・出力なし。失敗は data/touch-errors.log に 1 行(理由コードのみ)

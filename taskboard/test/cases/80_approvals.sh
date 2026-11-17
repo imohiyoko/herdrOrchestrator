@@ -2,7 +2,7 @@
 # run.sh から番号順に source される(前のファイルが作った状態を使うものがある)
 # --- approvals(人の承認)
 export TB_DB=$TMP/appr.db TB_CONFIG=$TMP/send.conf TB_APPROVALS=$TMP/approvals.conf
-cp "$HERE/../config/approvals.conf" "$TB_APPROVALS"
+cp "$HERE/../config/approvals.conf.example" "$TB_APPROVALS"
 export FAKE_AGENTS='[{"pane_id":"wC:p1","name":"conductor","agent_session":{"value":"sc"}},{"pane_id":"wW:p1","name":"worker1","agent_session":{"value":"s1"}}]'
 : >"$FAKE_LOG"
 asql() { sqlite3 "$TB_DB" "$@"; }
@@ -30,7 +30,7 @@ eq "allow: human" "$(HERDR_PANE_ID= $TB allow 'role:change') $($TB approval role
 eq "allow: rewrites the same line (no duplicate)" "$(grep -c '^role:change' "$TB_APPROVALS")" "1"
 eq "ask: back to ask" "$(HERDR_PANE_ID= $TB ask 'send:task:worker1' >/dev/null; $TB approval send:task:worker1 | head -1)" "ask"
 eq "approval changes recorded" "$(asql "SELECT pattern||'='||value FROM approval_changes ORDER BY id;" | tr '\n' ' ')" "send:task:worker1=allow role:change=allow send:task:worker1=ask "
-eq "comments survive in approvals.conf" "$(grep -c '^#' "$TB_APPROVALS") -gt 5" "$(grep -c '^#' "$HERE/../config/approvals.conf") -gt 5"
+eq "comments survive in approvals.conf" "$(grep -c '^#' "$TB_APPROVALS") -gt 5" "$(grep -c '^#' "$HERE/../config/approvals.conf.example") -gt 5"
 # 古い outbox(pending なし)の移行
 export TB_DB=$TMP/old.db
 sqlite3 "$TB_DB" "CREATE TABLE outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, from_name TEXT NOT NULL, from_pane TEXT NOT NULL, from_session TEXT NOT NULL, target TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('task','info','answer')), task_id TEXT, text TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('queued','sent','denied')), reason TEXT, sent_at TEXT, created_at TEXT NOT NULL); INSERT INTO outbox (from_name, from_pane, from_session, target, kind, text, status, created_at) VALUES ('c','p','s','worker1','info','old','sent','t');"

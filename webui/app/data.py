@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
 from . import reqctx
-from .config import JOB_RE, SCHED_LOGS, STALL_MIN, TB_DB
+from .config import HERDR_ROOT, JOB_RE, SCHED_LOGS, STALL_MIN, TB_DB
 from .sanitize import clean
 from .herdr import agent_key, agent_session, cached, get_agents
 
@@ -66,6 +66,42 @@ def q_checked(sql, params=()):
         return [], False
     finally:
         c.close()
+
+
+# ---- 設定(config 表。taskboard/schema/013)。tb の lib/config.sh の config_lookup と同じ順で引く:
+# 環境変数で明示したファイル > DB のこのセッションの行 > DB の共通の行(*) > checkout の taskboard/config/<名前> > <名前>.example
+CONFIG_KEYS = {"projects": (("TB_CONFIG",), "projects.conf"),
+               "approvals": (("WEBUI_APPROVALS", "TB_APPROVALS"), "approvals.conf")}
+CONFIG_MAX = 262144
+
+
+def _read_text(path):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read(CONFIG_MAX + 1)
+    except OSError:
+        return None
+
+
+def config_text(key):
+    """(本文, 出どころ)。出どころは file:<パス> / db:<セッション> / db:* / example:<パス> / none。どこにも無い・読めなければ本文は None。
+    本文は CONFIG_MAX + 1 文字まで(それを超えたかで「大きすぎる」を見分けられる)。"""
+    envs, name = CONFIG_KEYS[key]
+    for ev in envs:
+        path = os.environ.get(ev)
+        if path:
+            return _read_text(path), "file:" + path
+    sess = reqctx.session()
+    rows, _ok = q_checked("SELECT herdr_session AS s, substr(body, 1, ?) AS body FROM main.config WHERE key=? AND herdr_session IN (?, '*') "
+                          "ORDER BY herdr_session='*' LIMIT 1", (CONFIG_MAX + 1, key, sess))
+    if rows:
+        return rows[0]["body"], "db:" + rows[0]["s"]
+    cdir = os.environ.get("TB_CONFIG_DIR") or os.path.join(HERDR_ROOT, "taskboard", "config")
+    for path, kind in ((os.path.join(cdir, name), "file:"), (os.path.join(cdir, name + ".example"), "example:")):
+        text = _read_text(path)
+        if text is not None:
+            return text, kind + path
+    return None, "none"
 
 
 def tail_lines(path, n, maxbytes=262144):

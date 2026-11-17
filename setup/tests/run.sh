@@ -163,6 +163,13 @@ fresh; mkdir -p "$R/taskboard/data"; : >"$R/taskboard/data/tasks.db"; run
 has "旧形式の DB が残っていれば warn" warn taskboard:legacy-db "$R/taskboard/data/tasks.db"
 printf '%s\n' "$OUT" | grep -A1 "taskboard:legacy-db" | grep -q "tb db-import" && ok "next: で tb db-import を案内" || ng "next: で tb db-import を案内"
 
+# --- 設定: checkout の config/*.conf が DB に取り込まれていなければ warn ---
+fresh; run; has "設定ファイルが無ければ ok" ok taskboard:config
+fresh; mkdir -p "$R/taskboard/config"; : >"$R/taskboard/config/projects.conf"; : >"$R/taskboard/config/approvals-catalog.conf"; run
+has "取り込んでいない設定ファイルは warn(キーを出す)" warn taskboard:config "projects"
+printf '%s\n' "$OUT" | grep -E "^warn +taskboard:config" | grep -q "catalog" && ng "既定値のファイル(catalog)は数えない" || ok "既定値のファイル(catalog)は数えない"
+printf '%s\n' "$OUT" | grep -A1 "taskboard:config" | grep -q "tb config import" && ok "next: で tb config import を案内" || ng "next: で tb config import を案内"
+
 # --- 引数 ---
 fresh; run --bogus; rc_is "不明なオプションは 2" 2
 

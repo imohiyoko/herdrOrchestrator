@@ -118,7 +118,7 @@ eq "risk strict: lowering the threshold and sender.model=ask take effect" "$(rk 
 
 # --- tb への組み込み(判定は変えない)
 export TB_DB=$TMP/risk.db TB_CONFIG=$TMP/send.conf TB_APPROVALS=$TMP/approvals-risk.conf
-cp "$HERE/../config/approvals.conf" "$TB_APPROVALS"
+cp "$HERE/../config/approvals.conf.example" "$TB_APPROVALS"
 export FAKE_AGENTS='[{"pane_id":"wC:p1","name":"conductor","agent_session":{"value":"sc"}},{"pane_id":"wW:p1","name":"worker1","agent_session":{"value":"s1"}}]'
 : >"$FAKE_LOG"
 eq "approval: no extra args → output exactly as before (no risk lines)" "$($TB approval send:task:worker1; echo "rc=$?")" "$(printf 'ask\nrule: send:task:* = ask\nrc=20')"

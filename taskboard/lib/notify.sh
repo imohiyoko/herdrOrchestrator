@@ -79,14 +79,14 @@ notify_norm() {  # $1=キー $2=値
 notify_load() {
   ((NOTIFY_LOADED)) && return 0
   local line k v
-  if [[ -f $NOTIFY_CONF ]]; then
+  if config_has notify; then
     while IFS= read -r line || [[ -n $line ]]; do
       line=$(trim "${line%%#*}"); [[ $line == *=* ]] || continue
       k=$(trim "${line%%=*}"); v=$(trim "${line#*=}")
       notify_key_ok "$k" || continue
       notify_norm "$k" "$v" || continue
       printf -v "NC_$k" '%s' "$NOTIFY_NORM"; printf -v "NC_SET_$k" '%s' 1
-    done <"$NOTIFY_CONF"
+    done < <(config_text notify)
   fi
   NOTIFY_LOADED=1
 }
@@ -535,18 +535,16 @@ cmd_pr-watch() {
 
 # ---------- tb notify ----------
 notify_write_conf() {  # $1=キー $2=値(人だけが呼ぶ)
-  local k=$1 v=$2 tmp line found=0
-  mkdir -p "$(dirname "$NOTIFY_CONF")"; [[ ! -L $NOTIFY_CONF ]] || die "notify.conf がシンボリックリンクです"
-  touch "$NOTIFY_CONF"; tmp=$(mktemp "$NOTIFY_CONF.XXXXXX")
-  {
+  local k=$1 v=$2 body line found=0
+  body=$(
     while IFS= read -r line || [[ -n $line ]]; do
       if [[ $line != \#* && $line == *=* && $(trim "${line%%=*}") == "$k" ]]; then
         if ((! found)); then printf '%s = %s\n' "$k" "$v"; found=1; fi
       else printf '%s\n' "$line"; fi
-    done <"$NOTIFY_CONF"
+    done < <(config_text notify)
     if ((! found)); then printf '%s = %s\n' "$k" "$v"; fi
-  } >"$tmp"
-  mv "$tmp" "$NOTIFY_CONF"; NOTIFY_LOADED=0
+  )
+  config_put notify "$body" notify; NOTIFY_LOADED=0
 }
 
 notify_event_ref() {  # "N-12" か "12" → 数字

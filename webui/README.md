@@ -117,7 +117,7 @@ POST/PUT/DELETE/PATCH は 405。
 | `/jobs/<job>` | 「ジョブが行うこと」(型・宛先 agent と今の状態・送られる本文 / 実行されるコマンドの全文・次回の予定・直近の結果・副作用の注記・承認の扱い。読み取りのみ)と、スケジュールの変更フォーム(自動更新しない)。保存先は `scheduler/settings/<job>.settings`、次の分から反映。「conf の値に戻す」で settings を消す |
 | `/ledger` | 送信履歴(tb の `messages` 表)。種別 × 結果の件数サマリと直近 100 件。failed は既定で畳む。`?kind=` `?result=`(sent / busy / failed / all) `?target=` `?from=` `?to=`(日付 `YYYY-MM-DD`、UTC)で絞り込み。send の `O-n` は `/outbox` にリンクし、本文は 1 行目だけ |
 | `/sessions` | セッション一覧(動いているほかの herdr セッションの Web UI へのリンク。入口の後ろでは、ログイン済みのセッションの緊急通知の件数も) |
-| `/perms` | 権限(`taskboard/config/approvals.conf` の読み取り)。上から順に順位・パターン・ask/allow・最後の変更(行末の注記と `approval_changes`)・その行で決まる操作の例・警告(`* = ask`、広い allow、上の行に隠れる行(ワイルドカードを含まない行)、「この操作はどの行で決まるか」の検索(`?op=`、tb の `approval_of` と同じ規則をここで再現。tb は呼ばない)、操作ごとの現在の権限(権限カタログ `taskboard/config/approvals-catalog.conf` × approvals.conf: 現在の値・決まる行・規則の有無(明示 / 既定に落ちる)・リスク階層・副作用・allow 候補・状態、`?kind=` `?state=` `?fallback=1` `?allowed=1` で絞り込み、high / human-only の操作が allow なら警告、reserved(将来用)と unwired(承認判定に渡らない。`proxy:*`)は薄く表示し、unwired の操作に当たる規則には「何も効かない」と警告、カタログに無い規則は「未知の規則」の欄)、変更履歴、`tb allow` / `tb ask` のコマンド行の組み立て表示(`?pat=&val=`。表示だけで実行しない)。変更の操作・POST は無い |
+| `/perms` | 権限(設定 `approvals` の読み取り。tb と同じく DB のこのセッションの行 → 共通の行 → `taskboard/config/approvals.conf` → `.example`)。上から順に順位・パターン・ask/allow・最後の変更(行末の注記と `approval_changes`)・その行で決まる操作の例・警告(`* = ask`、広い allow、上の行に隠れる行(ワイルドカードを含まない行)、「この操作はどの行で決まるか」の検索(`?op=`、tb の `approval_of` と同じ規則をここで再現。tb は呼ばない)、操作ごとの現在の権限(権限カタログ `taskboard/config/approvals-catalog.conf` × approvals.conf: 現在の値・決まる行・規則の有無(明示 / 既定に落ちる)・リスク階層・副作用・allow 候補・状態、`?kind=` `?state=` `?fallback=1` `?allowed=1` で絞り込み、high / human-only の操作が allow なら警告、reserved(将来用)と unwired(承認判定に渡らない。`proxy:*`)は薄く表示し、unwired の操作に当たる規則には「何も効かない」と警告、カタログに無い規則は「未知の規則」の欄)、変更履歴、`tb allow` / `tb ask` のコマンド行の組み立て表示(`?pat=&val=`。表示だけで実行しない)。変更の操作・POST は無い |
 
 名前の無い agent は `pane_id`(例: `w2:p3`)が名前の代わりになる。未知の URL は 404。
 
@@ -126,7 +126,7 @@ POST/PUT/DELETE/PATCH は 405。
 - `herdr agent list` / `herdr agent read`(結果は 3 秒キャッシュ)
 - tb と同じ DB(既定 `~/.local/state/herdr/tasks.db`。`mode=ro` で開く。無い・壊れていても落ちず、空の表になる)。DB は全セッション共有で、各セッションの Web UI は自分のセッションの行だけを見る(同じ名前の一時ビューで絞る)
 - 成果物として登録されたローカルのファイル(`/docs`。読むだけ)
-- `scheduler/logs/*.log`、`scheduler/jobs/*.conf`(`scheduler/bin/show.sh` 経由)、`taskboard/config/approvals.conf`(`/perms`)
+- `scheduler/logs/*.log`、`scheduler/jobs/*.conf`(`scheduler/bin/show.sh` 経由)、設定 `approvals` / `projects`(DB の `config` 表か `taskboard/config/` のファイル。`/perms` と宛先の表示)
 - 書き込むのは `scheduler/settings/<job>.settings` だけ。入力は数値(間隔は分か秒)・`HH:MM` か `HH:MM:SS`・決まった曜日だけを受け付け、scheduler が読めない内容なら元に戻す
 
 「滞留」は、`working` のまま最終入力(`agent_activity.last_prompt_at`)から 30 分を超えて停止がない agent。
@@ -234,7 +234,7 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.herdr-webui.plist
 | `WEBUI_TB_DB` | `TB_DB`、無ければ `~/.local/state/herdr/tasks.db` | tb と同じ DB(既定は `lib/herdr_env.py`) |
 | `WEBUI_SCHED_LOGS` / `WEBUI_SCHED_JOBS` / `WEBUI_SCHED_SETTINGS` / `WEBUI_RUN_DIR` | 兄弟ディレクトリ / `webui/run` | データ源・settings・`run/` の場所 |
 | (固定) | `taskboard/config/approvals-catalog.conf` | 権限カタログ。env では差し替えられない |
-| `WEBUI_APPROVALS` | `TB_APPROVALS`、無ければ `taskboard/config/approvals.conf` | `/perms` が読む approvals.conf(tb と同じ解決順。launchd 運用では tb が読むのと同じ approvals.conf を指すこと) |
+| `WEBUI_APPROVALS` | `TB_APPROVALS`、無ければ設定 `approvals`(DB → ファイル) | `/perms` が読む承認ルールのファイルを明示する(テスト用。普段は指定せず、tb と同じく DB から引く) |
 
 ## コードの構成
 

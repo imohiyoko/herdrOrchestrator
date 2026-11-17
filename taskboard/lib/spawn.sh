@@ -18,9 +18,8 @@ SPAWN_EXCLUDE_OP=""
 
 # 規則を読む。spawn-policy.conf → 無ければ .example → 無ければ組み込みの既定(上)。source せず、既知のキーだけ読む
 load_spawn_policy() {
-  local f=$SPAWN_POLICY line k v
-  [[ -f $f ]] || f=$SPAWN_POLICY.example
-  if [[ -f $f ]]; then
+  local line k v
+  if config_has spawn-policy; then
     while IFS= read -r line || [[ -n $line ]]; do
       line=$(trim "${line%%#*}"); [[ $line == *=* ]] || continue
       k=$(trim "${line%%=*}"); v=$(trim "${line#*=}")
@@ -32,7 +31,7 @@ load_spawn_policy() {
         model) [[ $v =~ $MODEL_RE ]] && SP_MODEL=$v;;
         denied_parents) SP_DENY_PARENTS=${v//,/ };;
       esac
-    done <"$f"
+    done < <(config_text spawn-policy)
   fi
   limits_override_spawn   # limits の spawn_max_per_parent / spawn_max_total が設定されていれば、それが優先
   return 0

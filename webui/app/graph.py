@@ -34,10 +34,6 @@ def roles_dir():
     return base
 
 
-def projects_conf():
-    return os.environ.get("TB_CONFIG") or os.path.join(HERDR_ROOT, "taskboard", "config", "projects.conf")
-
-
 def _read_lines(path):
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
@@ -91,7 +87,12 @@ def name_matches(name, pat, reg_role=None):
 def target_for(project, path=None):
     """project → 指揮官(core.sh の target_for と同じ。後に書いた行が勝つ)。"""
     t = DEFAULT_TARGET
-    for line in _read_lines(path or projects_conf()):
+    if path:
+        lines = _read_lines(path)
+    else:   # 設定は DB のこのセッションの行 → 共通の行 → checkout のファイル(app/data.config_text)
+        from . import data
+        lines = [ln.rstrip("\r") for ln in (data.config_text("projects")[0] or "").splitlines()]
+    for line in lines:
         k, sep, v = line.partition("=")
         k, v = re.sub(r"\s", "", k), re.sub(r"\s", "", v)
         if sep and k and not k.startswith("#") and v and k == project:

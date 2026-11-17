@@ -172,6 +172,18 @@ if [ -f "$legacy" ] && [ "$legacy" != "$db" ]; then
       "共有の DB へ取り込む: HERDR_SESSION=<この checkout のセッション> taskboard/bin/tb db-import $legacy(--dry-run で先に確かめられる)"
   else report ok "taskboard:legacy-db" "旧形式の DB は取り込み済み(不要なら消してよい): $legacy"; fi
 fi
+# 設定は DB の config 表に置く(schema/013)。checkout の config/*.conf があって、DB に共通の行(*)が無いキーを知らせる
+cfg_left=""
+for k in projects approvals grants routes limits notify compact sched-watch spawn-policy; do
+  [ -f "$ROOT/taskboard/config/$k.conf" ] || continue
+  hit=""
+  if [ -f "$db" ] && have sqlite3; then hit=$(sqlite3 -readonly "$db" "SELECT 1 FROM config WHERE herdr_session='*' AND key='$k' LIMIT 1;" 2>/dev/null); fi
+  [ -n "$hit" ] || cfg_left="$cfg_left $k"
+done
+if [ -n "$cfg_left" ]; then
+  report warn "taskboard:config" "DB に取り込んでいない設定ファイルがある(今はファイルを読んでいる):$cfg_left" \
+    "DB へ取り込む: taskboard/bin/tb config import(--dry-run で先に確かめられる。以後は tb config で編集)"
+else report ok "taskboard:config" "設定は DB から引く(確かめる: tb config)"; fi
 
 # --- 4. launchd の共通処理 ------------------------------------------------------
 # launchd_check <項目> <ラベル> <生成元 plist>

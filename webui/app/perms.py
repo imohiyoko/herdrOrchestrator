@@ -5,7 +5,8 @@ import re
 from fnmatch import fnmatchcase
 import shlex
 
-from .config import APPROVALS, CATALOG
+from .config import CATALOG
+from . import data
 from .graph import name_matches, roles_dir
 from .sanitize import clean
 
@@ -23,12 +24,9 @@ MAX_BYTES = 262144
 
 def load_rules():
     """[{no, pattern, value, note, line}]。読めなければ ([], エラー文)。"""
-    path = APPROVALS()
-    try:
-        with open(path, encoding="utf-8", errors="replace") as f:
-            text = f.read(MAX_BYTES + 1)
-    except OSError:
-        return [], "approvals.conf を読めません(無ければ、すべての操作が ask として扱われます)"
+    text, _src = data.config_text("approvals")   # DB のこのセッションの行 → 共通の行 → checkout のファイル
+    if text is None:
+        return [], "approvals の設定がありません(DB にもファイルにも無い。すべての操作が ask として扱われます)"
     if len(text.encode("utf-8", "replace")) > MAX_BYTES:
         return [], f"approvals.conf が大きすぎて({MAX_BYTES // 1024} KiB 超)全部は読めません。一覧と判定は出しません(tb は全体を読むので、手元で tb approval を使ってください)"
     rules = []
@@ -134,7 +132,16 @@ def tb_command(val, pat):
 
 
 def conf_path_label():
-    return os.path.basename(os.path.dirname(APPROVALS())) + "/" + os.path.basename(APPROVALS())
+    """承認ルールの出どころ(画面の表示用)。"""
+    src = data.config_text("approvals")[1]
+    if src.startswith(("file:", "example:")):
+        p = src.split(":", 1)[1]
+        return os.path.basename(os.path.dirname(p)) + "/" + os.path.basename(p)
+    if src == "db:*":
+        return "DB の設定 approvals(全セッション共通)"
+    if src.startswith("db:"):
+        return f"DB の設定 approvals(セッション {src[3:]})"
+    return "approvals(未設定)"
 
 
 # ---- 権限カタログ(taskboard/config/approvals-catalog.conf。操作の定義。判定には使わない)

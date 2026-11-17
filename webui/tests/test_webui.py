@@ -1272,7 +1272,7 @@ leak2 = [x for x in ("failbody-", "reportbody-", "SECOND-LINE-SECRET", "TITLETAI
 check("ログに送信履歴の本文・権限の検索語(URL のクエリ)を出さない", not leak2, str(leak2))
 _src = open(os.path.join(os.path.dirname(SERVER), "app", "perms.py"), encoding="utf-8").read()
 check("権限の画面は tb も他のコマンドも呼ばない(agent の pane から効く経路を作らない)",
-      "subprocess" not in _src and "os.system" not in _src and "open(path, encoding" in _src and '"w"' not in _src)
+      "subprocess" not in _src and "os.system" not in _src and '"w"' not in _src and "data.config_text(\"approvals\")" in _src)
 
 # ================= DB 不在・ログ不在・壊れた DB
 for name, prep in (("nodb", None), ("baddb", lambda e_: open(e_["WEBUI_TB_DB"], "w").write("not a sqlite file"))):
@@ -1829,6 +1829,33 @@ for _s in ("sa", "sb", "sa"):
         _hd.cached("t-key", lambda s=_s: _calls.append(s) or s)
 check("reqctx: herdr の結果キャッシュはセッションごと", _calls == ["sa", "sb"], str(_calls))
 check("reqctx: 文脈の外はプロセスの設定に落ちる", _rc.session() == "other")
+# 設定(config 表): このセッションの行 → 共通の行(*) → checkout のファイル。環境変数で明示したファイルが最優先
+_c = sqlite3.connect(_sdb)
+_c.execute("INSERT INTO config VALUES ('*','projects','pj = shared-cond','human','t'), ('sa','projects','pj = sa-cond','human','t'), ('*','approvals','send:* = allow','human','t')")
+_c.commit(); _c.close()
+from app import graph as _g3  # noqa: E402
+_old_tc = os.environ.pop("TB_CONFIG", None)
+_old_wa = os.environ.pop("WEBUI_APPROVALS", None)
+try:
+    _cfg_t = []
+    for _s in ("sa", "sb"):
+        with _rc.use(_s, _s):
+            _cfg_t.append((_g3.target_for("pj"), _data.config_text("projects")[1]))
+    check("config: projects はこのセッションの行、無ければ共通の行", _cfg_t == [("sa-cond", "db:sa"), ("shared-cond", "db:*")], str(_cfg_t))
+    with _rc.use("sb", "sb"):
+        _ap = _data.config_text("approvals")
+        _pl = __import__("app.perms", fromlist=["x"]).conf_path_label()
+    check("config: approvals も DB から(出どころの表示つき)", _ap[0] == "send:* = allow" and "全セッション共通" in _pl, f"{_ap} {_pl}")
+    os.environ["TB_CONFIG"] = os.path.join(TMP, "explicit-projects.conf")
+    open(os.environ["TB_CONFIG"], "w").write("pj = file-cond\n")
+    with _rc.use("sa", "sa"):
+        check("config: 環境変数で明示したファイルが DB より先", _g3.target_for("pj") == "file-cond")
+finally:
+    for _k, _v in (("TB_CONFIG", _old_tc), ("WEBUI_APPROVALS", _old_wa)):
+        if _v is None:
+            os.environ.pop(_k, None)
+        else:
+            os.environ[_k] = _v
 for _k, _v in (("WEBUI_TB_DB", _old_db), ("HERDR_SESSION", _old_hs)):
     if _v is None:
         os.environ.pop(_k, None)

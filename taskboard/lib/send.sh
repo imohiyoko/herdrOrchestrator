@@ -20,12 +20,12 @@ outbox_target_stopped() {  # $1=宛先
 conductor_names() {
   local k v
   printf '%s\n' "$DEFAULT_TARGET"
-  [[ -f $CONF ]] || return 0
+  config_has projects || return 0
   while IFS='=' read -r k v || [[ -n $k ]]; do
     k=${k//[[:space:]]/}; v=${v//[[:space:]]/}
     [[ -z $k || $k == \#* || -z $v ]] && continue
     printf '%s\n' "$v"
-  done <"$CONF"
+  done < <(config_text projects)
 }
 
 # route_allowed <from> <to>: 0 なら許可。理由は ROUTE_REASON に入る
@@ -42,7 +42,7 @@ route_allowed() {
 }
 _route_rules() {
   local from=$1 to=$2 line neg l r n
-  if [[ ! -f $ROUTES ]]; then
+  if ! config_has routes; then
     while IFS= read -r n; do
       [[ $from == "$n" ]] && { ROUTE_REASON="default: conductor $n"; return 0; }
     done < <(conductor_names)
@@ -61,7 +61,7 @@ _route_rules() {
       if ((neg)); then ROUTE_REASON="routes.conf: !$l -> $r"; return 1; fi
       ROUTE_REASON="routes.conf: $l -> $r"; return 0
     fi
-  done <"$ROUTES"
+  done < <(config_text routes)
   ROUTE_REASON="routes.conf: $from -> $to に一致する行がない"; return 1
 }
 

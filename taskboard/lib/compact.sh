@@ -15,16 +15,15 @@ COMPACT_PROJECTS=${TB_CLAUDE_PROJECTS:-$HOME/.claude/projects}
 
 # 設定値: 環境変数 TB_COMPACT_<キー大文字> > compact.conf > compact.conf.example > 既定。$1=キー $2=既定
 compact_cfg() {
-  local key=$1 def=$2 up f line k v ev
+  local key=$1 def=$2 up line k v ev
   up=$(tr '[:lower:]' '[:upper:]' <<<"$key"); ev="TB_COMPACT_$up"
   [[ -z ${!ev:-} ]] || { printf '%s' "${!ev}"; return; }
-  f=$COMPACT_CONF; [[ -f $f ]] || f="$COMPACT_CONF.example"
-  if [[ -f $f ]]; then
+  if config_has compact; then
     while IFS= read -r line || [[ -n $line ]]; do
       line=$(trim "${line%%#*}"); [[ $line == *=* ]] || continue
       k=$(trim "${line%%=*}"); v=$(trim "${line#*=}")
       [[ $k == "$key" ]] && { printf '%s' "$v"; return; }
-    done <"$f"
+    done < <(config_text compact)
   fi
   printf '%s' "$def"
 }
