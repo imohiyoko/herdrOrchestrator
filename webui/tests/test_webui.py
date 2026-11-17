@@ -1666,6 +1666,8 @@ check("perms: 台帳を読めないときは @役割 を map.conf で一致さ�
        _perms2.decide([{"raw": "send:task:@worker", "value": "ask"}, {"raw": "*", "value": "allow"}], "send:task:worker1")[0]]
       == ["ask", "allow", "ask"])
 _data2.q_checked = _qc
+check("perms: 拡張 glob の行(!(...) など)は判定できないとして止まる(下の allow に進まない)",
+      _perms2.decide([{"raw": "send:task:@!(conductor)", "value": "ask"}, {"raw": "*", "value": "allow"}], "send:task:worker1")[0] == "unknown")
 for _k, _v in _old.items():
     if _v is None:
         os.environ.pop(_k, None)

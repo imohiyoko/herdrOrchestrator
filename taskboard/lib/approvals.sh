@@ -11,6 +11,13 @@ valid_action() { [[ $1 =~ ^[A-Za-z0-9._:*?@-]{1,128}$ ]] || usage "操作名に�
 # approval_of <操作>: APPROVAL_VALUE に ask|allow、根拠の行を APPROVAL_RULE に入れる(サブシェルで呼ばない)
 APPROVAL_VALUE=ask
 approval_of() {
+  # 対象の役割は判定の間 1 回だけ引いて固定する(規則ごとに読み直さない)
+  local pinned=0
+  if [[ $1 == *:* && ${#ROLE_PIN_N[@]} -eq 0 ]]; then role_pin "${1##*:}"; pinned=1; fi
+  _approval_rules "$1"
+  ((pinned == 0)) || role_unpin
+}
+_approval_rules() {
   local act=$1 line k v
   APPROVAL_RULE="(一致なし: 既定 ask)"; APPROVAL_VALUE=ask
   if [[ -f $APPROVALS ]]; then

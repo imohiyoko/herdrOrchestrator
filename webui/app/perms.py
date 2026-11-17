@@ -46,7 +46,8 @@ def load_rules():
 
 
 def has_bracket(r):
-    return "[" in r["raw"]
+    """bash の glob と fnmatch で結果が変わりうる行([...] と、拡張 glob の !(...) @(...) など)。"""
+    return "[" in r["raw"] or "(" in r["raw"]
 
 
 def matches(op, pat):
