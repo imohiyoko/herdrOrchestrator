@@ -58,8 +58,8 @@ APPROVAL_VALUE=ask
 approval_of() {
   # 対象の役割は判定の間 1 回だけ引いて固定する(規則ごとに読み直さない)
   local pinned=0
-  if [[ $1 == *:* && ${#ROLE_PIN_N[@]} -eq 0 ]]; then role_pin "${1##*:}"; pinned=1; fi
-  _approval_rules "$1"
+  if [[ $1 == *:* && ${#ROLE_PIN_N[@]} -eq 0 ]]; then role_pin "${1##*:}" ${2:+"$2"}; pinned=1; fi   # 主体(grants.conf)も固定
+  _approval_rules "$1" "${2:-}"
   ((pinned == 0)) || role_unpin
 }
 _approval_rules() {
