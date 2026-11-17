@@ -211,7 +211,7 @@ def page_agents(qs, ctx=None):
         act = activity_for(a)
         tasks = tasks_for_agent(a)
         r0 = reg.get(a.get("name") or "") or {}
-        open_t = [t for t in tasks if t.get("status") in tree.OPEN_TASK_STATUSES]
+        open_t = [t for t in tasks if t.get("status") in tree.OPEN_TASK_STATUSES and t.get("owner_agent") == a.get("name")]
         nodes.append({"agent": a, "name": a.get("name") or "", "role": tree.role_of(a.get("name") or "", r0.get("role")),
                       "spawned_by": r0.get("spawned_by"), "spawn_task": r0.get("spawn_task"),
                       "task_project": open_t[0].get("project") if open_t else None})

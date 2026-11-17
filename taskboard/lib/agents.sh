@@ -479,9 +479,9 @@ AGENT_TREE_JQ='
         elif ($a.lead // "") != "" and ($names | index($a.lead)) and $a.lead != $a.name then . + {parent:$a.lead, parent_via:"project"}
         elif $a.role_file == "worker.md" and ($names | index($dflt)) and $dflt != $a.name then . + {parent:$dflt, parent_via:"default"}
         else . + {parent:null, parent_via:null} end)
-  | (map({key:.name, value:.parent}) | from_entries) as $p
+  | length as $cnt | (map({key:.name, value:.parent}) | from_entries) as $p
   | def top($n; $k): if $n == null then true elif $k == 0 then false else top($p[$n]; $k - 1) end;
-    map(if top(.parent; length) then . else . + {parent:null, parent_via:null} end)'
+    map(if top(.parent; $cnt) then . else . + {parent:null, parent_via:null} end)'
 
 # ツリーを罫線つきで描く(入力は AGENT_TREE_JQ の結果)
 AGENT_TREE_RENDER_JQ='
