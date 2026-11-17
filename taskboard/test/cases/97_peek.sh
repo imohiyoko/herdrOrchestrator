@@ -18,5 +18,6 @@ eq "peek: not running → 1" "$(rc $TB peek nobody)" "1"
 eq "peek: read_log keeps who read whom" "$(sqlite3 "$TB_DB" "SELECT reader||'>'||target||':'||status FROM read_log ORDER BY id;" | tr '\n' ' ')" \
   "human>conductor:ok sweeper>sweeper:ok sweeper>worker1:ok sweeper>conductor:denied human>nobody:failed "
 eq "agents --graph: agent-to-agent reads are edges (denied marked)" "$($TB agents --graph --json | jq -r '[.edges[] | select(.verb=="read") | "\(.from)>\(.to):\(.status)"] | sort | join(",")')" "sweeper>conductor:denied,sweeper>worker1:ok"
+eq "peek: a failed agent list is still logged" "$(FAKE_LIST_FAIL=1 rc $TB peek worker1) $(sqlite3 "$TB_DB" "SELECT reader||'>'||target||':'||status FROM read_log ORDER BY id DESC LIMIT 1;")" "1 human>worker1:failed"
 export TB_APPROVALS=$_saved_appr
 unset FAKE_AGENTS; export HERDR_PANE_ID=$_saved_pane

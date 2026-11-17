@@ -23,6 +23,7 @@ eq "role-set: a comma list" "$($TB role-set worker1 worker,manager | cut -d' ' -
 eq "role-set: every role must exist" "$(rc $TB role-set worker1 worker,nosuch)" "2"
 eq "role-set: an hr agent cannot grant hr inside a list" "$(HERDR_PANE_ID=whrm1:p1 rc $TB role-set worker1 task,hr)" "1"
 eq "role-set: an agent with hr among several roles may change others" "$(HERDR_PANE_ID=whrm1:p1 $TB role-set hrt1 task | cut -d' ' -f1-5)" "hrt1 role hr,task -> task"
+eq "agent-new: --role takes a comma list of existing roles" "$(rc $TB agent-new nw1 --cwd "$TMP" --role worker,nosuch) $($TB agent-new nw1 --cwd "$TMP" --role worker,manager | cut -d' ' -f1-2) $(sqlite3 "$TB_DB" "SELECT role FROM agents WHERE name='nw1';")" "2 nw1 started worker,manager"
 eq "agents --group role: grouped by the role combination" "$($TB agents --group role | grep '^\[' | tr '\n' ' ')" "[hr,manager] [task] [worker,manager] "
 export TB_APPROVALS=$_saved_appr
 if [[ -n $_saved_roles ]]; then export TB_ROLES=$_saved_roles; else unset TB_ROLES; fi
