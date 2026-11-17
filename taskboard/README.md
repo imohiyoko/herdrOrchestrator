@@ -259,6 +259,7 @@ agent 同士の関係は 1 本の木ではなく、`主体 -動詞→ 対象` �
 | report | `tb comment`(直近 7 日) | 担当 agent → タスクの project の指揮官 |
 | analyze | アラート(直近 7 日) | 報告した見張り役 → 解析役 |
 | role | `tb role-set` の記録(直近 7 日) | 人事役 → ロールを変えられた agent(人の操作は辺にしない) |
+| read | `tb peek` の記録(直近 7 日) | 読んだ agent → 読まれた agent(拒否は denied。人と本人の読み取りは辺にしない) |
 
 ```
 [conductor]
@@ -284,6 +285,16 @@ agent 同士の関係は 1 本の木ではなく、`主体 -動詞→ 対象` �
 
 役割は上の決まり方で引くので、役割を変えられる操作(`tb agent-new --role`、`roles/` や `map.conf` の書き換え)は、そのまま権限の変更になる。agent からのそれらは従来どおり人の承認が要る(`agent:new:*` と `role:change` は ask のまま)。
 
+#### 1 体に複数ロール(分野 × 立場)
+
+ロールはカンマ区切りで複数付けられる(例 `hr,manager` と `hr,task`)。「人事のマネージャー」と「人事のタスク担当」を分けるような、分野と立場の掛け合わせに使う。
+
+- 台帳(`tb role-set <agent> hr,manager`)と `roles/map.conf` の値に書ける。`roles/<agent 名>.md` があればそれ 1 つだけ
+- 本人に渡す役割は `_common.md` のあとに各ロールのファイルを順に足したもの(`tb roles` の役割ファイル欄は `hr.md,manager.md`)
+- 規則の `@hr` は hr を持つ agent すべて、`@hr+manager` は両方を持つ agent だけに一致する
+- グループ化(`--group role`、関係グラフの枠)は組み合わせ単位(`[hr,manager]`)
+- 1 体が複数の project を抱えているかは、ロールの数とは別に会計役のレビュー材料(「仕事の混在」)で見る
+
 #### ロール変更は人事役の専用操作(`tb role-set`)
 
 agent ごとのロールを変える入口は `tb role-set <agent 名> <ロール> [--reason R]` に絞る(台帳の role を書き換え、`role_changes` に記録する)。
@@ -293,6 +304,19 @@ agent ごとのロールを変える入口は `tb role-set <agent 名> <ロー�
 - agent は自分のロールを変えられず、人事役のロールを付けることもできない(権限の自己拡大を防ぐ)
 - `roles/<名前>.md` がある agent は台帳のロールが効かないので拒否する
 - 記録は `tb role-log`。人事役による変更は関係グラフに `role` の辺として出る。会計役(auditor)は提案するだけで、変えない
+- 人事役のロールは、複数のうちの 1 つとしても agent からは付けられない(人だけ)
+
+#### agent の中身を読むのは `tb peek` だけ
+
+`tb peek <agent> [--lines N]` は pane の直近の出力を読む。人と本人はそのまま、ほかの agent からは `approvals.conf` の `agent:read:<名前>`(`agent:read:@<役割>` も可)が allow のときだけ(既定は ask = 読めない。終了コード 20)。誰がいつ誰を読んだかは `read_log` に残り、agent 同士の読み取りは関係グラフに `read` の辺として出る(拒否は denied)。
+
+tb を通らない直読みを防ぐため、agent の Claude Code 設定で herdr の直接呼び出しを止める(指揮官の `herdr agent prompt` と同じやり方):
+
+```json
+{ "permissions": { "deny": ["Bash(herdr agent read:*)", "Bash(herdr agent prompt:*)"] } }
+```
+
+これは agent 側の設定による制限で、herdr のソケットに届く別の手段までは止めない。強く絞るには herdr 側で呼び出し元を確かめる仕組みが要る。
 
 ### 規則つきの子 agent 作成(`tb agent-spawn`)
 

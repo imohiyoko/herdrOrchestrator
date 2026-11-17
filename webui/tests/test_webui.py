@@ -1650,6 +1650,10 @@ check("graph: ロールごとの subgraph とラベルつきの辺(拒否は点�
       and "-- 依頼 x2 -->" in _mm and "-. 依頼 拒否 .->" in _mm and "<b>" not in _mm, _mm)
 check("graph: 規則の @役割", [_graph.name_matches(n, p) for n, p in (("worker1", "@worker"), ("worker1", "@cond*"), ("x", "@worker"), ("x", "x"))]
       == [True, False, False, True])
+open(os.path.join(_rd, "manager.md"), "w").write("x")
+open(os.path.join(_rd, "hr.md"), "w").write("x")
+check("graph: 複数ロール(台帳はカンマ区切り)と @a+b", _graph.role_of("helper", "hr, manager") == "hr,manager"
+      and [_graph.name_matches("helper", p, "hr,manager") for p in ("@hr", "@hr+manager", "@hr+worker", "@manag*")] == [True, True, False, True])
 _rules = [{"raw": "send:*:@worker", "value": "allow"}, {"raw": "*", "value": "ask"}]
 check("perms: @役割 の行は文字列の一致だけで「届かない」としない",
       _perms2.shadowed_by([{"no": 1, "raw": "send:task:*r", "value": "allow"}, {"no": 2, "raw": "send:task:@worker", "value": "ask"}],

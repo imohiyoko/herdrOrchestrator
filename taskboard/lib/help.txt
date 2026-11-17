@@ -44,7 +44,7 @@ tb outbox [--status pending|queued|sent|denied] [--json]
 tb role-context --source startup|resume|clear|compact --session-id S   hook 用。渡すときだけ hook の JSON を出す。常に 0
 tb role-broadcast [agent 名 ...]   動いている agent に役割の置き場所を送る(同じ版を渡し済みのセッションは飛ばす)
 tb roles [--json]                  agent ごとの役割ファイルと、渡した版が最新か(current|outdated|never|no-role)
-tb role-set <agent 名> <ロール> [--reason R]   ロールを変える(台帳)。人と人事役(@hr)だけ。人事役からは role:change が allow のときだけ。自分・人事役のロールは不可
+tb role-set <agent 名> <ロール[,ロール...]> [--reason R]   ロールを変える(台帳。複数は 分野×立場 の組み合わせ、例 hr,manager)。人と人事役(@hr)だけ。人事役からは role:change が allow のときだけ。自分・人事役のロールは不可
 tb role-log [--json]               ロール変更の記録(誰がいつ誰を何から何に)
 
 人の承認(config/approvals.conf。<操作のパターン> = ask|allow、最初に一致した行、無一致は ask):
@@ -77,6 +77,7 @@ tb proposals [P-<n>] [--status open|applied|rejected]
 tb proposal-resolve P-<n> --status applied|rejected [--note N]   設定役か人だけ
 
 agent の停止・復活・新規作成(台帳 agents。人の端末からはそのまま、agent の pane からは approvals の agent:<op>:<名前>):
+tb peek <agent 名> [--lines N]   agent の直近の出力を読む(1〜200 行、既定 40)。人と本人はそのまま、ほかの agent は approvals の agent:read:<名前>(agent:read:@<役割> も可)が allow のときだけ(終了コード 20)。記録は read_log
 tb agents [--json] [--all] [--group role] [--graph]   台帳と判定材料(状態・killable・未完了タスク・未対応の質問・idle 分・役割)。herdr と同期する。
          --group role はロールごとにまとめる。--graph は関係グラフ(誰が誰に何をしたか: spawn / lead / send:<kind> / report / analyze。直近 7 日)。--json と併用で {nodes, edges}
 tb agent-new <名前> [--cwd D] [--kind K] [--model M] [--role R] [--prompt P] [--killable yes|no]
