@@ -4,7 +4,10 @@
 # Python 側の同じ定義は lib/herdr_env.py。片方を変えたらもう片方も変える(tests/test_env.sh が突き合わせる)。
 HERDR_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 HERDR_DEFAULT_BIN=herdr                                   # PATH から探す(scheduler は PATH に /opt/homebrew/bin を足す)
-HERDR_DEFAULT_TB_DB=$HERDR_ROOT/taskboard/data/tasks.db   # tb / webui / setup が読み書きする DB
+# tb / webui / setup が読み書きする DB。checkout をまたいでホームの 1 か所に置き、herdr のセッションは行の herdr_session 列で分ける
+HERDR_STATE_DIR=${XDG_STATE_HOME:-$HOME/.local/state}/herdr
+HERDR_DEFAULT_TB_DB=$HERDR_STATE_DIR/tasks.db
+HERDR_LEGACY_TB_DB=$HERDR_ROOT/taskboard/data/tasks.db    # 旧: checkout ごとの DB(tb db-import で取り込む)
 HERDR_SCHEMA_DIR=$HERDR_ROOT/taskboard/schema             # NNN_*.sql。PRAGMA user_version で順に流す
 
 # herdr のセッション名。herdr の CLI と同じ優先順で、HERDR_SOCKET_PATH > HERDR_SESSION > herdr-session ファイル > default。

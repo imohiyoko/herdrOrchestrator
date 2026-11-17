@@ -289,7 +289,7 @@ eq "retry: only failed rows (created / pending are refused)" "$(rc $TB pr-queue 
 eq "retry: human puts a failed row back to approved, attempts reset" "$($TB pr-queue retry PQ-$fid | cut -d'(' -f1) $(pqsql "SELECT status||attempts FROM pr_queue WHERE id=$fid;")" "PQ-$fid approved approved0"
 : >"$FAKE_GH_LOG"; $TB pr-queue run >/dev/null 2>&1
 eq "retry: the guards still run, and the next run picks it up" "$(pqgh 'pr create') $(pqsql "SELECT status FROM pr_queue WHERE id=$fid;")" "1 created"
-eq "retry: no schema change (pr_queue columns unchanged)" "$(pqsql "SELECT group_concat(name) FROM pragma_table_info('pr_queue');")" "id,repo,branch,title,body_file,body_sha256,task_id,requested_by,status,last_error,attempts,pr_url,created_at,decided_at,executed_at"
+eq "retry: no schema change (pr_queue columns unchanged)" "$(pqsql "SELECT group_concat(name) FROM pragma_table_info('pr_queue');")" "id,repo,branch,title,body_file,body_sha256,task_id,requested_by,status,last_error,attempts,pr_url,created_at,decided_at,executed_at,herdr_session"
 unset PR_QUEUE_CONF
 
 # ---- ブランチ登録の拡張: 接頭辞を conf で列挙(既定は agent/ のみ)。登録時に origin に実在するかを確かめる(fail-closed)

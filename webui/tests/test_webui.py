@@ -178,18 +178,28 @@ open(os.path.join(TMP, "fake", "dialog.txt"), "w").write(
     "\x1b[1mDo you want to run?\x1b[0m\n> rm -rf /tmp/x " + XSS + "\n  1. Yes\n  2. No\r\n")
 
 
+def session_fill(c, session="default"):
+    """テストが herdr_session を書かずに足した行を、Web UI のセッション(既定 default)の行にする(テスト専用の便宜)。
+    tb は必ず herdr_session を書く。Web UI はこのセッションの行だけを読む(app/data.py の session_views)"""
+    for (t,) in c.execute("SELECT m.name FROM sqlite_master m WHERE m.type='table' AND EXISTS "
+                          "(SELECT 1 FROM pragma_table_info(m.name) p WHERE p.name='herdr_session')").fetchall():
+        c.execute(f"CREATE TRIGGER IF NOT EXISTS fill_{t} AFTER INSERT ON {t} WHEN NEW.herdr_session='' "
+                  f"BEGIN UPDATE {t} SET herdr_session='{session}' WHERE rowid=NEW.rowid; END")
+
+
 def make_db(path):
     c = sqlite3.connect(path)
     # 本物のスキーマ(taskboard/schema/*.sql を tb と同じ順に流す)。手書きのスキーマは持たない
     for f in sorted(glob.glob(os.path.join(SCHEMA_DIR, "[0-9][0-9][0-9]_*.sql"))):
-        c.executescript(open(f, encoding="utf-8").read())
+        c.executescript(open(f, encoding="utf-8").read().replace("@SESSION@", "'default'"))
         c.execute(f"PRAGMA user_version={int(os.path.basename(f)[:3])}")  # tb と同じく版を記録(tb が移行し直さない)
+    session_fill(c)
     c.execute("INSERT INTO tasks VALUES ('T-1','pj','題 " + XSS + "','alpha','11111111-2222-3333-4444-555555555555',"
-              "NULL,'in_progress',NULL,'[\"a.md\"]',NULL,NULL,NULL,'2026-11-06T00:00:00Z','2026-11-06T00:00:00Z')")
+              "NULL,'in_progress',NULL,'[\"a.md\"]',NULL,NULL,NULL,'2026-11-06T00:00:00Z','2026-11-06T00:00:00Z','default')")
     c.execute("INSERT INTO comments (task_id,kind,text,from_name,from_pane,from_session,created_at) VALUES "
               "('T-1','question','質問 " + XSS + "','alpha','w1:p1','s','2026-11-06T00:00:00Z')")
     c.execute("INSERT INTO agent_activity VALUES ('11111111-2222-3333-4444-555555555555','w1:p1',NULL,NULL,NULL,NULL,"
-              "'2026-11-06T00:00:00Z',NULL,'2026-11-06T00:00:00Z')")
+              "'2026-11-06T00:00:00Z',NULL,'2026-11-06T00:00:00Z','default')")
     c.commit()
     c.close()
 
@@ -341,7 +351,7 @@ _c.execute("INSERT INTO messages (kind,ref,target,body,result,created_at) VALUES
 
 # タスク一覧の fixture(親子・担当・PJ・未報告・停滞・長い題・長い報告)
 _now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-_t_ins = "INSERT INTO tasks VALUES (?,?,?,?,NULL,NULL,?,?,'[]',NULL,NULL,?,?,?)"
+_t_ins = "INSERT INTO tasks VALUES (?,?,?,?,NULL,NULL,?,?,'[]',NULL,NULL,?,?,?,'default')"
 for _row in [("T-2", "pj", "親 " + XSS, "beta", "todo", None, None, _now_iso, _now_iso),
              ("T-3", "pj2", "子", "alpha", "in_progress", "T-2", "2026-11-07T00:00:00Z", _now_iso, _now_iso),
              ("T-4", "pj2", "x" * 200 + "TITLETAIL", "alpha", "done", "T-2", "2026-11-07T00:00:00Z", _now_iso, _now_iso),
@@ -1770,6 +1780,32 @@ _t2 = _a2.create_session()
 check("auth: 別のプロセスで作ったセッションも有効(書き込みが互いを消さない)", _a2.session_hash(_t1) and _a1.session_hash(_t2))
 _a2.destroy_session(_t1)
 check("auth: 別のプロセスでのログアウトも効く", _a1.session_hash(_t1) is None and _a1.session_hash(_t2))
+
+# ================= DB は全セッション共有。各セッションの Web UI は自分のセッションの行だけを読む(app/data.py の一時ビュー)
+sys.path.insert(0, os.path.dirname(HERE))
+from app import data as _data  # noqa: E402
+_sdb = os.path.join(TMP, "sessions.db")
+make_db(_sdb)
+_c = sqlite3.connect(_sdb)
+_c.execute("INSERT INTO tasks (id,project,title,status,created_at,updated_at,herdr_session) VALUES ('T-o-001','o','other','todo','t','t','other')")
+_c.execute("INSERT INTO comments (task_id,kind,text,from_name,from_pane,from_session,created_at,herdr_session) "
+           "VALUES ('T-o-001','question','other q','x','p','s','t','other')")
+_c.commit(); _c.close()
+_old_db, _old_hs = os.environ.get("WEBUI_TB_DB"), os.environ.get("HERDR_SESSION")
+os.environ["WEBUI_TB_DB"] = _sdb
+os.environ["HERDR_SESSION"] = "default"
+_d_ids = [r["id"] for r in _data.q("SELECT id FROM tasks ORDER BY id")]
+_d_cm = _data.q("SELECT COUNT(*) AS n FROM comments c JOIN tasks t ON t.id=c.task_id")[0]["n"]
+os.environ["HERDR_SESSION"] = "other"
+_o_ids = [r["id"] for r in _data.q("SELECT id FROM tasks ORDER BY id")]
+check("sessions: default の Web UI に別のセッションの行は出ない", _d_ids == ["T-1"] and _d_cm == 1, f"{_d_ids} {_d_cm}")
+check("sessions: other の Web UI は other の行だけ", _o_ids == ["T-o-001"], str(_o_ids))
+check("sessions: 読み取り専用のまま(書き込めない)", not _data.q("INSERT INTO tasks (id,project,title,created_at,updated_at) VALUES ('x','x','x','t','t') RETURNING id"))
+for _k, _v in (("WEBUI_TB_DB", _old_db), ("HERDR_SESSION", _old_hs)):
+    if _v is None:
+        os.environ.pop(_k, None)
+    else:
+        os.environ[_k] = _v
 
 print()
 print("FAILED: " + ", ".join(fails) if fails else "all passed")

@@ -124,7 +124,7 @@ POST/PUT/DELETE/PATCH は 405。
 ## データ源(すべて読み取りのみ)
 
 - `herdr agent list` / `herdr agent read`(結果は 3 秒キャッシュ)
-- `taskboard/data/tasks.db`(`mode=ro` で開く。無い・壊れていても落ちず、空の表になる)
+- tb と同じ DB(既定 `~/.local/state/herdr/tasks.db`。`mode=ro` で開く。無い・壊れていても落ちず、空の表になる)。DB は全セッション共有で、各セッションの Web UI は自分のセッションの行だけを見る(同じ名前の一時ビューで絞る)
 - 成果物として登録されたローカルのファイル(`/docs`。読むだけ)
 - `scheduler/logs/*.log`、`scheduler/jobs/*.conf`(`scheduler/bin/show.sh` 経由)、`taskboard/config/approvals.conf`(`/perms`)
 - 書き込むのは `scheduler/settings/<job>.settings` だけ。入力は数値(間隔は分か秒)・`HH:MM` か `HH:MM:SS`・決まった曜日だけを受け付け、scheduler が読めない内容なら元に戻す
@@ -231,7 +231,7 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.herdr-webui.plist
 | `WEBUI_FAIL_DELAY` | `1` | ログイン・再設定の失敗時の遅延(秒) |
 | `WEBUI_DOC_ROOTS` | (なし) | パス指定で開いてよいディレクトリを足す(`:` 区切り)。agent の作業ディレクトリは自動で入る |
 | `HERDR_BIN` | `herdr` | herdr の実行ファイル(テストで疑似に差し替え) |
-| `WEBUI_TB_DB` | `TB_DB`、無ければ `taskboard/data/tasks.db` | tb と同じ DB(既定は `lib/herdr_env.py`) |
+| `WEBUI_TB_DB` | `TB_DB`、無ければ `~/.local/state/herdr/tasks.db` | tb と同じ DB(既定は `lib/herdr_env.py`) |
 | `WEBUI_SCHED_LOGS` / `WEBUI_SCHED_JOBS` / `WEBUI_SCHED_SETTINGS` / `WEBUI_RUN_DIR` | 兄弟ディレクトリ / `webui/run` | データ源・settings・`run/` の場所 |
 | (固定) | `taskboard/config/approvals-catalog.conf` | 権限カタログ。env では差し替えられない |
 | `WEBUI_APPROVALS` | `TB_APPROVALS`、無ければ `taskboard/config/approvals.conf` | `/perms` が読む approvals.conf(tb と同じ解決順。launchd 運用では tb が読むのと同じ approvals.conf を指すこと) |

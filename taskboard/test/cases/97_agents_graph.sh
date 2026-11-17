@@ -14,11 +14,11 @@ grsql "UPDATE agents SET spawned_by='worker1', spawn_task='T-a-001' WHERE name='
 tid=$($TB add -p projb -t 'b work' --owner worker2); $TB update "$tid" --status in_progress >/dev/null
 tid2=$($TB add -p proja -t 'a work' --owner worker2); $TB update "$tid2" --status review >/dev/null
 NOW="strftime('%Y-%m-%dT%H:%M:%SZ','now')"
-grsql "INSERT INTO outbox (from_name, from_pane, from_session, target, kind, text, status, created_at) VALUES
-  ('conductor','wconductor:p1','s','worker1','task','x','sent',$NOW), ('conductor','wconductor:p1','s','worker1','task','y','sent',$NOW),
-  ('worker1','wworker1:p1','s','worker2','task','z','denied',$NOW), ('conductor','wconductor:p1','s','worker1','info','old','sent','2000-01-01T00:00:00Z');
-  INSERT INTO comments (task_id, kind, text, from_name, from_pane, from_session, created_at) VALUES ('$tid','progress','p','worker2','wworker2:p1','s',$NOW);
-  INSERT INTO alerts (fingerprint, title, source, status, analyst, first_seen, last_seen) VALUES ('f','t','watcher','analyzing','analyst-A1',$NOW,$NOW);"
+grsql "INSERT INTO outbox (herdr_session, from_name, from_pane, from_session, target, kind, text, status, created_at) VALUES
+  ('default', 'conductor','wconductor:p1','s','worker1','task','x','sent',$NOW), ('default', 'conductor','wconductor:p1','s','worker1','task','y','sent',$NOW),
+  ('default', 'worker1','wworker1:p1','s','worker2','task','z','denied',$NOW), ('default', 'conductor','wconductor:p1','s','worker1','info','old','sent','2000-01-01T00:00:00Z');
+  INSERT INTO comments (herdr_session, task_id, kind, text, from_name, from_pane, from_session, created_at) VALUES ('default', '$tid','progress','p','worker2','wworker2:p1','s',$NOW);
+  INSERT INTO alerts (herdr_session, fingerprint, title, source, status, analyst, first_seen, last_seen) VALUES ('default', 'f','t','watcher','analyzing','analyst-A1',$NOW,$NOW);"
 
 edges=$($TB agents --graph --json | jq -r '.edges | sort_by(.from, .to, .verb) | .[] | "\(.from) \(.verb) \(.to) \(.status) \(.n)"' | tr '\n' ',')
 eq "agents --graph: typed edges from spawn / lead / send / report / analyze (a node may have several upstreams)" "$edges" \

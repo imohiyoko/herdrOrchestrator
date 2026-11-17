@@ -74,8 +74,8 @@ eq "hook: no body/reply/token in DB" "$(sqlite3 "$TB_DB" .dump | grep -c 'SECRET
 
 # activity: working 推定と滞留(stuck)
 old='2020-01-01T00:00:00.000Z'; new=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
-sqlite3 "$TB_DB" "INSERT INTO agent_activity(session_id,last_prompt_at,last_stop_at,updated_at) VALUES
-  ('old-working','$old',NULL,'$old'), ('old-done','$old','2020-01-01T00:05:00.000Z','$old'), ('fresh-working','$new',NULL,'$new');"
+sqlite3 "$TB_DB" "INSERT INTO agent_activity(herdr_session, session_id,last_prompt_at,last_stop_at,updated_at) VALUES
+  ('default', 'old-working','$old',NULL,'$old'), ('default', 'old-done','$old','2020-01-01T00:05:00.000Z','$old'), ('default', 'fresh-working','$new',NULL,'$new');"
 eq "activity: old prompt w/o stop → working+stuck" "$(act old-working | jq -r '"\(.working) \(.stuck)"')" "1 1"
 eq "activity: stopped after prompt → neither" "$(act old-done | jq -r '"\(.working) \(.stuck)"')" "0 0"
 eq "activity: fresh prompt → working, not stuck" "$(act fresh-working | jq -r '"\(.working) \(.stuck)"')" "1 0"

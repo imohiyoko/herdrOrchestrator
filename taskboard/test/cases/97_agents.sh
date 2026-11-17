@@ -33,7 +33,7 @@ eq "agents: flag shown with reason" "$($TB agents | grep '^worker1' | cut -f4,9 
 tid=$($TB add -p ag -t 'open work' --owner worker1); $TB update "$tid" --status in_progress >/dev/null
 eq "agent-stop: open task → refused" "$($TB agent-stop worker1 2>&1 | grep -c "未完了タスク $tid")" "1"
 $TB update "$tid" --status todo >/dev/null
-agsql "INSERT INTO agent_activity (session_id, pane_id, last_prompt_at, updated_at) VALUES ('s1','wW:p1', strftime('%Y-%m-%dT%H:%M:%fZ','now','+1 minute'), 'x');"
+agsql "INSERT INTO agent_activity (herdr_session, session_id, pane_id, last_prompt_at, updated_at) VALUES ('default', 's1','wW:p1', strftime('%Y-%m-%dT%H:%M:%fZ','now','+1 minute'), 'x');"
 eq "agent-stop: new input after the flag → stale" "$($TB agent-stop worker1 2>&1 | grep -c 'killable=stale')" "1"
 agsql "UPDATE agent_activity SET last_prompt_at='2000-01-01T00:00:00.000Z', last_stop_at='2000-01-01T00:01:00.000Z', cwd='$TMP' WHERE session_id='s1';"
 eq "agent-stop: --force refused from an agent pane" "$(HERDR_PANE_ID=wC:p1 rc $TB agent-stop worker1 --force)" "1"

@@ -503,9 +503,9 @@ cmd_review-submit() {
   if [[ $by == "$GATE_INGEST_SENDER" ]]; then echo "tb: 送信者名 $GATE_INGEST_SENDER は取り込み口の予約名です。記録しません" >&2; exit 5; fi
   # タスクと作者(タスクの owner)
   local exists owner
-  exists=$(sql "SELECT count(*) FROM tasks WHERE id=$(q "$tid");")
+  exists=$(sql "SELECT count(*) FROM tasks WHERE herdr_session=$SQS AND id=$(q "$tid");")
   [[ $exists == 1 ]] || die "タスクが見つかりません: $tid"
-  owner=$(sql "SELECT COALESCE(owner_agent,'') FROM tasks WHERE id=$(q "$tid");")
+  owner=$(sql "SELECT COALESCE(owner_agent,'') FROM tasks WHERE herdr_session=$SQS AND id=$(q "$tid");")
   if [[ $kind == agent ]]; then
     # 最小の職務分掌(設計書 11.3): agent はレビュー担当の役割だけ。作者と同一は拒否。作者が分からないときも拒否
     if [[ -z $owner ]]; then echo "tb: タスクの owner がいないため、作者と別かを確かめられません。記録しません" >&2; exit 4; fi
@@ -611,7 +611,7 @@ _gate_cmd_ingest() {
   [[ $sha =~ ^[0-9a-f]{7,40}$ ]] || usage "--sha は 7〜40 桁の小文字 16 進"
   # agent の pane からは実行できない(送信者 ingest を名乗らせない)。既知の限界: 環境変数を外せば破れる(docs/gate.md)
   if [[ -n ${HERDR_PANE_ID:-} ]]; then echo "tb: gate ingest-review は agent の pane からは実行できません" >&2; exit 5; fi
-  local exists; exists=$(sql "SELECT count(*) FROM tasks WHERE id=$(q "$tid");")
+  local exists; exists=$(sql "SELECT count(*) FROM tasks WHERE herdr_session=$SQS AND id=$(q "$tid");")
   [[ $exists == 1 ]] || die "タスクが見つかりません: $tid"
   _gate_load_ingest_conf || { echo "tb: gate ingest-review: $GATE_ING_ERR" >&2; exit 1; }
   local w; for w in "${GATE_WARNS[@]:-}"; do [[ -n $w ]] && echo "warn: $w" >&2; done
@@ -695,7 +695,7 @@ _gate_cmd_ingest_events() {
   local owner=${BASH_REMATCH[1]} repo=${BASH_REMATCH[2]} num=${BASH_REMATCH[3]}
   # agent の pane からは実行できない(送信者 ingest を名乗らせない)。既知の限界: 環境変数を外せば破れる(docs/gate.md)
   if [[ -n ${HERDR_PANE_ID:-} ]]; then echo "tb: gate ingest-events は agent の pane からは実行できません" >&2; exit 5; fi
-  local exists; exists=$(sql "SELECT count(*) FROM tasks WHERE id=$(q "$tid");")
+  local exists; exists=$(sql "SELECT count(*) FROM tasks WHERE herdr_session=$SQS AND id=$(q "$tid");")
   [[ $exists == 1 ]] || die "タスクが見つかりません: $tid"
   _gate_load_ingest_conf 0 || { echo "tb: gate ingest-events: $GATE_ING_ERR" >&2; exit 1; }
   local w; for w in "${GATE_WARNS[@]:-}"; do [[ -n $w ]] && echo "warn: $w" >&2; done

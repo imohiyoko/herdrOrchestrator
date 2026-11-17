@@ -20,9 +20,9 @@ herdr_send() {  # $1=宛先 $2=本文 $3=ログ用 ID [$4=種別(report|comment|
     idle|done) ;;
     "") log_message "$kind" "$id" "$target" "$msg" failed
         if [[ $ecode == agent_not_found ]]; then
-          echo "tb: 宛先 '$target' が herdr セッション '${HERDR_SESSION:-default}' に見つかりません(セッション違いの可能性。HERDR_SESSION=<名前> で指定)。未送信: $id" >&2
+          echo "tb: 宛先 '$target' が herdr セッション '$SESS' に見つかりません(セッション違いの可能性。HERDR_SESSION=<名前> で指定)。未送信: $id" >&2
         else
-          echo "tb: 宛先 '$target' の状態を取得できません(herdr セッション '${HERDR_SESSION:-default}')。未送信(pending に残す): $id" >&2
+          echo "tb: 宛先 '$target' の状態を取得できません(herdr セッション '$SESS')。未送信(pending に残す): $id" >&2
         fi
         return 11;;
     *)  log_message "$kind" "$id" "$target" "$msg" busy
@@ -39,8 +39,8 @@ herdr_send() {  # $1=宛先 $2=本文 $3=ログ用 ID [$4=種別(report|comment|
 
 # 送信の記録はアプリ(tb)が書く。agent の自己申告に頼らない
 log_message() {  # $1=kind $2=ref $3=target $4=body $5=sent|busy|failed
-  sql "INSERT INTO messages (kind, ref, target, body, result, created_at)
-    VALUES ($(q "$1"), $(q "$2"), $(q "$3"), $(q "$4"), $(q "$5"), $(q "$(now)"));" >/dev/null || true
+  sql "INSERT INTO messages (herdr_session, kind, ref, target, body, result, created_at)
+    VALUES ($SQS, $(q "$1"), $(q "$2"), $(q "$3"), $(q "$4"), $(q "$5"), $(q "$(now)"));" >/dev/null || true
 }
 
 # scheduler(tick.sh)からのプロンプト送信。agent の pane からは使えない。記録は messages(kind=scheduler)

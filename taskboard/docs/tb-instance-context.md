@@ -6,6 +6,7 @@
   2. 問題は、tb に**セッションを指定する構造が無い**こと。`tb --session staging list` を、どの cwd・どのシェルからでも、staging セッションの tb・DB・herdr に向けて実行できるようにする。
   3. staging は「1 つの OS の上で herdr セッションが複数立ち上がる場合」の模擬と動作確認の場所。
 - **後の変更(Web UI)**: Web UI はブラウザから開くポートを入口(`webui/gateway.py`、既定 8800)の 1 つにした。各セッションの Web UI は空きポートで待ち受け、`/s/<セッション名>/` に並ぶ。ログインは全セッション共通。この文書の「webui ポート」「`TB_UI_PORT`」は当時の設計(`webui/README.md` が今の決まり)。
+- **後の変更(DB)**: DB は全セッションで 1 つ(`~/.local/state/herdr/tasks.db`)にし、行を `herdr_session` 列で分けた(`schema/012`)。この文書の「セッションごとの DB」「台帳の DB 列」は当時の設計(`taskboard/README.md` の「セッションと DB」が今の決まり)。旧形式の DB は `tb db-import` で取り込む。
 - 前提: 複数セッションの紐づけ設計(案 A+)= 1 セッション = 1 checkout = 1 DB = 1 launchd 名前空間 = 1 webui。
   この文書の「**インスタンス**」は、その 1 組を指し、**herdr セッションと 1 対 1** である(インスタンス名 = セッション名。default は default)。
 - 根拠: コード読み取りと、`ls -l` / `grep` / `herdr` の読み取り専用の確認(「確認済み」)。実機で動かしていない点は「推測」と書く。

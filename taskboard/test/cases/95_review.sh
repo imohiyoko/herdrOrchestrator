@@ -7,9 +7,9 @@ export FAKE_AGENTS='[{"pane_id":"wU:p1","name":"auditor","agent_session":{"value
 : >"$FAKE_LOG"
 ausql() { sqlite3 "$TB_DB" "$@"; }
 $TB list >/dev/null
-ausql "INSERT INTO messages (kind, ref, target, body, result, created_at) VALUES ('digest','D-1','conductor','$(printf 'x%.0s' $(seq 1 500))','sent',strftime('%Y-%m-%dT%H:%M:%SZ','now')), ('send','O-1','worker1','short','busy',strftime('%Y-%m-%dT%H:%M:%SZ','now'));
-       INSERT INTO alerts (fingerprint, severity, title, source, status, count, first_seen, last_seen, analysis_started_at, analyzed_at, result_summary) VALUES
-       ('f1','low','ノイズ','watch','analyzed',7,strftime('%Y-%m-%dT%H:%M:%SZ','now'),strftime('%Y-%m-%dT%H:%M:%SZ','now'),strftime('%Y-%m-%dT%H:%M:%SZ','now','-12 minutes'),strftime('%Y-%m-%dT%H:%M:%SZ','now'),'誤報');"
+ausql "INSERT INTO messages (herdr_session, kind, ref, target, body, result, created_at) VALUES ('default', 'digest','D-1','conductor','$(printf 'x%.0s' $(seq 1 500))','sent',strftime('%Y-%m-%dT%H:%M:%SZ','now')), ('default', 'send','O-1','worker1','short','busy',strftime('%Y-%m-%dT%H:%M:%SZ','now'));
+       INSERT INTO alerts (herdr_session, fingerprint, severity, title, source, status, count, first_seen, last_seen, analysis_started_at, analyzed_at, result_summary) VALUES
+       ('default', 'f1','low','ノイズ','watch','analyzed',7,strftime('%Y-%m-%dT%H:%M:%SZ','now'),strftime('%Y-%m-%dT%H:%M:%SZ','now'),strftime('%Y-%m-%dT%H:%M:%SZ','now','-12 minutes'),strftime('%Y-%m-%dT%H:%M:%SZ','now'),'誤報');"
 pack=$($TB review-pack --mark)
 for want in "# レビュー材料" "digest | sent | 1 | 500" "worker1 | 1 | 0" "A-1 | 7 | low | ノイズ" "analyzed | low | 1 | 6 | 12" "watch | sent | 1" "watch | skipped_state | 1"; do
   [[ $pack == *"$want"* ]] && ok "review-pack: $want" || { ng "review-pack: $want"; echo "$pack" | head -60; }

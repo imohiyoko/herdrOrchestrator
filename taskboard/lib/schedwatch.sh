@@ -168,5 +168,5 @@ collect_sched_obs() {
     fi
   done
   # 条件が外れたものは記録を消す(再び当てはまったら、また送る)
-  sql "DELETE FROM observations WHERE kind IN ('schedoff','schedstale','schedfail') AND key NOT IN (${cur}'');"
+  sql "DELETE FROM observations WHERE herdr_session=$SQS AND kind IN ('schedoff','schedstale','schedfail') AND key NOT IN (${cur}'');"
 }

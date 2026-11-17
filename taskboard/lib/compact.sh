@@ -64,13 +64,13 @@ cmd_compact-check() {
       echo "$name - skip(excluded)"; continue
     fi
     case $st in idle|done) ;; *) echo "$name - skip(${st:-unknown})"; continue;; esac
-    ck=$(sql "SELECT COALESCE(kind,'$KIND_DEFAULT') FROM agents WHERE name=$(q "$name");")
+    ck=$(sql "SELECT COALESCE(kind,'$KIND_DEFAULT') FROM agents WHERE herdr_session=$SQS AND name=$(q "$name");")
     kind_supports "${ck:-$KIND_DEFAULT}" compact || { echo "$name - skip(kind=$ck: compact 非対応)"; continue; }
-    [[ -n $sid ]] || sid=$(sql "SELECT COALESCE(session_id,'') FROM agents WHERE name=$(q "$name");")
+    [[ -n $sid ]] || sid=$(sql "SELECT COALESCE(session_id,'') FROM agents WHERE herdr_session=$SQS AND name=$(q "$name");")
     tok=$(compact_tokens "$sid")
     [[ $tok =~ ^[0-9]+$ ]] || { echo "$name - skip(no transcript usage)"; continue; }
     ((tok > thr)) || { echo "$name $tok skip(below threshold $thr)"; continue; }
-    last=$(sql "SELECT COALESCE(CAST(strftime('%s','now') - strftime('%s', MAX(decided_at)) AS INTEGER), -1) FROM agent_ops WHERE op='compact' AND status='done' AND target=$(q "$name");")
+    last=$(sql "SELECT COALESCE(CAST(strftime('%s','now') - strftime('%s', MAX(decided_at)) AS INTEGER), -1) FROM agent_ops WHERE herdr_session=$SQS AND op='compact' AND status='done' AND target=$(q "$name");")
     if ((last >= 0 && last < minint)); then echo "$name $tok skip(compacted ${last}s ago, min_interval ${minint}s)"; continue; fi
     approval_of "agent:compact:$name"
     if [[ $APPROVAL_VALUE != allow ]]; then echo "$name $tok skip(approval: agent:compact:$name is ask; add 'agent:compact:* = allow' to approvals.conf)"; continue; fi

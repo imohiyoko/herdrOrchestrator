@@ -13,7 +13,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 db = sqlite3.connect(":memory:")
 for f in sorted(glob.glob(os.path.join(ROOT, "taskboard", "schema", "[0-9][0-9][0-9]_*.sql"))):
-    db.executescript(open(f, encoding="utf-8").read())
+    db.executescript(open(f, encoding="utf-8").read().replace("@SESSION@", "'default'"))
 
 found = fail = 0
 for path in sorted(glob.glob(os.path.join(ROOT, "webui", "app", "*.py"))):

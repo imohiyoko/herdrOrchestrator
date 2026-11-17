@@ -29,7 +29,7 @@
 }
 ```
 
-DB の場所を変えたいときは `TB_DB` を agent の環境に渡す(既定は `<TASKBOARD_DIR>/data/tasks.db`)。
+DB の場所を変えたいときは `TB_DB` を agent の環境に渡す(既定は全セッション共有の `~/.local/state/herdr/tasks.db`。活動記録には書いたセッションも残る)。
 
 ## 置き場所
 ### 推奨: プロジェクト単位(`<project>/.claude/settings.json`)

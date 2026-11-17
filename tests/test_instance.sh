@@ -91,7 +91,7 @@ eq "webui plist: instance log names differ" "$(grep -c "launchd-webui-training\\
 eq "webui plist: 未設定は TB_INSTANCE を足さず従来のログ名" "$(grep -c -e TB_INSTANCE -e 'launchd-webui-' "$TMP/gen-a/local.herdr-webui.plist")" "0"
 web c TB_INSTANCE='a/b'; eq "webui plist: bad instance writes nothing" "$(ls "$TMP/gen-c" 2>/dev/null | wc -l | tr -d ' ')" "0"
 
-# --- tb の HSESS は socket パスを見る(tb 本体を source せず、定義行だけ評価)
-eq "tb HSESS follows the socket" "$(HERDR_SESSION=staging HERDR_SOCKET_PATH=/h/.config/herdr/sessions/training/herdr.sock clean env HERDR_SESSION=staging HERDR_SOCKET_PATH=/h/.config/herdr/sessions/training/herdr.sock bash -c "source '$ROOT/lib/herdr-env.sh'; $(grep '^HSESS=' "$ROOT/taskboard/lib/agents.sh" | sed 's/ *#.*//'); echo \$HSESS")" "training"
+# --- tb のセッション(lib/db.sh の SESS。DB の行の分け方)は socket パスを見る(tb 本体を source せず、定義行だけ評価)
+eq "tb SESS follows the socket" "$(clean env HERDR_SESSION=staging HERDR_SOCKET_PATH=/h/.config/herdr/sessions/training/herdr.sock bash -c "source '$ROOT/lib/herdr-env.sh'; $(grep '^SESS=' "$ROOT/taskboard/lib/db.sh" | sed 's/ *#.*//'); echo \$SESS")" "training"
 
 echo "pass=$pass fail=$fail"; [[ $fail -eq 0 ]]

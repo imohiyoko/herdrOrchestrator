@@ -17,9 +17,9 @@ eq "digest: immediate prompt sent" "$(prompts)" "1"
 $TB claim $d2 --owner worker1 --session sidle >/dev/null
 $TB claim $d3 --owner w3 --session sstuck >/dev/null
 $TB claim $d4 --owner w4 --session sblk >/dev/null
-dsql "INSERT INTO agent_activity (session_id, last_prompt_at, last_stop_at, updated_at) VALUES
-  ('sidle', strftime('%Y-%m-%dT%H:%M:%fZ','now','-30 minutes'), strftime('%Y-%m-%dT%H:%M:%fZ','now','-20 minutes'), 'x'),
-  ('sstuck', strftime('%Y-%m-%dT%H:%M:%fZ','now','-45 minutes'), NULL, 'x');"
+dsql "INSERT INTO agent_activity (herdr_session, session_id, last_prompt_at, last_stop_at, updated_at) VALUES
+  ('default', 'sidle', strftime('%Y-%m-%dT%H:%M:%fZ','now','-30 minutes'), strftime('%Y-%m-%dT%H:%M:%fZ','now','-20 minutes'), 'x'),
+  ('default', 'sstuck', strftime('%Y-%m-%dT%H:%M:%fZ','now','-45 minutes'), NULL, 'x');"
 $TB done $d3 -d /tmp/never.md -m 'not yet' >/dev/null 2>&1 || true
 dsql "UPDATE tasks SET status='in_progress' WHERE id='$d3';"   # done にした後の戻し(未報告の done を作らない)
 $TB done $d1 -d /tmp/d1.md -m 'd1 summary' >/dev/null

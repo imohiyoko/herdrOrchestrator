@@ -6,7 +6,7 @@
 # ロールは herdr セッション固有。roles/sessions/<セッション>/ があれば、そのセッションではそこだけを使う(共有の roles/ は見ない)。
 # 無ければ共有の roles/。台帳の役割(agents.role)も、同じセッションの agent のものだけを使う
 ROLES_BASE=${TB_ROLES:-$TB_ROOT/../roles}
-ROLES_SESSION=$(herdr_session_name)
+ROLES_SESSION=$SESS   # このセッション(lib/db.sh)
 if [[ $ROLES_SESSION =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ && -d $ROLES_BASE/sessions/$ROLES_SESSION ]]; then ROLES_DIR=$ROLES_BASE/sessions/$ROLES_SESSION
 else ROLES_DIR=$ROLES_BASE; fi
 ROLE_MAX=${TB_ROLE_MAX:-12000}
@@ -35,10 +35,9 @@ role_files_for() {  # $1=agent 名 [$2=台帳の role]
   local reg row
   if [[ -n ${2+x} ]]; then reg=$2
   else
-    row=$(sql -separator $'\x1f' "SELECT herdr_session, COALESCE(role,'') FROM agents WHERE name=$(q "$name");" 2>/dev/null) || { [[ -n ${ROLE_STRICT:-} ]] && return 1; row=""; }
-    # 別の herdr セッションの agent には、このセッションの役割を付けない(ロールはセッション固有)
-    if [[ -n $row && ${row%%$'\x1f'*} != "$ROLES_SESSION" ]]; then return 0; fi
-    reg=${row#*$'\x1f'}
+    # 台帳はこのセッションの行だけ。別の herdr セッションの agent は台帳に無いものとして map.conf で決める
+    row=$(sql "SELECT COALESCE(role,'') FROM agents WHERE herdr_session=$SQS AND name=$(q "$name");" 2>/dev/null) || { [[ -n ${ROLE_STRICT:-} ]] && return 1; row=""; }
+    reg=$row
   fi
   if [[ -n $reg ]]; then found=$(_role_list "$reg"); [[ -z $found ]] || { printf '%s\n' "$found"; return 0; }; fi
   [[ -f $ROLES_DIR/map.conf ]] || return 0
@@ -146,11 +145,11 @@ load_role() {  # $1=agent 名
 }
 
 last_briefed_hash() {  # $1=session_id
-  sql "SELECT hash FROM role_briefings WHERE session_id=$(q "$1") ORDER BY id DESC LIMIT 1;"
+  sql "SELECT hash FROM role_briefings WHERE herdr_session=$SQS AND session_id=$(q "$1") ORDER BY id DESC LIMIT 1;"
 }
 record_briefing() {  # session agent file hash source via
-  sql "INSERT INTO role_briefings (session_id, agent, role_file, hash, source, via, created_at)
-    VALUES ($(q "$1"), $(q "$2"), NULLIF($(q "$3"),''), $(q "$4"), $(q "$5"), $(q "$6"), $(q "$(now)"));" >/dev/null
+  sql "INSERT INTO role_briefings (herdr_session, session_id, agent, role_file, hash, source, via, created_at)
+    VALUES ($SQS, $(q "$1"), $(q "$2"), NULLIF($(q "$3"),''), $(q "$4"), $(q "$5"), $(q "$6"), $(q "$(now)"));" >/dev/null
 }
 
 # 人か agent かの判定用: 一覧を取れなければ 1(「名前が無い」= 人の pane と区別する)
@@ -236,20 +235,21 @@ cmd_role-set() {
     fi
   fi
   agent_sync >/dev/null 2>&1 || true
-  local sess; sess=$(sql "SELECT herdr_session FROM agents WHERE name=$(q "$name");")
-  [[ -n $sess ]] || die "台帳に無い agent です: $name(tb agents で確かめる)"
-  [[ $sess == "$ROLES_SESSION" ]] || die "$name は herdr セッション '$sess' の agent です。ロールはセッション固有なので、HERDR_SESSION=$sess で実行してください"
+  if [[ -z $(sql "SELECT 1 FROM agents WHERE herdr_session=$SQS AND name=$(q "$name");") ]]; then
+    other_session "$name" && die "$OP_OUT(ロールはセッション固有)"
+    die "台帳に無い agent です: $name(tb agents で確かめる)"
+  fi
   [[ ! -f $ROLES_DIR/$name.md ]] || die "roles/$name.md があるため、台帳のロールは効きません(そのファイルを人事役の手順で直す)"
   # 旧ロールは実効の役割(台帳の役割ファイルが無ければ map.conf)。台帳の値を先に読み、変更はその値が変わっていないときだけ行う
   # (読んでから書くまでに別の変更が入ったら、履歴の old_role がずれるので何もせずやり直しを促す)
   local reg n
-  reg=$(sql "SELECT COALESCE(role,'') FROM agents WHERE name=$(q "$name");") || die "台帳を読めません"
+  reg=$(sql "SELECT COALESCE(role,'') FROM agents WHERE herdr_session=$SQS AND name=$(q "$name");") || die "台帳を読めません"
   old=$(role_name_of "$name" "$reg")   # 読んだ台帳の値から実効の役割を決める(もう一度は読まない)
   n=$(sql "BEGIN IMMEDIATE;
     INSERT INTO role_changes (agent, old_role, new_role, changed_by, reason, created_at, herdr_session)
-    SELECT $(q "$name"), NULLIF($(q "$old"),''), $(q "$role"), $(q "$REQ_BY"), NULLIF($(q "$(oneline "$why" 300)"),''), $(q "$(now)"), $(q "$ROLES_SESSION")
-    WHERE (SELECT COALESCE(role,'') FROM agents WHERE name=$(q "$name"))=$(q "$reg");
-    UPDATE agents SET role=$(q "$role"), updated_at=$(q "$(now)") WHERE name=$(q "$name") AND COALESCE(role,'')=$(q "$reg");
+    SELECT $(q "$name"), NULLIF($(q "$old"),''), $(q "$role"), $(q "$REQ_BY"), NULLIF($(q "$(oneline "$why" 300)"),''), $(q "$(now)"), $SQS
+    WHERE (SELECT COALESCE(role,'') FROM agents WHERE herdr_session=$SQS AND name=$(q "$name"))=$(q "$reg");
+    UPDATE agents SET role=$(q "$role"), updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND name=$(q "$name") AND COALESCE(role,'')=$(q "$reg");
     SELECT changes();
     COMMIT;") || die "ロールを変えられませんでした(DB)"
   [[ $n == 1 ]] || die "同時に別のロール変更が入りました。もう一度実行してください"
@@ -257,12 +257,11 @@ cmd_role-set() {
   echo "$name role ${old:--} -> $new (by $REQ_BY)。本人に配るには: tb role-broadcast $name"
 }
 
-# ロール変更の記録(このセッションのもの。セッションを記録する前の行も出す)
-role_log_where() { printf "herdr_session IS NULL OR herdr_session=%s" "$(q "$ROLES_SESSION")"; }
+# ロール変更の記録(このセッションのもの)
 cmd_role-log() {
   local json=0; [[ ${1:-} == --json ]] && json=1
-  if ((json)); then sql -json "SELECT * FROM role_changes WHERE $(role_log_where) ORDER BY id DESC LIMIT 100;" | jq -c '(. // [])[]'
-  else sql -nullvalue - -separator $'\t' "SELECT created_at, agent, COALESCE(old_role,'-')||' -> '||new_role, changed_by, COALESCE(reason,'') FROM role_changes WHERE $(role_log_where) ORDER BY id DESC LIMIT 100;"; fi
+  if ((json)); then sql -json "SELECT * FROM role_changes WHERE herdr_session=$SQS ORDER BY id DESC LIMIT 100;" | jq -c '(. // [])[]'
+  else sql -nullvalue - -separator $'\t' "SELECT created_at, agent, COALESCE(old_role,'-')||' -> '||new_role, changed_by, COALESCE(reason,'') FROM role_changes WHERE herdr_session=$SQS ORDER BY id DESC LIMIT 100;"; fi
 }
 
 # agent ごとの役割ファイルと、渡した版が最新か
@@ -276,7 +275,7 @@ cmd_roles() {
     if load_role "$name"; then
       if [[ -n $sess ]]; then
         last=$(last_briefed_hash "$sess")
-        at=$(sql "SELECT created_at FROM role_briefings WHERE session_id=$(q "$sess") ORDER BY id DESC LIMIT 1;")
+        at=$(sql "SELECT created_at FROM role_briefings WHERE herdr_session=$SQS AND session_id=$(q "$sess") ORDER BY id DESC LIMIT 1;")
       fi
       if [[ -z $last ]]; then state=never; elif [[ $last == "$ROLE_HASH" ]]; then state=current; else state=outdated; fi
     else state=no-role; fi

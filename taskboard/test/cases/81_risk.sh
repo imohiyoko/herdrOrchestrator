@@ -134,7 +134,7 @@ HERDR_PANE_ID=wC:p1 $TB send worker1 --text 'plain task' >/dev/null 2>&1; r=$?
 eq "send: approvals ask stays pending (exit 20) whatever the risk says" "$r|$(sqlite3 "$TB_DB" "SELECT status FROM outbox ORDER BY id DESC LIMIT 1;")" "20|pending"
 # 台帳に agent がいない宛先(役割は map.conf で引ける)でも評価は出る。宛先の状態が不明 → ask(参考)
 eq "send: target state unknown in the ledger → reference ask + reason" "$(sqlite3 "$TB_DB" "SELECT reason FROM outbox ORDER BY id DESC LIMIT 1;" | grep -c 'unknown:target.state +ask')" "1"
-sqlite3 "$TB_DB" "INSERT INTO agents (name,state,created_by,created_at,updated_at,model) VALUES ('worker1','stopped','tb','t','t','opus');"
+sqlite3 "$TB_DB" "INSERT INTO agents (herdr_session, name,state,created_by,created_at,updated_at,model) VALUES ('default', 'worker1','stopped','tb','t','t','opus');"
 HERDR_PANE_ID=wC:p1 $TB send worker1 --kind info --text 'stopped target' >/dev/null 2>&1
 eq "send: stopped target → R-06 in the reason, delivery unaffected by risk" "$(sqlite3 "$TB_DB" "SELECT reason FROM outbox ORDER BY id DESC LIMIT 1;" | grep -c 'R-06 +2 宛先が停止中')" "1"
 # 人の端末から(pane なし)の approval 評価: 送信者は human

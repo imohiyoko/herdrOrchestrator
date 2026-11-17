@@ -165,7 +165,7 @@ limits_count_working() {  # LIVE_AGENTS から。名前のある(台帳に載る
 limits_counts() {
   local rc=0
   agent_sync || rc=1
-  LIM_RUNNING=$(sql "SELECT COUNT(*) FROM agents WHERE state='running' AND herdr_session=$(q "$HSESS");")
+  LIM_RUNNING=$(sql "SELECT COUNT(*) FROM agents WHERE herdr_session=$SQS AND state='running';")
   limits_count_working
   return $rc
 }
@@ -248,8 +248,8 @@ limits_collect() {  # 数と上限を LS_* に入れる
   LS_IMAX=$(limit_get incident_max_open);  LS_AMAX=$(limit_get analyst_max)
   LS_SMAX=$(limit_get spawn_max_total)
   LS_INC=$(limits_open_incidents) || LS_INC="?"
-  LS_AN=$(sql "SELECT COUNT(*) FROM alerts WHERE status='analyzing';")
-  LS_SP=$(sql "SELECT COUNT(*) FROM agents WHERE state='running' AND herdr_session=$(q "$HSESS") AND spawned_by IS NOT NULL;")
+  LS_AN=$(sql "SELECT COUNT(*) FROM alerts WHERE herdr_session=$SQS AND status='analyzing';")
+  LS_SP=$(sql "SELECT COUNT(*) FROM agents WHERE herdr_session=$SQS AND state='running' AND spawned_by IS NOT NULL;")
   limits_load
   LS_MODE=$LIMIT_MODE
   LS_OVER=""

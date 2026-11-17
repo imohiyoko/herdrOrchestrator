@@ -72,6 +72,12 @@ worker のプロジェクトが presets に書かれていないときは `bash 
   あなたはパスワードを入力・保存・表示しない。
 - `webui:token` が出たら、廃止済みの `run/token` の削除を(承認後に)提案する。
 
+### 5b. 旧形式の DB(`taskboard:legacy-db`)
+DB は全セッションで 1 つ(`~/.local/state/herdr/tasks.db`)になった。checkout に旧形式の `taskboard/data/tasks.db` が残っていると warn が出る。
+- その checkout をどのセッションで使っていたかを聞き、`HERDR_SESSION=<名前> bash taskboard/bin/tb db-import <パス> --dry-run` の結果(件数・付け替え)を見せる。
+- 承認後に `--dry-run` を外して実行する。元の DB は書き換えない(戻すときは共有の DB をバックアップから戻す。実行前に `cp ~/.local/state/herdr/tasks.db{,.bak-$(date +%Y%m%d%H%M%S)}` を提案する)。
+- 旧 DB を消すのは利用者の判断。
+
 ### 6. 仕上げ
 `bash setup/check.sh` が `summary: ... warn=0 missing=0` になったら、何を設定したかを箇条書きでまとめ、
 元に戻す方法(バックアップの場所、`install.sh uninstall` など)を添えて終わる。
