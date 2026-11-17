@@ -68,8 +68,9 @@ init_db() {
   latest=$(schema_latest)
   ((latest > 0)) || { echo "tb: スキーマのファイルが見つかりません: ${TB_SCHEMA_DIR:-$HERDR_SCHEMA_DIR}" >&2; return 1; }
   mkdir -p "$(dirname "$DB")"
-  IFS='|' read -r v jm < <(sql_all "SELECT (SELECT user_version FROM pragma_user_version), (SELECT journal_mode FROM pragma_journal_mode);") || return 1
+  IFS='|' read -r v jm < <(sql_all "SELECT (SELECT user_version FROM pragma_user_version) || '|' || (SELECT journal_mode FROM pragma_journal_mode);") || return 1
   [[ $v =~ ^[0-9]+$ ]] || return 1
+  # (版と journal_mode は 1 列にまとめて読む: ~/.sqliterc の区切り文字に左右されない)
   # WAL にする(DB ファイルに残るので 1 回だけ)。全セッションが同じ DB を使うので、読みと書きが互いを待たないようにする。
   # 切り替えには一瞬の排他ロックが要る。取れなければ今回は諦め、次の tb で切り替える(失敗しても動作は変わらない)
   [[ $jm == wal ]] || sql_all "PRAGMA journal_mode=WAL;" >/dev/null 2>&1 || true
