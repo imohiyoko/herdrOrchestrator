@@ -19,7 +19,7 @@ DOCS_JS = """(function () {
 
 _NOTIFY_TMPL = """(function () {
   "use strict";
-  // BASE: gateway の後ろでは /s/<名前>(同じオリジンに複数のインスタンスが並ぶので、保存キーと通知のタグも分ける)
+  // BASE: /s/<セッション名>(同じオリジンに全セッションの画面が並ぶので、保存キーと通知のタグも分ける)
   var BASE = %s, POLL = %d, KEY = "herdr-webui-notified" + (BASE ? ":" + BASE : "");
   var badge = document.getElementById("nbadge");
   var state = document.getElementById("nstate");
@@ -75,34 +75,5 @@ _NOTIFY_TMPL = """(function () {
 
 
 def notify_js(base, poll_ms):
-    """緊急通知のポーリングと Chrome 通知。base は gateway の後ろでの置き場所(/s/<名前>、無ければ空)。"""
+    """緊急通知のポーリングと Chrome 通知。base はこの画面の置き場所(/s/<セッション名>)。"""
     return _NOTIFY_TMPL % (json.dumps(base), int(poll_ms))
-
-
-def count_js(api_re):
-    """td[data-api] ごとに、その URL の緊急通知の件数を(そのインスタンスのログインで)読んで書き込む。
-    api_re は data-api に許す URL の JS の正規表現(この形以外は読まない)。セッション一覧と入口の一覧で共用。"""
-    return """(function () {
-  "use strict";
-  var cells = document.querySelectorAll("td[data-api]");
-  Array.prototype.forEach.call(cells, function (td) {
-    var api = td.getAttribute("data-api");
-    if (!%s.test(api)) return;
-    fetch(api, {credentials: "same-origin", cache: "no-store", headers: {"Accept": "application/json"}})
-      .then(function (r) {
-        if (r.status === 401) { td.textContent = "要ログイン"; return null; }
-        if (!r.ok) throw new Error("status " + r.status);
-        return r.json();
-      })
-      .then(function (d) { if (d) td.textContent = String(Array.isArray(d.items) ? d.items.length : "?"); })
-      .catch(function () { td.textContent = "読めない"; });
-  });
-})();
-""" % api_re
-
-
-NAME_JS_RE = "[A-Za-z0-9][A-Za-z0-9._-]{0,63}"
-# セッション一覧(/sessions): 入口の後ろで、隣のインスタンスへの相対パス ../<名前>/api/notifications
-SESSIONS_JS = count_js(r"/^\.\.\/" + NAME_JS_RE + r"\/api\/notifications$/")
-# 入口の一覧(gateway.py の /): /s/<名前>/api/notifications
-GATEWAY_JS = count_js(r"/^\/s\/" + NAME_JS_RE + r"\/api\/notifications$/")

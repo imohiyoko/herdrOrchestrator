@@ -1,23 +1,23 @@
 """リクエストごとの文脈: この画面がどの herdr セッションのものか。
 
 セッションはプロセスの環境変数ではなくここから読む(DB の行の絞り込み・herdr と tb の呼び出し・URL の BASE)。
-ハンドラがリクエストの入口で use() し、各所は name() / session() / base() で読む。
-use() の外(テストやスクリプトから関数を直接呼ぶとき)は、プロセスの設定(TB_INSTANCE と herdr のセッション)に落とす。
+ハンドラがリクエストの入口で、URL の /s/<セッション名>/ のセッションを use() し、各所は name() / session() / base() で読む。
+use() の外(テストやスクリプトから関数を直接呼ぶとき)は、プロセスの herdr セッションに落とす。
 """
 
 import contextvars
 import os
 from contextlib import contextmanager
 
-from .config import INSTANCE, herdr_env
+from .config import herdr_env
 
 _cur = contextvars.ContextVar("herdr_webui_request", default=None)
 
 
 def name():
-    """URL の /s/<名前> の名前。TB_INSTANCE が無いプロセスでは空(画面にインスタンス名を出さない)。"""
+    """URL の /s/<名前> の名前(= herdr セッション名)。"""
     v = _cur.get()
-    return v[0] if v else INSTANCE
+    return v[0] if v else herdr_env.session_name()
 
 
 def session():
@@ -27,7 +27,7 @@ def session():
 
 
 def base():
-    return f"/s/{name() or 'default'}"
+    return f"/s/{name()}"
 
 
 @contextmanager

@@ -64,10 +64,11 @@ worker のプロジェクトが presets に書かれていないときは `bash 
 
 ### 5. Web UI(`webui:*` / `launchd:webui`)
 - `webui/README.md` の要点(127.0.0.1 のみ・ログイン必須・変更できるのはスケジュールだけ)を説明する。
-- ブラウザで開くのは入口(`webui/gateway.py`、既定 `http://127.0.0.1:8800/`)の 1 つだけ。各セッションの Web UI はその下の `/s/<セッション名>/` に並ぶ。
-- 常駐させるなら、入口は `bash webui/bin/gen-gateway-plist.sh`、各セッションの Web UI は `bash webui/bin/gen-plist.sh` で生成し、
-  承認後に README の「常駐」の `cp` と `launchctl bootstrap` を実行する。常駐させない場合は `python3 webui/gateway.py` と `python3 webui/server.py` を利用者に起動してもらう。
-- 起動したら、**すぐに本人がブラウザで `http://127.0.0.1:8800/s/<セッション名>/setup` を開いてユーザー名とパスワード(12 文字以上)を作る** よう案内する。
+- Web UI は 1 プロセスで全 herdr セッションの画面を返す。ブラウザで開くのは `http://127.0.0.1:8800/`(使用中なら +1 ずつずれる。実際のポートは起動ログ)の 1 つだけで、各セッションの画面は `/s/<セッション名>/` に並ぶ。
+- 常駐させるなら `bash webui/bin/gen-plist.sh` で生成し(ラベルは `local.herdr-webui` の 1 つ)、承認後に README の「常駐」の `cp` と `launchctl bootstrap` を実行する。
+  常駐させない場合は `python3 webui/server.py` を利用者に起動してもらう。
+- `webui:old-plist` が出たら、旧版の入口・セッションごとの plist(二重起動になって落ち続ける)の `bootout` と削除を(承認後に)提案する。
+- 起動したら、**すぐに本人がブラウザで `http://127.0.0.1:8800/` を開いて(初回設定の `/s/<セッション名>/setup` へ移る)ユーザー名とパスワード(12 文字以上)を作る** よう案内する。
   ログインは全セッションで共通(1 回作れば全セッションに入れる)。
   あなたはパスワードを入力・保存・表示しない。
 - `webui:token` が出たら、廃止済みの `run/token` の削除を(承認後に)提案する。

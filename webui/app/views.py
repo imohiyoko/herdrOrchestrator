@@ -15,7 +15,7 @@ from .data import badge_count, has_resolution, parse_ts, NOTIFY_POLL_SEC, QUEUED
 from .actions import NOTE_MAX
 from .jobview import agent_state, command_summary, job_about, job_defs, job_summary, mask, next_runs, prompt_file, send_task_decision
 from .jobs import DAY_PRESETS, DAY_TOKENS, INTERVAL_UNITS, interval_sec, interval_text, job_info, job_last, job_names
-from . import docs, perms, registry, reqctx
+from . import docs, perms, reqctx, sessions
 from .markdown import render as render_md
 
 
@@ -48,11 +48,9 @@ NAV = [("/", "概要"), ("/notifications", "緊急通知"), ("/agents", "agent")
 
 
 def inst_label():
-    """TB_INSTANCE があるときだけ、名前を出す(default 以外は色の帯)。未設定なら空 = 従来の表示。"""
+    """この画面の herdr セッション名(default 以外は色の帯)。"""
     name = reqctx.name()
-    if not name:
-        return ""
-    return f'<span class="inst{"" if name == "default" else " inst-warn"}" title="TB_INSTANCE">{e(name)}</span>'
+    return f'<span class="inst{"" if name == "default" else " inst-warn"}" title="herdr セッション">{e(name)}</span>'
 
 
 def title_suffix():
@@ -1222,31 +1220,21 @@ STATIC = {"/": page_overview, "/notifications": page_notifications, "/inbox": pa
 
 
 def page_sessions(_qs, ctx):
-    """動いている Web UI インスタンス(= herdr セッション)の一覧。各インスタンスは自分のセッションだけを見るので、ここは行き先の案内。"""
-    me = reqctx.name() or "default"
-    rows, here_api = [], False
-    for x in registry.entries():
-        up = registry.alive(x)
-        if x["name"] == me:
-            link = f"<strong>{e(x['name'])}</strong>(この画面)"
-            cell = f"<td>{len(urgent_items())}(報告・承認待ち {badge_count()})</td>"
-        else:   # 入口の上で /s/<名前>/ が隣に並ぶので相対パス
-            link = f'<a href="{e("../" + x["name"] + "/")}">{e(x["name"])}</a>'
-            if up:
-                cell = f'<td data-api="{e("../" + x["name"] + "/api/notifications")}">…</td>'
-                here_api = True
-            else:
-                cell = "<td>-</td>"
-        rows.append(f"<tr><td>{link}</td>{cell}<td>{'動いている' if up else '<span class=st-blocked>応答なし</span>'}</td></tr>")
-    body = ("<p>この画面は herdr セッション <strong>" + e(me) + "</strong> の Web UI です。ほかのセッションの Web UI は別のログインです。"
-            "件数は緊急通知の数です(ほかのセッションの件数は、そのセッションにログイン済みのときだけ出ます)。</p>"
-            '<p><a href="../../">入口(全セッションの一覧)へ</a></p>')
-    if rows:
-        body += "<table><tr><th>セッション</th><th>緊急通知</th><th>状態</th></tr>" + "".join(rows) + "</table>"
-    else:
-        body += "<p class=note>(一覧が空です。インスタンスは起動時に " + e(registry.REGISTRY_DIR()) + " に自分を書きます)</p>"
-    if here_api:
-        ctx.setdefault("scripts", []).append("/sessions.js")
+    """この Web UI が返す herdr セッションの一覧と、それぞれの緊急通知の数(ログインは全セッション共通なので、ここで数える)。"""
+    me = reqctx.name()
+    rows = []
+    for n in sessions.known():
+        try:
+            with reqctx.use(n, n):
+                cell = f"<td>{len(urgent_items())}</td><td>{badge_count()}</td>"
+        except Exception as ex:   # 1 セッションが読めなくても一覧は出す
+            cell = f"<td colspan=2>読めない({e(type(ex).__name__)})</td>"
+        # ページは /s/<この画面>/sessions。隣のセッションは相対パスで(/… はこの画面の下に付け替えられるため)
+        link = f"<strong>{e(n)}</strong>(この画面)" if n == me else f'<a href="{e("../" + n + "/")}">{e(n)}</a>'
+        rows.append(f"<tr><td>{link}</td>{cell}</tr>")
+    body = ("<p>この Web UI は全 herdr セッションの画面を返します(ログインは共通)。行き先を選んでください。"
+            "一覧は DB に行のあるセッションと、herdr のセッションのディレクトリ(" + e(sessions.herdr_sessions_dir()) + ")から作ります。</p>"
+            "<table><tr><th>セッション</th><th>緊急通知</th><th>報告・承認待ち</th></tr>" + "".join(rows) + "</table>")
     return "セッション一覧", body
 
 

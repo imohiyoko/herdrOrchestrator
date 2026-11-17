@@ -27,13 +27,12 @@ fresh() {
   hook_json UserPromptSubmit Stop >"$P/.claude/settings.local.json"
   echo '<plist><dict/></plist>' >"$LA/local.herdr-sched-taskboard-digest.plist"
   echo '<plist><dict/></plist>' >"$LA/local.herdr-webui.plist"
-  echo '<plist><dict/></plist>' >"$LA/local.herdr-webui-gateway.plist"
   WS="$H/.local/state/herdr-webui"; mkdir -p "$WS"
   echo '{}' >"$WS/auth.json"; chmod 600 "$WS/auth.json"
   for c in $CORE jq; do ln -s "$(command -v "$c")" "$B/$c"; done
   for c in sqlite3 python3 claude plutil; do ln -s "$HERE/fake/stub" "$B/$c"; done
   ln -s "$HERE/fake/herdr" "$B/herdr"; ln -s "$HERE/fake/launchctl" "$B/launchctl"
-  export FAKE_LOADED="local.herdr-sched-taskboard-digest local.herdr-webui local.herdr-webui-gateway" FAKE_HERDR_DOWN=0 FAKE_LOG="$W/calls.log"
+  export FAKE_LOADED="local.herdr-sched-taskboard-digest local.herdr-webui" FAKE_HERDR_DOWN=0 FAKE_LOG="$W/calls.log"
   OSNAME=Darwin
 }
 # hook_json <event>... [-- <hook のパス>]: settings.json を出す
@@ -154,8 +153,9 @@ fresh; echo '{"password_hash":"SECRET-HASH"}' >"$WS/auth.json"; chmod 600 "$WS/a
 printf '%s\n' "$OUT" | grep -q SECRET && ng "auth.json の中身を出さない" || ok "auth.json の中身を出さない"
 fresh; echo '{}' >"$R/webui/run/auth.json"; run; has "旧い置き場の auth.json は warn" warn webui:old-auth
 fresh; : >"$R/webui/run/token"; run; has "廃止された token" warn webui:token
-fresh; echo '{"port": 8801, "pid": 1}' >"$WS/gateway.json"; run; has "入口のポート" info webui:port "http://127.0.0.1:8801/"
-fresh; rm "$LA/local.herdr-webui-gateway.plist"; run; has "入口の plist が未登録" missing launchd:webui-gateway
+fresh; echo '{"port": 8801, "pid": 1}' >"$WS/gateway.json"; run; has "待ち受けたポート" info webui:port "http://127.0.0.1:8801/"
+fresh; echo '<plist><dict/></plist>' >"$LA/local.herdr-webui-gateway.plist"; run; has "旧版の入口の plist は warn" warn webui:old-plist "local.herdr-webui-gateway"
+fresh; echo '<plist><dict/></plist>' >"$LA/local.herdr-staging-webui.plist"; run; has "旧版のセッションごとの plist は warn" warn webui:old-plist "local.herdr-staging-webui"
 
 # --- DB: 共有の 1 か所(ホーム)。旧形式(checkout ごと)の DB が残っていれば warn ---
 fresh; run; has "DB は共有の置き場を見る" info taskboard:db "$H/.local/state/herdr/tasks.db"; hasnt "旧形式の DB が無ければ何も言わない" warn taskboard:legacy-db

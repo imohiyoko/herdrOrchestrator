@@ -15,7 +15,7 @@ import os
 import re
 import stat
 
-from .config import AUTH_DIR, REGISTRY_DIR, RUN_BASE, RUN_DIR, STATE_DIR, cfg
+from .config import AUTH_DIR, RUN_BASE, RUN_DIR, STATE_DIR, cfg
 from .data import q
 
 MAX_BYTES = 1024 * 1024        # これより大きいファイルは先頭だけ出す
@@ -72,10 +72,10 @@ def denied(path):
             return "認証情報が置かれる場所なので開きません"
     if DENY_NAME_RE.search(os.path.basename(path)):
         return "認証情報らしいファイル名なので開きません"
-    # 自分の run と、run の置き場そのもの(旧 run/ と他インスタンスの run/instance-<名>/ を含む)
+    # 自分の run と、run の置き場そのもの(旧版の run/instance-<名>/ を含む)
     # 文字列の前方一致ではなく実体(os.path.samefile)で比べる: path とその祖先のどれかが run と同じディレクトリなら拒否。
     # 綴り違い(大文字小文字を区別しないボリューム)・symlink・存在しないパス(存在する祖先まで遡る)でも通さない
-    for r in (RUN_DIR(), RUN_BASE(), AUTH_DIR(), STATE_DIR(), REGISTRY_DIR()):
+    for r in (RUN_DIR(), RUN_BASE(), AUTH_DIR(), STATE_DIR()):
         if _under(path, r):
             return "Web UI のログイン情報なので開きません"
     return None
