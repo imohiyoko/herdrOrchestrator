@@ -173,7 +173,7 @@ cmd_agent-spawn() {
   name=$(spawn_next_name "$parent") || { echo "tb: agent-spawn を拒否しました: 子の名前を決められません" >&2; return 4; }
   [[ $name =~ $AGENT_NAME_RE ]] || { echo "tb: agent-spawn を拒否しました: 子の名前 $name が長すぎます(32 字まで)" >&2; return 4; }
   # roles/<子の名前>.md は要求された役割より優先される。承認と作成後の役割がずれないよう拒否する
-  ! role_conflict "$name" "$role" || { echo "tb: agent-spawn を拒否しました: roles/$name.md があるため、子 $name の役割は $role になりません" >&2; return 4; }
+  ! role_conflict "$name" "$role" || { echo "tb: agent-spawn を拒否しました: $ROLE_CONFLICT_WHY" >&2; return 4; }
   cwd=$(sql "SELECT COALESCE(cwd,'') FROM agents WHERE name=$(q "$parent");"); [[ -n $cwd && -d $cwd ]] || cwd=$AGENT_CWD
   prompt=$(spawn_prompt "$parent" "$name" "$role" "$task" "$(oneline "$brief" "$BRIEF_MAX")")
   args=$(jq -nc --arg c "$cwd" --arg m "$SP_MODEL" --arg r "$role" --arg p "$prompt" --arg pa "$parent" --arg t "$task" \
