@@ -1850,6 +1850,15 @@ try:
     open(os.environ["TB_CONFIG"], "w").write("pj = file-cond\n")
     with _rc.use("sa", "sa"):
         check("config: 環境変数で明示したファイルが DB より先", _g3.target_for("pj") == "file-cond")
+    # 役割の定義も DB から(role:<名前> / role-map)。このセッションの行 > 共通の行 > roles/ のファイル
+    _c = sqlite3.connect(_sdb)
+    _c.execute("INSERT INTO config VALUES ('sa','role:zrole','z の役割','human','t'), ('*','role-map','z* = zrole','human','t')")
+    _c.commit(); _c.close()
+    _rl = []
+    for _s in ("sa", "sb"):
+        with _rc.use(_s, _s):
+            _rl.append((_g3.role_of("z1"), "zrole" in _g3.role_names()))
+    check("roles: DB の役割と対応(このセッションの行だけが効く)", _rl == [("zrole", True), (None, False)], str(_rl))
 finally:
     for _k, _v in (("TB_CONFIG", _old_tc), ("WEBUI_APPROVALS", _old_wa)):
         if _v is None:

@@ -348,10 +348,10 @@ cmd_agent-new() {
     local rx; local -a rxs; IFS=, read -ra rxs <<<"$role"
     ((${#rxs[@]} >= 1 && ${#rxs[@]} <= 4)) || usage "agent-new: --role はカンマ区切りで 1〜4 個: $role"
     for rx in "${rxs[@]}"; do
-      [[ $rx =~ $ROLE_RE && $rx != _* && $rx != README && -f $ROLES_DIR/$rx.md ]] || usage "agent-new: --role は roles/<名前>.md の名前(カンマ区切りで複数可): $rx"
+      [[ $rx =~ $ROLE_RE && $rx != _* && $rx != README ]] && role_exists "$rx" || usage "agent-new: --role は定義のある役割名(tb role-list。カンマ区切りで複数可): $rx"
     done
     # roles/<名前>.md は台帳の役割より優先される。承認(要求された役割)と作成後の役割がずれないよう拒否する
-    ! role_conflict "$name" "$role" || usage "agent-new: roles/$name.md があるため、この名前の役割は $name に固定です(--role $role は効きません)"
+    ! role_conflict "$name" "$role" || usage "agent-new: 役割 $name の定義があるため、この名前の役割は $name に固定です(--role $role は効きません)"
   fi
   [[ $kill == yes || $kill == no || $kill == unknown ]] || usage "agent-new: --killable は yes|no"
   if [[ $kill != unknown ]]; then   # 判定フラグを付けられるのは agent-flag と同じく判定役か人だけ

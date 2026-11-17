@@ -29,7 +29,7 @@ eq "role: briefings recorded" "$(sqlite3 "$TB_DB" "SELECT source||':'||via FROM 
 out=$($TB role-broadcast); r=$?
 eq "broadcast: sends to agents without current version" "$r|$(grep -c '^sent' <<<"$out")" "0|3"
 eq "broadcast: unnamed skipped silently" "$(grep -c 'wN' <<<"$out")" "0"
-eq "broadcast: message points to files" "$(grep '^prompt worker1' "$FAKE_LOG" | grep -c "\[role-update / tb\] .*$TB_ROLES/_common.md .*$TB_ROLES/worker.md")" "1"
+eq "broadcast: message tells to re-read with tb role-show (no file paths)" "$(grep '^prompt worker1' "$FAKE_LOG" | grep -c "\[role-update / tb\] .*worker.md).*tb role-show で読み直し") $(grep '^prompt worker1' "$FAKE_LOG" | grep -c "$TB_ROLES")" "1 0"
 eq "broadcast: second run skips (already given)" "$($TB role-broadcast | grep -c '^skip')" "3"
 printf 'worker の役割 v2\n' >"$TB_ROLES/worker.md"
 eq "broadcast: only changed roles resent" "$($TB role-broadcast | grep '^sent' | cut -d' ' -f2)" "worker1"

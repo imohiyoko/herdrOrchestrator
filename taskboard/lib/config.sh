@@ -85,14 +85,19 @@ config_put() {
     if [[ -n $body ]]; then printf '%s\n' "$body" >"$tmp"; else : >"$tmp"; fi
     mv "$tmp" "$f"
   else
-    if ((shared)); then hs="'*'"; else hs=$SQS; fi
-    sql "BEGIN IMMEDIATE;
-      INSERT INTO config (herdr_session, key, body, updated_by, updated_at) VALUES ($hs, $(q "$key"), $(q "$body"), 'human', $(q "$(now)"))
-        ON CONFLICT (herdr_session, key) DO UPDATE SET body=excluded.body, updated_by=excluded.updated_by, updated_at=excluded.updated_at;
-      INSERT INTO config_changes (herdr_session, key, body, changed_by, how, changed_at) VALUES ($hs, $(q "$key"), $(q "$body"), 'human', $(q "$how"), $(q "$(now)"));
-      COMMIT;" >/dev/null
+    config_db_put "$key" "$body" "$how" "$shared"
   fi
   config_forget "$key"
+}
+
+# DB の行を書く(キーの検査は呼び出し側)。$1=キー $2=本文 $3=how [$4=共通の行なら 1] [$5=書いた人。既定 human]
+config_db_put() {
+  local hs=$SQS by; by=$(q "${5:-human}"); ((${4:-0})) && hs="'*'"
+  sql "BEGIN IMMEDIATE;
+    INSERT INTO config (herdr_session, key, body, updated_by, updated_at) VALUES ($hs, $(q "$1"), $(q "$2"), $by, $(q "$(now)"))
+      ON CONFLICT (herdr_session, key) DO UPDATE SET body=excluded.body, updated_by=excluded.updated_by, updated_at=excluded.updated_at;
+    INSERT INTO config_changes (herdr_session, key, body, changed_by, how, changed_at) VALUES ($hs, $(q "$1"), $(q "$2"), $by, $(q "$3"), $(q "$(now)"));
+    COMMIT;" >/dev/null
 }
 
 config_unset() {  # $1=キー [$2=共通の行なら 1]。DB の行だけを消す
@@ -161,6 +166,7 @@ config_change() {
 
 # checkout のファイルを、共通の行(*)として取り込む。既に共通の行があるキーは飛ばす。
 # 取り込んだファイルは checkout から退かす(agent が古い本文を直接読まないように): $HERDR_STATE_DIR/config-imported/<日時>/
+# roles/sessions/<セッション>/ の役割もそのセッションの行として取り込む(共有の roles/*.md は既定値なのでファイルのまま)
 config_import() {
   local dry=0 k f n=0 dest=""
   while [[ $# -gt 0 ]]; do case $1 in --dry-run) dry=1; shift;; *) usage "config import [--dry-run]";; esac; done
@@ -181,6 +187,31 @@ config_import() {
       COMMIT;" >/dev/null
     mv "$f" "$dest/" || die "$f を退かせません(DB には取り込み済み)"
     echo "$k: $f を共通の行として取り込み、$dest/ へ退かしました"
+  done
+  # セッションごとの役割(roles/sessions/<セッション>/*.md と map.conf)は、そのセッションの行として取り込み、ディレクトリごと退かす
+  local d sname rf key
+  for d in "$ROLES_BASE"/sessions/*/; do
+    [[ -d $d && ! -L ${d%/} ]] || continue
+    sname=$(basename "$d")
+    [[ $sname =~ ^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$ ]] || { echo "roles/sessions/$sname: セッション名に使えない文字があるので飛ばします"; continue; }
+    n=$((n + 1))
+    for rf in "$d"*.md "$d"map.conf; do
+      [[ -f $rf && ! -L $rf ]] || continue
+      if [[ $(basename "$rf") == map.conf ]]; then key=role-map; else key="role:$(basename "$rf" .md)"; fi
+      [[ $key == role:README ]] && continue
+      role_key_of "${key#role:}" >/dev/null 2>&1 || [[ $key == role-map ]] || { echo "$rf: 役割名に使えない文字があるので飛ばします"; continue; }
+      if [[ -n $(sql "SELECT 1 FROM config WHERE herdr_session=$(q "$sname") AND key=$(q "$key");") ]]; then echo "$key(セッション $sname): 行が既にあるので飛ばします"; continue; fi
+      if ((dry)); then echo "$key: $rf をセッション $sname の行として取り込みます"; continue; fi
+      sql "BEGIN IMMEDIATE;
+        INSERT INTO config (herdr_session, key, body, updated_by, updated_at) VALUES ($(q "$sname"), $(q "$key"), $(q "$(cat "$rf")"), 'human', $(q "$(now)"));
+        INSERT INTO config_changes (herdr_session, key, body, changed_by, how, changed_at) VALUES ($(q "$sname"), $(q "$key"), $(q "$(cat "$rf")"), 'human', 'import', $(q "$(now)"));
+        COMMIT;" >/dev/null
+      echo "$key: $rf をセッション $sname の行として取り込みました"
+    done
+    ((dry)) && continue
+    if [[ -z $dest ]]; then dest=$HERDR_STATE_DIR/config-imported/$(date +%Y%m%d-%H%M%S); mkdir -p "$dest" || die "退かす先を作れません: $dest"; fi
+    mkdir -p "$dest/roles-sessions" && mv "${d%/}" "$dest/roles-sessions/" || die "$d を退かせません(DB には取り込み済み)"
+    echo "roles/sessions/$sname/ を $dest/roles-sessions/ へ退かしました"
   done
   ((dry)) && echo "(dry-run: 何も書いていません)"
   ((n > 0)) || echo "取り込むファイルはありません"
