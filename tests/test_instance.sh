@@ -7,8 +7,9 @@ ROOT=$HERE/..
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 pass=0; fail=0
 eq() { if [[ "$2" == "$3" ]]; then pass=$((pass+1)); echo "ok   $1"; else fail=$((fail+1)); echo "FAIL $1"; echo "   expected: $3"; echo "   actual:   $2"; fi; }
-clean() { env -u HERDR_SESSION -u HERDR_SOCKET_PATH -u TB_INSTANCE -u TB_UI_PORT "$@"; }
-unset HERDR_SESSION HERDR_SOCKET_PATH TB_INSTANCE TB_UI_PORT   # 呼び出し側の環境に左右されない
+clean() { env -u HERDR_SESSION -u HERDR_SESSION_FROM_FILE -u HERDR_SOCKET_PATH -u TB_INSTANCE -u TB_UI_PORT "$@"; }
+unset HERDR_SESSION HERDR_SOCKET_PATH TB_INSTANCE TB_UI_PORT HERDR_SESSION_FROM_FILE   # 呼び出し側の環境に左右されない
+export HERDR_SESSION_FILE=$TMP/herdr-session   # 手元の checkout のファイルは見ない(下のテストで書く)
 fn() { bash -c "source '$ROOT/lib/herdr-env.sh'; $1"; }
 
 # --- herdr_session_name: HERDR_SOCKET_PATH > HERDR_SESSION > default
@@ -31,6 +32,21 @@ eq "source: default socket wins" "$(HERDR_SESSION=staging HERDR_SOCKET_PATH=/tmp
 eq "source: unknown layout falls back to env" "$(HERDR_SESSION=staging HERDR_SOCKET_PATH=/tmp/x/other.sock fn herdr_session_source)" "env"
 eq "source: unknown layout, nothing else" "$(HERDR_SOCKET_PATH=/tmp/x/other.sock fn herdr_session_source)" "default"
 eq "source: unsafe name in the socket path falls back" "$(HERDR_SESSION=staging HERDR_SOCKET_PATH='/h/sessions/a b/herdr.sock' fn herdr_session_source)" "env"
+
+# --- herdr-session ファイル: HERDR_SOCKET_PATH > HERDR_SESSION > ファイル > default
+F=$HERDR_SESSION_FILE
+printf 'staging  # この checkout は staging\n' >"$F"
+eq "file: used when nothing else is set" "$(fn herdr_session_name) $(fn herdr_session_source)" "staging file"
+eq "file: HERDR_SESSION wins" "$(HERDR_SESSION=training fn herdr_session_name) $(HERDR_SESSION=training fn herdr_session_source)" "training env"
+eq "file: socket wins" "$(HERDR_SOCKET_PATH=$S fn herdr_session_name)" "training"
+eq "file: apply exports it for herdr and keeps the source" "$(fn 'herdr_session_apply; echo "$HERDR_SESSION $(herdr_session_source)"')" "staging file"
+eq "file: apply does nothing when HERDR_SESSION is set" "$(HERDR_SESSION=training fn 'herdr_session_apply; echo "$HERDR_SESSION ${HERDR_SESSION_FROM_FILE:-none}"')" "training none"
+printf 'a b\n' >"$F"
+eq "file: an unsafe name is ignored" "$(fn herdr_session_name) $(fn herdr_session_source)" "default default"
+rm -f "$F"
+eq "file: missing file -> default" "$(fn herdr_session_name)" "default"
+eq "whoami: shows the file as the source" "$(printf 'staging\n' >"$F"; TB_DB=$TMP/w.db bash "$ROOT/taskboard/bin/tb" whoami | awk '$1=="session"{print $2, $3}')" "staging [ファイル"
+rm -f "$F"
 
 # --- herdr_label_prefix: TB_INSTANCE 未設定なら従来のまま
 eq "prefix: unset -> legacy" "$(fn herdr_label_prefix)" "local.herdr-"

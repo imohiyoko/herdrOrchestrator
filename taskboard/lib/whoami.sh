@@ -30,6 +30,7 @@ cmd_whoami() {
   case $ssrc in
     socket)  ssrc="env HERDR_SOCKET_PATH";;
     env)     ssrc="env HERDR_SESSION";;
+    file)    ssrc="ファイル $(herdr_session_file)";;
     default) ssrc="既定";;
   esac
   inst=${TB_INSTANCE:-}

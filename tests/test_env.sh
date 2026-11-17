@@ -12,4 +12,11 @@ eq "tb db"     "$(sh_val HERDR_DEFAULT_TB_DB)" "$(py_val 'herdr_env.tb_db()')"
 eq "schema"    "$(sh_val HERDR_SCHEMA_DIR)"    "$(py_val herdr_env.SCHEMA_DIR)"
 eq "schema version" "$(env -u TB_DB bash -c "source '$HERE/../lib/herdr-env.sh'; source '$HERE/../taskboard/lib/db.sh'; schema_latest")" "$(py_val 'herdr_env.schema_version()')"
 eq "TB_DB override (python)" "$(TB_DB=/x/y.db python3 -c "import sys; sys.path.insert(0, '$HERE/../lib'); import herdr_env; print(herdr_env.tb_db())")" "/x/y.db"
+T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+sess() { env -u HERDR_SESSION -u HERDR_SOCKET_PATH HERDR_SESSION_FILE=$T/s "$@"; }
+for v in 'staging' '  training  # memo' 'a b' ''; do
+  printf '%s\n' "$v" >"$T/s"
+  eq "session file: '$v'" "$(sess bash -c "source '$HERE/../lib/herdr-env.sh'; herdr_session_name")" \
+    "$(sess python3 -c "import sys; sys.path.insert(0, '$HERE/../lib'); import herdr_env; print(herdr_env.session_name())")"
+done
 echo "pass=$pass fail=$fail"; [[ $fail -eq 0 ]]

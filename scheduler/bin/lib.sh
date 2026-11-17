@@ -9,6 +9,7 @@ LOG_DIR="${LOG_DIR:-$SCHED_ROOT/logs}"
 SETTINGS_DIR="${SCHED_SETTINGS_DIR:-$SCHED_ROOT/settings}"
 # shellcheck source=../../lib/herdr-env.sh
 source "$SCHED_ROOT/../lib/herdr-env.sh"
+herdr_session_apply   # checkout の herdr-session ファイルでセッションを固定していれば、herdr と tb にも渡す
 HERDR="${HERDR_BIN:-$HERDR_DEFAULT_BIN}"   # 上の PATH で /opt/homebrew/bin/herdr が先に見つかる
 export HERDR_BIN_PATH="${HERDR_BIN_PATH:-$HERDR}"
 

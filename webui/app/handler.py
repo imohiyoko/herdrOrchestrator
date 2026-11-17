@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, unquote, urlencode, urlsplit
 
 import auth
 
-from .config import COOKIE, HOST, INSTANCE, JOB_RE, LEGACY_RUN_DIR, ROOT, RUN_DIR, cfg
+from .config import COOKIE, HOST, INSTANCE, herdr_env, JOB_RE, LEGACY_RUN_DIR, ROOT, RUN_DIR, cfg
 from .sanitize import clean, e
 from .actions import agent_decide, agent_new, agent_op, resolve_comment
 from .data import NOTIFY_POLL_SEC, badge_count, urgent_items
@@ -415,6 +415,7 @@ def bind_server():
 
 
 def main():
+    herdr_env.apply_session()   # checkout の herdr-session ファイルでセッションを固定していれば、herdr にも渡す
     run_dir = RUN_DIR()
     # 旧い場所(run/)の auth.json の引き継ぎは、明示したとき(WEBUI_LEGACY_AUTH=1)だけ。
     # 既定で引き継ぐと、これから作る別インスタンスも default の認証で入れてしまい、別の認証情報を設定できない

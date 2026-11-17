@@ -193,6 +193,9 @@ bash webui/bin/gen-plist.sh      # webui/generated/local.herdr-webui.plist を�
 
 ラベルは `local.herdr-webui`、`KeepAlive` あり、ログは `webui/logs/`。**登録は人が行う**:
 
+Web UI は 1 つのインスタンス(ポート)で 1 つの herdr セッションだけを見る(画面の中でセッションは切り替えない)。
+セッション名は `HERDR_SESSION` か、checkout 直下の `herdr-session` ファイル(1 行目に名前)で決まる(優先順は `HERDR_SESSION` > ファイル > `default`)。
+
 複数の herdr セッションを別の checkout(`git worktree` など)で動かすときは、`TB_INSTANCE=<名前>` を付けて生成すると、
 ラベルと plist のファイル名が `local.herdr-<名前>-webui` になり、checkout 同士で衝突しない(未設定なら従来のまま)。
 名前は英数字で始まり、英数字と `.` `_` `-` だけ。`HERDR_SESSION` と `TB_UI_PORT` を付けて生成すると、plist の環境変数にも渡す。
