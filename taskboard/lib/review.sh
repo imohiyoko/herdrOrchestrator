@@ -36,6 +36,25 @@ cmd_review-pack() {
   sec "人の承認(承認された送信の操作 | 回数)— 何度も承認されているものは allow にする候補"
   tsv "SELECT 'send:'||kind||':'||target, COUNT(*) FROM outbox WHERE $w AND reason LIKE '%人が承認%' GROUP BY kind, target ORDER BY COUNT(*) DESC LIMIT $lim;"
   tsv "SELECT 'approvals 変更', pattern, value, created_at FROM approval_changes WHERE $w ORDER BY id;"
+  sec "人への依頼の繰り返し(依頼元 | 種類 | 対象・内容 | 回数)— 同じ依頼を何度も人に出していないか(2 回以上だけ)"
+  tsv "SELECT who, what, obj, COUNT(*) AS n FROM (
+         SELECT from_name AS who, 'send:'||kind AS what, target AS obj FROM outbox
+           WHERE $w AND (status='pending' OR reason LIKE '%人が承認%' OR status='rejected')
+         UNION ALL
+         SELECT requested_by, 'agent:'||op, target FROM agent_ops
+           WHERE $w AND requested_by!='human' AND (decided_at IS NULL OR decided_at!=created_at)
+         UNION ALL
+         SELECT from_name, kind, substr(replace(text, char(10), ' '),1,40) FROM comments
+           WHERE $w AND kind IN ('question','blocked'))
+       GROUP BY who, what, obj HAVING n >= 2 ORDER BY n DESC LIMIT $lim;"
+  sec "仕事の混在(agent | ロール | project 数 | ロール変更 | project)— 1 体が複数種類の仕事をしていないか(該当だけ)"
+  tsv "SELECT a.name, COALESCE(a.role,'-'), p.np, COALESCE(rc.n,0), p.ps
+       FROM agents a
+       LEFT JOIN (SELECT owner_agent, COUNT(DISTINCT project) AS np, group_concat(DISTINCT project) AS ps FROM tasks
+                  WHERE owner_agent IS NOT NULL AND (status IN ('in_progress','review','blocked') OR updated_at > $(q "$since"))
+                  GROUP BY owner_agent) p ON p.owner_agent=a.name
+       LEFT JOIN (SELECT agent, COUNT(*) AS n FROM role_changes WHERE $w GROUP BY agent) rc ON rc.agent=a.name
+       WHERE COALESCE(p.np,0) > 1 OR COALESCE(rc.n,0) > 0 ORDER BY COALESCE(p.np,0) DESC, a.name LIMIT $lim;"
   sec "報告(種類 | 件数)と、質問・ブロックの例"
   tsv "SELECT kind, COUNT(*) FROM comments WHERE $w GROUP BY kind;"
   tsv "SELECT 'C-'||id, kind, from_name, substr(replace(text, char(10), ' '),1,100) FROM comments WHERE $w AND kind IN ('question','blocked') ORDER BY id DESC LIMIT $lim;"
