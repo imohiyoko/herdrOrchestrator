@@ -31,6 +31,16 @@ for path in sorted(glob.glob(os.path.join(ROOT, "webui", "app", "*.py"))):
         except sqlite3.Error as ex:
             fail += 1
             print(f"FAIL {os.path.basename(path)}:{node.lineno} {ex}\n     {sql[:160]}")
+# taskboard/sql/*.sql(tb と webui が同じものを読む)もそのまま通るか
+for path in sorted(glob.glob(os.path.join(ROOT, "taskboard", "sql", "*.sql"))):
+    sql = "\n".join(ln for ln in open(path, encoding="utf-8").read().splitlines() if not ln.startswith("--"))
+    found += 1
+    try:
+        db.execute("EXPLAIN " + sql)
+        print(f"ok   {os.path.basename(path)}")
+    except sqlite3.Error as ex:
+        fail += 1
+        print(f"FAIL {os.path.basename(path)} {ex}")
 if found < 10:
     fail += 1
     print(f"FAIL SQL が {found} 件しか見つからない(抽出が壊れている)")

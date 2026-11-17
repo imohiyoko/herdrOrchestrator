@@ -44,7 +44,7 @@ conductor_names() {
 }
 
 # route_allowed <from> <to>: 0 なら許可。理由は ROUTE_REASON に入る
-# routes.conf の各行は "<送信者のパターン> -> <宛先のパターン>"(* と ? の glob)。最初に一致した行で決まる。
+# routes.conf の各行は "<送信者のパターン> -> <宛先のパターン>"(* と ? の glob。@<役割> なら役割で比べる)。最初に一致した行で決まる。
 # 行頭に ! を付けると拒否。routes.conf が無いときは「指揮官 → 誰でも」だけを許可する
 ROUTE_REASON=""
 route_allowed() {
@@ -60,8 +60,7 @@ route_allowed() {
     neg=0; [[ $line == \!* ]] && { neg=1; line=$(trim "${line#!}"); }
     [[ $line == *"->"* ]] || continue
     l=$(trim "${line%%->*}"); r=$(trim "${line#*->}")
-    # shellcheck disable=SC2053  # glob として比べる
-    if [[ $from == $l && $to == $r ]]; then
+    if name_matches "$from" "$l" && name_matches "$to" "$r"; then
       if ((neg)); then ROUTE_REASON="routes.conf: !$l -> $r"; return 1; fi
       ROUTE_REASON="routes.conf: $l -> $r"; return 0
     fi

@@ -94,7 +94,8 @@ POST/PUT/DELETE/PATCH は 405。
 | `/` | 概要(承認待ち、agent の状態、滞留、直近の完了) |
 | `/notifications` | 緊急通知の一覧と、Chrome 通知を有効にするボタン |
 | `/api/notifications` | 緊急通知の JSON(`/notify.js` が 15 秒ごとに取得。未ログインは 401) |
-| `/agents` | agent 一覧(状態・workspace・いま何を・最終入力/停止・警告・止めてよいか・停止ボタン)、承認待ちの agent 操作、停止中の agent(復活ボタン)、直近の操作 |
+| `/agents` | agent 一覧(状態・workspace・いま何を・最終入力/停止・警告・止めてよいか・停止ボタン)、承認待ちの agent 操作、停止中の agent(復活ボタン)、直近の操作、ロール別の一覧 |
+| `/agent-graph` | agent の関係グラフ(誰が誰に何をしたか。ロールごとの枠にまとめた mermaid の図と表。`tb agents --graph` と同じ SQL) |
 | `/agent-new` | 新しい agent を作るフォーム(名前・作業ディレクトリ・モデル・役割・止めてよいか・最初の指示) |
 | `/agents/<名前>` | 状態、担当タスク、直近の出力(`herdr agent read`)、最終入力/停止、`session_id`、手元で開く `herdr agent attach`(`claude --resume` は会話が枝分かれするので出さない) |
 | `/tasks` | タスク一覧(読み取りのみ)。状態の件数サマリ(todo / in_progress / review / done / blocked)、`?project=` `?owner=`(担当 agent) `?status=` `?unreported=1`(未報告だけ) `?stale=1`(in_progress のまま 24 時間超更新が無い「停滞」だけ。しきい値は `app/config.py` の `TASK_STALE_HOURS`)で絞り込み、`?sort=`(`project` / `oldest` / `created` / `id`)で並び替え。既定の並びは優先順(未対応の報告があるもの → blocked → in_progress → review → todo → done)で、最大 300 件。超えたときは「N 件のうち 300 件だけ表示」と明示する。親子(parent_id)、session、報告の種別ごとの件数(人が未対応の question / blocked を強調)、成果物の数、停滞の目印を出す。題は先頭 80 文字だけ。期限・優先度は tb に無いので出さない |

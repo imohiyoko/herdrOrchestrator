@@ -6,10 +6,11 @@ from fnmatch import fnmatchcase
 import shlex
 
 from .config import APPROVALS, CATALOG
+from .graph import name_matches
 from .sanitize import clean
 
 # tb の valid_action と同じ文字種
-ACTION_RE = re.compile(r"[A-Za-z0-9._:*?][A-Za-z0-9._:*?-]{0,127}")
+ACTION_RE = re.compile(r"[A-Za-z0-9._:*?@][A-Za-z0-9._:*?@-]{0,127}")
 
 # 一致の例に使う、tb が実際に出す操作名(宛先は仮の名前)
 SAMPLE_OPS = ["send:task:worker1", "send:info:worker1", "send:answer:worker1", "role:change", "proxy:read-only",
@@ -48,13 +49,24 @@ def has_bracket(r):
     return "[" in r["raw"]
 
 
+def matches(op, pat):
+    """tb の approval_of と同じ照合。末尾が @<役割> の行は、操作の末尾の名前を役割で比べる。"""
+    head, _, last = pat.rpartition(":")
+    if last.startswith("@"):
+        if ":" not in op:
+            return False
+        oh, _, on = op.rpartition(":")
+        return fnmatchcase(oh, head) and name_matches(on, last)
+    return fnmatchcase(op, pat)
+
+
 def decide(rules, op):
     """(値, 決めた行 or None)。どれにも一致しなければ ask。
     [ を含む行に行き当たったら ("unknown", その行): bash の glob と fnmatch で結果が変わりうるので、それより下へは進まない。"""
     for r in rules:
         if has_bracket(r):
             return "unknown", r
-        if fnmatchcase(op, r["raw"]):
+        if matches(op, r["raw"]):
             return r["value"], r
     return "ask", None
 

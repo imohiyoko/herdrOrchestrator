@@ -468,52 +468,49 @@ cmd_agent-flag() {
   echo "$name killable=$kill"
 }
 
-# 論理ツリーの親(指揮系統)を決める。入力は cmd_agents の配列(lead = タスクの project の指揮官)。
-# 優先: spawned_by(tb agent-spawn の親) > 役割が conductor なら最上位 > 未完了タスクの project の指揮官 > worker は既定の指揮官 > 最上位。
-# 親が一覧に居ないとき・循環するときは最上位(人の直下)に置く。parent / parent_via を足して返す
-AGENT_TREE_JQ='
-  (map(.name)) as $names
-  | map(. as $a
-      | if ($a.spawned_by // "") != "" and ($names | index($a.spawned_by)) and $a.spawned_by != $a.name then . + {parent:$a.spawned_by, parent_via:"spawn"}
-        elif $a.role_file == "conductor.md" then . + {parent:null, parent_via:null}
-        elif ($a.lead // "") != "" and ($names | index($a.lead)) and $a.lead != $a.name then . + {parent:$a.lead, parent_via:"project"}
-        elif $a.role_file == "worker.md" and ($names | index($dflt)) and $dflt != $a.name then . + {parent:$dflt, parent_via:"default"}
-        else . + {parent:null, parent_via:null} end)
-  | length as $cnt | (map({key:.name, value:.parent}) | from_entries) as $p
-  | def top($n; $k): if $n == null then true elif $k == 0 then false else top($p[$n]; $k - 1) end;
-    map(if top(.parent; $cnt) then . else . + {parent:null, parent_via:null} end)'
+# 関係グラフ: taskboard/sql/agent_edges.sql の行を、主体 -動詞→ 対象 のエッジにする(Web UI の /agent-graph と同じ SQL)。
+# project しか分からない端(lead の主体・report の宛先)は target_for で指揮官にする。自分への辺と端の欠けた行は捨て、同じ (動詞, 主体, 対象, status) はまとめる
+EDGES_SQL=$TB_ROOT/sql/agent_edges.sql
+agent_edges() {
+  local rows projects map="{}" p
+  rows=$(sql -json "$(grep -v '^--' "$EDGES_SQL");") || return 1
+  [[ -n $rows ]] || rows="[]"
+  projects=$(jq -r '[.[] | .project // empty] | unique[]' <<<"$rows")
+  while IFS= read -r p; do
+    [[ -n $p ]] || continue
+    map=$(jq -c --arg k "$p" --arg v "$(target_for "$p")" '. + {($k): $v}' <<<"$map")
+  done <<<"$projects"
+  jq -c --argjson m "$map" '
+    map(.src = (.src // (if .project then $m[.project] else null end)) | .dst = (.dst // (if .project then $m[.project] else null end)))
+    | map(select(.src != null and .dst != null and .src != "" and .dst != "" and .src != .dst))
+    | group_by([.verb, .src, .dst, .status])
+    | map({verb: .[0].verb, from: .[0].src, to: .[0].dst, status: .[0].status, n: (map(.n) | add), last_at: (map(.last_at // "") | max)})' <<<"$rows"
+}
 
-# ツリーを罫線つきで描く(入力は AGENT_TREE_JQ の結果)
-AGENT_TREE_RENDER_JQ='
-  . as $all
-  | def node_label: "\(.name)  \(.state)/\(.agent_status // "-")  \(.role_file // "-" | sub("\\.md$"; ""))  tasks:\(.open_tasks) q:\(.open_questions)"
-      + (if .parent_via == "spawn" then "  (spawn" + (if (.spawn_task // "") != "" then ": \(.spawn_task)" else "" end) + ")" else "" end)
-      + (if .killable == "yes" then "  killable" else "" end);
-    def walk_tree($parent; $prefix):
-      [$all[] | select(.parent == $parent)] as $kids | ($kids | length) as $n
-      | range(0; $n) as $i | $kids[$i] as $k | ($i == $n - 1) as $last
-      | ($prefix + (if $last then "└─ " else "├─ " end) + ($k | node_label)),
-        walk_tree($k.name; $prefix + (if $last then "   " else "│  " end));
-    "human", walk_tree(null; "")'
+# --graph の文字の出力: ロールごとの agent と、直近 7 日の関係(拒否された試みには [denied])
+AGENT_GRAPH_RENDER_JQ='
+  (.nodes | group_by(.role // "-") | map("[\(.[0].role // "-")]", (.[] | "  \(.name)  \(.state)/\(.agent_status // "-")")) | .[]),
+  "", "関係(直近 7 日。spawn と lead は今の状態):",
+  (if (.edges | length) == 0 then "  (なし)" else
+     (.edges | sort_by(.from, .to, .verb) | .[] | "  \(.from)  -\(.verb)\(if .n > 1 then " ×\(.n)" else "" end)→  \(.to)\(if .status == "denied" then "  [denied]" else "" end)") end)'
 
-# 台帳 + 判定に使う材料(判定役はこれを読んで決める)。--tree は指揮系統の論理ツリーで出す
+# 台帳 + 判定に使う材料(判定役はこれを読んで決める)。--group role はロールごとにまとめる。--graph は関係グラフ
 cmd_agents() {
-  local json=0 all=0 tree=0
+  local json=0 all=0 graph=0 group=""
   while [[ $# -gt 0 ]]; do
     case $1 in
       --json) json=1; shift;;
       --all) all=1; shift;;
-      --tree) tree=1; shift;;
+      --graph) graph=1; shift;;
+      --group) need_arg "$@"; [[ $2 == role ]] || usage "agents: --group は role だけ"; group=$2; shift 2;;
       *) usage "agents: 不明な引数 $1";;
     esac
   done
   agent_sync || echo "tb: herdr agent list に失敗しました(台帳の内容だけを出します)" >&2
   local where="1=1"; ((all)) || where="(a.state='running' OR a.stopped_at > strftime('%Y-%m-%dT%H:%M:%SZ','now','-7 days'))"
-  local rows name k status lead
+  local rows name k status
   rows=$(sql -json "SELECT a.name, a.state, a.pane_id, a.session_id, a.cwd, a.model, a.role, a.killable_reason, a.killable_by, a.killable_at,
       a.created_by, a.created_at, a.stopped_at, a.spawned_by, a.spawn_task,
-      (SELECT t.project FROM tasks t WHERE t.owner_agent=a.name AND t.status IN ($OPEN_TASK_STATUSES)
-         ORDER BY t.updated_at DESC LIMIT 1) AS task_project,
       (SELECT COUNT(*) FROM tasks t WHERE t.owner_agent=a.name AND t.status IN ($OPEN_TASK_STATUSES)) AS open_tasks,
       (SELECT COUNT(*) FROM comments c LEFT JOIN tasks t ON t.id=c.task_id WHERE c.from_name=a.name AND c.kind IN ('question','blocked')
          AND c.resolved_at IS NULL AND COALESCE(t.status,'')!='done') AS open_questions,
@@ -530,14 +527,30 @@ cmd_agents() {
     name=$(jq -r .name <<<"$r"); k=$(killable_of "$name")
     status=$(jq -r --arg n "$name" '[.[] | select(.name==$n)][0].agent_status // ""' <<<"$LIVE_AGENTS")
     load_role "$name" >/dev/null 2>&1 || true
-    lead=""; [[ -z $(jq -r '.task_project // ""' <<<"$r") ]] || lead=$(target_for "$(jq -r .task_project <<<"$r")")
-    out=$(jq -c --argjson r "$r" --arg k "$k" --arg s "$status" --arg f "${ROLE_FILE#"$ROLES_DIR"/}" --arg l "$lead" \
+    out=$(jq -c --argjson r "$r" --arg k "$k" --arg s "$status" --arg f "${ROLE_FILE#"$ROLES_DIR"/}" \
       '. + [$r + {killable:$k, agent_status:(if $s=="" then null else $s end), role_file:(if $f=="" then null else $f end),
-                  lead:(if $l=="" then null else $l end)}]' <<<"$out")
+                  role_name:(if $f=="" then null else ($f | sub("\\.md$"; "")) end)}]' <<<"$out")
   done < <(jq -c '.[]' <<<"$rows")
-  out=$(jq -c --arg dflt "$(target_for "")" "$AGENT_TREE_JQ" <<<"$out")
+  if ((graph)); then
+    local edges extra g n f
+    edges=$(agent_edges) || die "関係を読めません(DB)"
+    # 関係の端に居るが一覧に無い名前(止まって 7 日を過ぎた agent・cli など)も点として足す
+    g=$(jq -c --argjson e "$edges" '{nodes: map({name, state, agent_status, role: .role_name}), edges: $e}' <<<"$out")
+    extra=$(jq -r '(.nodes | map(.name)) as $have | [.edges[] | .from, .to] | unique | map(select(. as $x | $have | index($x) | not)) | .[]' <<<"$g")
+    while IFS= read -r n; do
+      [[ -n $n ]] || continue
+      f=$(role_name_of "$n")
+      g=$(jq -c --arg n "$n" --arg r "$f" '.nodes += [{name:$n, state:"-", agent_status:null, role:(if $r=="" then null else $r end)}]' <<<"$g")
+    done <<<"$extra"
+    if ((json)); then jq -c . <<<"$g"; else jq -r "$AGENT_GRAPH_RENDER_JQ" <<<"$g"; fi
+    return 0
+  fi
   if ((json)); then jq -c '.[]' <<<"$out"; return 0; fi
-  if ((tree)); then jq -r "$AGENT_TREE_RENDER_JQ" <<<"$out"; return 0; fi
+  if [[ $group == role ]]; then
+    jq -r 'group_by(.role_name // "-") | .[] | "[\(.[0].role_name // "-")]", (.[] | "  " + ([.name, .state, (.agent_status // "-"), .killable,
+       "tasks:\(.open_tasks)", "q:\(.open_questions)", "idle:\(.idle_min // "-")m", (.killable_reason // "")] | join("\t")))' <<<"$out"
+    return 0
+  fi
   jq -r '.[] | [.name, .state, (.agent_status // "-"), .killable, "tasks:\(.open_tasks)", "q:\(.open_questions)",
      "idle:\(.idle_min // "-")m", (.role_file // "-"), (.killable_reason // "")] | join("\t")' <<<"$out"
 }

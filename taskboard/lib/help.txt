@@ -75,8 +75,8 @@ tb proposals [P-<n>] [--status open|applied|rejected]
 tb proposal-resolve P-<n> --status applied|rejected [--note N]   設定役か人だけ
 
 agent の停止・復活・新規作成(台帳 agents。人の端末からはそのまま、agent の pane からは approvals の agent:<op>:<名前>):
-tb agents [--json] [--all] [--tree]   台帳と判定材料(状態・killable・未完了タスク・未対応の質問・idle 分・役割)。herdr と同期する。
-         --tree は指揮系統の論理ツリー(人 → 指揮官 → worker → spawn した子)。--json の各行には parent / parent_via が付く
+tb agents [--json] [--all] [--group role] [--graph]   台帳と判定材料(状態・killable・未完了タスク・未対応の質問・idle 分・役割)。herdr と同期する。
+         --group role はロールごとにまとめる。--graph は関係グラフ(誰が誰に何をしたか: spawn / lead / send:<kind> / report / analyze。直近 7 日)。--json と併用で {nodes, edges}
 tb agent-new <名前> [--cwd D] [--kind K] [--model M] [--role R] [--prompt P] [--killable yes|no]
          専用 workspace で agent(--kind の既定は claude)を起動。kind が対応していない指定(--model など)は終了コード 12。--role は roles/<R>.md(台帳に残り、復活後も同じ役割)
 tb agent-stop <名前> [--force]   pane を閉じて止める。killable=yes(判定後に新しい入力なし)で未完了タスクが無いときだけ。

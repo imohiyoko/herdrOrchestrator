@@ -458,7 +458,13 @@ check("attach 欄にインラインのスクリプトがない", "onfocus" not i
 check("名前に HTML を含む agent も安全", "&lt;img src=x onerror=alert(2)&gt;" in cl.get("/agents")[2])
 check("pane_id フォールバックの URL", cl.get("/agents/w1%3Ap3")[0] == 200)
 _ab = cl.get("/agents")[2]
-check("agent 一覧に指揮系統ツリー", '<h2 id="tree">' in _ab and "<ul class=tree><li>人(human)<ul>" in _ab and _ab.count('<a href="/agents/alpha">') >= 2)
+check("agent 一覧にロール別と関係グラフへのリンク", '<h2 id="roles">ロール別</h2>' in _ab and 'href="/agent-graph"' in _ab and _ab.count('<a href="/agents/alpha">') >= 2)
+_gs, _gh, _gb = cl.get("/agent-graph")
+check("関係グラフ: mermaid と表、スクリプトは同一オリジンだけ", _gs == 200 and "<pre class=mermaid>flowchart LR" in _gb
+      and re.findall(r"<script[^>]*>", _gb, re.I) == [NOTIFY_TAG[:-9], '<script src="/static/mermaid.min.js" defer>', '<script src="/docs.js" defer>'],
+      str(re.findall(r"<script[^>]*>", _gb, re.I)))
+_gm = _gb.split("<pre class=mermaid>")[1].split("</pre>")[0]
+check("関係グラフ: HTML を含む名前もラベルでは安全な文字だけ", "&lt;" not in _gm and "_img_src_x_onerror_alert_2_" in _gm, _gm[:300])
 check("未知の agent は 404", cl.get("/agents/nope")[0] == 404)
 check("未知のタスクは 404", cl.get("/tasks/nope")[0] == 404)
 check("未知の URL は 404", cl.get("/nope")[0] == 404)
@@ -1612,36 +1618,40 @@ if portu:
     check("TB_INSTANCE=Alpha の画面表示も小文字", ">alpha<" in cu_.get("/tasks")[2])
 stop(pu_)
 
-# ================= 指揮系統ツリー(app/tree.py。tb agents --tree と同じ規則)
+# ================= 関係グラフ(app/graph.py。tb agents --graph と同じ SQL とまとめ方)と規則の @<役割>
 sys.path.insert(0, os.path.dirname(HERE))
-import app.tree as _tree  # noqa: E402
-_rd = os.path.join(TMP, "tree-roles")
+import app.graph as _graph  # noqa: E402
+import app.perms as _perms2  # noqa: E402
+_rd = os.path.join(TMP, "graph-roles")
 os.makedirs(_rd, exist_ok=True)
 for _r in ("conductor", "worker", "watcher"):
     open(os.path.join(_rd, _r + ".md"), "w").write("x")
 open(os.path.join(_rd, "map.conf"), "w").write("*-conductor = conductor\nworker* = worker\nwatch* = watcher\n")
-_pc = os.path.join(TMP, "tree-projects.conf")
+_pc = os.path.join(TMP, "graph-projects.conf")
 open(_pc, "w").write("# c\nprojb = b-conductor\n")
 _old = {k: os.environ.get(k) for k in ("TB_ROLES", "TB_CONFIG")}
 os.environ.update(TB_ROLES=_rd, TB_CONFIG=_pc)
-check("tree: 役割は名前の .md > 台帳の role > map.conf", [_tree.role_of(n, r) for n, r in
+check("graph: 役割は名前の .md > 台帳の role > map.conf", [_graph.role_of(n, r) for n, r in
       (("conductor", None), ("b-conductor", None), ("worker1", None), ("helper", "worker"), ("helper", None), ("_x", None))]
       == ["conductor", "conductor", "worker", "worker", None, None])
-_nodes = [{"name": n, "role": _tree.role_of(n), "spawned_by": sb, "task_project": tp} for n, sb, tp in (
-    ("conductor", None, None), ("b-conductor", None, None), ("worker1", None, None), ("worker2", None, "projb"),
-    ("worker3", "worker1", None), ("watcher", None, None), ("worker4", "gone", None))]
-_tree.build(_nodes)
-check("tree: spawn > project の指揮官 > 既定の指揮官 > 最上位",
-      {n["name"]: (n["parent"], n["parent_via"]) for n in _nodes} == {
-          "conductor": (None, None), "b-conductor": (None, None), "worker1": ("conductor", "default"),
-          "worker2": ("b-conductor", "project"), "worker3": ("worker1", "spawn"), "watcher": (None, None),
-          "worker4": ("conductor", "default")})
-_cyc = [{"name": "a", "role": None, "spawned_by": "b"}, {"name": "b", "role": None, "spawned_by": "a"}]
-_tree.build(_cyc)
-check("tree: 循環は最上位へ", [n["parent"] for n in _cyc] == [None, None])
-_h = _v2.agent_tree_html([dict(n, agent={"name": n["name"]}) for n in _nodes])
-check("tree: 入れ子の ul で描く", "<a href=\"/agents/worker1\">worker1</a>" in _h
-      and _h.index("worker1") < _h.index("worker3") and "spawn した子" in _h)
+_rows = [{"verb": "lead", "src": None, "dst": "worker2", "project": "projb", "status": "ok", "n": 1, "last_at": "a"},
+         {"verb": "lead", "src": None, "dst": "worker2", "project": "proja", "status": "ok", "n": 1, "last_at": "b"},
+         {"verb": "send:task", "src": "conductor", "dst": "worker1", "project": None, "status": "ok", "n": 2, "last_at": "c"},
+         {"verb": "report", "src": "worker2", "dst": None, "project": "projb", "status": "ok", "n": 1, "last_at": "d"},
+         {"verb": "spawn", "src": "worker1", "dst": "worker1", "project": None, "status": "ok", "n": 1, "last_at": "e"}]
+_es = _graph.edges(_rows)
+check("graph: project の端は指揮官で埋め、自分への辺は捨てる(1 体に複数の上流)",
+      [(x["from"], x["verb"], x["to"]) for x in _es] == [("b-conductor", "lead", "worker2"), ("conductor", "send:task", "worker1"),
+                                                         ("conductor", "lead", "worker2"), ("worker2", "report", "b-conductor")])
+_ns = [{"name": n, "role": _graph.role_of(n)} for n in ("conductor", "b-conductor", "worker1", "worker2", "<b>x</b>")]
+_mm = _graph.mermaid(_ns, _es + [{"verb": "send:task", "from": "worker1", "to": "worker2", "status": "denied", "n": 1, "last_at": ""}])
+check("graph: ロールごとの subgraph とラベルつきの辺(拒否は点線)", 'subgraph g0["conductor"]' in _mm and 'subgraph g2["役割なし"]' in _mm
+      and "-- 依頼 x2 -->" in _mm and "-. 依頼 拒否 .->" in _mm and "<b>" not in _mm, _mm)
+check("graph: 規則の @役割", [_graph.name_matches(n, p) for n, p in (("worker1", "@worker"), ("worker1", "@cond*"), ("x", "@worker"), ("x", "x"))]
+      == [True, False, False, True])
+_rules = [{"raw": "send:*:@worker", "value": "allow"}, {"raw": "*", "value": "ask"}]
+check("perms: 末尾 @役割 の行を役割で照合", [_perms2.decide(_rules, op)[0] for op in ("send:task:worker1", "send:task:conductor", "role:change")]
+      == ["allow", "ask", "ask"])
 for _k, _v in _old.items():
     if _v is None:
         os.environ.pop(_k, None)

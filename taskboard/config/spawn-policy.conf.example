@@ -10,4 +10,4 @@ max_children_per_parent = 2 # 1 体の親が同時に持てる子の数
 max_children_total = 6      # 全体の子の数
 max_depth = 1               # 1 = 子は子を立てられない
 model = sonnet              # 子のモデル(呼び出し側は選べない)
-denied_parents =            # 子を立てられない親の名前(glob。空白区切り)。例: inc*-*(障害対応の workspace の agent など)
+denied_parents =            # 子を立てられない親の名前(glob。空白区切り。@<役割> なら役割で)。例: inc*-*(障害対応の workspace の agent など)、@watcher

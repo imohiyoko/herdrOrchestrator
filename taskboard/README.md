@@ -213,7 +213,8 @@ tb alert-close A-<n>                # 人が閉じる
 
 ```bash
 tb agents [--json] [--all]          # 台帳と判定材料: 状態・killable・未完了タスク数・未対応の質問数・idle 分・役割ファイル
-tb agents --tree                    # 指揮系統の論理ツリー(下の「agent の論理ツリー」)
+tb agents --group role              # ロールごとにまとめた一覧
+tb agents --graph [--json]          # 関係グラフ(下の「agent の関係グラフ」)
 tb agent-new <名前> [--cwd D] [--kind K] [--model M] [--role R] [--prompt P] [--killable yes|no]
 tb agent-stop <名前> [--force]
 tb agent-revive <名前> [--fresh] [--model M] [--prompt P]
@@ -245,25 +246,42 @@ tb agent-approve L-<n> [--always] / tb agent-reject L-<n>      # 人だけ
 - herdr のセッション(`HERDR_SESSION`、プリセットの `# session:`)ごとに台帳を分けて扱う。別セッションの agent は同期で「止まった」扱いにせず、操作するときは `HERDR_SESSION=<名前>` を付けるよう案内する
 - 実行したもの・断ったもの・承認待ちは `agent_ops` にすべて残る。終了コード: 0 実行済み / 1 拒否・前提違い / 11 herdr の失敗 / 20 承認待ち
 
-### agent の論理ツリー(`tb agents --tree`)
+### agent の関係グラフ(`tb agents --graph`)とロール
 
-`tb agents --tree` は、一覧を指揮系統の木で出す(Web UI の /agents にも「指揮系統ツリー」として同じものが出る)。親は次の順で決める。
+agent 同士の関係は 1 本の木ではなく、`主体 -動詞→ 対象` のエッジの集まり(メッシュ)として出す。1 体が複数の上流(spawn の親・複数 project の指揮官・送信者)を持ってよい。
+エッジは既存の記録から作る(`taskboard/sql/agent_edges.sql`。Web UI の /agent-graph も同じ SQL を読む)。
 
-1. `tb agent-spawn` で立てた子は、台帳の `spawned_by`(親)の下
-2. 役割が conductor の agent は最上位(人の直下)
-3. 未完了タスク(in_progress / review / blocked)の project の指揮官(`config/projects.conf`)の下
-4. 役割が worker なら、既定の指揮官(conductor)の下
-5. それ以外(watcher / sweeper / auditor など)は最上位
-
-親が一覧に居ないとき・循環するときは最上位に置く。`--json` の各行にも `parent` と `parent_via`(spawn / project / default)が付く。
+| 動詞 | 元の記録 | 意味 |
+|---|---|---|
+| spawn | 台帳 `agents.spawned_by` | 親が `tb agent-spawn` で子を立てた |
+| lead | 未完了タスク(in_progress / review / blocked)の project | その project の指揮官(`config/projects.conf`)→ 担当 agent |
+| send:task / send:info / send:answer | `tb send` の outbox(直近 7 日) | 依頼・連絡・回答。routes.conf で拒否された試みは `[denied]` |
+| report | `tb comment`(直近 7 日) | 担当 agent → タスクの project の指揮官 |
+| analyze | アラート(直近 7 日) | 報告した見張り役 → 解析役 |
 
 ```
-human
-├─ conductor  running/idle  conductor  tasks:0 q:0
-│  └─ worker1  running/working  worker  tasks:1 q:0
-│     └─ worker3  running/idle  worker  tasks:0 q:0  (spawn: T-a-001)
-└─ watcher  running/idle  watcher  tasks:0 q:0
+[conductor]
+  conductor  running/idle
+[worker]
+  worker1  running/working
+  worker3  running/idle
+
+関係(直近 7 日。spawn と lead は今の状態):
+  conductor  -send:task ×2→  worker1
+  worker1  -spawn→  worker3
 ```
+
+ロールは `roles/<名前>.md` > 台帳の role(`tb agent-new --role`)> `roles/map.conf` の順で決まる。`tb agents --group role` はロールごとにまとめた一覧。
+
+#### 規則の @<役割>
+
+「どのロールがどのロールに何をしてよいか」を書けるように、次の規則では名前の glob の代わりに `@<役割の glob>` が使える。
+
+- `config/routes.conf`: `@conductor -> @worker`、`!@worker -> @conductor`(送信者・宛先の両方)
+- `config/approvals.conf`: 末尾の宛先を `@<役割>` にする(例 `send:task:@worker = allow`、`agent:stop:@analyst = allow`)
+- `config/spawn-policy.conf` の `denied_parents`(例 `@watcher`)
+
+役割は上の決まり方で引くので、役割を変えられる操作(`tb agent-new --role`、`roles/` や `map.conf` の書き換え)は、そのまま権限の変更になる。agent からのそれらは従来どおり人の承認が要る(`agent:new:*` と `role:change` は ask のまま)。
 
 ### 規則つきの子 agent 作成(`tb agent-spawn`)
 

@@ -28,6 +28,24 @@ role_file_for() {  # $1=agent 名 → 役割ファイルのパス(無ければ�
   done <"$ROLES_DIR/map.conf"
 }
 
+# 役割名(roles/<役割>.md の <役割>)。無ければ空
+role_name_of() {  # $1=agent 名
+  local f; f=$(role_file_for "$1"); f=${f##*/}; printf '%s' "${f%.md}"
+}
+
+# 規則のパターンと agent 名を比べる。@<役割の glob> なら役割で、それ以外は名前の glob で比べる。一致すれば 0
+# (routes.conf / approvals.conf の宛先 / spawn-policy の denied_parents が使う。役割の決まり方は role_file_for と同じ)
+name_matches() {  # $1=agent 名 $2=パターン
+  if [[ $2 == @* ]]; then
+    local r; r=$(role_name_of "$1")
+    # shellcheck disable=SC2053  # glob として比べる
+    [[ -n $r && $r == ${2#@} ]]
+  else
+    # shellcheck disable=SC2053
+    [[ $1 == $2 ]]
+  fi
+}
+
 # ROLE_FILE / ROLE_HASH / ROLE_TEXT を埋める。渡すものが無ければ 1
 load_role() {  # $1=agent 名
   local body=""

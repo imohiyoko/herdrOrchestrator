@@ -99,8 +99,7 @@ spawn_check() {
   # shellcheck disable=SC2053  # glob として比べる
   local pat
   for pat in $SP_DENY_PARENTS; do
-    # shellcheck disable=SC2053  # glob として比べる
-    if [[ $parent == $pat ]]; then SPAWN_WHY="$parent は子を立てられません(spawn-policy の denied_parents: $pat)"; return 1; fi
+    if name_matches "$parent" "$pat"; then SPAWN_WHY="$parent は子を立てられません(spawn-policy の denied_parents: $pat)"; return 1; fi
   done
   agent_sync || { SPAWN_WHY="herdr agent list に失敗したため、親が動いているか確かめられません"; return 1; }
   [[ -n $(live_row "$parent") ]] || { SPAWN_WHY="親 $parent は herdr で動いていません"; return 1; }
