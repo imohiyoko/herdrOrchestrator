@@ -1230,28 +1230,22 @@ def page_sessions(_qs, ctx):
     rows, here_api = [], False
     for x in registry.entries():
         up = registry.alive(x)
-        direct = f"http://127.0.0.1:{x['port']}/s/{x['name']}/"
         if x["name"] == me:
-            link, cnt = f"<strong>{e(x['name'])}</strong>(この画面)", f"{len(urgent_items())}(報告・承認待ち {badge_count()})"
-            cell = f"<td>{cnt}</td>"
-        else:
-            # 相対パス(入口経由ならその入口、直接開いていれば隣のポートではなく同じポートの /s/<名前>/ になるので、入口経由を前提にする)
+            link = f"<strong>{e(x['name'])}</strong>(この画面)"
+            cell = f"<td>{len(urgent_items())}(報告・承認待ち {badge_count()})</td>"
+        else:   # 入口の上で /s/<名前>/ が隣に並ぶので相対パス
             link = f'<a href="{e("../" + x["name"] + "/")}">{e(x["name"])}</a>'
             if up:
                 cell = f'<td data-api="{e("../" + x["name"] + "/api/notifications")}">…</td>'
                 here_api = True
             else:
                 cell = "<td>-</td>"
-        rows.append(f"<tr><td>{link}</td>{cell}<td>{'動いている' if up else '<span class=st-blocked>応答なし</span>'}</td>"
-                    f"<td>{x['port']}</td>"
-                    f'<td><a href="{e(direct)}">{e(direct)}</a></td></tr>')
-    body = ("<p>この画面は herdr セッション <strong>" + e(me) + "</strong> の Web UI です。ほかのセッションは別の Web UI(別のポート・別のログイン)で動いています。"
-            "名前のリンクは入口(既定 8800)経由で開きます。入口が止まっているときは「直接開く」から。"
-            "件数は緊急通知の数です(ほかのセッションの件数は、入口経由で開いていて、そのセッションにログイン済みのときだけ出ます)。</p>"
+        rows.append(f"<tr><td>{link}</td>{cell}<td>{'動いている' if up else '<span class=st-blocked>応答なし</span>'}</td></tr>")
+    body = ("<p>この画面は herdr セッション <strong>" + e(me) + "</strong> の Web UI です。ほかのセッションの Web UI は別のログインです。"
+            "件数は緊急通知の数です(ほかのセッションの件数は、そのセッションにログイン済みのときだけ出ます)。</p>"
             '<p><a href="../../">入口(全セッションの一覧)へ</a></p>')
     if rows:
-        body += ("<table><tr><th>セッション</th><th>緊急通知</th><th>状態</th><th>ポート</th><th>直接開く</th></tr>"
-                 + "".join(rows) + "</table>")
+        body += "<table><tr><th>セッション</th><th>緊急通知</th><th>状態</th></tr>" + "".join(rows) + "</table>"
     else:
         body += "<p class=note>(一覧が空です。インスタンスは起動時に " + e(registry.REGISTRY_DIR()) + " に自分を書きます)</p>"
     if here_api:

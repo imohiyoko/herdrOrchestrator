@@ -194,39 +194,18 @@ def make_db(path):
     c.close()
 
 
-# ================= ポート探索
-base = free_range(3)
-occupy(base)
-env, _ = make_env("collide", HERDR_WEBUI_RANGE=f"{base}-{base + 2}")
+# ================= 待ち受け: 外から開くのは入口だけなので、各インスタンスは OS が選ぶ空きポート
+env, _ = make_env("ephemeral")
 p = start(env)
 port = wait_port(env, p)
-check("ポート衝突で +1", port == base + 1, f"port={port}")
-if port:
-    check("run/port に書く", open(os.path.join(env["WEBUI_RUN_DIR"], "port")).read().strip() == str(port))
+check("インスタンスは空きポートで起動し run/port に書く", bool(port) and open(os.path.join(env["WEBUI_RUN_DIR"], "port")).read().strip() == str(port), f"port={port}")
+_reg_e = json.load(open(os.path.join(TMP, "registry", "default.json"))) if port else {}
+check("インスタンスの一覧にも同じポート(port ファイルより先に書く)", _reg_e.get("port") == port and _reg_e.get("base") == "/s/default", str(_reg_e))
+ss_ = subprocess.run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN"], capture_output=True, text=True).stdout if port and shutil.which("lsof") else ""
+check("bind はループバックだけ", (not ss_) or ("127.0.0.1:" in ss_ and "*:" not in ss_ and "0.0.0.0" not in ss_), ss_)
 stop(p)
-check("終了時に run/port を消す", not os.path.exists(os.path.join(env["WEBUI_RUN_DIR"], "port")))
-
-occupy(base + 1)
-occupy(base + 2)
-env, _ = make_env("full", HERDR_WEBUI_RANGE=f"{base}-{base + 2}")
-p = start(env)
-try:
-    rc = p.wait(5)
-except subprocess.TimeoutExpired:
-    rc = None
-check("全部埋まっていればエラー終了", rc not in (None, 0), f"rc={rc}")
-check("エラー文に使用中と出る", "使用中" in (p.stderr.read() if rc else ""))
-
-env, _ = make_env("fixed", TB_UI_PORT=str(base), HERDR_WEBUI_RANGE=f"{base}-{base + 2}")
-p = start(env)
-try:
-    rc = p.wait(5)
-except subprocess.TimeoutExpired:
-    rc = None
-check("TB_UI_PORT 固定は探索しない(使用中ならエラー)", rc not in (None, 0), f"rc={rc}")
-for s in socks:
-    s.close()
-socks.clear()
+check("終了時に run/port と一覧の行を消す", not os.path.exists(os.path.join(env["WEBUI_RUN_DIR"], "port"))
+      and not os.path.exists(os.path.join(TMP, "registry", "default.json")))
 
 # ================= 認証つき本体
 USER, PW = "tester", "correct-horse-battery-9"
@@ -1467,45 +1446,6 @@ for bad in ("a/b", "../x", "a b", "-x", "x" * 65):
         rc = None
     check(f"不正な TB_INSTANCE({bad[:12]!r})は起動しない", rc not in (None, 0), f"rc={rc}")
 
-# (2) ポート固定: 使用中なら逃げずにエラー。ログに指定ポートと理由
-base = free_range(3)
-occupy(base)
-env, _ = inst_env("inst-fixed", "gamma", TB_UI_PORT=str(base), HERDR_WEBUI_RANGE=f"{base}-{base + 2}")
-pf_ = start(env)
-try:
-    rc = pf_.wait(5)
-except subprocess.TimeoutExpired:
-    rc = None
-err = (pf_.stderr.read() or "") if rc else ""
-check("TB_UI_PORT 使用中: 別ポートへ逃げずエラー終了", rc not in (None, 0), f"rc={rc}")
-check("TB_UI_PORT 使用中: エラーに指定ポートと instance", str(base) in err and "gamma" in err, err[:200])
-check("TB_UI_PORT 使用中: 隣のポートで待ち受けていない", all(
-    socket.socket().connect_ex(("127.0.0.1", q)) != 0 for q in (base + 1, base + 2)))
-env, _ = inst_env("inst-fixed-bad", "gamma", TB_UI_PORT="abc")
-pf_ = start(env)
-try:
-    rc = pf_.wait(5)
-except subprocess.TimeoutExpired:
-    rc = None
-check("TB_UI_PORT が数値でない: エラー終了(範囲探索に落ちない)", rc not in (None, 0), f"rc={rc}")
-for s in socks:
-    s.close()
-socks.clear()
-# 固定ポートが空いていればそのポートで起動し、run ファイルに残す
-base = free_range(1)
-env, _ = inst_env("inst-fixed-ok", "gamma", TB_UI_PORT=str(base))
-pf_ = start(env)
-pfile = os.path.join(env["WEBUI_RUN_BASE"], "instance-gamma", "port")
-end = time.time() + 5
-while time.time() < end and not os.path.exists(pfile) and pf_.poll() is None:
-    time.sleep(0.05)
-check("TB_UI_PORT 空き: そのポートで起動し run に残す", os.path.exists(pfile) and open(pfile).read().strip() == str(base))
-# (5) bind はループバックのまま
-ss_ = subprocess.run(["lsof", "-nP", f"-iTCP:{base}", "-sTCP:LISTEN"], capture_output=True, text=True).stdout if shutil.which("lsof") else ""
-check("bind はループバックだけ", (not ss_) or ("127.0.0.1:" in ss_ and "*:" not in ss_ and "0.0.0.0" not in ss_), ss_)
-stop(pf_)
-check("終了時にインスタンスの run ファイルを消す", not os.path.exists(pfile) and not os.path.exists(os.path.join(os.path.dirname(pfile), "instance")))
-
 # ---- 追加: 既存運用の移行(旧い run/auth.json は読み取りだけ引き継ぐ)
 base_ = free_range(1)
 env, d_ = inst_env("inst-mig", "mig", HERDR_WEBUI_RANGE=f"{base_}-{base_}", WEBUI_LEGACY_AUTH="1")
@@ -1582,31 +1522,6 @@ p2 = start(env2)
 np2 = wait_port({"WEBUI_RUN_DIR": os.path.join(env2["WEBUI_RUN_BASE"], "instance-mig2")}, p2)
 check("移行: 旧い auth.json が無ければ /setup が開く", np2 is not None and "confirm" in Client(np2).get("/setup")[2])
 stop(p2)
-
-# ---- 追加: ワイルドカード(0.0.0.0)で待ち受け中の固定ポートは使用中として扱う
-ws = socket.socket()
-ws.bind(("0.0.0.0", 0)); ws.listen(1); socks.append(ws)
-wport = ws.getsockname()[1]
-env, _ = inst_env("inst-wild", "wild", TB_UI_PORT=str(wport))
-pw_ = start(env)
-try:
-    rc = pw_.wait(5)
-except subprocess.TimeoutExpired:
-    rc = None
-check("TB_UI_PORT が 0.0.0.0 で使用中: エラー終了", rc not in (None, 0), f"rc={rc}")
-check("TB_UI_PORT が 0.0.0.0 で使用中: 理由を出す", "待ち受け" in ((pw_.stderr.read() or "") if rc else ""))
-ws.close(); socks.remove(ws)
-
-# ---- 追加: TB_UI_PORT の範囲(1〜65535)
-for badp in ("0", "99999", "-1", "65536"):
-    env, _ = inst_env("inst-portrange", "pr", TB_UI_PORT=badp)
-    pp = start(env)
-    try:
-        rc = pp.wait(5)
-    except subprocess.TimeoutExpired:
-        rc = None
-    err = (pp.stderr.read() or "") if rc else ""
-    check(f"TB_UI_PORT={badp}: 説明つきでエラー終了(トレースバックなし)", rc not in (None, 0) and "Traceback" not in err and "herdr-webui" in err, f"rc={rc} {err[:120]}")
 
 # ---- 追加: 表示にインスタンス名の生の HTML 特殊文字が出ない(多層防御の確認)
 sys.path.insert(0, os.path.dirname(HERE))
@@ -1740,9 +1655,9 @@ for _k, _v in _old.items():
 # ================= 入口(gateway): 1 ポートで受けて /s/<名前>/ を各インスタンスへ中継する
 GW = os.path.join(os.path.dirname(HERE), "gateway.py")
 _gb = free_range(3)
-env_a, _ = make_env("gw-alpha", TB_INSTANCE="alpha", TB_UI_PORT=str(_gb))
+env_a, _ = make_env("gw-alpha", TB_INSTANCE="alpha")
 make_db(env_a["WEBUI_TB_DB"])
-env_b, _ = make_env("gw-beta", TB_INSTANCE="beta", TB_UI_PORT=str(_gb + 1))
+env_b, _ = make_env("gw-beta", TB_INSTANCE="beta")
 make_db(env_b["WEBUI_TB_DB"])
 pa, pb = start(env_a), start(env_b)
 pa_port, pb_port = wait_port(env_a, pa), wait_port(env_b, pb)
@@ -1755,7 +1670,16 @@ while time.time() < _end:
         if _s.connect_ex(("127.0.0.1", _gb + 2)) == 0:
             break
     time.sleep(0.05)
-check("gateway: インスタンス 2 つと入口が起動", pa_port == _gb and pb_port == _gb + 1 and pg.poll() is None)
+check("gateway: インスタンス 2 つと入口が起動", pa_port and pb_port and pg.poll() is None)
+GWJ = os.path.join(TMP, "gateway.json")
+check("gateway: 入口のポートを記録する(600)", os.path.exists(GWJ) and json.load(open(GWJ))["port"] == _gb + 2 and mode(GWJ) == "0o600")
+pg2 = subprocess.Popen([sys.executable, GW], env=env_g, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+procs.append(pg2)
+try:
+    _rc2 = pg2.wait(5)
+except subprocess.TimeoutExpired:
+    _rc2 = None
+check("gateway: 入口が動いていれば 2 つ目は起動しない(ずれたポートで重ねて動かない)", _rc2 not in (None, 0) and "既にポート" in pg2.stderr.read(), f"rc={_rc2}")
 REG = env_a["WEBUI_REGISTRY_DIR"]
 check("gateway: インスタンス一覧はディレクトリ 700・ファイル 600、base 付き",
       mode(REG) == "0o700" and mode(os.path.join(REG, "alpha.json")) == "0o600"
@@ -1790,9 +1714,9 @@ r = gc.get("/s/alpha/inbox", cookie=None)
 check("gateway: 未ログインは BASE 付きのログインへ(next は BASE を外したパス)",
       r[0] == 302 and r[1]["Location"] == "/s/alpha/login?next=%2Finbox", str(r[:2]))
 r = gc.get("/s/alpha/sessions")
-check("gateway: セッション一覧に自分と beta(入口経由の相対リンクと件数の読み取り、直接開くリンク)、入口へのリンク",
+check("gateway: セッション一覧に自分と beta(入口の上の相対リンクと件数の読み取り)、入口へのリンク。ポート番号は出さない",
       r[0] == 200 and "(この画面)" in r[2] and 'href="../beta/"' in r[2] and 'data-api="../beta/api/notifications"' in r[2]
-      and f'href="http://127.0.0.1:{pb_port}/s/beta/"' in r[2] and 'href="../../"' in r[2] and 'src="/s/alpha/sessions.js"' in r[2], r[2][-1500:])
+      and str(pb_port) not in r[2] and 'href="../../"' in r[2] and 'src="/s/alpha/sessions.js"' in r[2], r[2][-1500:])
 r = gc.get("/s/alpha/sessions.js")
 check("gateway: sessions.js を配る", r[0] == 200 and "data-api" in r[2])
 r = gc.get("/s/beta/")
@@ -1812,8 +1736,8 @@ check("gateway: 一覧に alpha(件数はログインで読む)と beta",
       r[0] == 200 and 'href="/s/alpha/"' in r[2] and 'data-api="/s/alpha/api/notifications"' in r[2] and ">beta</a>" in r[2], r[2][-800:])
 bc, _bck = inst_cookie_name(pb_port)
 r = bc.get("/sessions")
-check("sessions: beta の一覧にも alpha(相対リンク・件数・直接開くリンク)",
-      r[0] == 200 and 'href="../alpha/"' in r[2] and f'href="http://127.0.0.1:{pa_port}/s/alpha/"' in r[2] and 'data-api="../alpha/api/notifications"' in r[2]
+check("sessions: beta の一覧にも alpha(相対リンク・件数)",
+      r[0] == 200 and 'href="../alpha/"' in r[2] and 'data-api="../alpha/api/notifications"' in r[2]
       and 'href="/sessions" class=on' in r[2], r[2][-1200:])
 r = gc.get("/gateway.js")
 check("gateway: gateway.js を配る", r[0] == 200 and r[1]["Content-Type"].startswith("text/javascript"))
@@ -1869,6 +1793,19 @@ check("gateway: 書いたプロセスが居ない行には中継しない(502)",
 stop(pb)
 pg.send_signal(signal.SIGTERM)
 pg.wait(3)
+check("gateway: 止めると記録を消す", not os.path.exists(GWJ))
+# 既定のポートがほかのアプリで埋まっていれば +1 ずつずらす
+_sb = free_range(3)
+occupy(_sb)
+env_s, _ = make_env("gw-shift", TB_UI_GATEWAY_PORT=str(_sb))
+ps_ = subprocess.Popen([sys.executable, GW], env=env_s, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+procs.append(ps_)
+_end = time.time() + 5
+while time.time() < _end and not os.path.exists(GWJ) and ps_.poll() is None:
+    time.sleep(0.05)
+check("gateway: 既定のポートが使用中なら次のポートで待ち受ける", os.path.exists(GWJ) and json.load(open(GWJ))["port"] == _sb + 1)
+ps_.send_signal(signal.SIGTERM)
+ps_.wait(3)
 
 print()
 print("FAILED: " + ", ".join(fails) if fails else "all passed")

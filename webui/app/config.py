@@ -54,10 +54,9 @@ SCHED_SETTINGS = lambda: cfg("WEBUI_SCHED_SETTINGS", os.path.join(SCHED_ROOT, "s
 JOB_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")  # ジョブ名(scheduler/jobs/<名前>.conf)
 
 # ---- 入口(gateway.py)が 1 つのポート(既定 8800)で受け、/s/<インスタンス名>/ でこのインスタンスへ振り分ける。
-# 各インスタンスは別プロセス・別ポート(既定 8801〜8819)で、自分のセッションだけを見る(入口は中継するだけ)。
-# ページは常に /s/<名前>/ の下に置く(名前は TB_INSTANCE、未設定なら default)。ポートを直接開くときも同じパス
+# 各インスタンスは別プロセスで、自分のセッションだけを見る(入口は中継するだけ)。待ち受けは OS が選ぶ空きポートで、人は開かない。
+# ページは常に /s/<名前>/ の下に置く(名前は TB_INSTANCE、未設定なら default)
 BASE = f"/s/{INSTANCE or 'default'}"
-DEFAULT_RANGE = "8801-8819"   # 8800 は入口(gateway.py の既定)
 # 動いているインスタンスの一覧(gateway と「セッション一覧」が読む)。checkout をまたいで共有するのでホームに置く
 REGISTRY_DIR = lambda: os.environ.get("WEBUI_REGISTRY_DIR") or os.path.join(  # noqa: E731
     os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state"), "herdr-webui", "instances")

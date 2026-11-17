@@ -5,7 +5,6 @@ import os
 import re
 import shlex
 import signal
-import socket
 import sys
 import threading
 import time
@@ -16,7 +15,7 @@ import auth
 
 from . import registry
 from .httpbase import host_ok, log_request_line, origins, send
-from .config import BASE, COOKIE, DEFAULT_RANGE, HOST, INSTANCE, herdr_env, JOB_RE, LEGACY_RUN_DIR, ROOT, RUN_DIR, cfg
+from .config import BASE, COOKIE, HOST, INSTANCE, herdr_env, JOB_RE, LEGACY_RUN_DIR, ROOT, RUN_DIR
 from .sanitize import clean, e
 from .actions import agent_decide, agent_new, agent_op, resolve_comment
 from .data import NOTIFY_POLL_SEC, badge_count, urgent_items
@@ -382,34 +381,9 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def bind_server():
-    """(server, port)。固定指定なら探索しない。全部埋まっていれば SystemExit。"""
-    fixed = os.environ.get("TB_UI_PORT")
-    try:
-        if fixed:
-            lo = hi = int(fixed)
-            if not 1 <= lo <= 65535:
-                raise SystemExit(f"herdr-webui: TB_UI_PORT は 1〜65535 の数字: {fixed}")
-        else:
-            lo, hi = (int(x) for x in cfg("HERDR_WEBUI_RANGE", DEFAULT_RANGE).split("-"))
-    except ValueError:
-        raise SystemExit("herdr-webui: ポート指定が数値ではありません")
-    last = None
-    if fixed:
-        # macOS では SO_REUSEADDR の bind が、0.0.0.0 で待ち受け中のポートにも通ってしまう。先に接続を試して検出する
-        # (固定ポートのときだけ。bind の失敗検査は残す)
-        with socket.socket() as probe:
-            probe.settimeout(0.5)
-            if probe.connect_ex((HOST, lo)) == 0:
-                raise SystemExit(f"herdr-webui: instance={INSTANCE or 'default'} 固定ポート {lo}(TB_UI_PORT)で既に別のプロセスが待ち受けています。別のポートへは移りません")
-    for p in range(lo, hi + 1):
-        try:
-            return ThreadingHTTPServer((HOST, p), Handler), p
-        except OSError as ex:
-            last = ex
-    if fixed:
-        # TB_UI_PORT は「このセッションのポート」の約束なので、別のポートへ黙って逃げない
-        raise SystemExit(f"herdr-webui: instance={INSTANCE or 'default'} 固定ポート {lo}(TB_UI_PORT)を使えません。別のポートへは移りません: {last}")
-    raise SystemExit(f"herdr-webui: ポート {lo}〜{hi} がすべて使用中です")
+    """(server, port)。外から開くのは入口(gateway.py)のポートだけなので、各インスタンスは OS が選ぶ空きポート(127.0.0.1)で待ち受ける。"""
+    srv = ThreadingHTTPServer((HOST, 0), Handler)
+    return srv, srv.server_address[1]
 
 
 def main():
@@ -444,7 +418,9 @@ def main():
         f.write(f"{INSTANCE or 'default'}\n")
     print(f"herdr-webui: listening on http://{HOST}:{port}{BASE}/", flush=True)
     print(f"herdr-webui: instance={INSTANCE or 'default'} port={port}", flush=True)
-    print(f"herdr-webui: 入口(gateway.py)経由で開く: http://{HOST}:<入口のポート、既定 8800>{BASE}/", flush=True)
+    gw = registry.read_gateway()
+    print(f"herdr-webui: 開く: http://{HOST}:{gw['port'] if gw else '<入口のポート、既定 8800>'}{BASE}/"
+          + ("" if gw else "(入口 webui/gateway.py が動いていません)"), flush=True)
     if Handler.auth.configured():
         print(f"herdr-webui: ログイン http://{HOST}:{port}{BASE}/login", flush=True)
     else:

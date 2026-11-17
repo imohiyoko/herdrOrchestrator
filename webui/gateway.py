@@ -35,11 +35,30 @@ CSS = ("body{font-family:-apple-system,system-ui,sans-serif;margin:24px;color:#1
 CSP = httpbase.CSP.replace("form-action 'self'", "form-action 'none'")   # 入口自身はフォームを出さない
 
 
-def gateway_port():
+SHIFT = 19   # 既定のポートが埋まっていれば、+1 ずつ最大この数だけずらす
+
+
+def start_port():
     v = os.environ.get("TB_UI_GATEWAY_PORT") or str(DEFAULT_PORT)
     if not v.isdigit() or not 1 <= int(v) <= 65535:
         raise SystemExit(f"herdr-webui-gateway: TB_UI_GATEWAY_PORT は 1〜65535 の数字: {v}")
     return int(v)
+
+
+def bind_gateway(start):
+    """(server, port)。start から空いているポートを探す(ほかのアプリが使っていればずらす)。"""
+    last = None
+    for p in range(start, min(start + SHIFT, 65535) + 1):
+        with socket.socket() as probe:   # macOS では SO_REUSEADDR の bind が待ち受け中のポートにも通るので、先に接続を試す
+            probe.settimeout(0.5)
+            if probe.connect_ex((HOST, p)) == 0:
+                last = "使用中"
+                continue
+        try:
+            return ThreadingHTTPServer((HOST, p), Gateway), p
+        except OSError as ex:
+            last = ex
+    raise SystemExit(f"herdr-webui-gateway: ポート {start}〜{start + SHIFT} がすべて使えません: {last}")
 
 
 def index_html():
@@ -48,9 +67,8 @@ def index_html():
         up = registry.alive(x)
         link = f'<a href="{e(x["base"])}/">{e(x["name"])}</a>'
         cnt = f'<td data-api="{e(x["base"])}/api/notifications">…</td>' if up else "<td>-</td>"
-        rows.append(f"<tr><td>{link}</td>{cnt}<td>{'動いている' if up else '<span class=bad>応答なし</span>'}</td>"
-                    f"<td>{x['port']}</td></tr>")
-    table = ("<table><tr><th>セッション</th><th>緊急通知</th><th>状態</th><th>ポート</th></tr>" + "".join(rows) + "</table>"
+        rows.append(f"<tr><td>{link}</td>{cnt}<td>{'動いている' if up else '<span class=bad>応答なし</span>'}</td></tr>")
+    table = ("<table><tr><th>セッション</th><th>緊急通知</th><th>状態</th></tr>" + "".join(rows) + "</table>"
              if rows else f"<p class=note>(動いているインスタンスがありません。一覧の置き場所: {e(registry.REGISTRY_DIR())})</p>")
     return ("<!doctype html><html lang=ja><head><meta charset=utf-8><meta name=referrer content=same-origin>"
             '<meta name=viewport content="width=device-width,initial-scale=1"><title>herdr セッション一覧</title>'
@@ -161,16 +179,15 @@ class Gateway(BaseHTTPRequestHandler):
 
 
 def main():
-    port = gateway_port()
+    running = registry.read_gateway()
+    if running:
+        raise SystemExit(f"herdr-webui-gateway: 入口は既にポート {running['port']} で動いています(pid {running['pid']}): http://{HOST}:{running['port']}/")
+    srv, port = bind_gateway(start_port())
     Gateway.port = port
-    with socket.socket() as probe:   # macOS では SO_REUSEADDR の bind が待ち受け中のポートにも通るので、先に接続を試す
-        probe.settimeout(0.5)
-        if probe.connect_ex((HOST, port)) == 0:
-            raise SystemExit(f"herdr-webui-gateway: ポート {port} で既に別のプロセスが待ち受けています")
     try:
-        srv = ThreadingHTTPServer((HOST, port), Gateway)
+        registry.write_gateway(port)
     except OSError as ex:
-        raise SystemExit(f"herdr-webui-gateway: ポート {port} で待ち受けられません: {ex}")
+        print(f"herdr-webui-gateway: 入口のポートを記録できません: {type(ex).__name__}", flush=True)
     print(f"herdr-webui-gateway: http://{HOST}:{port}/ (一覧: {registry.REGISTRY_DIR()})", flush=True)
 
     def stop(*_):
@@ -181,6 +198,7 @@ def main():
         srv.serve_forever()
     finally:
         srv.server_close()
+        registry.clear_gateway()
 
 
 if __name__ == "__main__":

@@ -82,6 +82,51 @@ def pid_ok(entry):
         return False
 
 
+def _gateway_path():
+    return os.path.join(os.path.dirname(REGISTRY_DIR()), "gateway.json")
+
+
+def write_gateway(port):
+    """入口が実際に待ち受けたポート(8800 が埋まっていればずれる)。インスタンスの起動ログと setup の確認が読む。"""
+    d = os.path.dirname(_gateway_path())
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    tmp = _gateway_path() + f".{os.getpid()}.tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump({"port": port, "pid": os.getpid()}, f)
+    os.replace(tmp, _gateway_path())
+
+
+def read_gateway(check_alive=True):
+    """動いている入口 {port, pid} か None(check_alive=False なら、動いているかは見ずに記録を返す)。"""
+    p = _gateway_path()
+    try:
+        st = os.lstat(p)
+        if not os.path.isfile(p) or os.path.islink(p) or st.st_uid != os.getuid() or st.st_size > MAX_ENTRY:
+            return None
+        with open(p, encoding="utf-8") as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(d, dict):
+        return None
+    port, pid = d.get("port"), d.get("pid")
+    if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535 or not isinstance(pid, int) or isinstance(pid, bool):
+        return None
+    e = {"port": port, "pid": pid}
+    return e if not check_alive or alive(e) else None
+
+
+def clear_gateway():
+    """自分(この pid)が書いた記録だけ消す。"""
+    g = read_gateway(check_alive=False)
+    if g and g["pid"] == os.getpid():
+        try:
+            os.remove(_gateway_path())
+        except OSError:
+            pass
+
+
 def alive(entry, timeout=0.3):
     """書いたプロセスが動いていて、そのポートで待ち受けているか。"""
     if not pid_ok(entry):
