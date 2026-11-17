@@ -14,16 +14,19 @@ Python 3 の標準ライブラリだけで動く(依存なし)。Mermaid の図�
 
 ## 起動
 
+ブラウザで開くのは**入口(`gateway.py`)の 1 つのポートだけ**(既定 `http://127.0.0.1:8800/`)。
+herdr セッションごとの Web UI(`server.py`)はその下の `/s/<セッション名>/` に並ぶ。各セッションの Web UI は別プロセスで、
+OS が選ぶ空きポート(`127.0.0.1`)で待ち受ける(人は開かない。番号を決める必要もない)。
+
 ```bash
-python3 webui/server.py
+python3 webui/gateway.py                    # 入口(1 つだけ)
+python3 webui/server.py                     # セッションごと(別 checkout なら各 checkout で。名前は TB_INSTANCE、未設定なら default)
+# → http://127.0.0.1:8800/ がセッション一覧、http://127.0.0.1:8800/s/default/ が default の Web UI
 ```
 
-起動時に標準出力へポートと、ログイン(または初回設定)の URL を出す。URL に機密は含まれない。
-
 ```
-herdr-webui: listening on http://127.0.0.1:8800/
-herdr-webui: port=8800
-herdr-webui: 初回設定(ユーザー名とパスワードを作る) http://127.0.0.1:8800/setup
+herdr-webui-gateway: http://127.0.0.1:8800/ (一覧: ~/.local/state/herdr-webui/instances)
+herdr-webui: 開く: http://127.0.0.1:8800/s/default/
 ```
 
 ## ログイン(ID/パスワード)
@@ -31,7 +34,10 @@ herdr-webui: 初回設定(ユーザー名とパスワードを作る) http://127
 認証は ID/パスワードのログイン方式。従来の `?token=` と `run/token` は**廃止**した(コードから参照しない)。
 残っている `run/token` は不要なので削除してよい。
 
-- **初回設定**: `run/auth.json` が無いときだけ `/setup` が開く。ユーザー名とパスワード(確認入力あり、**12 文字以上**)を
+ログインは**全セッションで共通**(1 回ログインすれば、入口の上のどのセッションにも入れる)。ログイン情報はホームの 1 か所
+(`~/.local/state/herdr-webui/`。`XDG_STATE_HOME` / `WEBUI_STATE_DIR` / `WEBUI_AUTH_DIR` で変更可)に置き、各セッションの Web UI が共有する。
+
+- **初回設定**: `auth.json` が無いときだけ `/setup` が開く(どのセッションの `/s/<名>/setup` からでも同じ)。ユーザー名とパスワード(確認入力あり、**12 文字以上**)を
   画面で作る。設定後は自動でログインされ、`/setup` は 404 で閉じる。最初にアクセスした人が設定するので、
   起動したらすぐ自分で設定すること(待ち受けは 127.0.0.1 のみ)。
 - **ログイン**: `/login`。未ログインで他の URL を開くと `/login?next=<元のパス>` に 302 する。
@@ -39,7 +45,7 @@ herdr-webui: 初回設定(ユーザー名とパスワードを作る) http://127
 - **有効期間**: 12 時間(`WEBUI_SESSION_TTL` 秒で変更可)。サーバーを再起動してもセッションは続く。
 - **ログアウト**: 各ページ右上のボタン(`POST /logout`)。サーバー側のセッションも破棄される。
 - **総当たり対策**: 失敗が 5 回続くと 5 分ロック(全体でカウント。`WEBUI_LOCK_MAX` / `WEBUI_LOCK_SEC`)。ロック中は正しい
-  パスワードでも通らない(429)。カウントはメモリ上なので、サーバーの再起動でリセットされる。
+  パスワードでも通らない(429)。カウントは `lockout.json` で全セッションの Web UI が共有する(セッションを渡り歩いて回数を稼げない。再起動でも消えない)。
   失敗時は「ユーザー名違い」か「パスワード違い」かを区別して表示せず、ログにも残さない。
 
 ### パスワードを忘れたとき(再設定)
@@ -51,41 +57,44 @@ herdr-webui: 初回設定(ユーザー名とパスワードを作る) http://127
 2. 手元のシェルで実行する(パスは画面に表示される絶対パス):
 
    ```bash
-   touch webui/run/allow-reset
+   touch ~/.local/state/herdr-webui/allow-reset
    ```
 
 3. `/reset` を再読み込みし、新しいパスワード(確認入力あり、12 文字以上)を設定する。
 
-許可は、`run/allow-reset` が**通常ファイル**で、**自分のユーザーの所有**で、**作成(更新)から 10 分以内**のときだけ有効。
+許可は、`allow-reset` が**通常ファイル**で、**自分のユーザーの所有**で、**作成(更新)から 10 分以内**のときだけ有効。
 シンボリックリンク・期限切れ・未来の時刻のものは無効で、画面に理由が出る。存在確認は毎回行う(キャッシュしない)。
 期限が切れたら `touch` し直す。
 
-再設定に成功すると、`run/allow-reset` を削除し、`run/auth.json` のハッシュを更新(0600 のまま)、`run/sessions.json` の
+再設定に成功すると、`allow-reset` を削除し、`auth.json` のハッシュを更新(0600 のまま)、`sessions.json` の
 全セッションを無効化(全員が再ログイン)、ロックアウトのカウントもリセットする。ユーザー名は変わらない。
 `/reset` の POST にも、ログインと同じ CSRF 検査(Origin/Referer と隠しトークン)と失敗時の遅延(`WEBUI_FAIL_DELAY`、既定 1 秒)を適用する。
 成功・拒否(期限切れ・不正・未許可)はログに `reset: ok` / `reset: denied (...)` として残る(パスワードは出さない)。
 
-**最終手段**: ユーザー名も含めて最初からやり直すなら、`run/auth.json` と `run/sessions.json` を削除して `/setup` から作り直す。
+**最終手段**: ユーザー名も含めて最初からやり直すなら、`auth.json` と `sessions.json` を削除して `/setup` から作り直す。
 
 ```bash
-rm webui/run/auth.json webui/run/sessions.json
+rm ~/.local/state/herdr-webui/auth.json ~/.local/state/herdr-webui/sessions.json
 ```
 
-### 保存されるもの(`run/`、すべて 0600 で作成)
+### 保存されるもの(`~/.local/state/herdr-webui/`、ディレクトリ 0700・ファイル 0600)
 
 - `auth.json`: ユーザー名と、scrypt(salt 16 バイト、パラメータも記録)によるパスワードのハッシュ。平文はどこにも残さない。
 - `sessions.json`: セッション値の SHA-256 と有効期限だけ。Cookie の値そのものは保存しない。
-- Cookie は `HttpOnly; SameSite=Strict; Path=/`。
+- `lockout.json`: ログイン失敗の回数とロックの期限。
+- 複数のプロセスが同じファイルを書くので、書き換えは `auth.lock` の排他ロック(flock)の中で行う。
+- `instances/<名>.json`: 動いているセッションの Web UI(名前・内部のポート・pid)。`gateway.json`: 入口が実際に待ち受けたポート。
+- Cookie は 1 つ(`herdr_webui_session`)で `HttpOnly; SameSite=Strict; Path=/`。
+- checkout の `webui/run/`(`instance-<名>/`)には、そのセッションの Web UI の `port` と `instance` だけを置く。旧い `webui/run/auth.json` はもう読まない(setup の確認で warn)。
 
-POST を受け付けるのは `/login`・`/setup`・`/logout`・`/reset`・`/jobs/<job>`・`/resolve`・`/agent-op`・`/agent-new` だけ(`/jobs/<job>`・`/resolve`・`/agent-op`・`/agent-new` はログイン中のセッションに結びついたトークンが必要)。これらは `Origin`/`Referer` が自分のオリジン
-(`127.0.0.1:<port>`)であることと、フォームの隠しトークン(署名付き・30 分で失効)を確認する。それ以外の
+POST を受け付けるのは `/login`・`/setup`・`/logout`・`/reset`・`/jobs/<job>`・`/resolve`・`/agent-op`・`/agent-new` だけ(`/jobs/<job>`・`/resolve`・`/agent-op`・`/agent-new` はログイン中のセッションに結びついたトークンが必要)。これらは `Origin`/`Referer` が入口のオリジン
+(`127.0.0.1:<入口のポート>`。入口がそのセッションの Web UI のものに読み替えて渡す)であることと、フォームの隠しトークン(署名付き・30 分で失効)を確認する。それ以外の
 POST/PUT/DELETE/PATCH は 405。
 
 ### ポート
 
-- 既定は 8800 から +1 で実際に bind を試して空きを探す(上限 8819)。全部埋まっていればエラー終了。
-- `TB_UI_PORT=8810` のように固定指定した場合は探索しない(使用中ならエラー終了)。
-- 開いたポートは `run/port` に書く(終了時に消す)。
+- 入口: 既定 8800。ほかのアプリが使っていれば +1 ずつずらす(最大 8819。`TB_UI_GATEWAY_PORT` で起点を変えられる)。実際のポートは起動ログと `gateway.json` に出る。入口が既に動いていれば、2 つ目は起動しない。
+- 各セッションの Web UI: OS が選ぶ空きポート。`run/port` とインスタンスの一覧に書く(終了時に消す)。入口はこの一覧を見て中継する。
 
 ## ページ
 
@@ -171,7 +180,7 @@ ttyd(ブラウザ上の端末)は採用しない。署名が無効で、会社�
 
 ## 安全性
 
-- `127.0.0.1` のみで待ち受ける。Host ヘッダが自分以外なら 403(DNS リバインディング対策)。
+- 入口も各セッションの Web UI も `127.0.0.1` のみで待ち受ける。Host ヘッダが自分以外なら 403(DNS リバインディング対策)。
 - agent の出力・タスク本文・ログなど外部由来の文字列は、ANSI 等の制御文字を除いたうえで HTML エスケープして出す。
   CSP は `default-src 'none'` を基本に、`script-src 'self'` と `connect-src 'self'` だけを許す。JS は同一オリジンの
   `/notify.js`(通知のポーリングだけ。ログイン必須)と、Mermaid の図があるドキュメントだけで読む `/static/mermaid.min.js`・`/docs.js`
@@ -189,34 +198,35 @@ agent の端末出力、タスクの報告、送信履歴(送ったプロンプ�
 ## 常駐(launchd)
 
 ```bash
-bash webui/bin/gen-plist.sh      # webui/generated/local.herdr-webui.plist を生成して lint(登録はしない)
+bash webui/bin/gen-gateway-plist.sh   # 入口: webui/generated/local.herdr-webui-gateway.plist(TB_INSTANCE によらず 1 つ)
+bash webui/bin/gen-plist.sh           # セッションの Web UI: webui/generated/local.herdr-webui.plist
 ```
 
-ラベルは `local.herdr-webui`、`KeepAlive` あり、ログは `webui/logs/`。**登録は人が行う**:
+`KeepAlive` あり、ログは `webui/logs/`。**登録は人が行う**:
 
-Web UI は 1 つのインスタンス(ポート)で 1 つの herdr セッションだけを見る(画面の中でセッションは切り替えない)。
+Web UI は 1 つのプロセスで 1 つの herdr セッションだけを見る(画面の中でセッションは切り替えない。ほかのセッションへは「セッション」のリンクで移る)。
 セッション名は `HERDR_SESSION` か、checkout 直下の `herdr-session` ファイル(1 行目に名前)で決まる(優先順は `HERDR_SESSION` > ファイル > `default`)。
 
 複数の herdr セッションを別の checkout(`git worktree` など)で動かすときは、`TB_INSTANCE=<名前>` を付けて生成すると、
 ラベルと plist のファイル名が `local.herdr-<名前>-webui` になり、checkout 同士で衝突しない(未設定なら従来のまま)。
-名前は英数字で始まり、英数字と `.` `_` `-` だけ。`HERDR_SESSION` と `TB_UI_PORT` を付けて生成すると、plist の環境変数にも渡す。
+名前は英数字で始まり、英数字と `.` `_` `-` だけ。`HERDR_SESSION` を付けて生成すると、plist の環境変数にも渡す。
 
 ```bash
-cp webui/generated/local.herdr-webui.plist ~/Library/LaunchAgents/
+cp webui/generated/local.herdr-webui-gateway.plist webui/generated/local.herdr-webui.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.herdr-webui-gateway.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.herdr-webui.plist
-# 解除: launchctl bootout gui/$(id -u)/local.herdr-webui && rm ~/Library/LaunchAgents/local.herdr-webui.plist
+# 解除: launchctl bootout gui/$(id -u)/local.herdr-webui && rm ~/Library/LaunchAgents/local.herdr-webui.plist(入口も同様)
 ```
 
 ## 設定(環境変数)
 
 | 変数 | 既定 | 意味 |
 | --- | --- | --- |
-| `TB_INSTANCE` | (なし) | セッション(インスタンス)名。設定すると Cookie 名が `herdr_webui_session_<名>`、run ファイルが `run/instance-<名>/`、全画面のタイトルとヘッダに名前が出る(`default` 以外は色の帯)。未設定は従来どおり |
-| `TB_UI_PORT` | (なし) | 固定ポート。指定すると探索せず、使用中なら別ポートへ移らずエラーで終了する |
-| `TB_UI_GATEWAY` | (なし) | `1` で入口(`gateway.py`)の後ろに置く: ページを `/s/<TB_INSTANCE または default>/` の下に置く |
-| `TB_UI_GATEWAY_PORT` | `8790` | 入口(`gateway.py`)のポート |
-| `WEBUI_REGISTRY_DIR` | `$XDG_STATE_HOME/herdr-webui/instances`(無ければ `~/.local/state/…`) | 動いているインスタンスの一覧の置き場 |
-| `HERDR_WEBUI_RANGE` | `8800-8819` | 探索範囲(`下限-上限`)。テスト用 |
+| `TB_INSTANCE` | (なし = `default`) | セッション(インスタンス)名。ページの置き場所 `/s/<名>/`、run ファイル `run/instance-<名>/`、全画面のタイトルとヘッダに名前が出る(`default` 以外は色の帯) |
+| `TB_UI_GATEWAY_PORT` | `8800` | 入口(`gateway.py`)のポートの起点(使用中なら +1 ずつ、最大 +19) |
+| `WEBUI_STATE_DIR` | `$XDG_STATE_HOME/herdr-webui`(無ければ `~/.local/state/…`) | ログイン情報・インスタンスの一覧・入口のポートの置き場 |
+| `WEBUI_AUTH_DIR` | `WEBUI_STATE_DIR` | ログイン情報だけ別の場所に置く(テスト用) |
+| `WEBUI_REGISTRY_DIR` | `WEBUI_STATE_DIR/instances` | 動いているインスタンスの一覧の置き場 |
 | `WEBUI_SESSION_TTL` / `WEBUI_LOCK_MAX` / `WEBUI_LOCK_SEC` | `43200` / `5` / `300` | ログインの有効秒数 / ロックまでの失敗回数 / ロック秒数 |
 | `WEBUI_FAIL_DELAY` | `1` | ログイン・再設定の失敗時の遅延(秒) |
 | `WEBUI_DOC_ROOTS` | (なし) | パス指定で開いてよいディレクトリを足す(`:` 区切り)。agent の作業ディレクトリは自動で入る |
@@ -255,8 +265,8 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.herdr-webui.plist
 bash webui/tests/run.sh
 ```
 
-herdr は `tests/fake/herdr`(疑似)、DB・ログは一時ディレクトリ。本物のポートは 30000〜60000 の空き範囲から
-最大 3 つだけ使い、終了時に必ず片付ける。確認する境界: ポート衝突で +1、全埋まりでエラー、`TB_UI_PORT` 固定は探索しない、
+herdr は `tests/fake/herdr`(疑似)、DB・ログ・ログイン情報の置き場は一時ディレクトリ。各 Web UI は空きポート、入口は 30000〜60000 の空き範囲を使い、
+終了時に必ず片付ける。確認する境界: 入口のポートの使用中は +1・二重起動しない、`/s/<名>/` の付け外しと中継、ログインの共通化(Cookie 1 つ・失敗回数の共有)、
 未ログインは /login へ、初回設定は 1 回だけ、パスワード 12 文字未満の拒否、ハッシュに平文を含まない、0600、ロックアウト、
 パスワード再設定(許可なし・期限切れ・シンボリックリンクの拒否、成功後の許可削除とセッション失効、時刻の注入)、期限切れ・再起動後・ログアウトのセッション、`next` の外部 URL 無視、Origin 不一致・CSRF トークン無しの POST の拒否、他の POST 等は 405、不正な Host 403、XSS・ANSI のエスケープ、DB 不在・破損・herdr 失敗でも落ちない、未知の URL は 404。
 
@@ -279,55 +289,26 @@ herdr は `tests/fake/herdr`(疑似)、DB・ログは一時ディレクトリ。
 
 ## 複数セッションの並行運用
 
-herdr のセッションごとに、別ポート・別プロセスで webui を動かす(同一ポートでの切り替えはしない)。
+herdr のセッションごとに、別プロセスで Web UI を動かし、入口の 1 つのポートの `/s/<名>/` に並べる。
 
-- セッションごとに `TB_INSTANCE=<名>` と `TB_UI_PORT=<ポート>` を決めて起動する(`bin/gen-plist.sh` は両方を plist に渡す)。
-- Cookie は host 単位で、ポートでは分かれない。そのため Cookie 名にインスタンス名を入れ、別セッションのログインと干渉しないようにしている。
-- `TB_UI_PORT` が使用中ならエラーで終了する(別ポートへ黙って移ると、別セッションの画面と取り違えるため)。未指定なら従来どおり `HERDR_WEBUI_RANGE` で探索し、選んだポートとインスタンス名を起動ログ(`instance=<名> port=<n>`)と run ファイル(`port`・`instance`)に残す。
-- run ファイル(ログイン情報・セッション・port)は `run/instance-<名>/`、launchd のログは `logs/launchd-webui-<名>.{out,err}`。未設定なら従来の `run/`・`logs/launchd-webui.*`。
-- bind は `127.0.0.1` のまま(変更なし)。
+- セッションごとに `TB_INSTANCE=<名>` を決めて起動する(`bin/gen-plist.sh` は plist に渡す)。ポートは決めない(空きポートで待ち受け、入口が一覧を見て中継する)。
+- 動いているインスタンスは、起動時にホームの一覧(`~/.local/state/herdr-webui/instances/<名>.json`。ディレクトリ 700・ファイル 600)に名前・ポート・置き場所を書き、終了時に消す(自分の書いたものだけ)。
+  各画面の「セッション」(`/sessions`)と入口の `/` はこの一覧から、ほかのセッションへのリンクと緊急通知の件数を出す。
+- 同じ名前のインスタンスを 2 つ動かすと、一覧は後から起動したほうに置き換わる(起動ログに出る)。別の checkout なら `TB_INSTANCE` を分ける。
+- run ファイル(port・instance)は `run/instance-<名>/`、launchd のログは `logs/launchd-webui-<名>.{out,err}`。未設定なら `run/`・`logs/launchd-webui.*`。
+- bind は `127.0.0.1` のまま。
 
-- 動いているインスタンスは、起動時にホームの一覧(`~/.local/state/herdr-webui/instances/<名>.json`、`XDG_STATE_HOME` / `WEBUI_REGISTRY_DIR` で変更可。ディレクトリ 700・ファイル 600)に名前・ポート・置き場所を書き、終了時に消す。各画面の「セッション」(`/sessions`)はこの一覧から、ほかのセッションの Web UI へのリンクを出す(中身は見せない。開くとそのセッションのログイン)。
+### 入口(`gateway.py`)
 
-### 入口(1 ポートで全セッションを開く: `gateway.py`)
-
-ポートをセッションごとに覚えなくてよいよう、入口を 1 つ置ける。入口は `127.0.0.1:8790`(`TB_UI_GATEWAY_PORT`)で受け、`/s/<名>/…` をそのセッションの Web UI に中継する。
-
-```bash
-TB_INSTANCE=main TB_UI_PORT=8801 TB_UI_GATEWAY=1 python3 webui/server.py   # セッションごとに(別 checkout なら各 checkout で)
-python3 webui/gateway.py                                                  # 入口は 1 つだけ
-# → http://127.0.0.1:8790/ がセッション一覧、http://127.0.0.1:8790/s/main/ が main の Web UI
-```
-
-- **各セッションは今までどおり別プロセス・別ポート・別ログイン**(入口は中継するだけで、ログインも DB も持たない)。入口が止まっても、各セッションのポートを直接開けば使える(`http://127.0.0.1:8801/s/main/`)。
-- `TB_UI_GATEWAY=1` のインスタンスは、ページを `/s/<名>/` の下に置く(名前は `TB_INSTANCE`、未設定なら `default`)。Cookie の Path も `/s/<名>/` なので、ログインはセッションごとに別のまま。`/s/<名>/` の外は 404。
-- 入口の `/` はセッションの名前・ポート・動いているかの一覧。緊急通知の件数は、ブラウザがそのセッションにログイン済みのときだけ出る(そのセッションの `/api/notifications` を、そのセッションの Cookie で読む)。
-- 中継先はホームの一覧にあるポート(`127.0.0.1` だけ)。Host と、入口から来た Origin / Referer をそのセッションのものに読み替えて渡すので、各セッションの DNS リバインディング対策・CSRF 対策はそのまま効く。chunked の本文は受けない(411)、本文は 64 KiB まで。
-- 入口の後ろでは全セッションが同じオリジン(`127.0.0.1:8790`)になる。画面に出すのは自前のスクリプトだけで、外部由来の文字列はすべてエスケープしているが、どれか 1 つのセッションの画面でスクリプトを差し込まれると、ログイン済みのほかのセッションも読めることになる(別ポートで直接開く運用ではオリジンが分かれる)。
-- 常駐: `bash webui/bin/gen-gateway-plist.sh` で `local.herdr-webui-gateway.plist` を生成(登録は人が行う。手順は「常駐」と同じ)。各セッションの plist は `TB_UI_GATEWAY=1 bash webui/bin/gen-plist.sh` で生成する。
-
-### 既に `TB_INSTANCE` を付けて動かしている場合の移行
-
-以前は `TB_INSTANCE` はラベルにだけ効き、ログイン情報は `run/auth.json` にあった。更新後は `run/instance-<名>/` が置き場になる。
-
-- **既定では引き継がない**。更新後の最初の起動は `/setup`(初回設定)になる。引き継ぎを既定にすると、これから作る別インスタンス(研修用など)も default の認証で入れてしまい、別の認証情報を設定できないため。
-- 既存の運用を続けたい人は、`WEBUI_LEGACY_AUTH=1` を付けて起動する(`bin/gen-plist.sh` に付けて生成すれば plist にも入る)。新しい場所に `auth.json` が無いときだけ、旧い `run/auth.json` を**読み取りで**使う(消さない・書き換えない)。**1 回で済むのではなく、外すまで起動のたびに使われる**。起動ログに「旧い … を読み取りで使います」と出る。
-- 引き継ぐのは、通常ファイル(リンクでない)・自分の所有・group/other に書き込み権限が無いときだけ。満たさなければ引き継がず、起動ログで知らせて `/setup` になる。
-- 新しい場所に `auth.json` があれば、常にそちらが優先(インスタンスごとのパスワード)。`WEBUI_RUN_DIR` を明示している場合は引き継がない。
-- セッション(`sessions.json`)と Cookie 名は新しくなるので、ログインし直しになる。**外す手順**: `run/auth.json` を `run/instance-<名>/auth.json` にコピー(権限 0600)してから、`WEBUI_LEGACY_AUTH` を外して再起動する。新しい場所が常に優先されるので、コピー後は引き継ぎは働かない。
-
-### 固定ポート(`TB_UI_PORT`)の使用中の判定
-
-- `127.0.0.1` で待ち受け中なら、bind の失敗でエラーになる。macOS は `0.0.0.0` など全インターフェースで待ち受け中のポートにも bind が通ってしまうため、固定ポートのときは bind の前に接続を試し、何かが待ち受けていればエラーにする。
-- 範囲は 1〜65535。範囲外・数字でない指定はエラー終了する(範囲探索には落ちない)。
-
-### 将来(`tb use` / 台帳)との関係
-
-Cookie 名は現在 `herdr_webui_session_<TB_INSTANCE>`。台帳側の設計に合わせて名前の付け方を変えるときは、ログインし直しが 1 回で済むよう、同時に切り替える。
+- `/` はセッション一覧(名前・動いているか・緊急通知の件数)。件数は、ブラウザがログイン済みのときだけ出る(各セッションの `/api/notifications` をブラウザから読む)。
+- `/s/<名>/…` を一覧にあるポート(`127.0.0.1` だけ)へ中継する。Host と、入口から来た Origin / Referer をそのセッションの Web UI のものに読み替えて渡すので、各 Web UI の DNS リバインディング対策・CSRF 対策はそのまま効く。
+  chunked の本文は受けない(411)、本文は 64 KiB まで。書いたプロセスが居ない古い行(強制終了の残り)へはつながない。
+- 入口自身はログインを持たない(中身は各セッションの Web UI のログインの後ろ)。127.0.0.1 だけで待ち受け、Host が自分以外なら 403。
+- 全セッションが同じオリジン(`127.0.0.1:8800`)に並ぶ。画面に出すのは自前のスクリプトだけで、外部由来の文字列はすべてエスケープしている。
 
 ### `TB_INSTANCE` の大文字小文字
 
-大文字小文字を区別しないボリューム(macOS の既定など)で run を共有しないよう、webui は名前を**小文字に正規化**する(`Alpha` と `alpha` は同じインスタンス: Cookie 名・run・表示とも小文字)。launchd のラベルと plist のファイル名は、`TB_INSTANCE` の書いたまま(`bin/gen-plist.sh`)。
+大文字小文字を区別しないボリューム(macOS の既定など)で run を共有しないよう、webui は名前を**小文字に正規化**する(`Alpha` と `alpha` は同じインスタンス: 置き場所・run・表示とも小文字)。launchd のラベルと plist のファイル名は、`TB_INSTANCE` の書いたまま(`bin/gen-plist.sh`)。
 
 ## 定期実行ジョブの表示(`/jobs/<job>`)の読み取り範囲
 

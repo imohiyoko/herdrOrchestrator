@@ -33,8 +33,8 @@ bash setup/check.sh --project ~/work/app  # 確認するプロジェクトを指
 | `hook:global` / `hook:<project>` | Claude Code の settings(`~/.claude/settings.json`、`<project>/.claude/settings{,.local}.json`)の `UserPromptSubmit` と `Stop` に `tb-hook` があるか。パスがこのリポジトリを指すか、重複・片方だけ・グローバルとの二重登録 |
 | `taskboard:db` | `taskboard/data/tasks.db` の有無(情報のみ) |
 | `job:<job>` | `scheduler/jobs/*.conf.example` に対応する `*.conf` があるか、`/path/to/` が残っていないか。`taskboard-digest` だけ必須 |
-| `launchd:<job>` / `launchd:webui` | `~/Library/LaunchAgents/` の plist と、`launchctl print` で読み込まれているか。時刻を焼き込んだ古い plist は warn。macOS 以外は skip |
-| `webui:auth` / `webui:token` / `webui:port` | `run/auth.json` の有無と権限 600(中身は読まない)、廃止された `run/token` の残り、起動中のポート |
+| `launchd:<job>` / `launchd:webui` / `launchd:webui-gateway` | `~/Library/LaunchAgents/` の plist と、`launchctl print` で読み込まれているか。時刻を焼き込んだ古い plist は warn。macOS 以外は skip |
+| `webui:auth` / `webui:old-auth` / `webui:token` / `webui:port` | `~/.local/state/herdr-webui/auth.json`(全セッション共通)の有無と権限 600(中身は読まない)、旧い置き場 `webui/run/auth.json` と廃止された `run/token` の残り、入口のポート |
 | `presets` | `example.conf` / `setup.conf` 以外のプリセットがあるか |
 
 出力は 1 項目 1 行(`ok` / `warn` / `missing` / `skip` / `info`)で、対処が要るものには `next:` 行が付く。

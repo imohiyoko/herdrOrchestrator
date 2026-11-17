@@ -27,11 +27,13 @@ fresh() {
   hook_json UserPromptSubmit Stop >"$P/.claude/settings.local.json"
   echo '<plist><dict/></plist>' >"$LA/local.herdr-sched-taskboard-digest.plist"
   echo '<plist><dict/></plist>' >"$LA/local.herdr-webui.plist"
-  echo '{}' >"$R/webui/run/auth.json"; chmod 600 "$R/webui/run/auth.json"
+  echo '<plist><dict/></plist>' >"$LA/local.herdr-webui-gateway.plist"
+  WS="$H/.local/state/herdr-webui"; mkdir -p "$WS"
+  echo '{}' >"$WS/auth.json"; chmod 600 "$WS/auth.json"
   for c in $CORE jq; do ln -s "$(command -v "$c")" "$B/$c"; done
   for c in sqlite3 python3 claude plutil; do ln -s "$HERE/fake/stub" "$B/$c"; done
   ln -s "$HERE/fake/herdr" "$B/herdr"; ln -s "$HERE/fake/launchctl" "$B/launchctl"
-  export FAKE_LOADED="local.herdr-sched-taskboard-digest local.herdr-webui" FAKE_HERDR_DOWN=0 FAKE_LOG="$W/calls.log"
+  export FAKE_LOADED="local.herdr-sched-taskboard-digest local.herdr-webui local.herdr-webui-gateway" FAKE_HERDR_DOWN=0 FAKE_LOG="$W/calls.log"
   OSNAME=Darwin
 }
 # hook_json <event>... [-- <hook のパス>]: settings.json を出す
@@ -142,16 +144,18 @@ has "macOS 以外は launchd を skip" skip launchd:webui
 rc_is "skip だけなら終了コード 0" 0
 fresh; rm "$B/launchctl"; run; has "launchctl がなければ skip" skip launchd:webui
 
-# --- Web UI ---
-fresh; rm "$R/webui/run/auth.json"; run
+# --- Web UI(ログイン情報と入口のポートはホームの 1 か所) ---
+fresh; rm "$WS/auth.json"; run
 has "auth.json がない" missing webui:auth "ログイン未設定"
 printf '%s\n' "$OUT" | grep -A1 "^missing *webui:auth" | grep -q "/setup" && ok "next: で /setup を案内" || ng "next: で /setup を案内"
-fresh; chmod 644 "$R/webui/run/auth.json"; run
+fresh; chmod 644 "$WS/auth.json"; run
 has "auth.json の権限が 600 でない" warn webui:auth "644"
-fresh; echo '{"password_hash":"SECRET-HASH"}' >"$R/webui/run/auth.json"; chmod 600 "$R/webui/run/auth.json"; run
+fresh; echo '{"password_hash":"SECRET-HASH"}' >"$WS/auth.json"; chmod 600 "$WS/auth.json"; run
 printf '%s\n' "$OUT" | grep -q SECRET && ng "auth.json の中身を出さない" || ok "auth.json の中身を出さない"
+fresh; echo '{}' >"$R/webui/run/auth.json"; run; has "旧い置き場の auth.json は warn" warn webui:old-auth
 fresh; : >"$R/webui/run/token"; run; has "廃止された token" warn webui:token
-fresh; echo 8803 >"$R/webui/run/port"; run; has "起動中のポート" info webui:port "8803"
+fresh; echo '{"port": 8801, "pid": 1}' >"$WS/gateway.json"; run; has "入口のポート" info webui:port "http://127.0.0.1:8801/"
+fresh; rm "$LA/local.herdr-webui-gateway.plist"; run; has "入口の plist が未登録" missing launchd:webui-gateway
 
 # --- 引数 ---
 fresh; run --bogus; rc_is "不明なオプションは 2" 2

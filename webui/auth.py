@@ -1,9 +1,14 @@
 """webui の認証: ID/パスワード、セッション、総当たり対策、CSRF トークン。標準ライブラリのみ。
 
-- パスワードは scrypt(ソルト 16 バイト、パラメータも記録)でハッシュ化し、run/auth.json(0600)に保存する。平文は保存・ログしない。
-- セッションは 32 バイトの乱数。サーバー側にはその SHA-256 だけを run/sessions.json(0600)に期限付きで保存する。
+- ログインは全セッション(全インスタンス)で共通。置き場はホームの 1 か所(config.AUTH_DIR、既定 ~/.local/state/herdr-webui/)。
+  複数のプロセスが同じファイルを読み書きするので、書き換えは auth.lock の排他ロック(flock)の中で行う。
+- パスワードは scrypt(ソルト 16 バイト、パラメータも記録)でハッシュ化し、auth.json(0600)に保存する。平文は保存・ログしない。
+- セッションは 32 バイトの乱数。サーバー側にはその SHA-256 だけを sessions.json(0600)に期限付きで保存する。
+- 総当たり対策の失敗回数とロックも lockout.json で共有する(インスタンスを渡り歩いて回数を稼げない)。
 - 失敗理由(ユーザー名違いか、パスワード違いか)は区別せず、ログにも残さない。
 """
+import contextlib
+import fcntl
 import hashlib
 import hmac
 import json
@@ -18,7 +23,7 @@ MIN_PASSWORD = 12
 MAX_FIELD = 256
 SCRYPT = {"n": 2 ** 14, "r": 8, "p": 1, "dklen": 32}
 FORM_TOKEN_TTL = 1800
-RESET_WINDOW = 600  # run/allow-reset の有効時間(10 分)
+RESET_WINDOW = 600  # allow-reset の有効時間(10 分)
 
 
 def _env_int(name, default):
@@ -93,39 +98,32 @@ def safe_next(n):
 
 
 class Auth:
-    def __init__(self, run_dir, clock=time.time, legacy_dir=None):
+    def __init__(self, auth_dir, clock=time.time):
         self.clock = clock  # 時刻の注入点(テスト用)
-        self.run_dir = run_dir
-        self.allow_path = os.path.join(os.path.abspath(run_dir), "allow-reset")
-        self.auth_path = os.path.join(run_dir, "auth.json")
-        self.sess_path = os.path.join(run_dir, "sessions.json")
-        # 旧い置き場(TB_INSTANCE を付ける前の run/)の auth.json。新しい場所に無いときだけ「読む」(消さない・書かない)
-        self.legacy_auth_path = os.path.join(legacy_dir, "auth.json") if legacy_dir else None
+        self.run_dir = auth_dir
+        os.makedirs(auth_dir, mode=0o700, exist_ok=True)
+        self.allow_path = os.path.join(os.path.abspath(auth_dir), "allow-reset")
+        self.auth_path = os.path.join(auth_dir, "auth.json")
+        self.sess_path = os.path.join(auth_dir, "sessions.json")
+        self.lockout_path = os.path.join(auth_dir, "lockout.json")
+        self.lock_path = os.path.join(auth_dir, "auth.lock")
         self.lock = threading.Lock()
-        self.key = secrets.token_bytes(32)  # フォームトークンの署名鍵(プロセス内のみ)
-        self.fails = 0
-        self.locked_until = 0.0
-        os.makedirs(run_dir, exist_ok=True)
+        self.key = secrets.token_bytes(32)  # フォームトークンの署名鍵(プロセス内のみ。フォームは出したインスタンスへ戻る)
+
+    @contextlib.contextmanager
+    def _locked(self):
+        """プロセス内(スレッド)とプロセス間(flock)の両方で排他する。"""
+        with self.lock:
+            fd = os.open(self.lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+                yield
+            finally:
+                os.close(fd)   # close でロックも外れる
 
     # ---- 初回設定
-    def _legacy_file_ok(self):
-        """旧い auth.json を信頼してよいか: 通常ファイル(リンクでない)・自分の所有・group/other に書き込み権限なし。"""
-        try:
-            st = os.lstat(self.legacy_auth_path)
-        except OSError:
-            return False
-        return stat.S_ISREG(st.st_mode) and st.st_uid == os.geteuid() and st.st_mode & 0o022 == 0
-
-    def _auth_read_path(self):
-        if not os.path.isfile(self.auth_path) and self.legacy_auth_path and self._legacy_file_ok() and self.legacy_auth_path and os.path.isfile(self.legacy_auth_path):
-            return self.legacy_auth_path
-        return self.auth_path
-
-    def using_legacy(self):
-        return self._auth_read_path() != self.auth_path
-
     def configured(self):
-        return os.path.isfile(self._auth_read_path())
+        return os.path.isfile(self.auth_path)
 
     def setup(self, username, password):
         """auth.json が無いときだけ作る。作れたら True(先に作られていたら False)。"""
@@ -135,7 +133,7 @@ class Auth:
         with os.fdopen(fd, "w") as f:
             json.dump(rec, f)
         try:
-            os.link(tmp, self.auth_path)  # 既にあれば失敗する(排他的な作成)
+            os.link(tmp, self.auth_path)  # 既にあれば失敗する(排他的な作成。ほかのインスタンスと同時でも 1 つだけ)
             return True
         except FileExistsError:
             return False
@@ -144,18 +142,35 @@ class Auth:
 
     def _load(self):
         try:
-            with open(self._auth_read_path()) as f:
+            with open(self.auth_path) as f:
                 return json.load(f)
         except (OSError, ValueError):
             return None
 
     # ---- ログイン
+    def _read_lockout(self):
+        try:
+            with open(self.lockout_path) as f:
+                d = json.load(f)
+            fails, until = d.get("fails"), d.get("until")
+            if isinstance(fails, int) and isinstance(until, (int, float)):
+                return fails, float(until)
+        except (OSError, ValueError, AttributeError):
+            pass
+        return 0, 0.0
+
+    def _write_lockout(self, fails, until):
+        write_private_json(self.lockout_path, {"fails": fails, "until": until})
+
     def locked_for(self):
-        with self.lock:
-            left = self.locked_until - time.time()
-            if left <= 0 and self.locked_until:
-                self.locked_until, self.fails = 0.0, 0
-            return max(0, int(left) + 1) if left > 0 else 0
+        fails, until = self._read_lockout()
+        left = until - time.time()
+        if left <= 0 and until:
+            with self._locked():
+                _, u2 = self._read_lockout()
+                if u2 == until:   # 期限切れのロックを解く(その間にほかで変わっていなければ)
+                    self._write_lockout(0, 0.0)
+        return max(0, int(left) + 1) if left > 0 else 0
 
     def attempt(self, username, password):
         """True/False。失敗の理由は区別しない(常に両方を検証する)。"""
@@ -165,13 +180,14 @@ class Auth:
             u_ok = hmac.compare_digest(str(rec.get("username", "")).encode(), username.encode())
             p_ok = verify_password(password, rec.get("password") or {})
             ok = u_ok and p_ok
-        with self.lock:
+        with self._locked():
+            fails, until = self._read_lockout()
             if ok:
-                self.fails, self.locked_until = 0, 0.0
+                if fails or until:
+                    self._write_lockout(0, 0.0)
             else:
-                self.fails += 1
-                if self.fails >= lock_max():
-                    self.locked_until = time.time() + lock_sec()
+                fails += 1
+                self._write_lockout(fails, time.time() + lock_sec() if fails >= lock_max() else until)
         return ok
 
     # ---- セッション
@@ -193,7 +209,7 @@ class Auth:
 
     def create_session(self):
         tok = secrets.token_urlsafe(32)  # 32 バイトの乱数
-        with self.lock:
+        with self._locked():
             d = self._read_sessions()
             d[self._h(tok)] = time.time() + session_ttl()
             self._write_sessions(d)
@@ -212,7 +228,7 @@ class Auth:
     def destroy_session(self, tok):
         if not tok:
             return
-        with self.lock:
+        with self._locked():
             d = self._read_sessions()
             if d.pop(self._h(tok), None) is not None:
                 self._write_sessions(d)
@@ -234,7 +250,7 @@ class Auth:
         good = hmac.new(self.key, f"{ctx}|{ts}|{nonce}".encode(), hashlib.sha256).hexdigest()
         return hmac.compare_digest(good.encode(), sig.encode())
 
-    # ---- パスワード再設定(run/allow-reset を人がシェルで作ったときだけ)
+    # ---- パスワード再設定(allow-reset を人がシェルで作ったときだけ)
     def reset_state(self, now=None):
         """"ok" | "missing" | "expired" | "invalid"。毎回ファイルを調べる(キャッシュしない)。
         通常ファイルで自分のユーザーの所有のものだけ有効。シンボリックリンクは無効。"""
@@ -255,7 +271,7 @@ class Auth:
     def reset_password(self, password, now=None):
         """許可が有効なら、ハッシュ更新・許可ファイル削除・全セッション無効化・ロックアウト解除。
         返り値は reset_state の値(成功時は "done")。"""
-        with self.lock:
+        with self._locked():
             state = self.reset_state(now)
             if state != "ok":
                 return state
@@ -269,5 +285,5 @@ class Auth:
             rec["password"] = hash_password(password)
             write_private_json(self.auth_path, rec)
             write_private_json(self.sess_path, {})
-            self.fails, self.locked_until = 0, 0.0
+            self._write_lockout(0, 0.0)
             return "done"

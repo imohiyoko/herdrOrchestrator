@@ -207,17 +207,24 @@ for conf in "$JOBS"/*.conf; do
 done
 
 # --- 6. Web UI --------------------------------------------------------------------
-RUN="$ROOT/webui/run"
-if [ -f "$RUN/auth.json" ]; then
-  mode=$(perm_of "$RUN/auth.json")
-  if [ "$mode" = 600 ]; then report ok "webui:auth" "ログイン設定済み(内容は表示しない)"
-  else report warn "webui:auth" "run/auth.json の権限が $mode(600 であるべき)" "chmod 600 webui/run/auth.json"; fi
+# ログイン情報と入口のポートは checkout をまたいでホームの 1 か所(webui/app/config.py の STATE_DIR と同じ)
+WSTATE="${XDG_STATE_HOME:-$HOME/.local/state}/herdr-webui"
+if [ -f "$WSTATE/auth.json" ]; then
+  mode=$(perm_of "$WSTATE/auth.json")
+  if [ "$mode" = 600 ]; then report ok "webui:auth" "ログイン設定済み(全セッション共通。内容は表示しない)"
+  else report warn "webui:auth" "$WSTATE/auth.json の権限が $mode(600 であるべき)" "chmod 600 $WSTATE/auth.json"; fi
 else
-  report missing "webui:auth" "ログイン未設定(run/auth.json がない)" "Web UI を起動し、本人がブラウザで /setup を開いてユーザー名とパスワードを作る"
+  report missing "webui:auth" "ログイン未設定($WSTATE/auth.json がない)" "Web UI と入口を起動し、本人がブラウザで http://127.0.0.1:8800/s/<セッション名>/setup を開いてユーザー名とパスワードを作る"
 fi
+RUN="$ROOT/webui/run"
+[ -e "$RUN/auth.json" ] && report warn "webui:old-auth" "旧い置き場のログイン情報 webui/run/auth.json が残っている(もう使わない)" "rm webui/run/auth.json webui/run/sessions.json(人の承認が要る)"
 [ -e "$RUN/token" ] && report warn "webui:token" "廃止された run/token が残っている" "rm webui/run/token(もう使わない)"
-if [ -f "$RUN/port" ]; then report info "webui:port" "起動中の可能性: http://127.0.0.1:$(head -c 6 "$RUN/port" | tr -cd 0-9)/"; fi
+if [ -f "$WSTATE/gateway.json" ]; then
+  gp=$(tr -cd '0-9:,"a-z' <"$WSTATE/gateway.json" | sed -n 's/.*"port":\([0-9]*\).*/\1/p')
+  [ -n "$gp" ] && report info "webui:port" "入口が動いている可能性: http://127.0.0.1:$gp/"
+fi
 launchd_check "launchd:webui" "${LABEL_PREFIX}webui" "$ROOT/webui/generated/${LABEL_PREFIX}webui.plist"
+launchd_check "launchd:webui-gateway" "local.herdr-webui-gateway" "$ROOT/webui/generated/local.herdr-webui-gateway.plist"
 
 # --- 7. プリセット ---------------------------------------------------------------
 n_presets=0

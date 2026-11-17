@@ -26,7 +26,7 @@ worker のプロジェクトが presets に書かれていないときは `bash 
 - **既存の設定ファイルは上書きしない。** 読んで、必要な部分だけを足す(JSON は `jq` で読み、壊れていたら直す前に相談する)。
   書く前に `cp <file> <file>.bak-$(date +%Y%m%d%H%M%S)` でバックアップを取る(これも承認の範囲に含めて説明する)。
 - `launchctl` で使ってよいのは承認済みの `bootstrap` / `bootout` と、確認用の `print` だけ。
-- **パスワードを聞かない・扱わない。** Web UI のログイン設定は本人がブラウザで行う。`webui/run/auth.json` と
+- **パスワードを聞かない・扱わない。** Web UI のログイン設定は本人がブラウザで行う。`~/.local/state/herdr-webui/` の `auth.json` と
   `sessions.json` の中身は表示しない(`check.sh` も中身を読まない)。
 - 外部への送信(gh での push・PR・Issue、Slack など)はセットアップの範囲外。頼まれても、このスレッドではやらない。
 - `jobs/*.conf` の `COMMAND` は `bash -c` で実行される。中身はこのリポジトリのパスと決まったコマンドだけにし、
@@ -64,9 +64,11 @@ worker のプロジェクトが presets に書かれていないときは `bash 
 
 ### 5. Web UI(`webui:*` / `launchd:webui`)
 - `webui/README.md` の要点(127.0.0.1 のみ・ログイン必須・変更できるのはスケジュールだけ)を説明する。
-- 常駐させるなら `bash webui/bin/gen-plist.sh` で生成し、承認後に README の「常駐」の `cp` と `launchctl bootstrap` を実行する。
-  常駐させない場合は `python3 webui/server.py` を利用者に起動してもらう。
-- 起動したら、**すぐに本人がブラウザで `/setup` を開いてユーザー名とパスワード(12 文字以上)を作る** よう案内する。
+- ブラウザで開くのは入口(`webui/gateway.py`、既定 `http://127.0.0.1:8800/`)の 1 つだけ。各セッションの Web UI はその下の `/s/<セッション名>/` に並ぶ。
+- 常駐させるなら、入口は `bash webui/bin/gen-gateway-plist.sh`、各セッションの Web UI は `bash webui/bin/gen-plist.sh` で生成し、
+  承認後に README の「常駐」の `cp` と `launchctl bootstrap` を実行する。常駐させない場合は `python3 webui/gateway.py` と `python3 webui/server.py` を利用者に起動してもらう。
+- 起動したら、**すぐに本人がブラウザで `http://127.0.0.1:8800/s/<セッション名>/setup` を開いてユーザー名とパスワード(12 文字以上)を作る** よう案内する。
+  ログインは全セッションで共通(1 回作れば全セッションに入れる)。
   あなたはパスワードを入力・保存・表示しない。
 - `webui:token` が出たら、廃止済みの `run/token` の削除を(承認後に)提案する。
 
