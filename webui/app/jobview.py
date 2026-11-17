@@ -108,7 +108,7 @@ def job_defs(name):
 
 
 # conf の先頭コメントのうち、どの job にも付く注意書き(説明ではない)は省く
-_BOILER = re.compile(r"^(注意: COMMAND は bash -c|HERDR_SESSION は tb が操作する|先頭を / にしないこと|xargs は空入力では)")
+_BOILER = re.compile(r"^(注意: COMMAND は bash -c|HERDR_SESSION は|先頭を / にしないこと|xargs は空入力では)")
 
 
 def job_about(name):
