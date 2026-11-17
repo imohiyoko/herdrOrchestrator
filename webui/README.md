@@ -242,6 +242,8 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.herdr-webui.plist
 | `app/jobs.py` | scheduler のジョブ定義と、Web UI から書く上書き設定 |
 | `app/jobview.py` | `/jobs/<job>` の読み取り表示(conf を実行せず PROMPT / COMMAND をそのまま読む、本文のマスク、次回の予定、宛先の状態) |
 | `app/views.py` | HTML の組み立てと各ページ |
+| `app/scripts.py` | 画面に配るスクリプト(緊急通知・mermaid・件数の取得)。CSP でインラインのスクリプトは使えないので、すべて別ファイルとして配る |
+| `app/httpbase.py` | Web UI と入口で共通の HTTP 応答(安全のためのヘッダ、中身を残さないアクセスログ、Host の検査) |
 | `app/registry.py` | 動いているインスタンスの一覧(ホームに 1 インスタンス 1 ファイル。セッション一覧と入口が読む) |
 | `app/handler.py` | HTTP ハンドラ・ログイン・起動 |
 | `auth.py` | パスワードとセッション |

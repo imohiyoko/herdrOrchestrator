@@ -18,9 +18,10 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
-from app import registry
+from app import httpbase, registry
 from app.config import HOST
 from app.sanitize import e
+from app.scripts import GATEWAY_JS
 
 DEFAULT_PORT = 8790
 MAX_BODY = 64 * 1024
@@ -29,29 +30,9 @@ TIMEOUT = 60
 HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "proxy-connection", "te", "trailer",
        "transfer-encoding", "upgrade"}
 
-CSP = ("default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'unsafe-inline'; "
-       "base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 CSS = ("body{font-family:-apple-system,system-ui,sans-serif;margin:24px;color:#1f2328}table{border-collapse:collapse}"
        "th,td{border:1px solid #d0d7de;padding:4px 10px;text-align:left}.note{color:#57606a;font-size:13px}.bad{color:#cf222e}")
-
-# 一覧の件数: 各インスタンスの /api/notifications を、そのインスタンスのログイン(Cookie は /s/<名前>/ にだけ付く)で読む
-GATEWAY_JS = """(function () {
-  "use strict";
-  var cells = document.querySelectorAll("td[data-api]");
-  Array.prototype.forEach.call(cells, function (td) {
-    var api = td.getAttribute("data-api");
-    if (!/^\\/s\\/[A-Za-z0-9][A-Za-z0-9._-]{0,63}\\/api\\/notifications$/.test(api)) return;
-    fetch(api, {credentials: "same-origin", cache: "no-store", headers: {"Accept": "application/json"}})
-      .then(function (r) {
-        if (r.status === 401) { td.textContent = "要ログイン"; return null; }
-        if (!r.ok) throw new Error("status " + r.status);
-        return r.json();
-      })
-      .then(function (d) { if (d) td.textContent = String(Array.isArray(d.items) ? d.items.length : "?"); })
-      .catch(function () { td.textContent = "読めない"; });
-  });
-})();
-"""
+CSP = httpbase.CSP.replace("form-action 'self'", "form-action 'none'")   # 入口自身はフォームを出さない
 
 
 def gateway_port():
@@ -90,39 +71,17 @@ class Gateway(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.0"   # 1 リクエスト 1 接続(中継を単純に保つ)
     port = 0
 
-    def log_message(self, fmt, *args):  # クエリ・Cookie・本文は残さない
-        try:
-            line = self.requestline.split(" ")
-            path = urlsplit(line[1]).path if len(line) > 1 else "?"
-            sys.stderr.write(f"{self.log_date_time_string()} {line[0]} {path} {args[1] if len(args) > 1 else ''}\n")
-        except Exception:
-            pass
+    def log_message(self, fmt, *args):
+        httpbase.log_request_line(self, args)
 
     def _send(self, code, body, ctype="text/html; charset=utf-8", extra=()):
-        data = body.encode("utf-8") if isinstance(body, str) else body
-        self.send_response(code)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Referrer-Policy", "same-origin")
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("X-Frame-Options", "DENY")
-        self.send_header("Content-Security-Policy", CSP)
-        for k, v in extra:
-            self.send_header(k, v)
-        self.end_headers()
-        if self.command != "HEAD":
-            self.wfile.write(data)
+        httpbase.send(self, code, body.encode("utf-8") if isinstance(body, str) else body, ctype, extra, CSP)
 
     def _text(self, code, msg, extra=()):
         self._send(code, msg + "\n", "text/plain; charset=utf-8", extra)
 
-    def _origins(self):
-        return (f"http://127.0.0.1:{self.port}", f"http://localhost:{self.port}")
-
     def _handle(self):
-        host = (self.headers.get("Host") or "").lower()
-        if host not in (f"127.0.0.1:{self.port}", f"localhost:{self.port}"):
+        if not httpbase.host_ok(self, self.port):
             return self._text(403, "Forbidden")
         u = urlsplit(self.path)
         if u.scheme or u.netloc:
@@ -202,7 +161,7 @@ class Gateway(BaseHTTPRequestHandler):
 
     def _rewrite_origin(self, v, port):
         """入口から来た Origin / Referer だけ、そのインスタンスのものに読み替える。ほかの値はそのまま(インスタンスが拒む)。"""
-        for o in self._origins():
+        for o in httpbase.origins(self.port):
             if v == o or v.startswith(o + "/"):
                 return o.rsplit(":", 1)[0] + f":{port}" + v[len(o):]
         return v

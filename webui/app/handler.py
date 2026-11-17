@@ -15,12 +15,16 @@ from urllib.parse import parse_qs, unquote, urlencode, urlsplit
 import auth
 
 from . import registry
+from .httpbase import host_ok, log_request_line, origins, send
 from .config import BASE, COOKIE, HOST, INSTANCE, herdr_env, JOB_RE, LEGACY_RUN_DIR, ROOT, RUN_DIR, cfg
 from .sanitize import clean, e
 from .actions import agent_decide, agent_new, agent_op, resolve_comment
 from .data import NOTIFY_POLL_SEC, badge_count, urgent_items
 from .jobs import job_names, save_job_settings
-from .views import CSS, DOCS_JS, NOTIFY_JS, SESSIONS_JS, err_html, inst_label, page, page_agent_new, page_job, route, title_suffix
+from .scripts import DOCS_JS, SESSIONS_JS, notify_js
+from .views import CSS, err_html, inst_label, page, page_agent_new, page_job, route, title_suffix
+
+NOTIFY_JS = notify_js(BASE, NOTIFY_POLL_SEC * 1000)
 
 
 def plain_page(title, body):
@@ -42,6 +46,31 @@ def form_html(action, csrf, fields, submit, error="", note="", next_=""):
 
 
 FORGOT = '<p class=note><a href="/reset">パスワードを忘れた</a></p>'
+SETUP_FIELDS = [("username", "ユーザー名", "text", "username"),
+                ("password", f"パスワード({auth.MIN_PASSWORD} 文字以上)", "password", "new-password"),
+                ("confirm", "パスワード(確認)", "password", "new-password")]
+LOGIN_FIELDS = [("username", "ユーザー名", "text", "username"),
+                ("password", "パスワード", "password", "current-password")]
+
+
+def setup_page(a, error=""):
+    return plain_page("初回設定", form_html("/setup", a.form_token("anon"), SETUP_FIELDS, "設定する", error=error,
+                                         note="" if error else "最初に 1 回だけ行う設定です。設定後、この画面は閉じます。"))
+
+
+def login_page(a, next_, error=""):
+    return plain_page("ログイン", form_html("/login", a.form_token("anon"), LOGIN_FIELDS, "ログイン", error=error, next_=next_) + FORGOT)
+
+
+def password_error(pw, conf):
+    """新しいパスワードの検査(初回設定・再設定で共通)。問題なければ None。"""
+    if len(pw) < auth.MIN_PASSWORD:
+        return f"パスワードは {auth.MIN_PASSWORD} 文字以上にしてください"
+    if len(pw) > auth.MAX_FIELD:
+        return "パスワードが長すぎます"
+    if pw != conf:
+        return "確認入力が一致しません"
+    return None
 RESET_DENY = {"missing": "再設定は許可されていません。", "expired": "再設定の許可の期限(10 分)が切れています。",
               "invalid": "再設定の許可ファイルが不正です(通常ファイルで、自分の所有のものだけ有効)。いったん削除して作り直してください。"}
 
@@ -76,13 +105,8 @@ class Handler(BaseHTTPRequestHandler):
     auth = None
     port = 0
 
-    def log_message(self, fmt, *args):  # クエリ・Cookie・本文はログに残さない(メソッド・パス・状態だけ)
-        try:
-            line = self.requestline.split(" ")
-            path = urlsplit(line[1]).path if len(line) > 1 else "?"
-            sys.stderr.write(f"{self.log_date_time_string()} {line[0]} {path} {args[1] if len(args) > 1 else ''}\n")
-        except Exception:
-            pass
+    def log_message(self, fmt, *args):
+        log_request_line(self, args)
 
     _static_cache = {}
 
@@ -100,23 +124,7 @@ class Handler(BaseHTTPRequestHandler):
     def _send(self, code, body, ctype="text/html; charset=utf-8", extra=()):
         if BASE and isinstance(body, str) and ctype.startswith("text/html"):
             body = with_base(body)
-        data = body.encode("utf-8") if isinstance(body, str) else body
-        self.send_response(code)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Referrer-Policy", "same-origin")
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("X-Frame-Options", "DENY")
-        self.send_header("Content-Security-Policy",
-                         "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'unsafe-inline'; "
-                         "base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
-        self.send_header("Cross-Origin-Resource-Policy", "same-origin")
-        for k, v in extra:
-            self.send_header(k, v)
-        self.end_headers()
-        if self.command != "HEAD":
-            self.wfile.write(data)
+        send(self, code, body.encode("utf-8") if isinstance(body, str) else body, ctype, extra)
 
     def _text(self, code, msg, extra=()):
         self._send(code, msg + "\n", "text/plain; charset=utf-8", extra)
@@ -128,12 +136,10 @@ class Handler(BaseHTTPRequestHandler):
         self._send(302, "", "text/plain", [("Location", loc), *extra])
 
     def _origins(self):
-        return (f"http://127.0.0.1:{self.port}", f"http://localhost:{self.port}")
+        return origins(self.port)
 
     def _host_ok(self):
-        # DNS リバインディング対策: Host が自分自身であること
-        host = (self.headers.get("Host") or "").lower()
-        return host in (f"127.0.0.1:{self.port}", f"localhost:{self.port}")
+        return host_ok(self, self.port)
 
     def _origin_ok(self):
         o, ref = self.headers.get("Origin"), self.headers.get("Referer")
@@ -175,22 +181,14 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/setup":
             if a.configured():
                 return self._send(404, plain_page("見つかりません", "<p>そのページはありません。</p>"))
-            return self._send(200, plain_page("初回設定", form_html(
-                "/setup", a.form_token("anon"),
-                [("username", "ユーザー名", "text", "username"),
-                 ("password", f"パスワード({auth.MIN_PASSWORD} 文字以上)", "password", "new-password"),
-                 ("confirm", "パスワード(確認)", "password", "new-password")],
-                "設定する", note="最初に 1 回だけ行う設定です。設定後、この画面は閉じます。")))
+            return self._send(200, setup_page(a))
         if path == "/login":
             if not a.configured():
                 return self._redirect("/setup")
             nx = auth.safe_next((qs.get("next") or ["/"])[0])
             if self._session():
                 return self._redirect(nx)
-            return self._send(200, plain_page("ログイン", form_html(
-                "/login", a.form_token("anon"),
-                [("username", "ユーザー名", "text", "username"),
-                 ("password", "パスワード", "password", "current-password")], "ログイン", next_=nx) + FORGOT))
+            return self._send(200, login_page(a, nx))
         if path == "/reset":
             if not a.configured():
                 return self._redirect("/setup")
@@ -317,21 +315,10 @@ class Handler(BaseHTTPRequestHandler):
             if a.configured():
                 return self._send(404, plain_page("見つかりません", "<p>そのページはありません。</p>"))
             user, pw, conf = form.get("username", "").strip(), form.get("password", ""), form.get("confirm", "")
-            err = None
-            if not user or len(user) > 64 or clean(user) != user:
-                err = "ユーザー名は 1〜64 文字で入力してください"
-            elif len(pw) < auth.MIN_PASSWORD:
-                err = f"パスワードは {auth.MIN_PASSWORD} 文字以上にしてください"
-            elif len(pw) > auth.MAX_FIELD:
-                err = "パスワードが長すぎます"
-            elif pw != conf:
-                err = "確認入力が一致しません"
+            err = ("ユーザー名は 1〜64 文字で入力してください" if not user or len(user) > 64 or clean(user) != user
+                   else password_error(pw, conf))
             if err:
-                return self._send(400, plain_page("初回設定", form_html(
-                    "/setup", a.form_token("anon"),
-                    [("username", "ユーザー名", "text", "username"),
-                     ("password", f"パスワード({auth.MIN_PASSWORD} 文字以上)", "password", "new-password"),
-                     ("confirm", "パスワード(確認)", "password", "new-password")], "設定する", error=err)))
+                return self._send(400, setup_page(a, err))
             if not a.setup(user, pw):
                 return self._send(404, plain_page("見つかりません", "<p>そのページはありません。</p>"))
             sys.stderr.write("setup: 認証情報を作成しました\n")
@@ -342,15 +329,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._redirect("/setup")
             st = a.reset_state()
             pw, conf = form.get("password", ""), form.get("confirm", "")
-            err = None
-            if st != "ok":
-                err = "denied"
-            elif len(pw) < auth.MIN_PASSWORD:
-                err = f"パスワードは {auth.MIN_PASSWORD} 文字以上にしてください"
-            elif len(pw) > auth.MAX_FIELD:
-                err = "パスワードが長すぎます"
-            elif pw != conf:
-                err = "確認入力が一致しません"
+            err = "denied" if st != "ok" else password_error(pw, conf)
             if not err:
                 st = a.reset_password(pw)
                 if st == "done":
@@ -378,11 +357,7 @@ class Handler(BaseHTTPRequestHandler):
         sys.stderr.write("login: failed\n")
         time.sleep(auth.fail_delay())  # 失敗の遅延
         wait = a.locked_for()
-        return self._send(401, plain_page("ログイン", form_html(
-            "/login", a.form_token("anon"),
-            [("username", "ユーザー名", "text", "username"),
-             ("password", "パスワード", "password", "current-password")], "ログイン",
-            error=LOGIN_FAIL + ("(ロックしました)" if wait else ""), next_=nx) + FORGOT))
+        return self._send(401, login_page(a, nx, LOGIN_FAIL + ("(ロックしました)" if wait else "")))
 
     def _handle(self):
         if not self._host_ok():

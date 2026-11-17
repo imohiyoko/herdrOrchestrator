@@ -7,7 +7,7 @@ import shlex
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote, unquote, urlencode
 
-from .config import BASE, GATEWAY, HERDR_ROOT, INSTANCE, JOB_RE, REFRESH_SEC, SCHED_LOGS, STALL_MIN, TASK_STALE_HOURS
+from .config import GATEWAY, HERDR_ROOT, INSTANCE, JOB_RE, REFRESH_SEC, SCHED_LOGS, STALL_MIN, TASK_STALE_HOURS
 from .sanitize import clean, e
 from . import graph
 from .herdr import agent_key, agent_session, get_agents, read_agent, workspace_label
@@ -680,7 +680,7 @@ def _job_overview(name, info):
                       + (f" / herdr セッション {e(st['registry'].get('herdr_session'))}" if st["registry"].get("herdr_session") else "")
                       + (f" / 役割 {e(st['registry'].get('role'))}" if st["registry"].get("role") else ""))
             if s not in ("idle", "done"):
-                a_html += f' <span class=note>(idle / done 以外のときは送らず skipped になります)</span>'
+                a_html += ' <span class=note>(idle / done 以外のときは送らず skipped になります)</span>'
         reg = st.get("registry") or {}
         if reg.get("state") == "stopped":
             a_html += ' <span class=warn>tb の台帳では停止中です</span>'
@@ -716,7 +716,7 @@ def _job_overview(name, info):
     nxt, nnote = next_runs(info)
     rows.append(("いつ", f'{e(interval_text(info))}おき / {e(info["start"])}-{e(info["end"])} / {e(info["days"])} / TZ {e(info["tz"])}'
                  + ("" if info.get("enabled") else ' <span class=warn>一時停止中</span>')))
-    rows.append(("次回の予定(目安)", " → ".join(e(x) for x in nxt) + (f' <span class=note>(ジョブの TZ の時刻。間隔・時間帯・曜日からの推定で、実際の起動と数秒ずれることがあります)</span>' if nxt else f'<span class=note>{e(nnote)}</span>')))
+    rows.append(("次回の予定(目安)", " → ".join(e(x) for x in nxt) + (' <span class=note>(ジョブの TZ の時刻。間隔・時間帯・曜日からの推定で、実際の起動と数秒ずれることがあります)</span>' if nxt else f'<span class=note>{e(nnote)}</span>')))
     last, lr = job_last(name)
     recs = parse_jsonl(tail_lines(os.path.join(SCHED_LOGS(), name + ".log"), 200))
     counts = {}
@@ -897,11 +897,11 @@ def _catalog_section(qs, rules, err, catalog, cerr, cbad):
         dim = c["state"] in ("reserved", "unwired")
         cell = (lambda x: f'<span class=note>{x}</span>' if dim else x)
         if r["value"] == "unknown":
-            val = f'<b class=warn>判定不能</b>'
+            val = '<b class=warn>判定不能</b>'
             via = f'{r["rule"]["no"]} 行目(<code>[</code> を含む)'
             how = "-"
         else:
-            val = f'<b class=warn>allow</b>' if r["value"] == "allow" else "ask"
+            val = '<b class=warn>allow</b>' if r["value"] == "allow" else "ask"
             if r["rule"] is None:
                 via, how = "なし(既定の ask)", "既定に落ちる"
             elif r["explicit"]:
@@ -1295,90 +1295,3 @@ def route(path, qs, ctx=None):
         r = page_agent(key) if m.group(1) == "agents" else page_task(key, qs, ctx)
         return r
     return None
-
-
-DOCS_JS = """(function () {
-  "use strict";
-  // /docs/view の ```mermaid を図にする。securityLevel strict(ラベル内の HTML・クリックの JS は無効)
-  if (!window.mermaid) return;
-  try {
-    window.mermaid.initialize({startOnLoad: false, securityLevel: "strict"});
-    window.mermaid.run({querySelector: "pre.mermaid"}).catch(function () {});
-  } catch (x) {}
-})();
-"""
-
-NOTIFY_JS = """(function () {
-  "use strict";
-  // BASE: gateway の後ろでは /s/<名前>(同じオリジンに複数のインスタンスが並ぶので、保存キーと通知のタグも分ける)
-  var BASE = %s, POLL = %d, KEY = "herdr-webui-notified" + (BASE ? ":" + BASE : "");
-  var badge = document.getElementById("nbadge");
-  var state = document.getElementById("nstate");
-  var btn = document.getElementById("nenable");
-  function supported() { return "Notification" in window; }
-  function load() {
-    try { var v = JSON.parse(localStorage.getItem(KEY)); return v && typeof v === "object" ? v : null; }
-    catch (x) { return null; }
-  }
-  function save(v) { try { localStorage.setItem(KEY, JSON.stringify(v)); } catch (x) {} }
-  function showState() {
-    if (!state) return;
-    var t;
-    if (!supported()) t = "このブラウザはデスクトップ通知に対応していません";
-    else if (Notification.permission === "granted") t = "Chrome 通知: 有効";
-    else if (Notification.permission === "denied") t = "Chrome 通知: ブロック中(アドレスバー左のサイト情報から通知を許可してください)";
-    else t = "Chrome 通知: まだ許可していません";
-    state.textContent = t;
-    if (btn) btn.hidden = !supported() || Notification.permission !== "default";
-  }
-  function safeHref(h) { return typeof h === "string" && h.charAt(0) === "/" && h.charAt(1) !== "/" && h.charAt(1) !== "\\\\"; }
-  function notify(it) {
-    var n = new Notification("[herdr] " + it.label + ": " + it.title, {body: (it.body || "-") + "\\n対応: " + (it.how || "Web UI で確かめる"), tag: "herdr-" + (BASE ? BASE + "-" : "") + it.id});
-    n.onclick = function () { window.focus(); if (safeHref(it.href)) location.href = BASE + it.href; n.close(); };
-  }
-  if (btn) btn.addEventListener("click", function () {
-    Notification.requestPermission().then(function (p) {
-      showState();
-      if (p === "granted") new Notification("[herdr] 通知を有効にしました", {body: "新しい緊急通知をここに出します", tag: "herdr-enabled"});
-    });
-  });
-  function poll() {
-    fetch(BASE + "/api/notifications", {credentials: "same-origin", cache: "no-store", headers: {"Accept": "application/json"}})
-      .then(function (r) { if (!r.ok) throw new Error("status " + r.status); return r.json(); })
-      .then(function (d) {
-        var items = Array.isArray(d.items) ? d.items : [];
-        if (badge) { badge.textContent = String(items.length); badge.className = items.length ? "badge" : "badge zero"; }
-        var seen = load(), first = seen === null, now = {};
-        var ok = supported() && Notification.permission === "granted";
-        items.forEach(function (it) {
-          now[it.id] = 1;
-          if (!first && !seen[it.id] && ok) notify(it);
-        });
-        save(now);
-      })
-      .catch(function () {});
-  }
-  showState();
-  poll();
-  setInterval(poll, POLL);
-})();
-""" % (json.dumps(BASE), NOTIFY_POLL_SEC * 1000)
-
-SESSIONS_JS = """(function () {
-  "use strict";
-  // セッション一覧: gateway の後ろ(同じオリジン)なら、ほかのインスタンスの緊急通知の件数を、そのインスタンスのログインで読む
-  var cells = document.querySelectorAll("td[data-api]");
-  Array.prototype.forEach.call(cells, function (td) {
-    var api = td.getAttribute("data-api");
-    if (!/^\\.\\.\\/[A-Za-z0-9][A-Za-z0-9._-]{0,63}\\/api\\/notifications$/.test(api)) return;
-    fetch(api, {credentials: "same-origin", cache: "no-store", headers: {"Accept": "application/json"}})
-      .then(function (r) {
-        if (r.status === 401) { td.textContent = "要ログイン"; return null; }
-        if (!r.ok) throw new Error("status " + r.status);
-        return r.json();
-      })
-      .then(function (d) { if (d) td.textContent = String(Array.isArray(d.items) ? d.items.length : "?"); })
-      .catch(function () { td.textContent = "読めない"; });
-  });
-})();
-"""
