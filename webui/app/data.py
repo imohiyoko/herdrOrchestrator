@@ -7,7 +7,8 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
-from .config import JOB_RE, SCHED_LOGS, STALL_MIN, TB_DB, herdr_env
+from . import reqctx
+from .config import JOB_RE, SCHED_LOGS, STALL_MIN, TB_DB
 from .sanitize import clean
 from .herdr import agent_key, agent_session, cached, get_agents
 
@@ -34,7 +35,7 @@ def db_conn():
     try:
         c = sqlite3.connect(f"file:{quote(path)}?mode=ro", uri=True, timeout=2)
         c.row_factory = sqlite3.Row
-        session_views(c, herdr_env.session_name())
+        session_views(c, reqctx.session())
         c.execute("PRAGMA query_only=ON")
         return c
     except sqlite3.Error:

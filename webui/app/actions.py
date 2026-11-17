@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 
+from . import reqctx
 from .config import HERDR_ROOT, TB_DB
 
 TB = os.path.join(HERDR_ROOT, "taskboard", "bin", "tb")
@@ -13,7 +14,8 @@ NOTE_MAX = 200
 def _run_tb(args, timeout=15):
     """(終了コード, 出力)。tb が無い・失敗・タイムアウトでも例外にしない。
     HERDR_PANE_ID は外す: Web UI の操作は人の操作として扱う(ログイン済みのブラウザからだけ届く)。"""
-    env = {k: v for k, v in os.environ.items() if k != "HERDR_PANE_ID"}
+    env = reqctx.child_env()
+    env.pop("HERDR_PANE_ID", None)
     env["TB_DB"] = TB_DB()
     try:
         p = subprocess.run(["bash", TB, *args], env=env, capture_output=True, text=True, timeout=timeout,

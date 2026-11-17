@@ -8,7 +8,8 @@ import os
 import re
 from fnmatch import fnmatchcase
 
-from .config import HERDR_ROOT, herdr_env
+from . import reqctx
+from .config import HERDR_ROOT
 
 DEFAULT_TARGET = "conductor"   # taskboard/lib/core.sh の DEFAULT_TARGET
 EDGES_SQL = os.path.join(HERDR_ROOT, "taskboard", "sql", "agent_edges.sql")
@@ -25,7 +26,7 @@ def roles_dir():
     """役割ファイルの場所。ロールは herdr セッション固有: このセッションの roles/sessions/<セッション>/ があればそこだけ(tb と同じ)。
     台帳もこのセッションの行だけなので(app/data.py)、どの agent の役割もこのセッションの場所で決める。"""
     base = os.environ.get("TB_ROLES") or os.path.join(HERDR_ROOT, "roles")
-    session = herdr_env.session_name()
+    session = reqctx.session()
     if SESSION_RE.fullmatch(session):
         d = os.path.join(base, "sessions", session)
         if os.path.isdir(d):
