@@ -45,9 +45,9 @@ cmd_list() {
   [[ -z $project ]] || where+=" AND project=$(q "$project")"
   if [[ -n $status ]]; then valid_status "$status"; where+=" AND status=$(q "$status")"; fi
   if ((json)); then
-    sql -json "SELECT * FROM tasks WHERE herdr_session=$SQS AND ($where) ORDER BY project, id;" | jq -c '(. // [])[] | .deliverables |= fromjson'
+    sql -json "SELECT * FROM tasks WHERE ($where) ORDER BY project, id;" | jq -c '(. // [])[] | .deliverables |= fromjson'
   else
-    sql -separator $'\t' "SELECT id, status, COALESCE(owner_agent,'-'), replace(title, char(10), ' ') FROM tasks WHERE herdr_session=$SQS AND ($where) ORDER BY project, id;"
+    sql -separator $'\t' "SELECT id, status, COALESCE(owner_agent,'-'), replace(title, char(10), ' ') FROM tasks WHERE ($where) ORDER BY project, id;"
   fi
 }
 
@@ -192,18 +192,18 @@ cmd_pending() {
   done
   local where="status='done' AND (reported_at IS NULL OR reported_at='')"
   case $mode in
-    ids)  sql "SELECT id FROM tasks WHERE herdr_session=$SQS AND ($where) ORDER BY updated_at, id;"
-          sql "SELECT 'C-'||id FROM comments WHERE herdr_session=$SQS AND delivered_at IS NULL ORDER BY id;";;
-    json) sql -json "SELECT * FROM tasks WHERE herdr_session=$SQS AND ($where) ORDER BY updated_at, id;" | jq -c '(. // [])[] | .deliverables |= fromjson'
-          sql -json "SELECT * FROM comments WHERE herdr_session=$SQS AND delivered_at IS NULL ORDER BY id;" | jq -c '(. // [])[] | .deliverables |= fromjson | .id = "C-\(.id)"';;
+    ids)  sql "SELECT id FROM tasks WHERE ($where) ORDER BY updated_at, id;"
+          sql "SELECT 'C-'||id FROM comments WHERE delivered_at IS NULL ORDER BY id;";;
+    json) sql -json "SELECT * FROM tasks WHERE ($where) ORDER BY updated_at, id;" | jq -c '(. // [])[] | .deliverables |= fromjson'
+          sql -json "SELECT * FROM comments WHERE delivered_at IS NULL ORDER BY id;" | jq -c '(. // [])[] | .deliverables |= fromjson | .id = "C-\(.id)"';;
     tsv)  local id project summary
           while IFS=$'\t' read -r id project summary; do
             printf '%s\t%s\t%s\t%s\n' "$id" "$project" "$(target_for "$project")" "$summary"
-          done < <(sql -separator $'\t' "SELECT id, project, replace(replace(COALESCE(summary,''), char(10), ' '), char(9), ' ') FROM tasks WHERE herdr_session=$SQS AND ($where) ORDER BY updated_at, id;")
+          done < <(sql -separator $'\t' "SELECT id, project, replace(replace(COALESCE(summary,''), char(10), ' '), char(9), ' ') FROM tasks WHERE ($where) ORDER BY updated_at, id;")
           # 未配送のコメント: ID は C-<n>(tb report C-<n> で再送)
           while IFS=$'\t' read -r id project summary; do
             printf '%s\t%s\t%s\t%s\n' "$id" "$project" "$(target_for "$project")" "$summary"
           done < <(sql -separator $'\t' "SELECT 'C-'||c.id, COALESCE(t.project,''), '['||c.kind||'] '||substr(replace(replace(c.text, char(10), ' '), char(9), ' '),1,80)
-            FROM comments c LEFT JOIN tasks t ON t.id=c.task_id AND t.herdr_session=c.herdr_session WHERE c.herdr_session=$SQS AND c.delivered_at IS NULL ORDER BY c.id;");;
+            FROM comments c LEFT JOIN tasks t ON t.id=c.task_id WHERE c.delivered_at IS NULL ORDER BY c.id;");;
   esac
 }

@@ -367,7 +367,7 @@ pq_list() {
     esac
   done
   [[ -z $status || $status =~ ^(pending|approved|rejected|created|failed)$ ]] || usage "pr-queue: status は pending|approved|rejected|created|failed"
-  local where="WHERE herdr_session=$SQS"; [[ -z $status ]] || where+=" AND status=$(q "$status")"
+  local where=""; [[ -z $status ]] || where="WHERE status=$(q "$status")"
   if ((json)); then sql -json "SELECT id,repo,branch,title,task_id,requested_by,status,last_error,attempts,pr_url,created_at FROM pr_queue $where ORDER BY id;" | jq -c '.[]?'
   else sql -separator $'\t' "SELECT 'PQ-'||id, status, branch, title FROM pr_queue $where ORDER BY id;"; fi
 }
@@ -416,7 +416,7 @@ pq_retry() {
 pq_auth_locked() {  # $1=dry
   echo "pr-queue: 認証で止まっています(auth-locked)。残りの行は処理せず、次の回に自動で再開します" >&2
   [[ $1 == 1 ]] && return 0
-  local was; was=$(sql "SELECT COUNT(*) FROM pr_queue WHERE herdr_session=$SQS AND status='approved' AND last_error='auth-locked';")
+  local was; was=$(sql "SELECT COUNT(*) FROM pr_queue WHERE status='approved' AND last_error='auth-locked';")
   sql "UPDATE main.pr_queue SET last_error='auth-locked' WHERE herdr_session=$SQS AND status='approved';"
   ((was == 0)) && notify_emit warning "pr-queue-auth-locked" "" "pr-queue: 公開待ちがあるが、ghtkn が token を返せず止まっています。人の対話端末で ghtkn agent unlock --enable-refresh(ロック中)か ghtkn auth <app>(期限切れ)。再開は次の run が自動で拾います"
   return 0
@@ -486,7 +486,7 @@ pq_run() {
       echo "PQ-$id error: gh pr create が失敗(exit $rc)"
       pq_cap_attempts "$id" 0
     fi
-  done < <(sql "SELECT id FROM pr_queue WHERE herdr_session=$SQS AND status='approved' ORDER BY id;")
+  done < <(sql "SELECT id FROM pr_queue WHERE status='approved' ORDER BY id;")
   # 印を消すのは、この run が認証で止まらずに最後まで進んだときだけ(list が通って create が 75 のときに毎回消えて、毎回通知されるのを防ぐ)
   ((locked || dry)) || sql "UPDATE main.pr_queue SET last_error=NULL WHERE herdr_session=$SQS AND last_error='auth-locked';"
   return 0
@@ -529,8 +529,8 @@ pq_scan() {
   while IFS= read -r b; do
     [[ -n $b ]] || continue
     pq_valid_branch "$b" || { echo "skip $b: ブランチ名が安全な形ではない"; continue; }
-    cnt=$(sql "SELECT COUNT(*) FROM pr_queue WHERE herdr_session=$SQS AND repo=$(q "$repo") AND branch=$(q "$b");")
-    if (($(sql "SELECT COUNT(*) FROM pr_queue WHERE herdr_session=$SQS AND repo=$(q "$repo") AND branch=$(q "$b") AND status<>'rejected';") > 0)); then echo "skip $b: 既にキューにある"; continue; fi
+    cnt=$(sql "SELECT COUNT(*) FROM pr_queue WHERE repo=$(q "$repo") AND branch=$(q "$b");")
+    if (($(sql "SELECT COUNT(*) FROM pr_queue WHERE repo=$(q "$repo") AND branch=$(q "$b") AND status<>'rejected';") > 0)); then echo "skip $b: 既にキューにある"; continue; fi
     if ((cnt >= PQ_MAX_ATTEMPTS)); then echo "skip $b: 同じブランチの試行が上限($PQ_MAX_ATTEMPTS)"; continue; fi
     slug=${b//\//-}; file=$root/pr-body-$slug.md
     [[ -f $file && ! -L $file ]] || { echo "skip $b: 本文(pr-body-$slug.md)が無い"; continue; }

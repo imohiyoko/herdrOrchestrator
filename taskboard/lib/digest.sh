@@ -20,7 +20,7 @@ add_item() {  # $1=target $2=type(comment|task|obs) $3=ref $4=key $5=task_id $6=
     --arg okind "$6" --arg short "[$7] $(item_text "$8" "$DIGEST_ITEM_MAX")" --arg full "[$7] $(item_text "$8" 2000)" \
     '{target:$target,type:$type,ref:$ref,key:$key,task:$task,okind:$okind,short:$short,full:$full}')$'\n'
 }
-obs_seen() { [[ -n $(sql "SELECT 1 FROM observations WHERE herdr_session=$SQS AND key=$(q "$1");") ]]; }
+obs_seen() { [[ -n $(sql "SELECT 1 FROM observations WHERE key=$(q "$1");") ]]; }
 
 collect_digest() {
   local r tid kind from text dels project id owner summary key m pane sess name list task sby
@@ -33,33 +33,33 @@ collect_digest() {
     [[ -n $dels ]] && text+=" / 成果物: $dels"
     sby=$(jq -r '.spawned_by // ""' <<<"$r"); [[ -z $sby ]] || from+=" (spawned_by: $sby)"
     add_item "$(target_for "$project")" comment "C-$id" "" "$tid" "" "$tid $kind / $from" "$text"
-  done < <(sql -json "SELECT c.*, t.project, ag.spawned_by FROM comments c LEFT JOIN tasks t ON t.id=c.task_id AND t.herdr_session=c.herdr_session
-             LEFT JOIN agents ag ON ag.name=c.from_name AND ag.herdr_session=c.herdr_session
-             WHERE c.herdr_session=$SQS AND c.delivered_at IS NULL ORDER BY c.id;" | jq -c '(. // [])[]')
+  done < <(sql -json "SELECT c.*, t.project, ag.spawned_by FROM comments c LEFT JOIN tasks t ON t.id=c.task_id
+             LEFT JOIN agents ag ON ag.name=c.from_name
+             WHERE c.delivered_at IS NULL ORDER BY c.id;" | jq -c '(. // [])[]')
   # 2. done なのに未報告のタスク
   while IFS= read -r r; do
     [[ -n $r ]] || continue
     id=$(jq -r .id <<<"$r"); project=$(jq -r .project <<<"$r"); owner=$(jq -r '.owner_agent // "-"' <<<"$r")
     summary=$(jq -r '.summary // ""' <<<"$r"); dels=$(jq -r '.deliverables | fromjson | join(", ")' <<<"$r")
     add_item "$(target_for "$project")" task "$id" "" "$id" "" "$id done / $owner" "$summary / 成果物: $dels"
-  done < <(sql -json "SELECT * FROM tasks WHERE herdr_session=$SQS AND status='done' AND (reported_at IS NULL OR reported_at='') ORDER BY updated_at, id;" | jq -c '(. // [])[]')
+  done < <(sql -json "SELECT * FROM tasks WHERE status='done' AND (reported_at IS NULL OR reported_at='') ORDER BY updated_at, id;" | jq -c '(. // [])[]')
   # 2b. アラート: 新しく登録されたもの(まだまとめに入れていない)と、届いていない解析結果
   while IFS=$'\t' read -r id st title; do
     [[ -n $id ]] || continue
     key="alert:$id"; obs_seen "$key" && continue
     add_item "$DEFAULT_TARGET" obs "A-$id" "$key" "" alert "A-$id アラート / $st" "$title (tb alerts A-$id)"
-  done < <(sql -separator $'\t' "SELECT id, status, replace(replace(title, char(10), ' '), char(9), ' ') FROM alerts WHERE herdr_session=$SQS AND status NOT IN ('closed') ORDER BY id;")
+  done < <(sql -separator $'\t' "SELECT id, status, replace(replace(title, char(10), ' '), char(9), ' ') FROM alerts WHERE status NOT IN ('closed') ORDER BY id;")
   while IFS=$'\t' read -r id sev title summary; do
     [[ -n $id ]] || continue
     add_item "$DEFAULT_TARGET" alert "A-$id" "" "" "" "A-$id 解析結果 / $sev" "$title — $summary (全文: tb alerts A-$id)"
   done < <(sql -separator $'\t' "SELECT id, severity, replace(replace(title, char(10), ' '), char(9), ' '), replace(replace(result_summary, char(10), ' '), char(9), ' ')
-             FROM alerts WHERE herdr_session=$SQS AND status='analyzed' AND result_delivered_at IS NULL ORDER BY id;")
+             FROM alerts WHERE status='analyzed' AND result_delivered_at IS NULL ORDER BY id;")
   # 2c. 通知: 秘密らしい値を含むため外へ出さなかったイベント(人に知らせる。同じものは二度出さない)
   while IFS=$'\t' read -r id sev; do
     [[ -n $id ]] || continue
     key="notify-blocked:$id"; obs_seen "$key" && continue
     add_item "$DEFAULT_TARGET" obs "N-$id" "$key" "" notifyblock "N-$id 通知を止めた" "秘密らしい値($sev)を含むため外へ出していません(file には伏せて残した。tb notify events)"
-  done < <(sql -separator $'\t' "SELECT id, COALESCE(blocked_reason,'') FROM notify_events WHERE herdr_session=$SQS AND blocked=1 AND type!='warning' ORDER BY id;")
+  done < <(sql -separator $'\t' "SELECT id, COALESCE(blocked_reason,'') FROM notify_events WHERE blocked=1 AND type!='warning' ORDER BY id;")
   # 3. 観測: turn が終わって DIGEST_IDLE_MIN 分たつのに in_progress のまま(done も報告もない)
   while IFS=$'\t' read -r id project owner key m; do
     [[ -n $id ]] || continue
@@ -69,7 +69,7 @@ collect_digest() {
   done < <(sql -separator $'\t' "SELECT t.id, t.project, COALESCE(t.owner_agent,'-'), 'idle:'||t.id||':'||a.last_stop_at,
              CAST((julianday('now') - julianday(a.last_stop_at)) * 1440 AS INTEGER)
              FROM tasks t JOIN main.agent_activity a ON a.session_id=t.session_id
-             WHERE t.herdr_session=$SQS AND t.status='in_progress' AND a.last_stop_at IS NOT NULL
+             WHERE t.status='in_progress' AND a.last_stop_at IS NOT NULL
                AND (a.last_prompt_at IS NULL OR a.last_prompt_at <= a.last_stop_at)
                AND (julianday('now') - julianday(a.last_stop_at)) * 1440 >= $DIGEST_IDLE_MIN ORDER BY t.id;")
   # 4. 観測: DIGEST_STUCK_MIN 分以上 working のまま
@@ -81,7 +81,7 @@ collect_digest() {
   done < <(sql -separator $'\t' "SELECT t.id, t.project, COALESCE(t.owner_agent,'-'), 'stuck:'||a.session_id||':'||a.last_prompt_at,
              CAST((julianday('now') - julianday(a.last_prompt_at)) * 1440 AS INTEGER)
              FROM tasks t JOIN main.agent_activity a ON a.session_id=t.session_id
-             WHERE t.herdr_session=$SQS AND t.status IN ('in_progress','review','blocked') AND a.last_prompt_at IS NOT NULL
+             WHERE t.status IN ('in_progress','review','blocked') AND a.last_prompt_at IS NOT NULL
                AND (a.last_stop_at IS NULL OR a.last_prompt_at > a.last_stop_at)
                AND (julianday('now') - julianday(a.last_prompt_at)) * 1440 >= $DIGEST_STUCK_MIN ORDER BY t.id;")
   # 4b. 観測: outbox が DIGEST_QUEUED_SEC 秒以上 queued のまま(宛先に届いていない)。queued が無ければ何も出さない
@@ -91,7 +91,7 @@ collect_digest() {
     add_item "$DEFAULT_TARGET" obs "O-$id" "$key" "" queued "O-$id 観測 / $owner" \
       "O-$id が $m 分 queued のまま(宛先に届いていない。tb outbox --status queued で確認、tb flush で再送)"
   done < <(sql -separator $'\t' "SELECT id, target, 'queued:'||id, CAST((julianday('now') - julianday(created_at)) * 1440 AS INTEGER)
-             FROM outbox WHERE herdr_session=$SQS AND status='queued' AND (julianday('now') - julianday(created_at)) * 86400 >= $DIGEST_QUEUED_SEC ORDER BY id;")
+             FROM outbox WHERE status='queued' AND (julianday('now') - julianday(created_at)) * 86400 >= $DIGEST_QUEUED_SEC ORDER BY id;")
   # 5. 観測: herdr 上で blocked(承認ダイアログ待ちなど)の agent。担当タスクがあるものだけ
   if list=$(herdr_call agent list 2>/dev/null) && jq -e '.result.agents' <<<"$list" >/dev/null 2>&1; then
     local current=""
@@ -99,7 +99,7 @@ collect_digest() {
       [[ -n $pane ]] || continue
       key="blocked:$pane:$sess"; current+="$(q "$key"),"
       obs_seen "$key" && continue
-      task=$(sql -separator $'\t' "SELECT id, project FROM tasks WHERE herdr_session=$SQS AND status!='done'
+      task=$(sql -separator $'\t' "SELECT id, project FROM tasks WHERE status!='done'
                AND ((session_id IS NOT NULL AND session_id=$(q "$sess")) OR (owner_agent IS NOT NULL AND owner_agent=$(q "$name")))
                ORDER BY updated_at DESC LIMIT 1;")
       [[ -n $task ]] || continue
@@ -118,11 +118,11 @@ collect_digest() {
 #    - 子の数が上限の 1 つ手前以上(全体、または 1 体の親)
 #    - 親のタスクが done / blocked になったのに、子がまだ動いている
 collect_spawn_obs() {
-  [[ -n $(sql "SELECT 1 FROM agents WHERE herdr_session=$SQS AND spawned_by IS NOT NULL AND state='running' LIMIT 1;") ]] || { sql "DELETE FROM main.observations WHERE herdr_session=$SQS AND kind IN ('spawnlimit','spawnorphan');"; return 0; }
+  [[ -n $(sql "SELECT 1 FROM agents WHERE spawned_by IS NOT NULL AND state='running' LIMIT 1;") ]] || { sql "DELETE FROM main.observations WHERE herdr_session=$SQS AND kind IN ('spawnlimit','spawnorphan');"; return 0; }
   agent_sync 2>/dev/null || true
   load_spawn_policy
   local current="" id parent n key project task st
-  n=$(sql "SELECT COUNT(*) FROM agents WHERE herdr_session=$SQS AND spawned_by IS NOT NULL AND state='running';")
+  n=$(sql "SELECT COUNT(*) FROM agents WHERE spawned_by IS NOT NULL AND state='running';")
   if ((SP_TOTAL > 0 && n >= SP_TOTAL - 1)); then
     key="spawnlimit:total:$n"; current+="$(q "$key"),"
     obs_seen "$key" || add_item "$DEFAULT_TARGET" obs "spawn" "$key" "" spawnlimit "spawn 観測 / 全体" \
@@ -134,15 +134,15 @@ collect_spawn_obs() {
     key="spawnlimit:$parent:$n"; current+="$(q "$key"),"
     obs_seen "$key" || add_item "$DEFAULT_TARGET" obs "spawn" "$key" "" spawnlimit "spawn 観測 / $parent" \
       "$parent の子が $n 体動いている(1 体の親あたりの上限 $SP_PER)"
-  done < <(sql -separator $'\t' "SELECT spawned_by, COUNT(*) FROM agents WHERE herdr_session=$SQS AND spawned_by IS NOT NULL AND state='running' GROUP BY spawned_by ORDER BY spawned_by;")
+  done < <(sql -separator $'\t' "SELECT spawned_by, COUNT(*) FROM agents WHERE spawned_by IS NOT NULL AND state='running' GROUP BY spawned_by ORDER BY spawned_by;")
   while IFS=$'\t' read -r id parent task st project; do
     [[ -n $id ]] || continue
     key="spawnorphan:$id:$task:$st"; current+="$(q "$key"),"
     obs_seen "$key" && continue
     add_item "$(target_for "$project")" obs "$task" "$key" "$task" spawnorphan "$task 観測 / $parent" \
       "親のタスクが $st になったが、子 $id はまだ動いている(止めるなら tb agent-stop $id)"
-  done < <(sql -separator $'\t' "SELECT a.name, a.spawned_by, a.spawn_task, t.status, t.project FROM agents a JOIN tasks t ON t.id=a.spawn_task AND t.herdr_session=a.herdr_session
-             WHERE a.spawned_by IS NOT NULL AND a.state='running' AND a.herdr_session=$SQS AND t.status IN ('done','blocked') ORDER BY a.name;")
+  done < <(sql -separator $'\t' "SELECT a.name, a.spawned_by, a.spawn_task, t.status, t.project FROM agents a JOIN tasks t ON t.id=a.spawn_task
+             WHERE a.spawned_by IS NOT NULL AND a.state='running' AND t.status IN ('done','blocked') ORDER BY a.name;")
   # 条件が外れたものは記録を消す(再び当てはまったら、また送る)
   sql "DELETE FROM main.observations WHERE herdr_session=$SQS AND kind IN ('spawnlimit','spawnorphan') AND key NOT IN (${current}'');"
 }
@@ -178,7 +178,7 @@ cmd_digest() {
   ((dry)) || cmd_alert-dispatch >/dev/null 2>&1 || true   # 承認・上限待ちのアラートを進める
   if ! ((dry)); then   # 設定役に届いていない提案を再送
     local _p; while read -r _p; do [[ -n $_p ]] && { proposal_deliver "$_p" >/dev/null 2>&1 || true; }; done \
-      < <(sql "SELECT id FROM proposals WHERE herdr_session=$SQS AND delivered_at IS NULL AND status='open' ORDER BY id;")
+      < <(sql "SELECT id FROM proposals WHERE delivered_at IS NULL AND status='open' ORDER BY id;")
   fi
   DIGEST_ITEMS=""
   collect_digest
@@ -230,8 +230,8 @@ cmd_digests() {
     [[ -n $row ]] || die "digest が見つかりません: D-$did"
     if ((json)); then jq -c '.id = "D-\(.id)"' <<<"$row"; else jq -r '"D-\(.id) → \(.target) (\(.item_count) 件, \(.created_at))\n\(.body)"' <<<"$row"; fi
   elif ((json)); then
-    sql -json "SELECT * FROM digests WHERE herdr_session=$SQS ORDER BY id DESC LIMIT 50;" | jq -c '(. // [])[] | .id = "D-\(.id)"'
+    sql -json "SELECT * FROM digests ORDER BY id DESC LIMIT 50;" | jq -c '(. // [])[] | .id = "D-\(.id)"'
   else
-    sql -separator $'\t' "SELECT 'D-'||id, target, item_count, created_at FROM digests WHERE herdr_session=$SQS ORDER BY id DESC LIMIT 50;"
+    sql -separator $'\t' "SELECT 'D-'||id, target, item_count, created_at FROM digests ORDER BY id DESC LIMIT 50;"
   fi
 }

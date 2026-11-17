@@ -72,7 +72,7 @@ role_files_for() {  # $1=agent 名 [$2=台帳の role]
   if [[ -n ${2+x} ]]; then reg=$2
   else
     # 台帳はこのセッションの行だけ。別の herdr セッションの agent は台帳に無いものとして map で決める
-    reg=$(sql "SELECT COALESCE(role,'') FROM agents WHERE herdr_session=$SQS AND name=$(q "$name");" 2>/dev/null) || { [[ -n ${ROLE_STRICT:-} ]] && return 1; reg=""; }
+    reg=$(sql "SELECT COALESCE(role,'') FROM agents WHERE name=$(q "$name");" 2>/dev/null) || { [[ -n ${ROLE_STRICT:-} ]] && return 1; reg=""; }
   fi
   if [[ -n $reg ]]; then found=$(_role_list "$reg"); [[ -z $found ]] || { printf '%s\n' "$found"; return 0; }; fi
   role_lookup @map || return 0
@@ -180,7 +180,7 @@ load_role() {  # $1=agent 名
 }
 
 last_briefed_hash() {  # $1=session_id
-  sql "SELECT hash FROM role_briefings WHERE herdr_session=$SQS AND session_id=$(q "$1") ORDER BY id DESC LIMIT 1;"
+  sql "SELECT hash FROM role_briefings WHERE session_id=$(q "$1") ORDER BY id DESC LIMIT 1;"
 }
 record_briefing() {  # session agent file hash source via
   sql "INSERT INTO main.role_briefings (herdr_session, session_id, agent, role_file, hash, source, via, created_at)
@@ -346,7 +346,7 @@ cmd_role-set() {
     role_admin_check "$name" "tb role-set $name $role" || return $?
   fi
   agent_sync >/dev/null 2>&1 || true
-  if [[ -z $(sql "SELECT 1 FROM agents WHERE herdr_session=$SQS AND name=$(q "$name");") ]]; then
+  if [[ -z $(sql "SELECT 1 FROM agents WHERE name=$(q "$name");") ]]; then
     other_session "$name" && die "$OP_OUT(ロールはセッション固有)"
     die "台帳に無い agent です: $name(tb agents で確かめる)"
   fi
@@ -354,12 +354,12 @@ cmd_role-set() {
   # 旧ロールは実効の役割(台帳の役割ファイルが無ければ map.conf)。台帳の値を先に読み、変更はその値が変わっていないときだけ行う
   # (読んでから書くまでに別の変更が入ったら、履歴の old_role がずれるので何もせずやり直しを促す)
   local reg n
-  reg=$(sql "SELECT COALESCE(role,'') FROM agents WHERE herdr_session=$SQS AND name=$(q "$name");") || die "台帳を読めません"
+  reg=$(sql "SELECT COALESCE(role,'') FROM agents WHERE name=$(q "$name");") || die "台帳を読めません"
   old=$(role_name_of "$name" "$reg")   # 読んだ台帳の値から実効の役割を決める(もう一度は読まない)
   n=$(sql "BEGIN IMMEDIATE;
     INSERT INTO main.role_changes (agent, old_role, new_role, changed_by, reason, created_at, herdr_session)
     SELECT $(q "$name"), NULLIF($(q "$old"),''), $(q "$role"), $(q "$REQ_BY"), NULLIF($(q "$(oneline "$why" 300)"),''), $(q "$(now)"), $SQS
-    WHERE (SELECT COALESCE(role,'') FROM agents WHERE herdr_session=$SQS AND name=$(q "$name"))=$(q "$reg");
+    WHERE (SELECT COALESCE(role,'') FROM agents WHERE name=$(q "$name"))=$(q "$reg");
     UPDATE main.agents SET role=$(q "$role"), updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND name=$(q "$name") AND COALESCE(role,'')=$(q "$reg");
     SELECT changes();
     COMMIT;") || die "ロールを変えられませんでした(DB)"
@@ -371,8 +371,8 @@ cmd_role-set() {
 # ロール変更の記録(このセッションのもの)
 cmd_role-log() {
   local json=0; [[ ${1:-} == --json ]] && json=1
-  if ((json)); then sql -json "SELECT * FROM role_changes WHERE herdr_session=$SQS ORDER BY id DESC LIMIT 100;" | jq -c '(. // [])[]'
-  else sql -nullvalue - -separator $'\t' "SELECT created_at, agent, COALESCE(old_role,'-')||' -> '||new_role, changed_by, COALESCE(reason,'') FROM role_changes WHERE herdr_session=$SQS ORDER BY id DESC LIMIT 100;"; fi
+  if ((json)); then sql -json "SELECT * FROM role_changes ORDER BY id DESC LIMIT 100;" | jq -c '(. // [])[]'
+  else sql -nullvalue - -separator $'\t' "SELECT created_at, agent, COALESCE(old_role,'-')||' -> '||new_role, changed_by, COALESCE(reason,'') FROM role_changes ORDER BY id DESC LIMIT 100;"; fi
 }
 
 # agent ごとの役割ファイルと、渡した版が最新か
@@ -386,7 +386,7 @@ cmd_roles() {
     if load_role "$name"; then
       if [[ -n $sess ]]; then
         last=$(last_briefed_hash "$sess")
-        at=$(sql "SELECT created_at FROM role_briefings WHERE herdr_session=$SQS AND session_id=$(q "$sess") ORDER BY id DESC LIMIT 1;")
+        at=$(sql "SELECT created_at FROM role_briefings WHERE session_id=$(q "$sess") ORDER BY id DESC LIMIT 1;")
       fi
       if [[ -z $last ]]; then state=never; elif [[ $last == "$ROLE_HASH" ]]; then state=current; else state=outdated; fi
     else state=no-role; fi

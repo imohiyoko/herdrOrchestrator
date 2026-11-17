@@ -37,13 +37,13 @@ load_spawn_policy() {
   return 0
 }
 
-spawn_frozen() { [[ $(sql "SELECT value FROM tb_flags WHERE herdr_session=$SQS AND key='spawn_frozen';") == 1 ]]; }
+spawn_frozen() { [[ $(sql "SELECT value FROM tb_flags WHERE key='spawn_frozen';") == 1 ]]; }
 
 # 親の深さ(0 = 人が立てた agent、1 = 子)。台帳の spawned_by を辿る
 spawn_depth_of() {  # $1=名前
   local n=$1 d=0 p
   while ((d < 20)); do
-    p=$(sql "SELECT COALESCE(spawned_by,'') FROM agents WHERE herdr_session=$SQS AND name=$(q "$n");")
+    p=$(sql "SELECT COALESCE(spawned_by,'') FROM agents WHERE name=$(q "$n");")
     [[ -n $p ]] || break
     d=$((d+1)); n=$p
   done
@@ -56,8 +56,8 @@ spawn_count_children() {  # $1=親(空なら全体)
   [[ -z $1 ]] || w=" AND spawned_by=$(q "$1")"
   [[ -z $1 ]] || w2=" AND json_extract(args,'\$.spawn.parent')=$(q "$1")"
   [[ -z $SPAWN_EXCLUDE_OP ]] || w2+=" AND id!=$SPAWN_EXCLUDE_OP"   # 承認時の再検査では、その操作自身を数えない
-  sql "SELECT (SELECT COUNT(*) FROM agents WHERE herdr_session=$SQS AND state='running' AND spawned_by IS NOT NULL$w)
-         + (SELECT COUNT(*) FROM agent_ops WHERE herdr_session=$SQS AND op='new' AND status='pending' AND json_extract(args,'\$.spawn.parent') IS NOT NULL$w2);"
+  sql "SELECT (SELECT COUNT(*) FROM agents WHERE state='running' AND spawned_by IS NOT NULL$w)
+         + (SELECT COUNT(*) FROM agent_ops WHERE op='new' AND status='pending' AND json_extract(args,'\$.spawn.parent') IS NOT NULL$w2);"
 }
 
 # 子の名前 = <親>-s<N>。N は台帳・承認待ち・herdr のどれにも無い最小の番号
@@ -65,7 +65,7 @@ spawn_next_name() {  # $1=親 → stdout に名前
   local n=1 name
   while ((n < 1000)); do
     name=$1-s$n
-    if [[ -z $(sql "SELECT 1 FROM agents WHERE herdr_session=$SQS AND name=$(q "$name") UNION ALL SELECT 1 FROM agent_ops WHERE herdr_session=$SQS AND op='new' AND status='pending' AND target=$(q "$name");") \
+    if [[ -z $(sql "SELECT 1 FROM agents WHERE name=$(q "$name") UNION ALL SELECT 1 FROM agent_ops WHERE op='new' AND status='pending' AND target=$(q "$name");") \
           && -z $(live_row "$name") ]]; then printf '%s' "$name"; return 0; fi
     n=$((n+1))
   done
@@ -109,13 +109,13 @@ spawn_check() {
   if (( $(spawn_depth_of "$parent") + 1 > SP_DEPTH )); then SPAWN_WHY="深さの上限($SP_DEPTH)を超えます(子は子を立てられません)"; return 1; fi
   [[ " $SP_ROLES " == *" $role "* ]] || { SPAWN_WHY="役割 '$role' は自動で立てられません(許可: $SP_ROLES)"; return 1; }
   [[ $role != _* && $role != README ]] && role_exists "$role" || { SPAWN_WHY="役割の定義がありません: $role(tb role-list)"; return 1; }
-  open=$(sql "SELECT COUNT(*) FROM tasks WHERE herdr_session=$SQS AND owner_agent=$(q "$parent") AND status='in_progress';")
+  open=$(sql "SELECT COUNT(*) FROM tasks WHERE owner_agent=$(q "$parent") AND status='in_progress';")
   ((open > 0)) || { SPAWN_WHY="親 $parent に in_progress のタスクがありません(tb claim 済みが必要)"; return 1; }
-  own=$(sql "SELECT COUNT(*) FROM tasks WHERE herdr_session=$SQS AND id=$(q "$task") AND owner_agent=$(q "$parent") AND status='in_progress';")
+  own=$(sql "SELECT COUNT(*) FROM tasks WHERE id=$(q "$task") AND owner_agent=$(q "$parent") AND status='in_progress';")
   ((own > 0)) || { SPAWN_WHY="--task $task は $parent が持つ in_progress のタスクではありません"; return 1; }
   if (( $(spawn_count_children "$parent") >= SP_PER )); then SPAWN_WHY="$parent の子の数が上限($SP_PER)です"; return 1; fi
   if (( $(spawn_count_children "") >= SP_TOTAL )); then SPAWN_WHY="全体の子の数が上限($SP_TOTAL)です"; return 1; fi
-  local running max; running=$(sql "SELECT COUNT(*) FROM agents WHERE herdr_session=$SQS AND state='running';"); max=$(limit_get max_running_agents)
+  local running max; running=$(sql "SELECT COUNT(*) FROM agents WHERE state='running';"); max=$(limit_get max_running_agents)
   if ((running >= max)); then SPAWN_WHY="動作中の agent が上限です(動作中 ${running}、max_running_agents=$max)。人が tb agent-shed の候補を止めるか、tb limits set max_running_agents <数>"; return 1; fi
   return 0
 }
@@ -173,7 +173,7 @@ cmd_agent-spawn() {
   [[ $name =~ $AGENT_NAME_RE ]] || { echo "tb: agent-spawn を拒否しました: 子の名前 $name が長すぎます(32 字まで)" >&2; return 4; }
   # roles/<子の名前>.md は要求された役割より優先される。承認と作成後の役割がずれないよう拒否する
   ! role_conflict "$name" "$role" || { echo "tb: agent-spawn を拒否しました: $ROLE_CONFLICT_WHY" >&2; return 4; }
-  cwd=$(sql "SELECT COALESCE(cwd,'') FROM agents WHERE herdr_session=$SQS AND name=$(q "$parent");"); [[ -n $cwd && -d $cwd ]] || cwd=$AGENT_CWD
+  cwd=$(sql "SELECT COALESCE(cwd,'') FROM agents WHERE name=$(q "$parent");"); [[ -n $cwd && -d $cwd ]] || cwd=$AGENT_CWD
   prompt=$(spawn_prompt "$parent" "$name" "$role" "$task" "$(oneline "$brief" "$BRIEF_MAX")")
   args=$(jq -nc --arg c "$cwd" --arg m "$SP_MODEL" --arg r "$role" --arg p "$prompt" --arg pa "$parent" --arg t "$task" \
     '{cwd:$c, model:$m, role:$r, prompt:$p, killable:"unknown", spawn:{parent:$pa, task:$t}}')

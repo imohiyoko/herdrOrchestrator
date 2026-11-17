@@ -16,10 +16,10 @@ cmd_review-pack() {
       *) usage "review-pack: 不明な引数 $1";;
     esac
   done
-  [[ -n $since ]] || since=$(sql "SELECT COALESCE(MAX(until_at), strftime('%Y-%m-%dT%H:%M:%SZ','now','-1 day')) FROM reviews WHERE herdr_session=$SQS;")
+  [[ -n $since ]] || since=$(sql "SELECT COALESCE(MAX(until_at), strftime('%Y-%m-%dT%H:%M:%SZ','now','-1 day')) FROM reviews;")
   [[ $since =~ ^[0-9T:.Z-]{10,30}$ ]] || usage "review-pack: --since は ISO 8601"
   local until; until=$(now)
-  local w="herdr_session=$SQS AND created_at > $(q "$since")"   # どの表もこのセッションの行だけ
+  local w="created_at > $(q "$since")"   # どの表もこのセッションの行だけ(表の名前はこのセッションのビュー)
   sec() { printf '\n## %s\n' "$1"; }
   tsv() { sql -separator ' | ' -nullvalue - "$@"; }
   printf '# レビュー材料(%s 〜 %s)\n' "$since" "$until"
@@ -51,10 +51,10 @@ cmd_review-pack() {
   tsv "SELECT a.name, COALESCE(a.role,'-'), p.np, COALESCE(rc.n,0), p.ps
        FROM agents a
        LEFT JOIN (SELECT owner_agent, COUNT(DISTINCT project) AS np, group_concat(DISTINCT project) AS ps FROM tasks
-                  WHERE herdr_session=$SQS AND owner_agent IS NOT NULL AND (status IN ('in_progress','review','blocked') OR updated_at > $(q "$since"))
+                  WHERE owner_agent IS NOT NULL AND (status IN ('in_progress','review','blocked') OR updated_at > $(q "$since"))
                   GROUP BY owner_agent) p ON p.owner_agent=a.name
        LEFT JOIN (SELECT agent, COUNT(*) AS n FROM role_changes WHERE $w GROUP BY agent) rc ON rc.agent=a.name
-       WHERE a.herdr_session=$SQS AND (COALESCE(p.np,0) > 1 OR COALESCE(rc.n,0) > 0) ORDER BY COALESCE(p.np,0) DESC, a.name LIMIT $lim;"
+       WHERE (COALESCE(p.np,0) > 1 OR COALESCE(rc.n,0) > 0) ORDER BY COALESCE(p.np,0) DESC, a.name LIMIT $lim;"
   sec "報告(種類 | 件数)と、質問・ブロックの例"
   tsv "SELECT kind, COUNT(*) FROM comments WHERE $w GROUP BY kind;"
   tsv "SELECT 'C-'||id, kind, from_name, substr(replace(text, char(10), ' '),1,100) FROM comments WHERE $w AND kind IN ('question','blocked') ORDER BY id DESC LIMIT $lim;"
@@ -63,11 +63,11 @@ cmd_review-pack() {
   sec "アラート(状態 | 緊急度 | 件数 | まとめた重複の合計 | 平均解析分)"
   tsv "SELECT status, COALESCE(severity,'未解析'), COUNT(*), SUM(count)-COUNT(*),
          CAST(ROUND(AVG(CASE WHEN analyzed_at IS NOT NULL THEN (julianday(analyzed_at)-julianday(analysis_started_at))*1440 END)) AS INTEGER)
-       FROM alerts WHERE herdr_session=$SQS AND last_seen > $(q "$since") GROUP BY status, severity;"
+       FROM alerts WHERE last_seen > $(q "$since") GROUP BY status, severity;"
   echo "重複の多いアラート(見張り役の見回りが同じものを拾い続けていないか):"
-  tsv "SELECT 'A-'||id, count, COALESCE(severity,'-'), substr(title,1,60) FROM alerts WHERE herdr_session=$SQS AND last_seen > $(q "$since") AND count > 1 ORDER BY count DESC LIMIT $lim;"
+  tsv "SELECT 'A-'||id, count, COALESCE(severity,'-'), substr(title,1,60) FROM alerts WHERE last_seen > $(q "$since") AND count > 1 ORDER BY count DESC LIMIT $lim;"
   echo "low と判定された解析(誤報・過剰な見回りの候補):"
-  tsv "SELECT 'A-'||id, substr(title,1,60), substr(replace(COALESCE(result_summary,''), char(10), ' '),1,80) FROM alerts WHERE herdr_session=$SQS AND analyzed_at > $(q "$since") AND severity='low' ORDER BY id DESC LIMIT $lim;"
+  tsv "SELECT 'A-'||id, substr(title,1,60), substr(replace(COALESCE(result_summary,''), char(10), ' '),1,80) FROM alerts WHERE analyzed_at > $(q "$since") AND severity='low' ORDER BY id DESC LIMIT $lim;"
   sec "観測(tb が見つけた滞留など: 種類 | 件数)"
   tsv "SELECT kind, COUNT(*) FROM observations WHERE $w GROUP BY kind;"
   sec "役割の配布(agent | 回数)— compact が多い agent は文脈が大きすぎる候補"
@@ -128,7 +128,7 @@ cmd_proposals() {
   fi
   local where="1=1"
   if [[ ${1:-} == --status ]]; then [[ ${2:-} =~ ^(open|applied|rejected)$ ]] || usage "proposals: --status は open|applied|rejected"; where="status=$(q "$2")"; fi
-  sql -nullvalue - -separator $'\t' "SELECT 'P-'||id, status, role_file, by_name, created_at, title FROM proposals WHERE herdr_session=$SQS AND ($where) ORDER BY id DESC LIMIT 100;"
+  sql -nullvalue - -separator $'\t' "SELECT 'P-'||id, status, role_file, by_name, created_at, title FROM proposals WHERE ($where) ORDER BY id DESC LIMIT 100;"
 }
 
 # 設定役(人事)か人が、提案を反映した・見送ったと記録する。提案者に結果が返る
@@ -147,7 +147,7 @@ cmd_proposal-resolve() {
     resolve_label || return 3
     [[ $LABEL_NAME == "$HR_NAME" ]] || die "提案を閉じられるのは設定役($HR_NAME)か人だけです"
   fi
-  [[ $(sql "SELECT status FROM proposals WHERE herdr_session=$SQS AND id=$id;") == open ]] || die "P-$id は open ではありません"
+  [[ $(sql "SELECT status FROM proposals WHERE id=$id;") == open ]] || die "P-$id は open ではありません"
   sql "UPDATE main.proposals SET status=$(q "$st"), note=NULLIF($(q "$note"),''), resolved_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$id;"
   echo "P-$id $st"
 }

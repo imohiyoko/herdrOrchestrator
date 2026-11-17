@@ -32,7 +32,7 @@ cmd_alert() {
   local src="cli" spane=""
   if [[ -n ${HERDR_PANE_ID:-} ]]; then resolve_label || return 3; src=$LABEL_NAME; spane=$LABEL_PANE; fi
   local fp; fp=$(printf '%s' "${key:-$title}" | sha256 | cut -c1-16)
-  local dup; dup=$(sql "SELECT id FROM alerts WHERE herdr_session=$SQS AND fingerprint=$(q "$fp") AND status NOT IN ('analyzed','closed') ORDER BY id DESC LIMIT 1;")
+  local dup; dup=$(sql "SELECT id FROM alerts WHERE fingerprint=$(q "$fp") AND status NOT IN ('analyzed','closed') ORDER BY id DESC LIMIT 1;")
   local id state ts; ts=$(now)
   if [[ -n $dup ]]; then
     sql "UPDATE main.alerts SET count=count+1, last_seen=$(q "$ts") WHERE herdr_session=$SQS AND id=$dup;"
@@ -46,19 +46,19 @@ cmd_alert() {
   [[ $state == new ]] && notify_hook notify_hook_alert_raised "$id"
   [[ $state == new ]] && { alert_dispatch_one "$id" >/dev/null 2>&1 || true; }
   if ((json)); then alert_row "$id" | jq -c '.id = "A-\(.id)"'
-  else echo "A-$id $state $(sql "SELECT status FROM alerts WHERE herdr_session=$SQS AND id=$id;")"; fi
+  else echo "A-$id $state $(sql "SELECT status FROM alerts WHERE id=$id;")"; fi
 }
 
 # 解析役を起動する。新規で approvals が ask なら awaiting-approval。上限に達していれば queued(承認は済んだ扱い)
 alert_dispatch_one() {  # $1=alerts.id(数字)
   local id=$1 st
-  st=$(sql "SELECT status FROM alerts WHERE herdr_session=$SQS AND id=$id;")
+  st=$(sql "SELECT status FROM alerts WHERE id=$id;")
   [[ $st == new || $st == queued || $st == approved ]] || return 0
   if [[ $st == new ]]; then
     approval_of "alert:analyze"
     if [[ $APPROVAL_VALUE != allow ]]; then sql "UPDATE main.alerts SET status='awaiting-approval' WHERE herdr_session=$SQS AND id=$id;"; return 0; fi
   fi
-  local busy amax=$ANALYST_MAX; busy=$(sql "SELECT COUNT(*) FROM alerts WHERE herdr_session=$SQS AND status='analyzing';")
+  local busy amax=$ANALYST_MAX; busy=$(sql "SELECT COUNT(*) FROM alerts WHERE status='analyzing';")
   limit_is_set analyst_max && amax=$(limit_get analyst_max)   # limits で設定されていれば TB_ANALYST_MAX より優先
   if (( busy >= amax )); then sql "UPDATE main.alerts SET status='queued' WHERE herdr_session=$SQS AND id=$id;"; return 0; fi
   # 動作中の agent の総数(max_running_agents)。上限なら作らず queued に戻す(枠が空いたら tb alert-dispatch で進む)
@@ -85,8 +85,8 @@ start_analyst() {  # $1=alerts.id
 # 承認待ち・上限待ちのアラートを進める(tb digest も最初に呼ぶ)。送れていない依頼も再送する
 cmd_alert-dispatch() {
   local id
-  while read -r id; do [[ -n $id ]] && { alert_dispatch_one "$id" || true; }; done < <(sql "SELECT id FROM alerts WHERE herdr_session=$SQS AND status IN ('new','queued','approved') ORDER BY id;")
-  sql -separator ' ' "SELECT 'A-'||id, status FROM alerts WHERE herdr_session=$SQS AND status IN ('awaiting-approval','queued','analyzing') ORDER BY id;"
+  while read -r id; do [[ -n $id ]] && { alert_dispatch_one "$id" || true; }; done < <(sql "SELECT id FROM alerts WHERE status IN ('new','queued','approved') ORDER BY id;")
+  sql -separator ' ' "SELECT 'A-'||id, status FROM alerts WHERE status IN ('awaiting-approval','queued','analyzing') ORDER BY id;"
 }
 
 # 人が解析役の起動を承認する(approvals が ask のとき)。--always で alert:analyze を allow に
@@ -95,11 +95,11 @@ cmd_alert-approve() {
   valid_aid "$1"; local id=${1#A-} always=0; shift
   [[ ${1:-} == --always ]] && always=1
   require_human "tb alert-approve"
-  [[ $(sql "SELECT status FROM alerts WHERE herdr_session=$SQS AND id=$id;") == awaiting-approval ]] || die "A-$id は承認待ちではありません"
+  [[ $(sql "SELECT status FROM alerts WHERE id=$id;") == awaiting-approval ]] || die "A-$id は承認待ちではありません"
   sql "UPDATE main.alerts SET status='approved' WHERE herdr_session=$SQS AND id=$id;"
   ((always)) && set_approval allow "alert:analyze" >/dev/null && echo "alert:analyze = allow(今後は承認なし)"
   alert_dispatch_one "$id" >/dev/null 2>&1 || true
-  echo "A-$id $(sql "SELECT status FROM alerts WHERE herdr_session=$SQS AND id=$id;")"
+  echo "A-$id $(sql "SELECT status FROM alerts WHERE id=$id;")"
 }
 
 # 解析役が結果を返す。担当の解析役(または人)だけ
@@ -172,6 +172,6 @@ cmd_alerts() {
     esac
   done
   local where="1=1"; [[ -z $st ]] || where="status=$(q "$st")"
-  if ((json)); then sql -json "SELECT * FROM alerts WHERE herdr_session=$SQS AND ($where) ORDER BY id DESC LIMIT 100;" | jq -c '(. // [])[] | .id = "A-\(.id)"'
-  else sql -nullvalue - -separator $'\t' "SELECT 'A-'||id, COALESCE(severity,'未解析'), status, count, COALESCE(analyst,'-'), last_seen, title FROM alerts WHERE herdr_session=$SQS AND ($where) ORDER BY id DESC LIMIT 100;"; fi
+  if ((json)); then sql -json "SELECT * FROM alerts WHERE ($where) ORDER BY id DESC LIMIT 100;" | jq -c '(. // [])[] | .id = "A-\(.id)"'
+  else sql -nullvalue - -separator $'\t' "SELECT 'A-'||id, COALESCE(severity,'未解析'), status, count, COALESCE(analyst,'-'), last_seen, title FROM alerts WHERE ($where) ORDER BY id DESC LIMIT 100;"; fi
 }

@@ -37,9 +37,9 @@ deliver_comment() {  # $1=comments.id → 0 送信済み / 10 / 11
   if [[ -n $delivered ]]; then echo "C-$cid は配送済みです($delivered)"; return 0; fi
   tid=$(jq -r .task_id <<<"$row"); kind=$(jq -r .kind <<<"$row"); text=$(jq -r .text <<<"$row")
   name=$(jq -r .from_name <<<"$row"); pane=$(jq -r .from_pane <<<"$row")
-  project=$(sql "SELECT project FROM tasks WHERE herdr_session=$SQS AND id=$(q "$tid");"); target=$(target_for "$project")
+  project=$(sql "SELECT project FROM tasks WHERE id=$(q "$tid");"); target=$(target_for "$project")
   # tb agent-spawn で立てた子なら、指揮官が親にも伝えられるよう親の名前を付ける(それ以外は従来のまま)
-  local sby; sby=$(sql "SELECT COALESCE(spawned_by,'') FROM agents WHERE herdr_session=$SQS AND name=$(q "$name");")
+  local sby; sby=$(sql "SELECT COALESCE(spawned_by,'') FROM agents WHERE name=$(q "$name");")
   if [[ $sby =~ ^[A-Za-z0-9._-]{1,64}$ ]]; then sby="spawned_by: $sby "; else sby=""; fi
   msg="[from: $name / $pane / $tid / $kind] ${sby}$(oneline "$text" 200) (詳細: tb comments $tid)"
   herdr_send "$target" "$msg" "C-$cid" comment || return $?
@@ -81,7 +81,7 @@ cmd_comment() {
     deliver_comment "$cid" >/dev/null || rc=$?   # 保存は済んでいる。配送の結果は終了コードで返す
     state=$([[ $rc == 0 ]] && echo delivered || echo saved-undelivered)
   fi
-  if ((json)); then sql -json "SELECT * FROM comments WHERE herdr_session=$SQS AND id=$cid;" | jq -c '.[0] | .deliverables |= fromjson | .id = "C-\(.id)"'
+  if ((json)); then sql -json "SELECT * FROM comments WHERE id=$cid;" | jq -c '.[0] | .deliverables |= fromjson | .id = "C-\(.id)"'
   else echo "C-$cid $state"; fi
   return $rc
 }
@@ -103,13 +103,13 @@ cmd_comments() {
   ((und)) && where+=" AND delivered_at IS NULL"
   ((open)) && where+=" AND kind IN ('question','blocked') AND resolved_at IS NULL"   # 人の対応待ち
   if ((json)); then
-    sql -json "SELECT * FROM comments WHERE herdr_session=$SQS AND ($where) ORDER BY id;" | jq -c '(. // [])[] | .deliverables |= fromjson | .id = "C-\(.id)"'
+    sql -json "SELECT * FROM comments WHERE ($where) ORDER BY id;" | jq -c '(. // [])[] | .deliverables |= fromjson | .id = "C-\(.id)"'
   else
     # needs-human: 未対応の question/blocked(人の判断・承認待ち)。resolved: 人が対応済みにしたもの
     sql -separator $'\t' "SELECT 'C-'||id, kind, CASE WHEN resolved_at IS NOT NULL THEN 'resolved'
            WHEN kind IN ('question','blocked') THEN 'needs-human' ELSE '-' END,
       CASE WHEN delivered_at IS NULL THEN 'undelivered' ELSE 'delivered' END, task_id, from_name,
-      replace(replace(text, char(10), ' '), char(9), ' ') FROM comments WHERE herdr_session=$SQS AND ($where) ORDER BY id;"
+      replace(replace(text, char(10), ' '), char(9), ' ') FROM comments WHERE ($where) ORDER BY id;"
   fi
 }
 
@@ -127,7 +127,7 @@ cmd_resolve() {
   done
   ((${#note} <= 500)) || usage "resolve: メモは 500 字まで"
   require_human "tb resolve"
-  row=$(sql -json "SELECT kind, resolved_at FROM comments WHERE herdr_session=$SQS AND id=$ref;" | jq -c '.[0] // empty')
+  row=$(sql -json "SELECT kind, resolved_at FROM comments WHERE id=$ref;" | jq -c '.[0] // empty')
   [[ -n $row ]] || die "報告が見つかりません: C-$ref"
   kind=$(jq -r .kind <<<"$row"); at=$(jq -r '.resolved_at // ""' <<<"$row")
   [[ $kind == question || $kind == blocked ]] || die "対応済みにできるのは question / blocked だけです(C-$ref は $kind)"
