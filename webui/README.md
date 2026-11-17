@@ -107,6 +107,7 @@ POST/PUT/DELETE/PATCH は 405。
 | `/jobs` | 各 job の型・宛先(agent 名 / コマンド)・実際に効く設定(間隔・時間帯・曜日・有効/一時停止)、最終記録と最後の実行 |
 | `/jobs/<job>` | 「ジョブが行うこと」(型・宛先 agent と今の状態・送られる本文 / 実行されるコマンドの全文・次回の予定・直近の結果・副作用の注記・承認の扱い。読み取りのみ)と、スケジュールの変更フォーム(自動更新しない)。保存先は `scheduler/settings/<job>.settings`、次の分から反映。「conf の値に戻す」で settings を消す |
 | `/ledger` | 送信履歴(tb の `messages` 表)。種別 × 結果の件数サマリと直近 100 件。failed は既定で畳む。`?kind=` `?result=`(sent / busy / failed / all) `?target=` `?from=` `?to=`(日付 `YYYY-MM-DD`、UTC)で絞り込み。send の `O-n` は `/outbox` にリンクし、本文は 1 行目だけ |
+| `/sessions` | セッション一覧(動いているほかの herdr セッションの Web UI へのリンク。入口の後ろでは、ログイン済みのセッションの緊急通知の件数も) |
 | `/perms` | 権限(`taskboard/config/approvals.conf` の読み取り)。上から順に順位・パターン・ask/allow・最後の変更(行末の注記と `approval_changes`)・その行で決まる操作の例・警告(`* = ask`、広い allow、上の行に隠れる行(ワイルドカードを含まない行)、「この操作はどの行で決まるか」の検索(`?op=`、tb の `approval_of` と同じ規則をここで再現。tb は呼ばない)、操作ごとの現在の権限(権限カタログ `taskboard/config/approvals-catalog.conf` × approvals.conf: 現在の値・決まる行・規則の有無(明示 / 既定に落ちる)・リスク階層・副作用・allow 候補・状態、`?kind=` `?state=` `?fallback=1` `?allowed=1` で絞り込み、high / human-only の操作が allow なら警告、reserved(将来用)と unwired(承認判定に渡らない。`proxy:*`)は薄く表示し、unwired の操作に当たる規則には「何も効かない」と警告、カタログに無い規則は「未知の規則」の欄)、変更履歴、`tb allow` / `tb ask` のコマンド行の組み立て表示(`?pat=&val=`。表示だけで実行しない)。変更の操作・POST は無い |
 
 名前の無い agent は `pane_id`(例: `w2:p3`)が名前の代わりになる。未知の URL は 404。
@@ -212,6 +213,9 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.herdr-webui.plist
 | --- | --- | --- |
 | `TB_INSTANCE` | (なし) | セッション(インスタンス)名。設定すると Cookie 名が `herdr_webui_session_<名>`、run ファイルが `run/instance-<名>/`、全画面のタイトルとヘッダに名前が出る(`default` 以外は色の帯)。未設定は従来どおり |
 | `TB_UI_PORT` | (なし) | 固定ポート。指定すると探索せず、使用中なら別ポートへ移らずエラーで終了する |
+| `TB_UI_GATEWAY` | (なし) | `1` で入口(`gateway.py`)の後ろに置く: ページを `/s/<TB_INSTANCE または default>/` の下に置く |
+| `TB_UI_GATEWAY_PORT` | `8790` | 入口(`gateway.py`)のポート |
+| `WEBUI_REGISTRY_DIR` | `$XDG_STATE_HOME/herdr-webui/instances`(無ければ `~/.local/state/…`) | 動いているインスタンスの一覧の置き場 |
 | `HERDR_WEBUI_RANGE` | `8800-8819` | 探索範囲(`下限-上限`)。テスト用 |
 | `WEBUI_SESSION_TTL` / `WEBUI_LOCK_MAX` / `WEBUI_LOCK_SEC` | `43200` / `5` / `300` | ログインの有効秒数 / ロックまでの失敗回数 / ロック秒数 |
 | `WEBUI_FAIL_DELAY` | `1` | ログイン・再設定の失敗時の遅延(秒) |
@@ -238,8 +242,10 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.herdr-webui.plist
 | `app/jobs.py` | scheduler のジョブ定義と、Web UI から書く上書き設定 |
 | `app/jobview.py` | `/jobs/<job>` の読み取り表示(conf を実行せず PROMPT / COMMAND をそのまま読む、本文のマスク、次回の予定、宛先の状態) |
 | `app/views.py` | HTML の組み立てと各ページ |
+| `app/registry.py` | 動いているインスタンスの一覧(ホームに 1 インスタンス 1 ファイル。セッション一覧と入口が読む) |
 | `app/handler.py` | HTTP ハンドラ・ログイン・起動 |
 | `auth.py` | パスワードとセッション |
+| `gateway.py` | 入口: 1 ポートで受け、`/s/<名>/` を各インスタンスへ中継(`app/registry.py` を読む) |
 
 ## テスト
 
@@ -278,6 +284,25 @@ herdr のセッションごとに、別ポート・別プロセスで webui を�
 - `TB_UI_PORT` が使用中ならエラーで終了する(別ポートへ黙って移ると、別セッションの画面と取り違えるため)。未指定なら従来どおり `HERDR_WEBUI_RANGE` で探索し、選んだポートとインスタンス名を起動ログ(`instance=<名> port=<n>`)と run ファイル(`port`・`instance`)に残す。
 - run ファイル(ログイン情報・セッション・port)は `run/instance-<名>/`、launchd のログは `logs/launchd-webui-<名>.{out,err}`。未設定なら従来の `run/`・`logs/launchd-webui.*`。
 - bind は `127.0.0.1` のまま(変更なし)。
+
+- 動いているインスタンスは、起動時にホームの一覧(`~/.local/state/herdr-webui/instances/<名>.json`、`XDG_STATE_HOME` / `WEBUI_REGISTRY_DIR` で変更可。ディレクトリ 700・ファイル 600)に名前・ポート・置き場所を書き、終了時に消す。各画面の「セッション」(`/sessions`)はこの一覧から、ほかのセッションの Web UI へのリンクを出す(中身は見せない。開くとそのセッションのログイン)。
+
+### 入口(1 ポートで全セッションを開く: `gateway.py`)
+
+ポートをセッションごとに覚えなくてよいよう、入口を 1 つ置ける。入口は `127.0.0.1:8790`(`TB_UI_GATEWAY_PORT`)で受け、`/s/<名>/…` をそのセッションの Web UI に中継する。
+
+```bash
+TB_INSTANCE=main TB_UI_PORT=8801 TB_UI_GATEWAY=1 python3 webui/server.py   # セッションごとに(別 checkout なら各 checkout で)
+python3 webui/gateway.py                                                  # 入口は 1 つだけ
+# → http://127.0.0.1:8790/ がセッション一覧、http://127.0.0.1:8790/s/main/ が main の Web UI
+```
+
+- **各セッションは今までどおり別プロセス・別ポート・別ログイン**(入口は中継するだけで、ログインも DB も持たない)。入口が止まっても、各セッションのポートを直接開けば使える(`http://127.0.0.1:8801/s/main/`)。
+- `TB_UI_GATEWAY=1` のインスタンスは、ページを `/s/<名>/` の下に置く(名前は `TB_INSTANCE`、未設定なら `default`)。Cookie の Path も `/s/<名>/` なので、ログインはセッションごとに別のまま。`/s/<名>/` の外は 404。
+- 入口の `/` はセッションの名前・ポート・動いているかの一覧。緊急通知の件数は、ブラウザがそのセッションにログイン済みのときだけ出る(そのセッションの `/api/notifications` を、そのセッションの Cookie で読む)。
+- 中継先はホームの一覧にあるポート(`127.0.0.1` だけ)。Host と、入口から来た Origin / Referer をそのセッションのものに読み替えて渡すので、各セッションの DNS リバインディング対策・CSRF 対策はそのまま効く。chunked の本文は受けない(411)、本文は 64 KiB まで。
+- 入口の後ろでは全セッションが同じオリジン(`127.0.0.1:8790`)になる。画面に出すのは自前のスクリプトだけで、外部由来の文字列はすべてエスケープしているが、どれか 1 つのセッションの画面でスクリプトを差し込まれると、ログイン済みのほかのセッションも読めることになる(別ポートで直接開く運用ではオリジンが分かれる)。
+- 常駐: `bash webui/bin/gen-gateway-plist.sh` で `local.herdr-webui-gateway.plist` を生成(登録は人が行う。手順は「常駐」と同じ)。各セッションの plist は `TB_UI_GATEWAY=1 bash webui/bin/gen-plist.sh` で生成する。
 
 ### 既に `TB_INSTANCE` を付けて動かしている場合の移行
 

@@ -7,15 +7,15 @@ import shlex
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote, unquote, urlencode
 
-from .config import HERDR_ROOT, INSTANCE, JOB_RE, REFRESH_SEC, SCHED_LOGS, STALL_MIN, TASK_STALE_HOURS
+from .config import BASE, GATEWAY, HERDR_ROOT, INSTANCE, JOB_RE, REFRESH_SEC, SCHED_LOGS, STALL_MIN, TASK_STALE_HOURS
 from .sanitize import clean, e
 from . import graph
 from .herdr import agent_key, agent_session, get_agents, read_agent, workspace_label
-from .data import has_resolution, parse_ts, NOTIFY_POLL_SEC, QUEUED_WARN_SEC, outbox_rows, activity_for, agent_ops, agent_registry, stopped_agents, db_conn, needs_human, parse_jsonl, q, stalled, tail_lines, tasks_for_agent, urgent_items, LEDGER_MAX, LEDGER_RESULTS, approval_history, ledger_kinds, ledger_rows, ledger_summary
+from .data import badge_count, has_resolution, parse_ts, NOTIFY_POLL_SEC, QUEUED_WARN_SEC, outbox_rows, activity_for, agent_ops, agent_registry, stopped_agents, db_conn, needs_human, parse_jsonl, q, stalled, tail_lines, tasks_for_agent, urgent_items, LEDGER_MAX, LEDGER_RESULTS, approval_history, ledger_kinds, ledger_rows, ledger_summary
 from .actions import NOTE_MAX
 from .jobview import agent_state, command_summary, job_about, job_defs, job_summary, mask, next_runs, prompt_file, send_task_decision
 from .jobs import DAY_PRESETS, DAY_TOKENS, INTERVAL_UNITS, interval_sec, interval_text, job_info, job_last, job_names
-from . import docs, perms
+from . import docs, perms, registry
 from .markdown import render as render_md
 
 
@@ -43,7 +43,8 @@ pre.mermaid{background:#fff}
 .doc h2.md{font-size:20px;border-bottom:1px solid #d0d7de}.doc ul,.doc ol{padding-left:1.5em}.err{background:#ffebe9;border:1px solid #cf222e;padding:6px 10px}
 """
 NAV = [("/", "概要"), ("/notifications", "緊急通知"), ("/agents", "agent"), ("/tasks", "タスク"),
-       ("/inbox", "報告・承認待ち"), ("/outbox", "送信"), ("/docs", "ドキュメント"), ("/jobs", "定期実行"), ("/ledger", "送信履歴"), ("/perms", "権限")]
+       ("/inbox", "報告・承認待ち"), ("/outbox", "送信"), ("/docs", "ドキュメント"), ("/jobs", "定期実行"), ("/ledger", "送信履歴"), ("/perms", "権限"),
+       ("/sessions", "セッション")]
 
 
 def inst_label():
@@ -1223,6 +1224,42 @@ STATIC = {"/": page_overview, "/notifications": page_notifications, "/inbox": pa
           "/outbox": page_outbox, "/jobs": page_jobs}
 
 
+def page_sessions(_qs, ctx):
+    """動いている Web UI インスタンス(= herdr セッション)の一覧。各インスタンスは自分のセッションだけを見るので、ここは行き先の案内。"""
+    me = INSTANCE or "default"
+    rows, here_api = [], False
+    for x in registry.entries():
+        up = registry.alive(x)
+        direct = f"http://127.0.0.1:{x['port']}{x['base']}/"
+        if x["name"] == me:
+            link, cnt = f"<strong>{e(x['name'])}</strong>(この画面)", f"{len(urgent_items())}(報告・承認待ち {badge_count()})"
+            cell = f"<td>{cnt}</td>"
+        else:
+            via = GATEWAY and x["base"]
+            href = f"../{x['name']}/" if via else direct
+            link = f'<a href="{e(href)}">{e(x["name"])}</a>'
+            if via and up:
+                cell = f'<td data-api="{e("../" + x["name"] + "/api/notifications")}">…</td>'
+                here_api = True
+            else:
+                cell = "<td>-</td>"
+        rows.append(f"<tr><td>{link}</td>{cell}<td>{'動いている' if up else '<span class=st-blocked>応答なし</span>'}</td>"
+                    f"<td>{x['port']}</td><td>{e('入口の後ろ ' + x['base'] + '/' if x['base'] else '直接')}</td>"
+                    f'<td><a href="{e(direct)}">{e(direct)}</a></td></tr>')
+    body = ("<p>この画面は herdr セッション <strong>" + e(me) + "</strong> の Web UI です。ほかのセッションは別の Web UI(別のポート・別のログイン)で動いています。"
+            "下の一覧から開きます。件数は緊急通知の数です(ほかのセッションの件数は入口の後ろで動いているときだけ、そのセッションにログイン済みなら出ます)。</p>")
+    if GATEWAY:
+        body += '<p><a href="../../">入口(全セッションの一覧)へ</a></p>'
+    if rows:
+        body += ("<table><tr><th>セッション</th><th>緊急通知</th><th>状態</th><th>ポート</th><th>置き場所</th><th>直接開く</th></tr>"
+                 + "".join(rows) + "</table>")
+    else:
+        body += "<p class=note>(一覧が空です。インスタンスは起動時に " + e(registry.REGISTRY_DIR()) + " に自分を書きます)</p>"
+    if here_api:
+        ctx.setdefault("scripts", []).append("/sessions.js")
+    return "セッション一覧", body
+
+
 def route(path, qs, ctx=None):
     """(title, body) か None(404)。ctx: {"csrf": フォーム用トークン}。フォームを出したページは ctx["norefresh"] を立てる。"""
     ctx = {} if ctx is None else ctx
@@ -1230,6 +1267,8 @@ def route(path, qs, ctx=None):
         path = path.rstrip("/")
     if path == "/inbox":
         return page_inbox(qs, ctx)
+    if path == "/sessions":
+        return page_sessions(qs, ctx)
     if path == "/agents":
         return page_agents(qs, ctx)
     if path == "/agent-graph":
@@ -1271,7 +1310,8 @@ DOCS_JS = """(function () {
 
 NOTIFY_JS = """(function () {
   "use strict";
-  var KEY = "herdr-webui-notified", POLL = %d;
+  // BASE: gateway の後ろでは /s/<名前>(同じオリジンに複数のインスタンスが並ぶので、保存キーと通知のタグも分ける)
+  var BASE = %s, POLL = %d, KEY = "herdr-webui-notified" + (BASE ? ":" + BASE : "");
   var badge = document.getElementById("nbadge");
   var state = document.getElementById("nstate");
   var btn = document.getElementById("nenable");
@@ -1293,8 +1333,8 @@ NOTIFY_JS = """(function () {
   }
   function safeHref(h) { return typeof h === "string" && h.charAt(0) === "/" && h.charAt(1) !== "/" && h.charAt(1) !== "\\\\"; }
   function notify(it) {
-    var n = new Notification("[herdr] " + it.label + ": " + it.title, {body: (it.body || "-") + "\\n対応: " + (it.how || "Web UI で確かめる"), tag: "herdr-" + it.id});
-    n.onclick = function () { window.focus(); if (safeHref(it.href)) location.href = it.href; n.close(); };
+    var n = new Notification("[herdr] " + it.label + ": " + it.title, {body: (it.body || "-") + "\\n対応: " + (it.how || "Web UI で確かめる"), tag: "herdr-" + (BASE ? BASE + "-" : "") + it.id});
+    n.onclick = function () { window.focus(); if (safeHref(it.href)) location.href = BASE + it.href; n.close(); };
   }
   if (btn) btn.addEventListener("click", function () {
     Notification.requestPermission().then(function (p) {
@@ -1303,7 +1343,7 @@ NOTIFY_JS = """(function () {
     });
   });
   function poll() {
-    fetch("/api/notifications", {credentials: "same-origin", cache: "no-store", headers: {"Accept": "application/json"}})
+    fetch(BASE + "/api/notifications", {credentials: "same-origin", cache: "no-store", headers: {"Accept": "application/json"}})
       .then(function (r) { if (!r.ok) throw new Error("status " + r.status); return r.json(); })
       .then(function (d) {
         var items = Array.isArray(d.items) ? d.items : [];
@@ -1322,4 +1362,23 @@ NOTIFY_JS = """(function () {
   poll();
   setInterval(poll, POLL);
 })();
-""" % (NOTIFY_POLL_SEC * 1000)
+""" % (json.dumps(BASE), NOTIFY_POLL_SEC * 1000)
+
+SESSIONS_JS = """(function () {
+  "use strict";
+  // セッション一覧: gateway の後ろ(同じオリジン)なら、ほかのインスタンスの緊急通知の件数を、そのインスタンスのログインで読む
+  var cells = document.querySelectorAll("td[data-api]");
+  Array.prototype.forEach.call(cells, function (td) {
+    var api = td.getAttribute("data-api");
+    if (!/^\\.\\.\\/[A-Za-z0-9][A-Za-z0-9._-]{0,63}\\/api\\/notifications$/.test(api)) return;
+    fetch(api, {credentials: "same-origin", cache: "no-store", headers: {"Accept": "application/json"}})
+      .then(function (r) {
+        if (r.status === 401) { td.textContent = "要ログイン"; return null; }
+        if (!r.ok) throw new Error("status " + r.status);
+        return r.json();
+      })
+      .then(function (d) { if (d) td.textContent = String(Array.isArray(d.items) ? d.items.length : "?"); })
+      .catch(function () { td.textContent = "読めない"; });
+  });
+})();
+"""

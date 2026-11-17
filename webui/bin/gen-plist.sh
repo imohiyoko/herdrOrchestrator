@@ -1,7 +1,7 @@
 #!/bin/bash
 # 使い方: bin/gen-plist.sh   -> generated/local.herdr-webui.plist を生成して lint する。
 # TB_INSTANCE があれば local.herdr-<instance>-webui(複数セッションを別 checkout で動かすとき)。
-# TB_INSTANCE / HERDR_SESSION / TB_UI_PORT が設定されていれば plist の環境変数に渡す(未設定なら何も足さない)。
+# TB_INSTANCE / HERDR_SESSION / TB_UI_PORT / TB_UI_GATEWAY(入口の後ろに置くなら 1)が設定されていれば plist の環境変数に渡す(未設定なら何も足さない)。
 # launchctl への登録はしない(人が行う。README 参照)。
 set -eu
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -9,9 +9,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/../lib/herdr-env.sh"
 LABEL="$(herdr_label_prefix)webui" || exit 2
 EXTRA_ENV=""
-for v in TB_INSTANCE HERDR_SESSION TB_UI_PORT WEBUI_LEGACY_AUTH; do
+for v in TB_INSTANCE HERDR_SESSION TB_UI_PORT TB_UI_GATEWAY WEBUI_LEGACY_AUTH; do
   [ -n "${!v:-}" ] || continue
-  [ "$v" != WEBUI_LEGACY_AUTH ] || [ "${!v}" = 1 ] || { echo "error: WEBUI_LEGACY_AUTH は 1 だけ: ${!v}" >&2; exit 2; }
+  case $v in WEBUI_LEGACY_AUTH|TB_UI_GATEWAY) [ "${!v}" = 1 ] || { echo "error: $v は 1 だけ: ${!v}" >&2; exit 2; } ;; esac
   herdr_plist_value_ok "${!v}" || { echo "error: $v は英数字と . _ - だけ: ${!v}" >&2; exit 2; }
   [ "$v" != TB_UI_PORT ] || { [[ ${!v} =~ ^[0-9]{1,5}$ ]] && ((10#${!v} >= 1 && 10#${!v} <= 65535)); } || { echo "error: TB_UI_PORT は 1〜65535 の数字: ${!v}" >&2; exit 2; }
   EXTRA_ENV="$EXTRA_ENV    <key>$v</key>
@@ -54,6 +54,6 @@ $EXTRA_ENV  </dict>
 </dict>
 </plist>
 PLIST
-plutil -lint "$OUT" >/dev/null
+if command -v plutil >/dev/null; then plutil -lint "$OUT" >/dev/null; fi   # macOS 以外(テスト)では lint を省く
 echo "$OUT"
 echo "登録は人が行う(このスクリプトは行わない)。手順は README の「常駐」を参照"
