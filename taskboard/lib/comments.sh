@@ -43,7 +43,7 @@ deliver_comment() {  # $1=comments.id → 0 送信済み / 10 / 11
   if [[ $sby =~ ^[A-Za-z0-9._-]{1,64}$ ]]; then sby="spawned_by: $sby "; else sby=""; fi
   msg="[from: $name / $pane / $tid / $kind] ${sby}$(oneline "$text" 200) (詳細: tb comments $tid)"
   herdr_send "$target" "$msg" "C-$cid" comment || return $?
-  sql "UPDATE comments SET delivered_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$cid;"
+  sql "UPDATE main.comments SET delivered_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$cid;"
   echo "C-$cid delivered to $target"
 }
 
@@ -72,7 +72,7 @@ cmd_comment() {
   require_task "$tid" >/dev/null
   resolve_label || return 3
   local cid rc=0
-  cid=$(sql "INSERT INTO comments (herdr_session, task_id, kind, text, deliverables, from_name, from_pane, from_session, created_at)
+  cid=$(sql "INSERT INTO main.comments (herdr_session, task_id, kind, text, deliverables, from_name, from_pane, from_session, created_at)
     VALUES ($SQS, $(q "$tid"), $(q "$kind"), $(q "$text"), $(q "$darr"), $(q "$LABEL_NAME"), $(q "$LABEL_PANE"), $(q "$LABEL_SESSION"), $(q "$(now)"));
     SELECT last_insert_rowid();")
   notify_hook notify_hook_comment "$cid"   # 外への通知の積み込み(off なら何もしない。失敗しても結果は変わらない)
@@ -132,6 +132,6 @@ cmd_resolve() {
   kind=$(jq -r .kind <<<"$row"); at=$(jq -r '.resolved_at // ""' <<<"$row")
   [[ $kind == question || $kind == blocked ]] || die "対応済みにできるのは question / blocked だけです(C-$ref は $kind)"
   if [[ -n $at ]]; then echo "C-$ref はすでに対応済みです($at)"; return 0; fi
-  sql "UPDATE comments SET resolved_at=$(q "$(now)"), resolved_note=NULLIF($(q "$note"),'') WHERE herdr_session=$SQS AND id=$ref AND resolved_at IS NULL;"
+  sql "UPDATE main.comments SET resolved_at=$(q "$(now)"), resolved_note=NULLIF($(q "$note"),'') WHERE herdr_session=$SQS AND id=$ref AND resolved_at IS NULL;"
   echo "C-$ref resolved"
 }

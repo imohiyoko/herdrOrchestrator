@@ -76,7 +76,7 @@ outbox_deliver() {  # $1=outbox.id → 0 送信済み / 10 / 11
   msg="[from: $from / $pane / $tid / $kind] $(oneline "$text" "$SEND_MAX")"
   limits_send_gate "$target" || { log_message send "O-$oid" "$target" "$msg" busy; return 10; }   # max_working_agents: 待たせる(queued のまま)
   herdr_send "$target" "$msg" "O-$oid" send || return $?
-  sql "UPDATE outbox SET status='sent', sent_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$oid;"
+  sql "UPDATE main.outbox SET status='sent', sent_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$oid;"
 }
 
 # 終了コード: 0 送信済み / 10 宛先使用中で outbox に積んだ / 11 送信失敗で outbox に積んだ / 4 ルールで拒否(記録のみ)
@@ -114,7 +114,7 @@ cmd_send() {
     risk_collect "$LABEL_NAME" "$target" "$kind" "$text"; risk_eval
     reason+=" / $(risk_oneline)"
   fi
-  oid=$(sql "INSERT INTO outbox (herdr_session, from_name, from_pane, from_session, target, kind, task_id, text, status, reason, created_at)
+  oid=$(sql "INSERT INTO main.outbox (herdr_session, from_name, from_pane, from_session, target, kind, task_id, text, status, reason, created_at)
     VALUES ($SQS, $(q "$LABEL_NAME"), $(q "$LABEL_PANE"), $(q "$LABEL_SESSION"), $(q "$target"), $(q "$kind"), NULLIF($(q "$tid"),''),
             $(q "$text"), $(q "$status"), $(q "$reason"), $(q "$(now)"));
     SELECT last_insert_rowid();")

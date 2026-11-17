@@ -128,7 +128,7 @@ spawn_notify() {  # $1=L-<n> $2=親 $3=子 $4=役割 $5=task $6=brief
   [[ -n $pane ]] || pane=tb; [[ -n $sess ]] || sess=tb
   [[ $pane =~ ^[A-Za-z0-9._:-]{1,64}$ ]] || pane=tb
   text="spawn 承認待ち $1: $2 が役割 $4 の子 $3 を要求(task $5)。人が自分の端末で tb agent-approve $1。依頼(データ): $(item_text "$6" 80)"
-  cid=$(sql "INSERT INTO comments (herdr_session, task_id, kind, text, deliverables, from_name, from_pane, from_session, created_at)
+  cid=$(sql "INSERT INTO main.comments (herdr_session, task_id, kind, text, deliverables, from_name, from_pane, from_session, created_at)
     VALUES ($SQS, $(q "$5"), 'question', $(q "$text"), '[]', $(q "$2"), $(q "$pane"), $(q "$sess"), $(q "$(now)"));
     SELECT last_insert_rowid();") || return 0
   ( deliver_comment "$cid" ) >/dev/null 2>&1 || true
@@ -186,7 +186,7 @@ cmd_agent-spawn() {
     [[ $APPROVAL_VALUE == allow ]] || why="approvals: $APPROVAL_RULE"
   fi
   if [[ -n $why ]]; then
-    id=$(sql "INSERT INTO agent_ops (herdr_session, op, target, args, requested_by, status, result, created_at)
+    id=$(sql "INSERT INTO main.agent_ops (herdr_session, op, target, args, requested_by, status, result, created_at)
       VALUES ($SQS, 'new', $(q "$name"), $(q "$args"), $(q "$parent"), 'pending', $(q "policy ok / $why"), $(q "$(now)"));
       SELECT last_insert_rowid();")
     spawn_notify "L-$id" "$parent" "$name" "$role" "$task" "$brief"
@@ -200,7 +200,7 @@ cmd_agent-spawn() {
 }
 
 set_spawn_frozen() {  # $1=1|0
-  sql "INSERT INTO tb_flags (herdr_session, key, value, set_by, set_at) VALUES ($SQS, 'spawn_frozen', '$1', 'human', $(q "$(now)"))
+  sql "INSERT INTO main.tb_flags (herdr_session, key, value, set_by, set_at) VALUES ($SQS, 'spawn_frozen', '$1', 'human', $(q "$(now)"))
     ON CONFLICT(herdr_session, key) DO UPDATE SET value=excluded.value, set_by=excluded.set_by, set_at=excluded.set_at;"
 }
 cmd_spawn-freeze() {

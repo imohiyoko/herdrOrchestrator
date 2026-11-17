@@ -94,16 +94,16 @@ config_put() {
 config_db_put() {
   local hs=$SQS by; by=$(q "${5:-human}"); ((${4:-0})) && hs="'*'"
   sql "BEGIN IMMEDIATE;
-    INSERT INTO config (herdr_session, key, body, updated_by, updated_at) VALUES ($hs, $(q "$1"), $(q "$2"), $by, $(q "$(now)"))
+    INSERT INTO main.config (herdr_session, key, body, updated_by, updated_at) VALUES ($hs, $(q "$1"), $(q "$2"), $by, $(q "$(now)"))
       ON CONFLICT (herdr_session, key) DO UPDATE SET body=excluded.body, updated_by=excluded.updated_by, updated_at=excluded.updated_at;
-    INSERT INTO config_changes (herdr_session, key, body, changed_by, how, changed_at) VALUES ($hs, $(q "$1"), $(q "$2"), $by, $(q "$3"), $(q "$(now)"));
+    INSERT INTO main.config_changes (herdr_session, key, body, changed_by, how, changed_at) VALUES ($hs, $(q "$1"), $(q "$2"), $by, $(q "$3"), $(q "$(now)"));
     COMMIT;" >/dev/null
 }
 
 config_unset() {  # $1=キー [$2=共通の行なら 1]。DB の行だけを消す
   local key=$1 hs=$SQS; ((${2:-0})) && hs="'*'"
-  sql "BEGIN IMMEDIATE; DELETE FROM config WHERE herdr_session=$hs AND key=$(q "$key");
-    INSERT INTO config_changes (herdr_session, key, body, changed_by, how, changed_at) SELECT $hs, $(q "$key"), NULL, 'human', 'unset', $(q "$(now)") WHERE changes() > 0;
+  sql "BEGIN IMMEDIATE; DELETE FROM main.config WHERE herdr_session=$hs AND key=$(q "$key");
+    INSERT INTO main.config_changes (herdr_session, key, body, changed_by, how, changed_at) SELECT $hs, $(q "$key"), NULL, 'human', 'unset', $(q "$(now)") WHERE changes() > 0;
     COMMIT;" >/dev/null
   config_forget "$key"
 }
@@ -174,7 +174,7 @@ config_import() {
   for k in $CONFIG_KEYS; do
     f=$(config_checkout_file "$k")
     [[ -f $f && ! -L $f ]] || continue
-    if [[ -n $(sql "SELECT 1 FROM config WHERE herdr_session='*' AND key=$(q "$k");") ]]; then echo "$k: 共通の行が既にあるので飛ばします($f はそのまま)"; continue; fi
+    if [[ -n $(sql "SELECT 1 FROM main.config WHERE herdr_session='*' AND key=$(q "$k");") ]]; then echo "$k: 共通の行が既にあるので飛ばします($f はそのまま)"; continue; fi
     n=$((n + 1))
     if ((dry)); then echo "$k: $f を共通の行として取り込みます"; continue; fi
     if [[ -z $dest ]]; then
@@ -182,8 +182,8 @@ config_import() {
       mkdir -p "$dest" || die "退かす先を作れません: $dest"
     fi
     sql "BEGIN IMMEDIATE;
-      INSERT INTO config (herdr_session, key, body, updated_by, updated_at) VALUES ('*', $(q "$k"), $(q "$(cat "$f")"), 'human', $(q "$(now)"));
-      INSERT INTO config_changes (herdr_session, key, body, changed_by, how, changed_at) VALUES ('*', $(q "$k"), $(q "$(cat "$f")"), 'human', 'import', $(q "$(now)"));
+      INSERT INTO main.config (herdr_session, key, body, updated_by, updated_at) VALUES ('*', $(q "$k"), $(q "$(cat "$f")"), 'human', $(q "$(now)"));
+      INSERT INTO main.config_changes (herdr_session, key, body, changed_by, how, changed_at) VALUES ('*', $(q "$k"), $(q "$(cat "$f")"), 'human', 'import', $(q "$(now)"));
       COMMIT;" >/dev/null
     mv "$f" "$dest/" || die "$f を退かせません(DB には取り込み済み)"
     echo "$k: $f を共通の行として取り込み、$dest/ へ退かしました"
@@ -200,11 +200,12 @@ config_import() {
       if [[ $(basename "$rf") == map.conf ]]; then key=role-map; else key="role:$(basename "$rf" .md)"; fi
       [[ $key == role:README ]] && continue
       role_key_of "${key#role:}" >/dev/null 2>&1 || [[ $key == role-map ]] || { echo "$rf: 役割名に使えない文字があるので飛ばします"; continue; }
-      if [[ -n $(sql "SELECT 1 FROM config WHERE herdr_session=$(q "$sname") AND key=$(q "$key");") ]]; then echo "$key(セッション $sname): 行が既にあるので飛ばします"; continue; fi
+      if [[ -n $(sql "SELECT 1 FROM main.config WHERE herdr_session=$(q "$sname") AND key=$(q "$key");") ]]; then echo "$key(セッション $sname): 行が既にあるので飛ばします"; continue; fi
       if ((dry)); then echo "$key: $rf をセッション $sname の行として取り込みます"; continue; fi
-      sql "BEGIN IMMEDIATE;
-        INSERT INTO config (herdr_session, key, body, updated_by, updated_at) VALUES ($(q "$sname"), $(q "$key"), $(q "$(cat "$rf")"), 'human', $(q "$(now)"));
-        INSERT INTO config_changes (herdr_session, key, body, changed_by, how, changed_at) VALUES ($(q "$sname"), $(q "$key"), $(q "$(cat "$rf")"), 'human', 'import', $(q "$(now)"));
+      # 例外: ほかのセッションの行を書く(人が実行する取り込み。見張りなしで開く)
+      sql_all "BEGIN IMMEDIATE;
+        INSERT INTO main.config (herdr_session, key, body, updated_by, updated_at) VALUES ($(q "$sname"), $(q "$key"), $(q "$(cat "$rf")"), 'human', $(q "$(now)"));
+        INSERT INTO main.config_changes (herdr_session, key, body, changed_by, how, changed_at) VALUES ($(q "$sname"), $(q "$key"), $(q "$(cat "$rf")"), 'human', 'import', $(q "$(now)"));
         COMMIT;" >/dev/null
       echo "$key: $rf をセッション $sname の行として取り込みました"
     done
@@ -222,5 +223,5 @@ config_history() {
   [[ $# -eq 1 ]] || usage "config history <キー>"
   config_key_ok "$1"
   sql -separator $'\t' "SELECT id, herdr_session, how, changed_by, changed_at, CASE WHEN body IS NULL THEN '(消した)' ELSE length(body) || ' 文字' END
-    FROM config_changes WHERE key=$(q "$1") AND herdr_session IN ($SQS, '*') ORDER BY id DESC LIMIT 50;"
+    FROM main.config_changes WHERE key=$(q "$1") AND herdr_session IN ($SQS, '*') ORDER BY id DESC LIMIT 50;"
 }

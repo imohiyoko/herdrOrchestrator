@@ -259,7 +259,7 @@ eq "gate cmd: no subcommand → 2" "$(rc "$TB" gate)" "2"
 eq "gate cmd: unknown subcommand → 2" "$(rc "$TB" gate run T-1 --action merge)" "2"
 eq "gate cmd: unknown flag → 2" "$(rc "$TB" gate evaluate T-1 --action merge --json)" "2"
 # 設定の無いツリーと、実設定のあるツリーを $TMP に作って tb を呼ぶ(実チェックアウトの config の有無に左右されない)
-mkiso() { mkdir -p "$1/taskboard" "$1/lib" "$1/roles"; cp -R "$HERE/../bin" "$HERE/../lib" "$HERE/../schema" "$1/taskboard/"; cp "$HERE/../../lib/"*.sh "$1/lib/"; mkdir -p "$1/taskboard/config"; }
+mkiso() { mkdir -p "$1/taskboard" "$1/lib" "$1/roles"; cp -R "$HERE/../bin" "$HERE/../lib" "$HERE/../schema" "$HERE/../sql" "$1/taskboard/"; cp "$HERE/../../lib/"*.sh "$1/lib/"; mkdir -p "$1/taskboard/config"; }
 ISO0=$GT/iso-noconf; mkiso "$ISO0"
 ISO1=$GT/iso-realconf; mkiso "$ISO1"
 # 実設定: 許可リストに例のリポジトリが入っていない(= 基準の事実は H-05 で ask になる)

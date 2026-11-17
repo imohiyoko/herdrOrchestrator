@@ -68,7 +68,7 @@ collect_digest() {
       "turn が終わって $m 分たつが、タスクは in_progress のまま(done・報告なし)"
   done < <(sql -separator $'\t' "SELECT t.id, t.project, COALESCE(t.owner_agent,'-'), 'idle:'||t.id||':'||a.last_stop_at,
              CAST((julianday('now') - julianday(a.last_stop_at)) * 1440 AS INTEGER)
-             FROM tasks t JOIN agent_activity a ON a.session_id=t.session_id
+             FROM tasks t JOIN main.agent_activity a ON a.session_id=t.session_id
              WHERE t.herdr_session=$SQS AND t.status='in_progress' AND a.last_stop_at IS NOT NULL
                AND (a.last_prompt_at IS NULL OR a.last_prompt_at <= a.last_stop_at)
                AND (julianday('now') - julianday(a.last_stop_at)) * 1440 >= $DIGEST_IDLE_MIN ORDER BY t.id;")
@@ -80,7 +80,7 @@ collect_digest() {
       "$m 分 working のまま(長い作業か停止かは区別できない)"
   done < <(sql -separator $'\t' "SELECT t.id, t.project, COALESCE(t.owner_agent,'-'), 'stuck:'||a.session_id||':'||a.last_prompt_at,
              CAST((julianday('now') - julianday(a.last_prompt_at)) * 1440 AS INTEGER)
-             FROM tasks t JOIN agent_activity a ON a.session_id=t.session_id
+             FROM tasks t JOIN main.agent_activity a ON a.session_id=t.session_id
              WHERE t.herdr_session=$SQS AND t.status IN ('in_progress','review','blocked') AND a.last_prompt_at IS NOT NULL
                AND (a.last_stop_at IS NULL OR a.last_prompt_at > a.last_stop_at)
                AND (julianday('now') - julianday(a.last_prompt_at)) * 1440 >= $DIGEST_STUCK_MIN ORDER BY t.id;")
@@ -108,7 +108,7 @@ collect_digest() {
         "blocked のまま(承認ダイアログ待ちの可能性。herdr agent attach ${name:-$pane} で確認)"
     done < <(jq -r '.result.agents[] | select(.agent_status=="blocked") | [.pane_id, (.name // ""), (.agent_session.value // "")] | map(tostring | gsub("[\u001f\n]"; " ")) | join("\u001f")' <<<"$list")
     # blocked でなくなった agent の記録は消す(再び blocked になったら、また送る)
-    sql "DELETE FROM observations WHERE herdr_session=$SQS AND kind='blocked' AND key NOT IN (${current}'');"
+    sql "DELETE FROM main.observations WHERE herdr_session=$SQS AND kind='blocked' AND key NOT IN (${current}'');"
   fi
   collect_spawn_obs
   collect_sched_obs
@@ -118,7 +118,7 @@ collect_digest() {
 #    - 子の数が上限の 1 つ手前以上(全体、または 1 体の親)
 #    - 親のタスクが done / blocked になったのに、子がまだ動いている
 collect_spawn_obs() {
-  [[ -n $(sql "SELECT 1 FROM agents WHERE herdr_session=$SQS AND spawned_by IS NOT NULL AND state='running' LIMIT 1;") ]] || { sql "DELETE FROM observations WHERE herdr_session=$SQS AND kind IN ('spawnlimit','spawnorphan');"; return 0; }
+  [[ -n $(sql "SELECT 1 FROM agents WHERE herdr_session=$SQS AND spawned_by IS NOT NULL AND state='running' LIMIT 1;") ]] || { sql "DELETE FROM main.observations WHERE herdr_session=$SQS AND kind IN ('spawnlimit','spawnorphan');"; return 0; }
   agent_sync 2>/dev/null || true
   load_spawn_policy
   local current="" id parent n key project task st
@@ -144,7 +144,7 @@ collect_spawn_obs() {
   done < <(sql -separator $'\t' "SELECT a.name, a.spawned_by, a.spawn_task, t.status, t.project FROM agents a JOIN tasks t ON t.id=a.spawn_task AND t.herdr_session=a.herdr_session
              WHERE a.spawned_by IS NOT NULL AND a.state='running' AND a.herdr_session=$SQS AND t.status IN ('done','blocked') ORDER BY a.name;")
   # 条件が外れたものは記録を消す(再び当てはまったら、また送る)
-  sql "DELETE FROM observations WHERE herdr_session=$SQS AND kind IN ('spawnlimit','spawnorphan') AND key NOT IN (${current}'');"
+  sql "DELETE FROM main.observations WHERE herdr_session=$SQS AND kind IN ('spawnlimit','spawnorphan') AND key NOT IN (${current}'');"
 }
 
 # 1 通分の本文を組み立てる。長さの上限に収まる項目だけを入れ、残りは次回に回す
@@ -189,27 +189,27 @@ cmd_digest() {
     if ((dry)); then
       out=$(build_digest "$items" "?"); printf '%s\t%s\n' "$target" "$(sed -n 2p <<<"$out")"; continue
     fi
-    did=$(sql "INSERT INTO digests (herdr_session, target, item_count, body, created_at) VALUES ($SQS, $(q "$target"), 0, '', $(q "$(now)")); SELECT last_insert_rowid();")
+    did=$(sql "INSERT INTO main.digests (herdr_session, target, item_count, body, created_at) VALUES ($SQS, $(q "$target"), 0, '', $(q "$(now)")); SELECT last_insert_rowid();")
     out=$(build_digest "$items" "$did"); n=$(sed -n 1p <<<"$out"); body=$(sed -n 2p <<<"$out")
     sel=$(head -n "$n" <<<"$items")
     if herdr_send "$target" "$body" "D-$did" digest; then
       full=$(jq -r .full <<<"$sel")
-      sql "UPDATE digests SET item_count=$n, body=$(q "$full") WHERE herdr_session=$SQS AND id=$did;"
+      sql "UPDATE main.digests SET item_count=$n, body=$(q "$full") WHERE herdr_session=$SQS AND id=$did;"
       local ts; ts=$(now)
       while IFS= read -r r; do
         local type ref; type=$(jq -r .type <<<"$r"); ref=$(jq -r .ref <<<"$r")
         case $type in
-          comment) sql "UPDATE comments SET delivered_at=$(q "$ts") WHERE herdr_session=$SQS AND id=${ref#C-} AND delivered_at IS NULL;";;
-          task)    sql "UPDATE tasks SET reported_at=$(q "$ts"), updated_at=$(q "$ts") WHERE herdr_session=$SQS AND id=$(q "$ref") AND reported_at IS NULL;";;
-          alert)   sql "UPDATE alerts SET result_delivered_at=$(q "$ts") WHERE herdr_session=$SQS AND id=${ref#A-} AND result_delivered_at IS NULL;";;
-          obs)     sql "INSERT OR IGNORE INTO observations (herdr_session, key, kind, task_id, text, digest_id, created_at)
+          comment) sql "UPDATE main.comments SET delivered_at=$(q "$ts") WHERE herdr_session=$SQS AND id=${ref#C-} AND delivered_at IS NULL;";;
+          task)    sql "UPDATE main.tasks SET reported_at=$(q "$ts"), updated_at=$(q "$ts") WHERE herdr_session=$SQS AND id=$(q "$ref") AND reported_at IS NULL;";;
+          alert)   sql "UPDATE main.alerts SET result_delivered_at=$(q "$ts") WHERE herdr_session=$SQS AND id=${ref#A-} AND result_delivered_at IS NULL;";;
+          obs)     sql "INSERT OR IGNORE INTO main.observations (herdr_session, key, kind, task_id, text, digest_id, created_at)
                         VALUES ($SQS, $(q "$(jq -r .key <<<"$r")"), $(q "$(jq -r .okind <<<"$r")"), $(q "$ref"), $(q "$(jq -r .full <<<"$r")"), $did, $(q "$ts"));";;
         esac
       done <<<"$sel"
       echo "D-$did sent to $target ($n 件)"
     else
       local e=$?
-      sql "DELETE FROM digests WHERE herdr_session=$SQS AND id=$did;"   # 送れなかった回は残さない(messages には残る)。項目は次回に持ち越す
+      sql "DELETE FROM main.digests WHERE herdr_session=$SQS AND id=$did;"   # 送れなかった回は残さない(messages には残る)。項目は次回に持ち越す
       (( e > rc )) && rc=$e
     fi
   done < <(jq -r .target <<<"$DIGEST_ITEMS" | awk '!seen[$0]++')

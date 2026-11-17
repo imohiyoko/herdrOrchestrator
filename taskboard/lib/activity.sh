@@ -8,7 +8,7 @@ ID_RE='^[A-Za-z0-9._:-]{1,128}$'
 
 # act_select N: working 推定と、N 分以上の滞留(stuck)を付けた SELECT(WHERE は呼び出し側)
 # agent_activity の行は Claude の session_id(DB 全体で一意)で引く。session_id で 1 行を引くときは herdr_session で絞らない。
-# 一覧(tb activity)はこのセッションの行だけ
+# 一覧(tb activity)はこのセッションの行だけ。どちらも main.agent_activity から引き、一覧は呼び出し側が herdr_session で絞る
 act_select() {
   [[ $1 =~ ^[0-9]+$ ]] || usage "分は数字: $1"
   local w="last_prompt_at IS NOT NULL AND (last_stop_at IS NULL OR last_prompt_at > last_stop_at)"
@@ -17,7 +17,7 @@ act_select() {
     CASE WHEN $w AND (julianday('now') - julianday(last_prompt_at)) * 1440 >= $1 THEN 1 ELSE 0 END AS stuck,
     CASE WHEN last_prompt_at IS NULL THEN NULL
          ELSE CAST((julianday('now') - julianday(last_prompt_at)) * 1440 AS INTEGER) END AS since_prompt_min
-    FROM agent_activity"
+    FROM main.agent_activity"
 }
 
 # 失敗時は固定の理由コードだけを stdout に出して return 1。入力値・DB のエラー文は一切出さない
@@ -44,7 +44,8 @@ touch_impl() {
   local ts="strftime('%Y-%m-%dT%H:%M:%fZ','now')" pa="NULL" sa="NULL" err
   if [[ $ev == UserPromptSubmit ]]; then pa=$ts; else sa=$ts; fi
   local SQL_TIMEOUT=1000   # ロックされていても 1 秒で諦める
-  err=$({ init_db && sql "INSERT INTO agent_activity
+  # 見張りなしで書く: session_id は DB 全体で一意で、Claude の会話が別の herdr セッションで再開されたら行ごとこのセッションへ移す
+  err=$({ init_db && sql_all "INSERT INTO main.agent_activity
       (herdr_session, session_id, pane_id, tab_id, workspace_id, cwd, last_prompt_id, last_prompt_at, last_stop_at, updated_at)
     VALUES ($SQS, $(q "$sid"), NULLIF($(q "$pane"),''), NULLIF($(q "$tab"),''), NULLIF($(q "$ws"),''), NULLIF($(q "$cwd"),''),
             NULLIF($(q "$pid"),''), $pa, $sa, $ts)

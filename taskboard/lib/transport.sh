@@ -39,7 +39,7 @@ herdr_send() {  # $1=宛先 $2=本文 $3=ログ用 ID [$4=種別(report|comment|
 
 # 送信の記録はアプリ(tb)が書く。agent の自己申告に頼らない
 log_message() {  # $1=kind $2=ref $3=target $4=body $5=sent|busy|failed
-  sql "INSERT INTO messages (herdr_session, kind, ref, target, body, result, created_at)
+  sql "INSERT INTO main.messages (herdr_session, kind, ref, target, body, result, created_at)
     VALUES ($SQS, $(q "$1"), $(q "$2"), $(q "$3"), $(q "$4"), $(q "$5"), $(q "$(now)"));" >/dev/null || true
 }
 

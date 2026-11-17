@@ -566,6 +566,18 @@ DB は 1 つで、全部の herdr セッションが共有する(既定は `${XD
 - Web UI も同じ DB を、自分のセッションの行だけ読む(`webui/app/data.py` の一時ビュー)
 - 共有の SQL(`sql/agent_edges.sql`)は表の名前のまま書き、tb は同じ名前の CTE(`session_cte`)で、Web UI は一時ビューで絞る
 
+### SQL の書き方(tb の `lib/db.sh`)
+
+tb の `sql()` は、接続ごとに `herdr_session` 列を持つ表(一覧は [`sql/session_tables`](sql/session_tables))について 2 つを作る。
+
+- **一時ビュー**: 表と同じ名前の、今のセッションの行だけのビュー。表の名前のまま読めば今のセッションの行だけを見る。全セッションを見る読み(タスク ID の採番、別セッションにいる agent のヒント、`session_id` での活動記録の引き当て、共通の設定 `'*'`)は `main.<表>` と書く
+- **書き込みの見張り**: `main.<表>` への INSERT / UPDATE / DELETE が別セッションの行に触れたら `RAISE(ABORT)` で止める(設定の `config` / `config_changes` だけは共通の行 `'*'` も書ける)。絞り忘れが「黙って他人の行を変える」ではなく「エラーで止まる」になる
+
+書き込みは必ず `main.<表>` と書く(ビューには書けず、SQLite が `cannot modify … because it is a view` で止めるので付け忘れも分かる)。
+ビュー経由(INSTEAD OF トリガー)にしないのは、`changes()` / `last_insert_rowid()` / `RETURNING` がビュー経由では効かないため。
+見張りなしの `sql_all` を使うのは、スキーマの移行、hook の活動記録(会話が別のセッションで再開されたら行ごと移す)、`tb config import` の別セッションの行の取り込みだけ。
+表を足して `herdr_session` 列を持たせたら `sql/session_tables` にも足す(テスト `89_session_guard` がスキーマとの食い違いを落とす)。
+
 ### 旧形式の DB の取り込み(`tb db-import`)
 
 以前は checkout ごとに `taskboard/data/tasks.db` があった(1 セッション = 1 DB)。中身を共有の DB へ移すには、人の端末で:
