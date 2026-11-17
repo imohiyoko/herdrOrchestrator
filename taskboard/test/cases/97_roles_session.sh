@@ -15,7 +15,8 @@ $TB agents >/dev/null 2>&1
 printf 'agent:stop:@worker = allow\nagent:stop:@auditor = allow\n* = ask\n' >"$TB_APPROVALS"
 eq "session roles: the shared roles/ in a session without its own directory" "$($TB approval agent:stop:worker1 | head -1) $($TB approval agent:stop:worker7 | sed -n 2p)" "allow rule: agent:stop:@worker = allow"
 eq "session roles: roles/sessions/s2/ replaces roles/ in s2 (map.conf there)" "$(HERDR_SESSION=s2 $TB approval agent:stop:worker7 | sed -n 2p)" "rule: agent:stop:@auditor = allow"
-eq "session roles: an agent of another session has no role here" "$(HERDR_SESSION=s2 $TB approval agent:stop:worker1 | head -1)" "ask"
+# 台帳はセッションごと: default の worker1 は s2 の台帳に無いので、s2 では未登録の名前と同じく s2 の map.conf で決まる(default の台帳の役割は使わない)
+eq "session roles: an agent of another session is unknown here (the session's map.conf decides)" "$(HERDR_SESSION=s2 $TB approval agent:stop:worker1 | sed -n 2p)" "rule: agent:stop:@auditor = allow"
 ctx=$(HERDR_SESSION=s2 HERDR_PANE_ID=wworker7:p1 FAKE_AGENTS="[$(rs_ worker7)]" $TB role-context --source startup --session-id s-w7 | jq -r .hookSpecificOutput.additionalContext)
 eq "session roles: role-context hands the session's own files" "$(grep -c '^S2-COMMON$\|^S2-auditor$' <<<"$ctx") $(grep -c 'ROLE-worker\|^COMMON$' <<<"$ctx")" "2 0"
 printf 'role:change = allow\n* = ask\n' >"$TB_APPROVALS"

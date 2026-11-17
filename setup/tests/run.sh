@@ -157,6 +157,12 @@ fresh; : >"$R/webui/run/token"; run; has "廃止された token" warn webui:toke
 fresh; echo '{"port": 8801, "pid": 1}' >"$WS/gateway.json"; run; has "入口のポート" info webui:port "http://127.0.0.1:8801/"
 fresh; rm "$LA/local.herdr-webui-gateway.plist"; run; has "入口の plist が未登録" missing launchd:webui-gateway
 
+# --- DB: 共有の 1 か所(ホーム)。旧形式(checkout ごと)の DB が残っていれば warn ---
+fresh; run; has "DB は共有の置き場を見る" info taskboard:db "$H/.local/state/herdr/tasks.db"; hasnt "旧形式の DB が無ければ何も言わない" warn taskboard:legacy-db
+fresh; mkdir -p "$R/taskboard/data"; : >"$R/taskboard/data/tasks.db"; run
+has "旧形式の DB が残っていれば warn" warn taskboard:legacy-db "$R/taskboard/data/tasks.db"
+printf '%s\n' "$OUT" | grep -A1 "taskboard:legacy-db" | grep -q "tb db-import" && ok "next: で tb db-import を案内" || ng "next: で tb db-import を案内"
+
 # --- 引数 ---
 fresh; run --bogus; rc_is "不明なオプションは 2" 2
 

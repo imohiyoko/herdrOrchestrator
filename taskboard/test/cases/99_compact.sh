@@ -20,7 +20,7 @@ cp_tr big 200000; cp_tr busy 200000; cp_tr skipme 200000; cp_tr small 1000; cp_t
 export FAKE_AGENTS="[$(cp_ag conductor wC:p1),$(cp_ag big wB:p1),$(cp_ag busy wY:p1 working),$(cp_ag skipme wS:p1),$(cp_ag small wM:p1),$(cp_ag recent wR:p1),$(cp_ag noappr wN:p1)]"
 : >"$FAKE_LOG"
 $TB agents >/dev/null
-cpsql "INSERT INTO agent_ops (op,target,args,requested_by,status,result,created_at,decided_at) VALUES ('compact','recent','{}','human','done','x',strftime('%Y-%m-%dT%H:%M:%SZ','now','-60 seconds'),strftime('%Y-%m-%dT%H:%M:%SZ','now','-60 seconds'));"
+cpsql "INSERT INTO agent_ops (herdr_session, op,target,args,requested_by,status,result,created_at,decided_at) VALUES ('default', 'compact','recent','{}','human','done','x',strftime('%Y-%m-%dT%H:%M:%SZ','now','-60 seconds'),strftime('%Y-%m-%dT%H:%M:%SZ','now','-60 seconds'));"
 
 # ---- dry-run(既定): 何も送らない。tokens は最後の usage 行の合計(203000)。transcript の中身は出さない
 out=$($TB compact-check 2>&1)

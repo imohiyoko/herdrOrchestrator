@@ -144,7 +144,7 @@ eq "digest: quiet about spawns when no child is running" "$(grep -c -e 'spawn è¦
 spsql "UPDATE agents SET state='running', stopped_at=NULL WHERE name IN ('parent1-s1','parent1-s2','parent2-s1');"
 export FAKE_AGENTS="[$SP_C,$SP_P,$SP_Q,$SP_S1,$SP_S2,$(sp_ag parent2-s1 wB:p1)]"
 spsql "UPDATE agents SET spawned_by='parent2', spawn_task='$T2' WHERE name IN ('parent1-s2');"
-spsql "INSERT OR IGNORE INTO agents (name, state, created_by, created_at, updated_at, spawned_by, spawn_task) VALUES ('parent2-s1','running','tb','t','t','parent2','$T2'),('x-s1','running','tb','t','t','x','$T2'),('x-s2','running','tb','t','t','x','$T2');"
+spsql "INSERT OR IGNORE INTO agents (herdr_session, name, state, created_by, created_at, updated_at, spawned_by, spawn_task) VALUES ('default','parent2-s1','running','tb','t','t','parent2','$T2'),('default','x-s1','running','tb','t','t','x','$T2'),('default','x-s2','running','tb','t','t','x','$T2');"
 export FAKE_AGENTS="[$SP_C,$SP_P,$SP_Q,$SP_S1,$SP_S2,$(sp_ag parent2-s1 wB:p1),$(sp_ag x-s1 wX:p1),$(sp_ag x-s2 wX:p2)]"
 spsql "UPDATE agents SET spawned_by='parent2', spawn_task='$T2' WHERE name='parent2-s1'; DELETE FROM observations;"
 out=$($TB digest --dry-run)

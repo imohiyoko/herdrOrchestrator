@@ -6,6 +6,14 @@
 sql() { sqlite3 -bail -batch -cmd ".timeout ${SQL_TIMEOUT:-5000}" "$DB" "$@"; }
 q()   { local s=${1//\'/\'\'}; printf "'%s'" "$s"; }          # SQL 文字列リテラル化
 
+# 1 つの DB を複数の herdr セッションで共有し、行は herdr_session 列で分ける(012)。
+# tb は今のセッション(SESS)の行だけを読み書きする。SQL には SQS(リテラル化済み)を埋める。
+# 例外(全セッションを見る)は、タスク ID の採番(ID は DB 全体で一意)と、人が明示した --all-sessions だけ。
+SESS=$(herdr_session_name)
+SQS=$(q "$SESS")
+# 表の名前を変えずにこのセッションの行だけを読む WITH 句(表の名前のまま書かれた共有の SQL の前に置く)。$@=表の名前
+session_cte() { local t w="WITH "; for t; do w+="$t AS (SELECT * FROM main.$t WHERE herdr_session=$SQS),"; done; printf '%s' "${w%,}"; }
+
 schema_files() { local f; for f in "${TB_SCHEMA_DIR:-$HERDR_SCHEMA_DIR}"/[0-9][0-9][0-9]_*.sql; do [[ -f $f ]] && printf '%s\n' "$f"; done; }
 schema_latest() { local f n=0; f=$(schema_files | tail -n 1); [[ -n $f ]] && n=$((10#$(basename "$f" | cut -c1-3))); echo "$n"; }
 
@@ -13,7 +21,9 @@ schema_latest() { local f n=0; f=$(schema_files | tail -n 1); [[ -n $f ]] && n=$
 migration_sql() {  # $1=番号 $2=ファイル
   echo "BEGIN IMMEDIATE;"
   echo "CREATE TEMP TABLE _tb_migrate_guard (v INTEGER CHECK (v < $1)); INSERT INTO _tb_migrate_guard SELECT user_version FROM pragma_user_version;"
-  cat "$2"
+  # @SESSION@ = 移行を流すセッション(012: それまでの 1 セッション = 1 DB の行を、そのセッションのものとして埋める)
+  local body; body=$(cat "$2")
+  ( shopt -u patsub_replacement 2>/dev/null || true; printf '%s\n' "${body//@SESSION@/$SQS}" )
   echo "PRAGMA user_version=$1; COMMIT;"
 }
 

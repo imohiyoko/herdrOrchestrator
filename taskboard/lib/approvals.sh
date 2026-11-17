@@ -17,7 +17,7 @@ valid_action() { [[ $1 =~ ^[A-Za-z0-9._:*?@-]{1,128}$ ]] || usage "操作名に�
 GRANTS=${TB_GRANTS:-$TB_ROOT/config/grants.conf}
 GRANT_RULE=""
 grant_parent_of() {  # $1=agent 名 → spawned_by(同じセッションの agent だけ)。読めなければ 1
-  sql "SELECT COALESCE(spawned_by,'') FROM agents WHERE name=$(q "$1") AND herdr_session=$(q "$ROLES_SESSION");"
+  sql "SELECT COALESCE(spawned_by,'') FROM agents WHERE herdr_session=$SQS AND name=$(q "$1");"
 }
 grant_relation() {  # $1=主体 $2=対象 $3=~関係 → 当たれば 0
   local p x i
@@ -157,7 +157,7 @@ set_approval() {  # $1=allow|ask $2=パターン
     mv "$tmp.2" "$tmp"
   fi
   mv "$tmp" "$APPROVALS"
-  sql "INSERT INTO approval_changes (pattern, value, created_at) VALUES ($(q "$pat"), $(q "$val"), $(q "$(now)"));" >/dev/null
+  sql "INSERT INTO approval_changes (herdr_session, pattern, value, created_at) VALUES ($SQS, $(q "$pat"), $(q "$val"), $(q "$(now)"));" >/dev/null
   echo "$pat = $val"
 }
 cmd_allow() { [[ $# -eq 1 ]] || usage "allow <操作のパターン>"; set_approval allow "$1"; }
@@ -169,11 +169,11 @@ cmd_approve() {
   local oid=${1#O-} always=0 row kind target; shift
   [[ ${1:-} == --always ]] && always=1
   require_human "tb approve"
-  row=$(sql -json "SELECT * FROM outbox WHERE id=$oid;" | jq -c '.[0] // empty')
+  row=$(sql -json "SELECT * FROM outbox WHERE herdr_session=$SQS AND id=$oid;" | jq -c '.[0] // empty')
   [[ -n $row ]] || die "outbox が見つかりません: O-$oid"
   [[ $(jq -r .status <<<"$row") == pending ]] || die "O-$oid は承認待ちではありません($(jq -r .status <<<"$row"))"
   kind=$(jq -r .kind <<<"$row"); target=$(jq -r .target <<<"$row")
-  sql "UPDATE outbox SET status='queued', reason=reason||' / 人が承認 $(now)' WHERE id=$oid;"
+  sql "UPDATE outbox SET status='queued', reason=reason||' / 人が承認 $(now)' WHERE herdr_session=$SQS AND id=$oid;"
   ((always)) && set_approval allow "send:$kind:$target" >/dev/null && echo "send:$kind:$target = allow(今後は承認なし)"
   local r=0; outbox_deliver_default "$oid" >/dev/null || r=$?
   case $r in
@@ -188,7 +188,7 @@ cmd_reject() {
   [[ $# -eq 1 && $1 =~ ^O-[0-9]+$ ]] || usage "reject O-<n>"
   local oid=${1#O-}
   require_human "tb reject"
-  [[ $(sql "SELECT status FROM outbox WHERE id=$oid;") == pending ]] || die "O-$oid は承認待ちではありません"
-  sql "UPDATE outbox SET status='denied', reason=reason||' / 人が却下 $(now)' WHERE id=$oid;"
+  [[ $(sql "SELECT status FROM outbox WHERE herdr_session=$SQS AND id=$oid;") == pending ]] || die "O-$oid は承認待ちではありません"
+  sql "UPDATE outbox SET status='denied', reason=reason||' / 人が却下 $(now)' WHERE herdr_session=$SQS AND id=$oid;"
   echo "O-$oid rejected"
 }

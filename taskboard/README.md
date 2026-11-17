@@ -1,6 +1,7 @@
 # taskboard — herdr agent 用の最小タスク表
 
-SQLite 1 ファイル(`data/tasks.db`)に仕事の状態を持ち、`bin/tb` で読み書きする。
+SQLite 1 ファイル(既定は `~/.local/state/herdr/tasks.db`。checkout をまたいで 1 つ)に仕事の状態を持ち、`bin/tb` で読み書きする。
+herdr のセッションは同じ DB の中で行ごとに分ける(下の「セッションと DB」)。
 依存は `sqlite3` / `bash` / `jq` のみ。
 
 - 「何を誰に送ったか」の監査ログ `dispatch.jsonl` とは別物。こちらは「仕事の状態」
@@ -55,7 +56,7 @@ tb whoami --short   # herdr セッション名だけ
 
 - **session**: 決め方は `herdr_session_name` と同じで、`HERDR_SOCKET_PATH`(名前を導けるとき)> `HERDR_SESSION` > `default`。効かなかった `HERDR_SESSION` や、socket の配置から名前を導けなかったことは `note:` に出す。
 - **label-prefix**: `TB_INSTANCE` 未設定なら従来の `local.herdr-`、設定すれば `local.herdr-<TB_INSTANCE>-`。default セッションでは `TB_INSTANCE` を渡さない方針なので、セッションと `TB_INSTANCE` が対応していないときも `note:` に出す(見るだけで、何も変えない)。
-- **db**: `TB_DB` か既定。symlink なら実体も出す。まだ無ければそう出す(作らない)。
+- **db**: `TB_DB` か既定(全セッション共有)。symlink なら実体も出す。まだ無ければそう出す(作らない)。旧形式の DB(checkout の `taskboard/data/tasks.db`)が残っていれば知らせる。
 - 設計: [docs/tb-instance-context.md](docs/tb-instance-context.md) の S1。台帳・`--session` による振り分けは後の段で、今は出さない。
 
 `project` は英数字と `_` のみ。ID は project ごとに 001 から採番される。
@@ -510,28 +511,55 @@ tb が `herdr agent prompt` で送ろうとしたものは、結果にかかわ�
 | `lib/core.sh` | エラー終了・入力の検査・タスク行の取得・project ごとの指示役 |
 | `lib/transport.sh` | herdr との境界。herdr を実行するのはここの `herdr_call` だけ。送信と `messages` への記録(`herdr_send`)、`system-send` |
 | `lib/tasks.sh` | add / list / show / claim / update / done / block / report / pending |
-| `lib/proxy.sh` / `activity.sh` / `comments.sh` / `digest.sh` / `send.sh` / `roles.sh` / `approvals.sh` / `alerts.sh` / `review.sh` / `agents.sh` / `spawn.sh` / `limits.sh` / `shed.sh` / `handoff.sh` | 各節のコマンド |
+| `lib/proxy.sh` / `activity.sh` / `comments.sh` / `digest.sh` / `send.sh` / `roles.sh` / `approvals.sh` / `alerts.sh` / `review.sh` / `agents.sh` / `spawn.sh` / `limits.sh` / `shed.sh` / `handoff.sh` / `dbimport.sh` | 各節のコマンド |
 
 agent への送信も DB への書き込みも、すべて `tb` を通る。後で MCP サーバーなど別の経路を足すときは、`tb` のコマンドを呼ぶか `lib/transport.sh` を差し替えればよい。
+
+## セッションと DB
+
+DB は 1 つで、全部の herdr セッションが共有する(既定は `${XDG_STATE_HOME:-~/.local/state}/herdr/tasks.db`。`TB_DB` で変えられる)。
+行はすべて `herdr_session` 列を持ち、tb は**今のセッション**(`tb whoami` の session。`HERDR_SOCKET_PATH` > `HERDR_SESSION` > `herdr-session` ファイル > `default`)の行だけを読み書きする。
+別のセッションのタスク・報告・承認待ち・アラート・agent の台帳は見えず、操作もできない(`tb agent-stop` などで名前が別のセッションの台帳にだけあるときは、`HERDR_SESSION=<名前>` を付けるようヒントを出す)。
+
+- タスク ID(`T-<project>-NNN`)だけは DB 全体で一意(採番は全セッションの行を見る)。C- / O- / A- / L- などの番号も DB 全体の通し番号
+- agent の台帳・`tb_flags`・`notify_seen`・`observations` は、セッションとの組で一意(同じ agent 名が別のセッションにいてよい)
+- hook の活動記録(`agent_activity`)は Claude の session id で引く。書いたセッションも残り、`tb activity` の一覧はセッションごと
+- Web UI も同じ DB を、自分のセッションの行だけ読む(`webui/app/data.py` の一時ビュー)
+- 共有の SQL(`sql/agent_edges.sql`)は表の名前のまま書き、tb は同じ名前の CTE(`session_cte`)で、Web UI は一時ビューで絞る
+
+### 旧形式の DB の取り込み(`tb db-import`)
+
+以前は checkout ごとに `taskboard/data/tasks.db` があった(1 セッション = 1 DB)。中身を共有の DB へ移すには、人の端末で:
+
+```bash
+HERDR_SESSION=<その checkout のセッション> tb db-import /path/to/checkout/taskboard/data/tasks.db --dry-run   # 件数と付け替えを見るだけ
+HERDR_SESSION=<その checkout のセッション> tb db-import /path/to/checkout/taskboard/data/tasks.db
+```
+
+- 元の DB は読むだけ(写しを作って移行し、1 つのトランザクションで足す)。同じファイルは 2 回取り込まない
+- 番号(C- / O- / A- など)は共有の DB の後ろへずらし、`messages` / `notify_events` の参照も直す。タスク ID がぶつかれば次の空き番号に付け替え、親・コメント・送信などの参照も直す(付け替えは一覧に出る)
+- agent の台帳・`observations` などキーが主キーの表は、共有の DB に既にある行を優先する(agent は空の値だけ旧 DB で埋める)
+- `setup/check.sh` は、取り込んでいない旧形式の DB を `taskboard:legacy-db` で知らせる
 
 ## スキーマ
 
 定義は [`schema/`](schema/) の `NNN_*.sql` にあり、DB の `PRAGMA user_version` より新しい番号だけを tb が順に流す(`lib/db.sh`)。
 版が最新なら `PRAGMA` を 1 回読むだけで済む。テーブルや列を変えるときは既存ファイルを書き換えず、次の番号のファイルを足す。
 版を付ける前に作られた DB(`user_version=0`)も、中身を保ったまま最新になる。
+012 から全部の表に `herdr_session` がある(移行のとき、既にある行は移行を流したセッションのものになる)。下の列の一覧では省く。
 
 `tasks(id, project, title, owner_agent, session_id, account, status, parent_id, deliverables(JSON 配列), summary, note, reported_at, created_at, updated_at)`
 `proxy_requests(id, task_id, cmd, why, effect, expect, status, result, created_at, updated_at)`
 `effect` は `read-only|write|external`、`status` は `open|done|pending-human|denied`。
 `comments(id, task_id, kind, text, deliverables, from_name, from_pane, from_session, delivered_at, created_at)`
 `agent_activity(session_id PK, pane_id, tab_id, workspace_id, cwd, last_prompt_id, last_prompt_at, last_stop_at, updated_at)`
-`messages(id, kind, ref, target, body, result, created_at)` / `alerts(id, fingerprint, severity, title, body, source, source_pane, status, count, analyst, note, result_*, first_seen, last_seen, analysis_started_at, analyzed_at, closed_at)` / `proposals(id, role_file, title, text, status, by_name, note, delivered_at, resolved_at, created_at)` / `reviews(id, since_at, until_at, created_at)` / `approval_changes(id, pattern, value, created_at)` / `role_briefings(id, session_id, agent, role_file, hash, source, via, created_at)` / `outbox(id, from_name, from_pane, from_session, target, kind, task_id, text, status, reason, sent_at, created_at)` / `digests(id, target, item_count, body, created_at)` / `observations(key PK, kind, task_id, text, digest_id, created_at)` / `agents(name PK, kind, cwd, model, role, session_id, pane_id, herdr_session, state, killable, killable_reason, killable_by, killable_at, killable_session, created_by, created_at, updated_at, stopped_at)` / `agent_ops(id, op, target, args, requested_by, status, result, created_at, decided_at)`
+`messages(id, kind, ref, target, body, result, created_at)` / `alerts(id, fingerprint, severity, title, body, source, source_pane, status, count, analyst, note, result_*, first_seen, last_seen, analysis_started_at, analyzed_at, closed_at)` / `proposals(id, role_file, title, text, status, by_name, note, delivered_at, resolved_at, created_at)` / `reviews(id, since_at, until_at, created_at)` / `approval_changes(id, pattern, value, created_at)` / `role_briefings(id, session_id, agent, role_file, hash, source, via, created_at)` / `outbox(id, from_name, from_pane, from_session, target, kind, task_id, text, status, reason, sent_at, created_at)` / `digests(id, target, item_count, body, created_at)` / `observations((herdr_session, key) PK, kind, task_id, text, digest_id, created_at)` / `agents((herdr_session, name) PK, kind, cwd, model, role, session_id, pane_id, herdr_session, state, killable, killable_reason, killable_by, killable_at, killable_session, created_by, created_at, updated_at, stopped_at)` / `agent_ops(id, op, target, args, requested_by, status, result, created_at, decided_at)`
 `tasks.status` は `todo|in_progress|review|done|blocked`。`summary`(done の要約)と `note`(block の理由)は設計メモの最小案への追加。
 時刻は UTC の ISO 8601。
 
 ## 環境変数
 
-`TB_DB`(DB パス) / `TB_CONFIG`(projects.conf) / `HERDR_BIN`(herdr の実体。既定 `herdr`) / `TB_SCHEMA_DIR`(テスト用)
+`TB_DB`(DB パス。既定は全セッション共有の `~/.local/state/herdr/tasks.db`) / `TB_CONFIG`(projects.conf) / `HERDR_BIN`(herdr の実体。既定 `herdr`) / `TB_SCHEMA_DIR`(テスト用)
 DB パスと herdr の既定値は部品で共通の [`lib/herdr-env.sh`](../lib/herdr-env.sh)(Python は `lib/herdr_env.py`)で決まる。
 `TB_ROUTES`(routes.conf) / `TB_HR_NAME`(hr) / `TB_SCHED_LOGS` / `TB_REVIEW_TOP`(8) / `TB_ANALYST_MAX`(2) / `TB_ANALYST_CWD` / `TB_ANALYST_MODEL` / `TB_AGENT_CWD` / `TB_SWEEPER_PATTERN`(`sweeper*`) / `TB_LIMITS`(limits.conf) / `TB_LIMIT_<キー大文字>`(各制限の上書き) / `TB_HANDOFF_DIR`(handoff の置き場) / `TB_SPAWN_RETRY_SEC`(3) / `TB_APPROVALS`(approvals.conf) / `TB_ROLES`(roles/) / `TB_ROLE_MAX`(12000) / `TB_SEND_MAX`(4000) / `TB_IMMEDIATE_KINDS`(既定 `question blocked`) / `TB_DIGEST_IDLE_MIN`(10) / `TB_DIGEST_STUCK_MIN`(30) / `TB_DIGEST_ITEM_MAX`(160) / `TB_DIGEST_MSG_MAX`(1800)
 

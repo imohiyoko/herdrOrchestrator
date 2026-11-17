@@ -2,13 +2,29 @@
 
 import json
 import os
+import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
-from .config import JOB_RE, SCHED_LOGS, STALL_MIN, TB_DB
+from .config import JOB_RE, SCHED_LOGS, STALL_MIN, TB_DB, herdr_env
 from .sanitize import clean
 from .herdr import agent_key, agent_session, cached, get_agents
+
+
+_TABLE_RE = re.compile(r"[a-z_]{1,64}")
+
+
+def session_views(c, session):
+    """1 つの DB を複数の herdr セッションで共有する(行は herdr_session 列で分ける。taskboard/schema/012)。
+    herdr_session 列のある表ごとに、同じ名前の一時ビュー(このセッションの行だけ)を作る。
+    一時ビューは main の表より先に名前解決されるので、画面側の SQL は表の名前のまま、このセッションの行だけを見る。
+    列が無い古い DB(tb の移行前)はビューを作らず、そのまま読む。"""
+    lit = "'" + session.replace("'", "''") + "'"
+    for (t,) in c.execute("SELECT m.name FROM main.sqlite_master m WHERE m.type='table' AND EXISTS "
+                          "(SELECT 1 FROM pragma_table_info(m.name) p WHERE p.name='herdr_session')").fetchall():
+        if _TABLE_RE.fullmatch(t):
+            c.execute(f"CREATE TEMP VIEW {t} AS SELECT * FROM main.{t} WHERE herdr_session={lit}")
 
 
 def db_conn():
@@ -18,6 +34,7 @@ def db_conn():
     try:
         c = sqlite3.connect(f"file:{quote(path)}?mode=ro", uri=True, timeout=2)
         c.row_factory = sqlite3.Row
+        session_views(c, herdr_env.session_name())
         c.execute("PRAGMA query_only=ON")
         return c
     except sqlite3.Error:

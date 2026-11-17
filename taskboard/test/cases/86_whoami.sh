@@ -10,7 +10,7 @@ ROOT_REAL=$(cd "$HERE/../.." && pwd -P)
 out=$(W $TB whoami); r=$?
 eq "whoami: exits 0" "$r" "0"
 eq "whoami: checkout is the physical repo root" "$(wf "$out" checkout | grep -c "^checkout  *$ROOT_REAL   \[checkout\]$")" "1"
-eq "whoami: default db is from the checkout" "$(wf "$out" db | grep -c "$ROOT_REAL/taskboard/data/tasks.db   \[既定")" "1"
+eq "whoami: default db is the shared one" "$(W XDG_STATE_HOME=/xs $TB whoami | grep -E '^db ' | grep -c "/xs/herdr/tasks.db   \[既定")" "1"
 eq "whoami: session defaults" "$(wf "$out" session | tr -s ' ')" "session default [既定]"
 eq "whoami: no TB_INSTANCE -> legacy label prefix" "$(wf "$out" label-prefix | tr -s ' ')" "label-prefix local.herdr- [既定]"
 eq "whoami: instance unset" "$(wf "$out" instance | tr -s ' ')" "instance (未設定) [既定]"

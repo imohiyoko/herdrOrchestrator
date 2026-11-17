@@ -4,7 +4,10 @@ import re
 
 HERDR_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_BIN = "herdr"
-DEFAULT_TB_DB = os.path.join(HERDR_ROOT, "taskboard", "data", "tasks.db")
+# tb / webui / setup が読み書きする DB。checkout をまたいでホームの 1 か所(セッションは行の herdr_session 列で分ける)
+STATE_DIR = os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state"), "herdr")
+DEFAULT_TB_DB = os.path.join(STATE_DIR, "tasks.db")
+LEGACY_TB_DB = os.path.join(HERDR_ROOT, "taskboard", "data", "tasks.db")  # 旧: checkout ごとの DB(tb db-import で取り込む)
 SCHEMA_DIR = os.path.join(HERDR_ROOT, "taskboard", "schema")
 
 

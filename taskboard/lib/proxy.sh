@@ -28,12 +28,12 @@ cmd_proxy-request() {
   [[ " $EFFECTS " == *" $effect "* ]] || usage "proxy-request: --effect は $EFFECTS のどれか: $effect"
   require_task "$tid" >/dev/null
   local prior status=open result="" n id; n=$(now)
-  prior=$(sql "SELECT id FROM proxy_requests WHERE cmd=$(q "$c") AND status='denied' ORDER BY id LIMIT 1;")
+  prior=$(sql "SELECT id FROM proxy_requests WHERE herdr_session=$SQS AND cmd=$(q "$c") AND status='denied' ORDER BY id LIMIT 1;")
   if [[ -n $prior ]]; then
     status=denied; result="同一 cmd が人に拒否済み(依頼 $prior)。同じ依頼は出し直さず、別の方法を提案すること"
   fi
-  id=$(sql "INSERT INTO proxy_requests (task_id, cmd, why, effect, expect, status, result, created_at, updated_at)
-            VALUES ($(q "$tid"), $(q "$c"), $(q "$why"), $(q "$effect"), NULLIF($(q "$expect"),''), $(q "$status"),
+  id=$(sql "INSERT INTO proxy_requests (herdr_session, task_id, cmd, why, effect, expect, status, result, created_at, updated_at)
+            VALUES ($SQS, $(q "$tid"), $(q "$c"), $(q "$why"), $(q "$effect"), NULLIF($(q "$expect"),''), $(q "$status"),
                     NULLIF($(q "$result"),''), $(q "$n"), $(q "$n")); SELECT last_insert_rowid();")
   [[ $status == denied ]] && echo "tb: $result" >&2
   echo "$id $status"
@@ -53,9 +53,9 @@ cmd_proxy-list() {
     where+=" AND status=$(q "$status")"
   fi
   if ((json)); then
-    sql -json "SELECT * FROM proxy_requests WHERE $where ORDER BY id;" | jq -c '(. // [])[]'
+    sql -json "SELECT * FROM proxy_requests WHERE herdr_session=$SQS AND ($where) ORDER BY id;" | jq -c '(. // [])[]'
   else
-    sql -separator $'\t' "SELECT id, status, effect, task_id, replace(replace(cmd, char(10), ' '), char(9), ' ') FROM proxy_requests WHERE $where ORDER BY id;"
+    sql -separator $'\t' "SELECT id, status, effect, task_id, replace(replace(cmd, char(10), ' '), char(9), ' ') FROM proxy_requests WHERE herdr_session=$SQS AND ($where) ORDER BY id;"
   fi
 }
 
@@ -71,10 +71,10 @@ cmd_proxy-resolve() {
     esac
   done
   [[ $status =~ ^(done|pending-human|denied)$ ]] || usage "proxy-resolve: --status は done|pending-human|denied のどれか"
-  local cur; cur=$(sql "SELECT status FROM proxy_requests WHERE id=$id;")
+  local cur; cur=$(sql "SELECT status FROM proxy_requests WHERE herdr_session=$SQS AND id=$id;")
   [[ -n $cur ]] || die "代行依頼が見つかりません: $id"
   [[ $cur == open || $cur == pending-human ]] || die "解決済み($cur)の依頼は変更できません: $id"
-  sql "UPDATE proxy_requests SET status=$(q "$status"), result=NULLIF($(q "$result"),''), updated_at=$(q "$(now)") WHERE id=$id;"
+  sql "UPDATE proxy_requests SET status=$(q "$status"), result=NULLIF($(q "$result"),''), updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$id;"
   echo "$id $status"
 }
 
@@ -99,7 +99,7 @@ cmd_proxy-check() {
   [[ $# -eq 1 ]] || usage "proxy-check <id>"
   valid_pid "$1"
   local row c effect status
-  row=$(sql -json "SELECT * FROM proxy_requests WHERE id=$1;" | jq -c '.[0] // empty')
+  row=$(sql -json "SELECT * FROM proxy_requests WHERE herdr_session=$SQS AND id=$1;" | jq -c '.[0] // empty')
   [[ -n $row ]] || die "代行依頼が見つかりません: $1"
   c=$(jq -r .cmd <<<"$row"); effect=$(jq -r .effect <<<"$row"); status=$(jq -r .status <<<"$row")
 

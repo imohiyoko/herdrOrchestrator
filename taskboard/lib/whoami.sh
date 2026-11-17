@@ -25,7 +25,7 @@ cmd_whoami() {
 
   local root db dbsrc dbreal inst isrc prefix perr=0 pane=${HERDR_PANE_ID:-} paneyn
   root=$(cd "$HERDR_ROOT" && pwd -P)
-  if [[ -n ${TB_DB:-} ]]; then db=$TB_DB; dbsrc="env TB_DB"; else db=$HERDR_DEFAULT_TB_DB; dbsrc="既定(checkout の taskboard/data/tasks.db)"; fi
+  if [[ -n ${TB_DB:-} ]]; then db=$TB_DB; dbsrc="env TB_DB"; else db=$HERDR_DEFAULT_TB_DB; dbsrc="既定(全セッション共有。行は herdr_session で分ける)"; fi
   dbreal=$(_whoami_real "$db")
   case $ssrc in
     socket)  ssrc="env HERDR_SOCKET_PATH";;
@@ -42,6 +42,7 @@ cmd_whoami() {
   printf '%-13s %s   [%s]\n' db "$db" "$dbsrc"
   [[ $dbreal == "$db" ]] || printf '%-13s %s\n' "" "実体: $dbreal"
   [[ -e $db ]] || printf '%-13s %s\n' "" "(まだ無い。tb の他のコマンドが初回に作る)"
+  [[ -n ${TB_DB:-} || ! -f $HERDR_LEGACY_TB_DB ]] || printf '%-13s %s\n' "" "旧形式の DB が残っています: $HERDR_LEGACY_TB_DB(取り込むには tb db-import)"
   printf '%-13s %s   [%s]\n' session "$session" "$ssrc"
   printf '%-13s %s\n' socket "${sock:-(未設定)}"
   printf '%-13s %s   [%s]\n' instance "$inst" "$isrc"

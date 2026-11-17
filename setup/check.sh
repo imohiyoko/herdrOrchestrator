@@ -148,7 +148,9 @@ else
 fi
 
 # --- 3. taskboard ----------------------------------------------------------------
-db="${TB_DB:-$ROOT/taskboard/data/tasks.db}"
+# DB は checkout をまたいでホームの 1 か所(lib/herdr-env.sh の HERDR_DEFAULT_TB_DB と同じ)。herdr のセッションは行で分ける
+db="${TB_DB:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr/tasks.db}"
+legacy="$ROOT/taskboard/data/tasks.db"   # 旧: checkout ごとの DB
 if [ -f "$db" ]; then
   # スキーマの版(taskboard/schema/NNN_*.sql の最大番号)と DB の PRAGMA user_version を比べる。読むだけ
   latest=0
@@ -158,6 +160,18 @@ if [ -f "$db" ]; then
     report info "taskboard:db" "$db(スキーマ v${ver}、最新は v${latest}。次に tb を実行したとき移行される)"
   else report ok "taskboard:db" "$db${ver:+(スキーマ v$ver)}"; fi
 else report info "taskboard:db" "まだない(最初の tb add で作られる): $db"; fi
+# 旧形式の DB が残っていて、まだ取り込んでいなければ知らせる(取り込んだ記録は共有の DB の tb_flags の db-import:<実体のパス>)
+if [ -f "$legacy" ] && [ "$legacy" != "$db" ]; then
+  lreal="$(cd "$(dirname "$legacy")" && pwd -P)/$(basename "$legacy")"
+  done_imp=""
+  if [ -f "$db" ] && have sqlite3; then
+    sq="'"; done_imp=$(sqlite3 -readonly "$db" "SELECT 1 FROM tb_flags WHERE key='db-import:${lreal//$sq/$sq$sq}' LIMIT 1;" 2>/dev/null)
+  fi
+  if [ -z "$done_imp" ]; then
+    report warn "taskboard:legacy-db" "旧形式の DB(checkout ごと)が残っている: $legacy" \
+      "共有の DB へ取り込む: HERDR_SESSION=<この checkout のセッション> taskboard/bin/tb db-import $legacy(--dry-run で先に確かめられる)"
+  else report ok "taskboard:legacy-db" "旧形式の DB は取り込み済み(不要なら消してよい): $legacy"; fi
+fi
 
 # --- 4. launchd の共通処理 ------------------------------------------------------
 # launchd_check <項目> <ラベル> <生成元 plist>

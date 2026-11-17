@@ -225,10 +225,10 @@ risk_collect() {
   if [[ -z $sender ]]; then RISK_IN_SENDER_ROLE=human; RISK_IN_SENDER_MODEL=human
   elif [[ $sender != "?" ]]; then
     r=$(role_file_for "$sender" 2>/dev/null) && RISK_IN_SENDER_ROLE=$(basename "${r:-}" .md)
-    RISK_IN_SENDER_MODEL=$(sql "SELECT COALESCE(model,'') FROM agents WHERE name=$(q "$sender");" 2>/dev/null) || unset RISK_IN_SENDER_MODEL
+    RISK_IN_SENDER_MODEL=$(sql "SELECT COALESCE(model,'') FROM agents WHERE herdr_session=$SQS AND name=$(q "$sender");" 2>/dev/null) || unset RISK_IN_SENDER_MODEL
   fi
   r=$(role_file_for "$target" 2>/dev/null) && RISK_IN_TARGET_ROLE=$(basename "${r:-}" .md)
-  RISK_IN_TARGET_STATE=$(sql "SELECT COALESCE(state,'') FROM agents WHERE name=$(q "$target");" 2>/dev/null) || unset RISK_IN_TARGET_STATE
+  RISK_IN_TARGET_STATE=$(sql "SELECT COALESCE(state,'') FROM agents WHERE herdr_session=$SQS AND name=$(q "$target");" 2>/dev/null) || unset RISK_IN_TARGET_STATE
   return 0
 }
 

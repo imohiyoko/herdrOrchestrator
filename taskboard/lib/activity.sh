@@ -7,6 +7,8 @@ TOUCH_LOG=${TB_TOUCH_LOG:-$(dirname "$DB")/touch-errors.log}
 ID_RE='^[A-Za-z0-9._:-]{1,128}$'
 
 # act_select N: working 推定と、N 分以上の滞留(stuck)を付けた SELECT(WHERE は呼び出し側)
+# agent_activity の行は Claude の session_id(DB 全体で一意)で引く。session_id で 1 行を引くときは herdr_session で絞らない。
+# 一覧(tb activity)はこのセッションの行だけ
 act_select() {
   [[ $1 =~ ^[0-9]+$ ]] || usage "分は数字: $1"
   local w="last_prompt_at IS NOT NULL AND (last_stop_at IS NULL OR last_prompt_at > last_stop_at)"
@@ -43,10 +45,11 @@ touch_impl() {
   if [[ $ev == UserPromptSubmit ]]; then pa=$ts; else sa=$ts; fi
   local SQL_TIMEOUT=1000   # ロックされていても 1 秒で諦める
   err=$({ init_db && sql "INSERT INTO agent_activity
-      (session_id, pane_id, tab_id, workspace_id, cwd, last_prompt_id, last_prompt_at, last_stop_at, updated_at)
-    VALUES ($(q "$sid"), NULLIF($(q "$pane"),''), NULLIF($(q "$tab"),''), NULLIF($(q "$ws"),''), NULLIF($(q "$cwd"),''),
+      (herdr_session, session_id, pane_id, tab_id, workspace_id, cwd, last_prompt_id, last_prompt_at, last_stop_at, updated_at)
+    VALUES ($SQS, $(q "$sid"), NULLIF($(q "$pane"),''), NULLIF($(q "$tab"),''), NULLIF($(q "$ws"),''), NULLIF($(q "$cwd"),''),
             NULLIF($(q "$pid"),''), $pa, $sa, $ts)
     ON CONFLICT(session_id) DO UPDATE SET
+      herdr_session=excluded.herdr_session,
       pane_id=COALESCE(excluded.pane_id, pane_id), tab_id=COALESCE(excluded.tab_id, tab_id),
       workspace_id=COALESCE(excluded.workspace_id, workspace_id), cwd=COALESCE(excluded.cwd, cwd),
       last_prompt_id=COALESCE(excluded.last_prompt_id, last_prompt_id),
@@ -86,9 +89,9 @@ cmd_activity() {
   done
   local s; s=$(act_select "$stuck")
   if ((json)); then
-    sql -json "$s ORDER BY updated_at DESC;" | jq -c '(. // [])[]'
+    sql -json "$s WHERE herdr_session=$SQS ORDER BY updated_at DESC;" | jq -c '(. // [])[]'
   else
     sql -nullvalue - -separator $'\t' "SELECT session_id, COALESCE(pane_id,'-'), working, stuck, last_prompt_at, last_stop_at, COALESCE(cwd,'-')
-      FROM ($s) ORDER BY updated_at DESC;"
+      FROM ($s WHERE herdr_session=$SQS) ORDER BY updated_at DESC;"
   fi
 }

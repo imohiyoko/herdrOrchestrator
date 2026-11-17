@@ -22,10 +22,11 @@ cmd_add() {
   if [[ -n $parent ]]; then valid_id "$parent"; require_task "$parent" >/dev/null; fi
   local n=$(now) p; p=$(q "$project")
   # 採番と挿入を 1 文で行い、同時 add でも重複しないようにする
-  sql "INSERT INTO tasks (id, project, title, owner_agent, session_id, account, parent_id, created_at, updated_at)
+  # ID は DB 全体で一意(採番は全セッションの行を見る。ここだけ herdr_session で絞らない)
+  sql "INSERT INTO tasks (id, project, title, owner_agent, session_id, account, parent_id, created_at, updated_at, herdr_session)
        SELECT 'T-'||$p||'-'||printf('%03d', COALESCE(MAX(CAST(substr(id, length($p)+4) AS INTEGER)),0)+1),
               $p, $(q "$title"), NULLIF($(q "$owner"),''), NULLIF($(q "$session"),''), NULLIF($(q "$account"),''),
-              NULLIF($(q "$parent"),''), $(q "$n"), $(q "$n")
+              NULLIF($(q "$parent"),''), $(q "$n"), $(q "$n"), $SQS
        FROM tasks WHERE project=$p;
        SELECT id FROM tasks WHERE rowid=last_insert_rowid();"
 }
@@ -44,9 +45,9 @@ cmd_list() {
   [[ -z $project ]] || where+=" AND project=$(q "$project")"
   if [[ -n $status ]]; then valid_status "$status"; where+=" AND status=$(q "$status")"; fi
   if ((json)); then
-    sql -json "SELECT * FROM tasks WHERE $where ORDER BY project, id;" | jq -c '(. // [])[] | .deliverables |= fromjson'
+    sql -json "SELECT * FROM tasks WHERE herdr_session=$SQS AND ($where) ORDER BY project, id;" | jq -c '(. // [])[] | .deliverables |= fromjson'
   else
-    sql -separator $'\t' "SELECT id, status, COALESCE(owner_agent,'-'), replace(title, char(10), ' ') FROM tasks WHERE $where ORDER BY project, id;"
+    sql -separator $'\t' "SELECT id, status, COALESCE(owner_agent,'-'), replace(title, char(10), ' ') FROM tasks WHERE herdr_session=$SQS AND ($where) ORDER BY project, id;"
   fi
 }
 
@@ -81,7 +82,7 @@ cmd_claim() {
   changed=$(sql "UPDATE tasks SET status='in_progress', owner_agent=$(q "$owner"),
       session_id=COALESCE(NULLIF($(q "$session"),''), session_id),
       account=COALESCE(NULLIF($(q "$account"),''), account), updated_at=$(q "$(now)")
-    WHERE id=$(q "$id") AND status='todo'; SELECT changes();")
+    WHERE herdr_session=$SQS AND id=$(q "$id") AND status='todo'; SELECT changes();")
   [[ $changed == 1 ]] || die "claim できません(status が todo ではない): $id"
   echo "$id claimed by $owner"
 }
@@ -111,7 +112,7 @@ cmd_update() {
   row=$(require_task "$id"); cur=$(jq -r .status <<<"$row")
   [[ $cur != done ]] || die "done のタスクは update できません: $id"
   local IFS=,
-  sql "UPDATE tasks SET ${sets[*]}, updated_at=$(q "$(now)") WHERE id=$(q "$id");"
+  sql "UPDATE tasks SET ${sets[*]}, updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id");"
   echo "$id updated"
 }
 
@@ -134,7 +135,7 @@ cmd_done() {
   [[ $cur != done ]] || die "すでに done です: $id"
   dj=$(jq -nc '$ARGS.positional' --args "${dels[@]}")
   sql "UPDATE tasks SET status='done', deliverables=$(q "$dj"), summary=$(q "$summary"),
-         reported_at=NULL, updated_at=$(q "$(now)") WHERE id=$(q "$id");"
+         reported_at=NULL, updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id");"
   notify_hook notify_hook_task_done "$id"
   echo "$id done (未報告。tb report $id を実行)"
 }
@@ -152,7 +153,7 @@ cmd_block() {
   done
   local row cur; row=$(require_task "$id"); cur=$(jq -r .status <<<"$row")
   [[ $cur != done ]] || die "done のタスクは block できません: $id"
-  sql "UPDATE tasks SET status='blocked', note=NULLIF($(q "$reason"),''), updated_at=$(q "$(now)") WHERE id=$(q "$id");"
+  sql "UPDATE tasks SET status='blocked', note=NULLIF($(q "$reason"),''), updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id");"
   echo "$id blocked"
 }
 
@@ -175,7 +176,7 @@ cmd_report() {
   summary=${summary%"${summary##*[![:space:]]}"}
   msg="[$id done] $summary / $paths"
   herdr_send "$target" "$msg" "$id" || return $?
-  sql "UPDATE tasks SET reported_at=$(q "$(now)"), updated_at=$(q "$(now)") WHERE id=$(q "$id");"
+  sql "UPDATE tasks SET reported_at=$(q "$(now)"), updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id");"
   echo "$id reported to $target"
 }
 
@@ -191,18 +192,18 @@ cmd_pending() {
   done
   local where="status='done' AND (reported_at IS NULL OR reported_at='')"
   case $mode in
-    ids)  sql "SELECT id FROM tasks WHERE $where ORDER BY updated_at, id;"
-          sql "SELECT 'C-'||id FROM comments WHERE delivered_at IS NULL ORDER BY id;";;
-    json) sql -json "SELECT * FROM tasks WHERE $where ORDER BY updated_at, id;" | jq -c '(. // [])[] | .deliverables |= fromjson'
-          sql -json "SELECT * FROM comments WHERE delivered_at IS NULL ORDER BY id;" | jq -c '(. // [])[] | .deliverables |= fromjson | .id = "C-\(.id)"';;
+    ids)  sql "SELECT id FROM tasks WHERE herdr_session=$SQS AND ($where) ORDER BY updated_at, id;"
+          sql "SELECT 'C-'||id FROM comments WHERE herdr_session=$SQS AND delivered_at IS NULL ORDER BY id;";;
+    json) sql -json "SELECT * FROM tasks WHERE herdr_session=$SQS AND ($where) ORDER BY updated_at, id;" | jq -c '(. // [])[] | .deliverables |= fromjson'
+          sql -json "SELECT * FROM comments WHERE herdr_session=$SQS AND delivered_at IS NULL ORDER BY id;" | jq -c '(. // [])[] | .deliverables |= fromjson | .id = "C-\(.id)"';;
     tsv)  local id project summary
           while IFS=$'\t' read -r id project summary; do
             printf '%s\t%s\t%s\t%s\n' "$id" "$project" "$(target_for "$project")" "$summary"
-          done < <(sql -separator $'\t' "SELECT id, project, replace(replace(COALESCE(summary,''), char(10), ' '), char(9), ' ') FROM tasks WHERE $where ORDER BY updated_at, id;")
+          done < <(sql -separator $'\t' "SELECT id, project, replace(replace(COALESCE(summary,''), char(10), ' '), char(9), ' ') FROM tasks WHERE herdr_session=$SQS AND ($where) ORDER BY updated_at, id;")
           # 未配送のコメント: ID は C-<n>(tb report C-<n> で再送)
           while IFS=$'\t' read -r id project summary; do
             printf '%s\t%s\t%s\t%s\n' "$id" "$project" "$(target_for "$project")" "$summary"
           done < <(sql -separator $'\t' "SELECT 'C-'||c.id, COALESCE(t.project,''), '['||c.kind||'] '||substr(replace(replace(c.text, char(10), ' '), char(9), ' '),1,80)
-            FROM comments c LEFT JOIN tasks t ON t.id=c.task_id WHERE c.delivered_at IS NULL ORDER BY c.id;");;
+            FROM comments c LEFT JOIN tasks t ON t.id=c.task_id AND t.herdr_session=c.herdr_session WHERE c.herdr_session=$SQS AND c.delivered_at IS NULL ORDER BY c.id;");;
   esac
 }

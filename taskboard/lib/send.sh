@@ -8,27 +8,16 @@
 ROUTES=${TB_ROUTES:-$TB_ROOT/config/routes.conf}
 SEND_KINDS="task info answer"
 SEND_MAX=${TB_SEND_MAX:-4000}
-# tb approve / tb flush が HERDR_SESSION 未指定のときに向ける herdr セッション(明示した HERDR_SESSION が常に優先)。
-# 空なら herdr の既定のセッション。scheduler から flush するときに、決まったセッションへ向けるために使う
-OUTBOX_SESSION=${TB_OUTBOX_SESSION:-}
-
-# outbox_deliver を、HERDR_SESSION 未指定なら OUTBOX_SESSION に向けて呼ぶ
-outbox_deliver_default() {  # $1=outbox.id
-  if [[ -z ${HERDR_SESSION:-} && -n $OUTBOX_SESSION ]]; then HERDR_SESSION=$OUTBOX_SESSION outbox_deliver "$1"
-  else outbox_deliver "$1"; fi
-}
+# 届け先の herdr セッションは、この tb のセッション(lib/db.sh の SESS)。outbox の行もそのセッションのものだけを見る
+outbox_deliver_default() { outbox_deliver "$1"; }   # $1=outbox.id
 
 # flush の前に、台帳を herdr の一覧と突き合わせる(台帳の stopped が古いままのことがある)。失敗なら 1
-outbox_sync() {
-  local HSESS=${HERDR_SESSION:-${OUTBOX_SESSION:-default}}   # agent_sync が見るセッション
-  if [[ -z ${HERDR_SESSION:-} && -n $OUTBOX_SESSION ]]; then HERDR_SESSION=$OUTBOX_SESSION agent_sync
-  else agent_sync; fi
-} >/dev/null 2>&1
+outbox_sync() { agent_sync; } >/dev/null 2>&1
 
 # 宛先が tb の台帳で停止中(agent-stop 済み、または herdr の一覧から消えた)か。
 # 停止中の宛先には送らず queued のまま残す(revive 後の flush で届く)。outbox_sync のあとでだけ使う
 outbox_target_stopped() {  # $1=宛先
-  [[ -n $(sql "SELECT 1 FROM agents WHERE name=$(q "$1") AND state='stopped' LIMIT 1;" 2>/dev/null) ]]
+  [[ -n $(sql "SELECT 1 FROM agents WHERE herdr_session=$SQS AND name=$(q "$1") AND state='stopped' LIMIT 1;" 2>/dev/null) ]]
 }
 
 # 指揮官として扱う名前: 既定の宛先と projects.conf の値
@@ -82,7 +71,7 @@ _route_rules() {
 
 outbox_deliver() {  # $1=outbox.id → 0 送信済み / 10 / 11
   local oid=$1 row st from pane target kind tid text msg
-  row=$(sql -json "SELECT * FROM outbox WHERE id=$oid;" | jq -c '.[0] // empty')
+  row=$(sql -json "SELECT * FROM outbox WHERE herdr_session=$SQS AND id=$oid;" | jq -c '.[0] // empty')
   [[ -n $row ]] || die "outbox が見つかりません: O-$oid"
   st=$(jq -r .status <<<"$row")
   [[ $st == queued ]] || { echo "O-$oid は $st です"; return 0; }
@@ -91,7 +80,7 @@ outbox_deliver() {  # $1=outbox.id → 0 送信済み / 10 / 11
   msg="[from: $from / $pane / $tid / $kind] $(oneline "$text" "$SEND_MAX")"
   limits_send_gate "$target" || { log_message send "O-$oid" "$target" "$msg" busy; return 10; }   # max_working_agents: 待たせる(queued のまま)
   herdr_send "$target" "$msg" "O-$oid" send || return $?
-  sql "UPDATE outbox SET status='sent', sent_at=$(q "$(now)") WHERE id=$oid;"
+  sql "UPDATE outbox SET status='sent', sent_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$oid;"
 }
 
 # 終了コード: 0 送信済み / 10 宛先使用中で outbox に積んだ / 11 送信失敗で outbox に積んだ / 4 ルールで拒否(記録のみ)
@@ -129,8 +118,8 @@ cmd_send() {
     risk_collect "$LABEL_NAME" "$target" "$kind" "$text"; risk_eval
     reason+=" / $(risk_oneline)"
   fi
-  oid=$(sql "INSERT INTO outbox (from_name, from_pane, from_session, target, kind, task_id, text, status, reason, created_at)
-    VALUES ($(q "$LABEL_NAME"), $(q "$LABEL_PANE"), $(q "$LABEL_SESSION"), $(q "$target"), $(q "$kind"), NULLIF($(q "$tid"),''),
+  oid=$(sql "INSERT INTO outbox (herdr_session, from_name, from_pane, from_session, target, kind, task_id, text, status, reason, created_at)
+    VALUES ($SQS, $(q "$LABEL_NAME"), $(q "$LABEL_PANE"), $(q "$LABEL_SESSION"), $(q "$target"), $(q "$kind"), NULLIF($(q "$tid"),''),
             $(q "$text"), $(q "$status"), $(q "$reason"), $(q "$(now)"));
     SELECT last_insert_rowid();")
   if [[ $status == denied ]]; then
@@ -142,7 +131,7 @@ cmd_send() {
   else
     outbox_deliver "$oid" >/dev/null || rc=$?
   fi
-  if ((json)); then sql -json "SELECT * FROM outbox WHERE id=$oid;" | jq -c '.[0] | .id = "O-\(.id)"'
+  if ((json)); then sql -json "SELECT * FROM outbox WHERE herdr_session=$SQS AND id=$oid;" | jq -c '.[0] | .id = "O-\(.id)"'
   else
     case $rc in 0) echo "O-$oid sent to $target";; 4) echo "O-$oid denied";; 20) echo "O-$oid pending-approval";; *) echo "O-$oid queued";; esac
   fi
@@ -155,7 +144,7 @@ cmd_send() {
 cmd_flush() {
   [[ $# -eq 0 ]] || usage "flush(引数なし)"
   local oid target rc=0 r busy=" " held=" " synced=0
-  [[ -n $(sql "SELECT 1 FROM outbox WHERE status='queued' LIMIT 1;") ]] || return 0
+  [[ -n $(sql "SELECT 1 FROM outbox WHERE herdr_session=$SQS AND status='queued' LIMIT 1;") ]] || return 0
   outbox_sync && synced=1   # herdr に届かなければ判定せず、今までどおり送ってみる
   while IFS=$'\t' read -r oid target; do
     [[ -n $oid ]] || continue
@@ -167,7 +156,7 @@ cmd_flush() {
     fi
     r=0; outbox_deliver_default "$oid" || r=$?
     if ((r)); then busy+="$target "; ((r > rc)) && rc=$r; fi
-  done < <(sql -separator $'\t' "SELECT id, target FROM outbox WHERE status='queued' ORDER BY id;")
+  done < <(sql -separator $'\t' "SELECT id, target FROM outbox WHERE herdr_session=$SQS AND status='queued' ORDER BY id;")
   return $rc
 }
 
@@ -181,8 +170,8 @@ cmd_outbox() {
     esac
   done
   if [[ -n $st ]]; then [[ $st =~ ^(pending|queued|sent|denied)$ ]] || usage "outbox: --status は pending|queued|sent|denied"; where="status=$(q "$st")"; fi
-  if ((json)); then sql -json "SELECT * FROM outbox WHERE $where ORDER BY id DESC LIMIT 100;" | jq -c '(. // [])[] | .id = "O-\(.id)"'
+  if ((json)); then sql -json "SELECT * FROM outbox WHERE herdr_session=$SQS AND ($where) ORDER BY id DESC LIMIT 100;" | jq -c '(. // [])[] | .id = "O-\(.id)"'
   else sql -nullvalue - -separator $'\t' "SELECT 'O-'||id, status, from_name, target, kind, COALESCE(task_id,'-'), created_at,
-         substr(replace(replace(text, char(10), ' '), char(9), ' '),1,80) FROM outbox WHERE $where ORDER BY id DESC LIMIT 100;"
+         substr(replace(replace(text, char(10), ' '), char(9), ' '),1,80) FROM outbox WHERE herdr_session=$SQS AND ($where) ORDER BY id DESC LIMIT 100;"
   fi
 }
