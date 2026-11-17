@@ -2,6 +2,7 @@
 
 SQLite 1 ファイル(既定は `~/.local/state/herdr/tasks.db`。checkout をまたいで 1 つ)に仕事の状態を持ち、`bin/tb` で読み書きする。
 herdr のセッションは同じ DB の中で行ごとに分ける(下の「セッションと DB」)。
+DB は WAL モードで開く(最初の tb が切り替え、DB ファイルに残る)。同時に動くセッションの読みと書きが互いを待たない。書きは最大 5 秒、hook の活動記録は 1 秒までロックを待ち、それを過ぎた活動記録は `touch-errors.log` に `db-locked` と残して捨てる。DB の横の `tasks.db-wal` / `tasks.db-shm` は SQLite のもので、消さない(DB を複製するときは `sqlite3 tasks.db ".backup 写し.db"`)。
 依存は `sqlite3` / `bash` / `jq` のみ。
 
 - 「何を誰に送ったか」の監査ログ `dispatch.jsonl` とは別物。こちらは「仕事の状態」
