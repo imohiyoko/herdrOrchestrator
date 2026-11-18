@@ -519,13 +519,10 @@ cmd_pr-watch() {
     out=$("$gh" pr list --repo "$r" --state all --limit 30 --json number,title,state,isDraft,reviewDecision,author,mergedBy 2>/dev/null) || continue
     jq -e 'type=="array"' <<<"$out" >/dev/null 2>&1 || continue
     # 前回の状態(このリポジトリの pr:<repo>#<番号> の行)は 1 回で読み、PR ごとに DB を開かない
-    seen=""; prev_json=""
-    {
-      IFS= read -r seen || true
-      IFS= read -r prev_json || true   # 行が無い(初回)ときの read の失敗で set -e に止められないように
-    } < <(sql "SELECT COALESCE((SELECT value FROM notify_seen WHERE key=$(q "prbase:$r")), '');" \
-          && sql -json "SELECT key, value FROM notify_seen WHERE substr(key, 1, $((${#r} + 4)))=$(q "pr:$r#");" | jq -c '. // []')
-    [[ -n $prev_json ]] || prev_json='[]'
+    # 読めなかった(DB のロックなど)ときは、このリポジトリを今回は飛ばす(空の状態とみなすと、既存の PR を全部「新規」にしてしまう)
+    seen=$(sql "SELECT value FROM notify_seen WHERE key=$(q "prbase:$r");") || continue
+    prev_json=$(sql -json "SELECT key, value FROM notify_seen WHERE substr(key, 1, $((${#r} + 4)))=$(q "pr:$r#");") || continue
+    prev_json=$(jq -c '. // []' <<<"${prev_json:-[]}" 2>/dev/null) || continue
     stmts=""; ts=$(now)
     # PR 1 件 = 1 行(区切りは \x1f)。jq は 1 回だけ通す。最後の 2 列は前回の状態の有無と値
     while IFS=$'\x1f' read -r num title state dec draft author merger hasprev prev; do
