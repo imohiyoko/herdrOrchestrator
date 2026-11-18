@@ -288,10 +288,16 @@ class Client:
 
 
 NOTIFY_TAG = '<script src="/notify.js" defer></script>'
+REFRESH_TAG = '<script src="/refresh.js" defer></script>'
 
 
 def no_js(b):
-    return b.replace(NOTIFY_TAG, "")
+    return b.replace(NOTIFY_TAG, "").replace(REFRESH_TAG, "")
+
+
+def script_tags(b):
+    """<script> の開始タグの一覧。自動更新の /refresh.js は除く(自動更新の有無は別に確かめる)。"""
+    return [t for t in re.findall(r"<script[^>]*>", b, re.I) if t != REFRESH_TAG[:-9]]
 
 
 def stop_out(p):
@@ -483,8 +489,11 @@ for path in PAGES:
     check(f"{path}: 共通ナビ・meta refresh・バッジ",
           (('http-equiv="refresh"' in b) != ('action="/resolve"' in b or path in ("/ledger", "/perms", "/tasks"))) and 'href="/ledger"' in b and 'class="badge"' in b, path)
     check(f"{path}: スクリプトは同一オリジンの notify.js だけ",
-          re.findall(r"<script[^>]*>", b, re.I) == [NOTIFY_TAG[:-9]] and "<script" not in no_js(b).lower()
+          script_tags(b) == [NOTIFY_TAG[:-9]] and "<script" not in no_js(b).lower()
           and "<img" not in b.lower(), str(re.findall(r"<script[^>]*>", b, re.I)))
+    check(f"{path}: 自動更新は refresh.js(meta refresh は noscript の中だけ)",
+          ('http-equiv="refresh"' in b) == (REFRESH_TAG in b) == ('<meta name=herdr-refresh content="30">' in b)
+          and ('http-equiv="refresh"' not in b or '<noscript><meta http-equiv="refresh" content="30"></noscript>' in b), path)
     check(f"{path}: 制御文字なし", not re.search("[\x00-\x08\x0b-\x1f\x1b]", b))
     check(f"{path}: ?token= の経路がない", "token=" not in b)
 
@@ -499,7 +508,7 @@ _ab = cl.get("/agents")[2]
 check("agent 一覧にロール別と関係グラフへのリンク", '<h2 id="roles">ロール別</h2>' in _ab and 'href="/agent-graph"' in _ab and _ab.count('<a href="/agents/alpha">') >= 2)
 _gs, _gh, _gb = cl.get("/agent-graph")
 check("関係グラフ: mermaid と表、スクリプトは同一オリジンだけ", _gs == 200 and "<pre class=mermaid>flowchart LR" in _gb
-      and re.findall(r"<script[^>]*>", _gb, re.I) == [NOTIFY_TAG[:-9], '<script src="/static/mermaid.min.js" defer>', '<script src="/docs.js" defer>'],
+      and script_tags(_gb) == [NOTIFY_TAG[:-9], '<script src="/static/mermaid.min.js" defer>', '<script src="/docs.js" defer>'],
       str(re.findall(r"<script[^>]*>", _gb, re.I)))
 _gm = _gb.split("<pre class=mermaid>")[1].split("</pre>")[0]
 check("関係グラフ: 名前のない agent も pane_id で点になる", '[&quot;w1:p3&quot;]' in _gm, _gm[:300])
@@ -585,6 +594,12 @@ check("/notify.js が 200 の JavaScript", r[0] == 200 and r[1].get("Content-Typ
       and "Notification" in r[2] and "/api/notifications" in r[2], str(r[:2]))
 check("/notify.js は innerHTML を使わない", "innerHTML" not in r[2] and "eval(" not in r[2])
 check("未ログインの /notify.js は /login へ", Client(port).get("/notify.js")[0] == 302)
+rf = cl.get("/refresh.js")
+check("/refresh.js が 200 の JavaScript。見ていないタブでは読み直さず、読み直しは GET",
+      rf[0] == 200 and rf[1].get("Content-Type", "").startswith("text/javascript") and "document.hidden" in rf[2]
+      and "visibilitychange" in rf[2] and "location.replace(location.href)" in rf[2] and "reload(" not in rf[2]
+      and "innerHTML" not in rf[2] and "eval(" not in rf[2], str(rf[:2]))
+check("未ログインの /refresh.js は /login へ", Client(port).get("/refresh.js")[0] == 302)
 csp = r[1].get("Content-Security-Policy", "")
 check("CSP は script-src 'self' / connect-src 'self' だけを足す(インラインスクリプト不可)",
       "default-src 'none'" in csp and "script-src 'self';" in csp and "connect-src 'self';" in csp
