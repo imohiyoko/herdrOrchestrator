@@ -103,15 +103,18 @@ run_command() {
     mkdir "$LOCK" 2>/dev/null || { emit skipped_locked "lock race"; return 0; }
   fi
   HAVE_LOCK=1
-  echo $$ >"$LOCK/pid"
+  echo "${BASHPID:-$$}" >"$LOCK/pid"   # dispatch.sh のサブシェルでも自分の pid(bash 3.2 は BASHPID が無く、dispatch.sh の pid になる。どちらも実行中は生きている)
   OUTF=$(mktemp); ERRF=$(mktemp)
   /bin/bash -c "$COMMAND" >"$OUTF" 2>"$ERRF" </dev/null &
-  local cpid=$! waited=0 timed_out=0 rc=0
-  while kill -0 "$cpid" 2>/dev/null; do
-    if ((waited >= COMMAND_TIMEOUT * 10)); then timed_out=1; kill_tree "$cpid"; break; fi
-    sleep 0.1; waited=$((waited + 1))
-  done
+  local cpid=$! wpid timed_out=0 rc=0
+  # 終わるのを wait で待つ(0.1 秒ごとの sleep で見回らない。macOS の bash 3.2 では sleep が毎回別のプロセスになる)。
+  # 時間切れは見張りのプロセスが印のファイルを作ってから止める
+  ( sleep "$COMMAND_TIMEOUT"; : >"$OUTF.timeout"; kill_tree "$cpid" ) </dev/null >/dev/null 2>&1 &
+  wpid=$!
   wait "$cpid" 2>/dev/null; EXITC=$?
+  kill_tree "$wpid" 2>/dev/null; wait "$wpid" 2>/dev/null
+  [ -e "$OUTF.timeout" ] && timed_out=1
+  rm -f "$OUTF.timeout"
   OUT_S=$(head -c 500 "$OUTF" | tr -d '\000'); ERR_S=$(head -c 500 "$ERRF" | tr -d '\000')
   cleanup
   if ((timed_out)); then EXITC=124; emit failed "timeout after ${COMMAND_TIMEOUT}s"; return 1; fi

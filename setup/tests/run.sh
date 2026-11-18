@@ -138,6 +138,14 @@ fresh; echo '<key>Hour</key>' >"$LA/local.herdr-sched-taskboard-digest.plist"; r
 has "時刻を焼き込んだ古い plist は warn" warn launchd:taskboard-digest "古い形式"
 fresh; echo 'TARGET=x' >"$R/scheduler/jobs/mine.conf"; run
 has "独自のジョブも出す" info job:mine; has "独自のジョブの launchd も見る" missing launchd:mine
+dispatch_plist() { printf '<plist><dict><array>\n<string>/bin/bash</string>\n<string>%s/scheduler/bin/dispatch.sh</string>\n%s</array></dict></plist>\n' "$R" "$(for j in "$@"; do printf '<string>%s</string>\n' "$j"; done)" >"$LA/local.herdr-sched-dispatch.plist"; }
+fresh; rm "$LA/local.herdr-sched-taskboard-digest.plist"; dispatch_plist taskboard-digest; FAKE_LOADED="local.herdr-sched-dispatch local.herdr-webui"; run
+has "dispatch の plist が読み込み済み" ok launchd:dispatch
+has "dispatch に入れたジョブは個別の plist が無くても ok" ok launchd:taskboard-digest "まとめて実行"
+fresh; dispatch_plist taskboard-digest; FAKE_LOADED="local.herdr-sched-dispatch local.herdr-sched-taskboard-digest local.herdr-webui"; run
+has "dispatch と個別の plist の両方に登録したジョブは warn(二重に動く)" warn launchd:taskboard-digest "二重"
+fresh; echo 'TARGET=x' >"$R/scheduler/jobs/mine.conf"; dispatch_plist taskboard-digest; FAKE_LOADED="local.herdr-sched-dispatch local.herdr-sched-taskboard-digest local.herdr-webui"; run
+has "dispatch に入れていないジョブは従来どおり個別の plist を見る" missing launchd:mine
 fresh; OSNAME=Linux; run
 has "macOS 以外は launchd を skip" skip launchd:webui
 rc_is "skip だけなら終了コード 0" 0

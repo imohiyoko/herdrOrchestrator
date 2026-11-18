@@ -210,6 +210,25 @@ ok "多重実行は skipped_locked" "$(jq -r .action "$LOG_DIR/lock.log" | sort 
 ok "実行後にロックが残らない" "$([ -e "$LOG_DIR/lock.lock.d" ] && echo left || echo none)" none
 mkdir "$LOG_DIR/cmd.lock.d"; echo 999999 >"$LOG_DIR/cmd.lock.d/pid"
 NOW="$THU 12:00" bash bin/tick.sh cmd; ok "stale lock は回収して実行" "$(last cmd | jq -r .action)" failed
+mkcmd fast "COMMAND='echo quick'
+COMMAND_TIMEOUT=97"
+t0=$SECONDS; NOW="$THU 12:00" bash bin/tick.sh fast
+ok "すぐ終わるコマンドは待たずに ran" "$(last fast | jq -r '[.action,.stdout]|join("|")')$([ $((SECONDS - t0)) -le 1 ] && echo y)" "ran|quicky"
+ok "時間切れの見張り(sleep)が残らない" "$(pgrep -f '^sleep 97$' >/dev/null && echo left || echo none)" none
+
+# ---- dispatch.sh: 複数のジョブを 1 回の起動で(各ジョブはサブシェル。判定と記録は tick.sh と同じ)
+rm -f "$LOG_DIR/cmd.log" "$LOG_DIR/fast.log" "$LOG_DIR/cmdok.log"
+NOW="$THU 12:00" bash bin/dispatch.sh cmd fast cmdok; drc=$?
+ok "dispatch: 各ジョブが自分のログに記録(窓の外は記録しない)" "$(last cmd | jq -r .action) $(last fast | jq -r .action) $([ -e "$LOG_DIR/cmdok.log" ] && echo logged || echo quiet)" "failed ran quiet"
+ok "dispatch: 1 つでも失敗があれば終了コード 1" "$drc" 1
+ok "dispatch: ジョブの変数が混ざらない(cmd の stdout が fast に出ない)" "$(last fast | jq -r .stdout)" quick
+NOW="$THU 12:00" bash bin/dispatch.sh fast; ok "dispatch: 全部成功なら 0" "$?" 0
+bash bin/dispatch.sh >/dev/null 2>&1; ok "dispatch: 引数なしは使い方の誤り(exit 2)" "$?" 2
+NOW="$THU 12:00" bash bin/dispatch.sh fast nosuchjob >/dev/null 2>&1; ok "dispatch: 無いジョブは失敗にし、ほかは動く" "$? $(last fast | jq -r .action)" "1 ran"
+OUT_DIR="$TMP/gen" bash bin/gen-plist.sh --dispatch fast cmd >/dev/null
+ok "gen-plist --dispatch: 1 本の plist に dispatch.sh とジョブ名" "$(grep -c '<string>' "$TMP/gen/local.herdr-sched-dispatch.plist") $(grep -c 'bin/dispatch.sh</string>' "$TMP/gen/local.herdr-sched-dispatch.plist")" "8 1"
+OUT_DIR="$TMP/gen" bash bin/gen-plist.sh --dispatch fast nosuchjob >/dev/null 2>&1; ok "gen-plist --dispatch: 無いジョブは止める" "$?" 2
+mkcmd dispatch "COMMAND='true'"; OUT_DIR="$TMP/gen" bash bin/gen-plist.sh dispatch >/dev/null 2>&1; ok "ジョブ名 dispatch は予約済み" "$?" 2; rm -f "$JOBS_DIR/dispatch.conf"
 
 # ---- プロンプト送信は tb を通る(疑似 herdr と一時 DB。本物は呼ばない)
 export FAKE_LOG="$TMP/herdr.log" TB_DB="$TMP/tb.db"; : >"$FAKE_LOG"
