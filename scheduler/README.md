@@ -63,6 +63,24 @@ bin/install.sh status <job>     # launchctl print
 bin/install.sh uninstall <job>  # bootout して plist を削除
 ```
 
+### まとめて 1 本で登録する(推奨)
+
+ジョブごとに plist を登録すると、ジョブの数だけ毎分 bash が起動し、そのたびに Mac をスリープから起こす。
+`--dispatch` を使うと 1 本の plist(`local.herdr-sched-dispatch`)が毎分 1 回だけ `bin/dispatch.sh` を起動し、
+その中で各ジョブの `tick.sh` をサブシェルで並べて動かす(判定・ログ・ロックはジョブごとに今までと同じ)。
+
+```bash
+bin/gen-plist.sh --dispatch taskboard-digest taskboard-flush notify-flush   # 動かすジョブを並べる
+bin/install.sh install --dispatch
+bin/install.sh status --dispatch
+bin/install.sh uninstall --dispatch
+```
+
+- ジョブを足す・外すときは `gen-plist.sh --dispatch …` → `install.sh install --dispatch` をやり直す(間隔や時間帯の変更では不要)。
+- 個別の plist から移るときは、dispatch に入れたジョブの個別の plist を `install.sh uninstall <job>` で外す。
+  両方に登録すると同じジョブが二重に動く(`setup/check.sh` が warn を出す)。
+- ジョブ名 `dispatch` は予約済み。
+
 conf を書き換えずに一時的に変えたいときは(Web UI の settings より優先)、環境変数 `SCHED_WINDOW` / `SCHED_START` / `SCHED_END` /
 `SCHED_INTERVAL_MIN` / `SCHED_INTERVAL_SEC` で上書きできる。
 

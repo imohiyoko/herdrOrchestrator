@@ -60,6 +60,9 @@ worker のプロジェクトが presets に書かれていないときは `bash 
 - `DRY_RUN=1 bash scheduler/bin/tick.sh <job>` で判定だけを試して結果を見せる。
 - `bash scheduler/bin/gen-plist.sh <job>` で plist を生成(登録はしない)し、内容を見せる。
 - 登録は承認後に `bash scheduler/bin/install.sh install <job>`。確認は `install.sh status <job>`、解除は `install.sh uninstall <job>`。
+- 複数のジョブを使うときは、ジョブごとの plist の代わりに `bash scheduler/bin/gen-plist.sh --dispatch <job> ...` で 1 本にまとめるのを勧める
+  (毎分の起動が 1 回で済む)。登録は承認後に `install.sh install --dispatch`。個別の plist から移るときは、移したジョブの個別の plist を
+  (承認後に)`install.sh uninstall <job>` で外す。`check.sh` が「二重に動く」と言ったら、この外し忘れ。
 - `check.sh` が「古い形式の plist」と言ったら、gen-plist → install をやり直す。
 
 ### 5. Web UI(`webui:*` / `launchd:webui`)

@@ -1,12 +1,25 @@
 #!/bin/bash
 # 使い方: gen-plist.sh <job>   -> generated/local.herdr-sched-<job>.plist(TB_INSTANCE があれば local.herdr-<instance>-sched-<job>.plist)
+#         gen-plist.sh --dispatch <job> [<job> ...]
+#                              -> generated/local.herdr-sched-dispatch.plist(推奨。複数のジョブを毎分 1 回の起動にまとめる。bin/dispatch.sh)
 # plist は毎分起動するだけ(StartCalendarInterval の空 dict = 毎分)。時間帯・間隔は tick.sh が実行時に判定するので、
-# conf や settings を変えても作り直さなくてよい。
+# conf や settings を変えても作り直さなくてよい(--dispatch はジョブを足す・外すときだけ作り直す)。
 set -eu
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
-load_job "${1:-}"
 OUT_DIR="${OUT_DIR:-$SCHED_ROOT/generated}"
+
+if [ "${1:-}" = --dispatch ]; then
+  shift
+  [ $# -gt 0 ] || die "使い方: gen-plist.sh --dispatch <job> [<job> ...]"
+  for j in "$@"; do ( load_job "$j" ) || exit 2; done   # 定義の誤りはここで止める(サブシェル: 変数を持ち越さない)
+  JOB=dispatch
+  PROG="$SCHED_ROOT/bin/dispatch.sh"; ARGS="$*"; WHAT="ジョブ $ARGS"
+else
+  load_job "${1:-}"
+  [ "$JOB" != dispatch ] || die "ジョブ名 dispatch は予約済み(--dispatch のラベルと重なる)"
+  PROG="$SCHED_ROOT/bin/tick.sh"; ARGS="$JOB"; WHAT="間隔 $(interval_label) / $WINDOW / $DAYS"
+fi
 
 LABEL="$(herdr_label_prefix)sched-$JOB" || exit 2   # TB_INSTANCE 未設定なら従来の local.herdr-sched-<job>
 SESS_XML=""
@@ -29,8 +42,8 @@ cat <<HDR
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>$SCHED_ROOT/bin/tick.sh</string>
-    <string>$JOB</string>
+    <string>$PROG</string>
+$(for a in $ARGS; do printf '    <string>%s</string>\n' "$a"; done)
   </array>
   <key>EnvironmentVariables</key>
   <dict>
@@ -50,4 +63,4 @@ cat <<FTR
 FTR
 } >"$OUT"
 if command -v plutil >/dev/null; then plutil -lint "$OUT" >/dev/null; fi   # macOS 以外(テスト)では lint を省く
-echo "$OUT (毎分起動。間隔 $(interval_label) / $WINDOW / $DAYS は tick.sh が判定)"
+echo "$OUT (毎分起動。$WHAT は tick.sh が判定)"

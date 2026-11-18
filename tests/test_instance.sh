@@ -74,6 +74,9 @@ eq "sched plist: HERDR_SESSION passed" "$(grep -A1 '<key>HERDR_SESSION</key>' "$
 eq "sched plist: PATH kept" "$(grep -c '<key>PATH</key>' "$TMP/gen-b"/*.plist)" "1"
 sched c TB_INSTANCE='a b'; eq "sched plist: bad instance writes nothing" "$(ls "$TMP/gen-c" 2>/dev/null | wc -l | tr -d ' ')" "0"
 sched d HERDR_SESSION='a<b'; eq "sched plist: bad HERDR_SESSION writes nothing" "$(ls "$TMP/gen-d" 2>/dev/null | wc -l | tr -d ' ')" "0"
+clean env JOBS_DIR="$JOBS" LOG_DIR="$TMP/logs" OUT_DIR="$TMP/gen-e" TB_INSTANCE=staging HERDR_SESSION=staging bash "$ROOT/scheduler/bin/gen-plist.sh" --dispatch t >/dev/null 2>&1
+eq "sched plist --dispatch: instance label" "$(label_of "$TMP/gen-e/local.herdr-staging-sched-dispatch.plist")" "local.herdr-staging-sched-dispatch"
+eq "sched plist --dispatch: HERDR_SESSION passed" "$(grep -A1 '<key>HERDR_SESSION</key>' "$TMP/gen-e"/*.plist | grep -c '<string>staging</string>')" "1"
 
 web a TB_INSTANCE=training HERDR_SESSION=training
 eq "webui plist: 1 つだけ(ラベルは TB_INSTANCE によらず固定)" "$(ls "$TMP/genw-a" 2>/dev/null | tr '\n' ' ')" "local.herdr-webui.plist "
