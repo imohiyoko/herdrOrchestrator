@@ -219,8 +219,10 @@ echo '[{"number":1,"title":"既存 PR","state":"OPEN","isDraft":false,"reviewDec
       {"number":2,"title":"T-np-001 の修正 @here <!channel>","state":"OPEN","isDraft":true,"reviewDecision":"","author":{"login":"bob"},"mergedBy":null}]' >"$GH_JSON"
 $TB pr-watch
 eq "pr-watch: new PR → pr_opened (title as data: mentions neutralised, draft, task id)" "$(nsql "SELECT text FROM notify_events WHERE type='pr_opened';")" "[PR] acme/widgets#2 を出した(draft): T-np-001 の修正 ＠here ‹!channel› / 作成: bob / タスク T-np-001"
+nsql "UPDATE notify_seen SET updated_at='sentinel' WHERE key LIKE 'pr%';"
 $TB pr-watch
 eq "pr-watch: unchanged state → no new events" "$(nsql "SELECT COUNT(*) FROM notify_events;")" "1"
+eq "pr-watch: unchanged state → notify_seen is not rewritten" "$(nsql "SELECT COUNT(*) FROM notify_seen WHERE key LIKE 'pr%' AND updated_at!='sentinel';")" "0"
 echo '[{"number":1,"title":"既存 PR","state":"OPEN","isDraft":false,"reviewDecision":"APPROVED","author":{"login":"alice"},"mergedBy":null},
       {"number":2,"title":"T-np-001 の修正","state":"OPEN","isDraft":true,"reviewDecision":"CHANGES_REQUESTED","author":{"login":"bob"},"mergedBy":null}]' >"$GH_JSON"
 $TB pr-watch

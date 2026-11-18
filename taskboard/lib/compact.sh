@@ -34,9 +34,21 @@ compact_tokens() {
   [[ $sid =~ ^[A-Za-z0-9._-]+$ ]] || return 0
   for d in "$COMPACT_PROJECTS"/*/; do [[ -f ${d}$sid.jsonl ]] && { f=${d}$sid.jsonl; break; }; done
   [[ -n $f ]] || return 0
-  line=$(grep -a '"usage"' "$f" 2>/dev/null | tail -n 1) || true
-  [[ -n $line ]] || return 0
-  jq -r '(.message.usage // .usage // empty) | (.input_tokens // 0) + (.cache_creation_input_tokens // 0) + (.cache_read_input_tokens // 0)' <<<"$line" 2>/dev/null | head -n 1
+  # transcript は数十 MB になりうるので、まず末尾だけを読む(最後の usage はほぼ必ず末尾にある)。
+  # 末尾で読めなかったとき(切れた 1 行目だけが当たった・usage が無い)だけ全体を読む
+  local tok
+  # 末尾の 1 行目は行の途中から始まりうる(JSON の断片)ので捨てる。ファイル全体が収まっていて 1 行目しか無ければ、下の全体読みで拾う
+  line=$(tail -c "${COMPACT_TAIL_BYTES:-4194304}" "$f" 2>/dev/null | sed 1d | grep -a '"usage"' | tail -n 1) || true
+  tok=$(compact_usage_sum "$line")
+  if [[ ! $tok =~ ^[0-9]+$ ]]; then
+    line=$(grep -a '"usage"' "$f" 2>/dev/null | tail -n 1) || true
+    tok=$(compact_usage_sum "$line")
+  fi
+  printf '%s' "$tok"
+}
+compact_usage_sum() {  # $1=transcript の 1 行 → トークン数(読めなければ空)
+  [[ -n $1 ]] || return 0
+  jq -r '(.message.usage // .usage // empty) | (.input_tokens // 0) + (.cache_creation_input_tokens // 0) + (.cache_read_input_tokens // 0)' <<<"$1" 2>/dev/null | head -n 1
 }
 
 cmd_compact-check() {
@@ -48,6 +60,7 @@ cmd_compact-check() {
       *) usage "compact-check: 不明な引数 $1";;
     esac
   done
+  config_has compact || true   # 設定を親のシェルで 1 回だけ引いて覚える($(compact_cfg …) のたびに DB を開かない)
   enabled=$(compact_cfg enabled 0)
   [[ $enabled == 1 ]] || { echo "compact-check: disabled (config/compact.conf の enabled = 1 で有効)"; return 0; }
   thr=$(compact_cfg threshold_tokens 150000); minint=$(compact_cfg min_interval_sec 1800); ex=$(compact_cfg exclude conductor)

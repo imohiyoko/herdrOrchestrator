@@ -32,6 +32,8 @@ eq "compact: excluded (config list and conductor) skipped" "$(grep -c '^skipme -
 eq "compact: compacted within min_interval skipped" "$(grep -c '^recent 203000 skip(compacted' <<<"$out")" "1"
 eq "compact: no approvals rule (ask) skipped with the line to add" "$(grep -c "^noappr 203000 skip(approval: agent:compact:noappr is ask; add 'agent:compact:\* = allow'" <<<"$out")" "1"
 eq "compact: output never contains transcript content" "$(grep -c SECRET-BODY <<<"$out")" "0"
+eq "compact: tail too short for the last usage line → falls back to reading the whole transcript" "$(COMPACT_TAIL_BYTES=40 $TB compact-check 2>&1 | grep -c '^big 203000 would-compact')" "1"
+eq "compact: tail cut inside the usage line → falls back too" "$(COMPACT_TAIL_BYTES=150 $TB compact-check 2>&1 | grep -c '^big 203000 would-compact')" "1"
 eq "compact: --dry-run explicit sends nothing" "$($TB compact-check --dry-run >/dev/null; echo $?)$(cp_keys)" "00"
 
 # ---- --apply: 対象 1 体にだけ /compact を 1 回送り、記録を残す。2 回目は min_interval で送らない
