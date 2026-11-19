@@ -175,7 +175,7 @@ tb digests [D-<n>] [--json]  # 送ったまとめの一覧 / 全文
 agent 同士は `herdr agent prompt` を直接打たず、`tb send` を通す。tb が送信者を特定し、ルールを当て、記録してから送る。
 
 ```bash
-tb send <宛先 agent 名> --text '本文' [--task T-<project>-NNN] [--kind task|info|answer] [--json]
+tb send <宛先 agent 名> --text '本文' [--task T-<project>-NNN] [--kind task|info|answer] [--reply-to O-<n>] [--json]
 tb flush                                   # 宛先が使用中で積まれたものを届ける(tb digest も最初に呼ぶ)
 tb outbox [--status queued|sent|denied] [--json]
 ```
@@ -183,7 +183,7 @@ tb outbox [--status queued|sent|denied] [--json]
 - 送信者は `HERDR_PANE_ID` + `herdr agent list` から決まる(`--from` などはエラー)。宛先は herdr にいる agent 名だけ
 - 宛先ルールは `config/routes.conf`(例: `config/routes.conf.example`)。`<送信者> -> <宛先>` の glob を上から見て、最初に一致した行で決まる。
   行頭 `!` は拒否。どれにも一致しなければ拒否。**ファイルが無いときは「指揮官(`conductor` と `projects.conf` の値)→ 誰にでも」だけ許可**
-- 届く文面は `[from: <名前> / <pane> / <task-id か -> / <kind>] <本文>`(1 行化、`[from:` の偽装は無効化、`TB_SEND_MAX` 字まで)
+- 届く文面は `[from: <名前> / <pane> / <task-id か -> / <kind> / O-<n>] <本文>`(確かめた返信は `/ O-<n> re O-<元>`)(1 行化、`[from:` の偽装は無効化、`TB_SEND_MAX` 字まで)
 - 宛先が `idle` / `done` 以外なら `outbox` に積み、`tb flush` で古い順に届ける(同じ宛先の後続は追い越さない)
 - 拒否したものも `outbox` に `denied` と根拠(`reason`)つきで残る
 - 終了コード: 0 送信済み(または保留した)/ 10 宛先使用中で積んだ / 11 送信失敗で積んだ / 12 保留に失敗して積んだ / 4 ルールで拒否 / 20 人の承認待ち(approvals)/ 3 送信者を特定できず未保存
@@ -211,6 +211,16 @@ tb inbox-read I-<n> [--json]      # 全文を読み、既読にする
 
 - 読めるのは自分宛てだけ(送信者も、ほかの agent も読めない。ほかの宛ての ID は「見つからない」)
 - 受け手は、人に頼まれたとき(「確認して」など)だけ読む(`roles/_common.md`)
+
+### 返信(`--reply-to`)
+
+保留している相手でも、相手が自分で聞いたことへの答えはすぐ届けたい。ただし種別 `answer` を信じると状況報告まで届いてしまうので、返信かどうかは tb が DB で確かめる。
+
+- `tb send <宛先> --reply-to O-<n> ...`: 届いた送信 `O-<n>`(文面のラベルの番号、inbox の `outbox_id`)への返信だと主張する
+- 認める条件(すべて): `O-<n>` がある / `O-<n>` は「この送信の宛先 → この送信の送信者」(組が逆向き)/ `O-<n>` が届いている(`sent`。inbox に保留されたものも含む)/ まだ認めた返信が無い。ルールで拒否された送信は認めない
+- 認めた返信は delivery の `reply=<now|hold>` で決まる(`*` には含まれない。`reply=` を書いた行が無ければ種別で決まる)。認めなかったら送信者に理由を出し(stderr)、返信ではない送信として通常の規則で扱う(拒否はしない)
+- 結果は outbox の `reply_to` / `reply_check`(`ok` か、認めなかった理由)に残る。返信の承認を人が却下したら返信済みに数えない
+- 返されていない依頼 = `reply_check='ok'` の行に `reply_to` で指されていない送信(`SELECT * FROM outbox o WHERE status='sent' AND NOT EXISTS (SELECT 1 FROM outbox r WHERE r.reply_to=o.id AND r.reply_check='ok')`)
 
 ## 人の承認(approvals)
 
