@@ -245,7 +245,9 @@ cmd_update() {
   local guard="" n ftype fparent
   if [[ -n $ntype || -n $nparent ]]; then
     ftype=${ntype:-$(jq -r .type <<<"$row")}; fparent=${nparent:-$(jq -r '.parent_id // empty' <<<"$row")}
-    guard=" AND $(hierarchy_ok_sql "$ftype" "$fparent" "$id")"
+    # 指定しなかった種別・親は読んだときの値で検査したので、書く時点でも変わっていないことを条件にする
+    guard=" AND $(hierarchy_ok_sql "$ftype" "$fparent" "$id") AND type=$(q "$(jq -r .type <<<"$row")")
+            AND parent_id IS NULLIF($(q "$(jq -r '.parent_id // empty' <<<"$row")"),'')"
   fi
   local IFS=,
   n=$(sql "BEGIN IMMEDIATE; UPDATE main.tasks SET ${sets[*]}, updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id")$guard;
