@@ -473,7 +473,7 @@ cmd_labels() {
   if ((json)); then sql -json "$qs" | jq -c '(. // [])[]'; else sql -separator $'\t' "$qs"; fi
 }
 
-# ---------- history / events(016 の task_events。ADR 0003 の段 1) ----------
+# ---------- history / events(017 の task_events。ADR 0003 の段 1) ----------
 # tb history <id>: そのタスクの履歴を古い順に(E-番号 時刻 種類 前 後 変えた者 元)
 EVENT_COLS="'E-'||id AS id, task_id, kind, old, new, actor, ref, created_at"
 events_out() {  # $1=json(0/1) $2=WHERE $3=ORDER/LIMIT

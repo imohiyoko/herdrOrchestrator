@@ -12,7 +12,11 @@
 # 書くのは人だけ。環境変数でファイルを明示しているときはそのファイルを、そうでなければ DB のこのセッションの行(--shared なら共通の行)を書く。
 
 CONFIG_DIR=${TB_CONFIG_DIR:-$TB_ROOT/config}   # checkout の設定ファイルの置き場(テストで差し替え)
+<<<<<<< HEAD
 CONFIG_KEYS="projects approvals grants routes limits notify notify-rules compact sched-watch spawn-policy role-models conv-routes"
+=======
+CONFIG_KEYS="projects approvals grants routes delivery limits notify compact sched-watch spawn-policy role-models conv-routes"
+>>>>>>> feat/task-events
 
 # キーの情報: CFG_ENV(上書きの環境変数)、CFG_FILE(checkout のファイル名)、CFG_EXAMPLE(1 なら .example も既定値として読む)
 config_key_info() {
@@ -22,6 +26,7 @@ config_key_info() {
     approvals)    CFG_ENV=TB_APPROVALS;       CFG_FILE=approvals.conf; CFG_EXAMPLE=1;;
     grants)       CFG_ENV=TB_GRANTS;          CFG_FILE=grants.conf;;
     routes)       CFG_ENV=TB_ROUTES;          CFG_FILE=routes.conf;;
+    delivery)     CFG_ENV=TB_DELIVERY;        CFG_FILE=delivery.conf;;
     notify)       CFG_ENV=TB_NOTIFY_CONF;     CFG_FILE=notify.conf;;
     notify-rules) CFG_ENV=TB_NOTIFY_RULES;    CFG_FILE=notify-rules.conf;;   # チケットのイベントの通知の規則(lib/notifyrules.sh)。.example は既定値にしない(無ければ規則なし)
     limits)       CFG_ENV=TB_LIMITS;          CFG_FILE=limits.conf; CFG_EXAMPLE=1;;

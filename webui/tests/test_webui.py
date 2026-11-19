@@ -579,6 +579,53 @@ check("outbox は新しい順", ob[2].index("O-4") < ob[2].index("O-3") < ob[2].
 check("outbox に操作フォームなし", "<form action" not in ob[2].split("</nav>", 1)[1] and "approve</button" not in ob[2])
 check("POST /outbox は 405", cl.raw("POST", "/outbox", {"a": "b"})[0] == 405)
 check("未ログインの /outbox は /login へ", Client(port).get("/outbox")[0] == 302)
+# 報告・承認待ち: 保留した送信(inbox)と「忘れているかも」(tb reminders の結果)。どちらも読むだけ、データがあるときだけ出す
+_ib = cl.get("/inbox")[2]
+check("inbox: データが無ければ保留・忘れているかもの欄は出ない", "保留した送信" not in _ib and "忘れているかも" not in _ib)
+check("inbox: inbox 表が無い DB でも本文の指定は 200", cl.get("/inbox?held=1")[0] == 200)
+_c = sqlite3.connect(env["WEBUI_TB_DB"])
+_c.executescript("""CREATE TABLE inbox (id INTEGER PRIMARY KEY AUTOINCREMENT, herdr_session TEXT NOT NULL DEFAULT '', outbox_id INTEGER NOT NULL,
+  recipient TEXT NOT NULL, from_name TEXT NOT NULL, kind TEXT NOT NULL, task_id TEXT, text TEXT NOT NULL, rule TEXT NOT NULL, created_at TEXT NOT NULL, read_at TEXT);
+INSERT INTO inbox (herdr_session,outbox_id,recipient,from_name,kind,task_id,text,rule,created_at,read_at) VALUES
+  ('default',7,'assistant','conductor','info','T-1','HELD-BODY <script>alert(9)</script>','r','2026-11-06T01:00:00Z',NULL),
+  ('default',8,'assistant','<b>bob</b>','answer',NULL,'READ-BODY','r','2026-11-06T02:00:00Z','2026-11-06T03:00:00Z'),
+  ('other',9,'assistant','conductor','info',NULL,'OTHER-BODY','r','2026-11-06T04:00:00Z',NULL);""")
+_rem = {"at": "2026-11-06T05:00:00Z", "full": False, "removed": ["o:9"], "text": "x", "items": [
+    {"p": 1, "key": "due:T-1", "what": "期限: T-1 <i>ship</i>", "who": "alpha", "due": "2026-11-05", "ref": "T-1", "age": "1d", "status": "changed", "day": 2},
+    {"p": 2, "key": "q:1", "what": "質問: T-1", "who": "人", "due": "", "ref": "C-1", "age": "2h", "status": "continuing", "day": 3},
+    {"p": 2, "key": "pr:org/repo#7", "what": "レビュー待ちの PR: add", "who": "レビュー担当", "due": "", "ref": "org/repo#7", "age": "1d", "status": "new", "day": 1},
+    {"p": 4, "key": "inbox:1", "what": "未読の保留メッセージ", "who": "assistant", "due": "", "ref": "I-1", "age": "1h", "status": "new", "day": 1},
+    {"p": 9, "key": "bad", "what": "壊れた項目", "status": "new"}]}
+_c.execute("INSERT INTO notify_seen (herdr_session,key,value,updated_at) VALUES ('default','reminders:last',?, 't')", (json.dumps(_rem),))
+_c.execute("INSERT INTO notify_seen (herdr_session,key,value,updated_at) VALUES ('other','reminders:last',?, 't')",
+           (json.dumps({"at": "x", "items": [{"p": 1, "key": "due:x", "what": "OTHER-SESSION", "status": "new"}]}),))
+_c.commit(); _c.close()
+time.sleep(3.2)
+_ib = cl.get("/inbox")[2]
+_rm = _ib.split('<h2 id="reminders">')[1].split("</p>")[0] if '<h2 id="reminders">' in _ib else ""
+check("inbox: 忘れているかもの欄が出る(優先度・期限・前回から)", "忘れているかも" in _rm and "急ぎ" in _rm and "2026-11-05" in _rm and "継続(3 日目)" in _rm
+      and "変化" in _rm and "解消 1 件" in _rm, _rm[:400])
+check("inbox: 忘れているかもの値はエスケープ、壊れた項目は捨てる", "&lt;i&gt;ship&lt;/i&gt;" in _rm and "<i>ship" not in _rm and "壊れた項目" not in _rm)
+check("inbox: 項目は既存の画面へリンク(質問は /inbox、タスク、保留は本文、PR はリンクなし)",
+      '<a href="/inbox">C-1</a>' in _rm and '<a href="/tasks/T-1">T-1</a>' in _rm and '<a href="/inbox?held=1">I-1</a>' in _rm
+      and "<td>org/repo#7</td>" in _rm, _rm[:600])
+check("inbox: 別のセッションのまとめは出ない", "OTHER-SESSION" not in _ib)
+_hd = _ib.split('<h3 id="held">')[1].split("</p>")[0] if '<h3 id="held">' in _ib else ""
+check("inbox: 保留した送信の一覧(このセッションの行だけ、未読・既読)", "I-1" in _hd and "I-2" in _hd and "I-3" not in _hd
+      and "未読" in _hd and "既読 2026-11-06T03:00:00Z" in _hd and "&lt;b&gt;bob&lt;/b&gt;" in _hd, _hd[:500])
+check("inbox: 一覧に本文は出さない", not any(x in _ib for x in ("HELD-BODY", "READ-BODY", "OTHER-BODY")))
+_hb = cl.get("/inbox?held=1")[2]
+check("inbox: 本文は明示して開いたときだけ(エスケープ)", "保留した送信 I-1 の本文" in _hb and "HELD-BODY &lt;script&gt;" in _hb and "<script>alert(9)" not in _hb
+      and "READ-BODY" not in _hb)
+check("inbox: 別のセッションの本文は開けない", "OTHER-BODY" not in cl.get("/inbox?held=3")[2] and "見つかりません" in cl.get("/inbox?held=3")[2])
+check("inbox: 不正な held は無視(見つからない)", all(cl.get("/inbox?held=" + v)[0] == 200 for v in ("x", "-1", "1%27")) and "見つかりません" in cl.get("/inbox?held=abc")[2])
+check("inbox: 欄に操作フォームを置かない", "<form" not in _rm and "<form" not in _hd)
+_it = [it for it in json.loads(cl.get("/api/notifications")[2])["items"] if it["id"].startswith("rm:")]
+check("通知: 急ぎ(期限切れ・今日・明日)の項目だけ緊急通知に出る", [it["id"] for it in _it] == ["rm:due:T-1:2026-11-05"] and _it[0]["href"] == "/tasks/T-1", str(_it))
+_c = sqlite3.connect(env["WEBUI_TB_DB"])
+_c.executescript("DROP TABLE inbox; DELETE FROM notify_seen WHERE key='reminders:last';")
+_c.commit(); _c.close()
+time.sleep(3.2)
 _c = sqlite3.connect(env["WEBUI_TB_DB"])
 _c.executescript("INSERT INTO alerts (fingerprint,source,first_seen,last_seen,severity,title,status,result_summary,analyzed_at) VALUES ('f1','watch','t0','t0','critical','API <i>5xx</i>','analyzed','設定漏れ','t1');"
                  "INSERT INTO alerts (fingerprint,source,first_seen,last_seen,severity,title,status,result_summary,analyzed_at) VALUES ('f2','watch','t0','t0','low','軽微','analyzed','誤報','t2');"
@@ -705,7 +752,7 @@ _cx.commit()
 _TD3 = cl.get("/tasks/T-3")[2]
 check("タスク詳細: 外部リンク(http(s) だけをリンクに)", 'href="https://acme.slack.com/archives/C1/p1"' in _TD3 and 'rel="noopener noreferrer"' in _TD3
       and 'href="javascript' not in _TD3 and "javascript:alert(1)" in _TD3)
-# 履歴(016 の task_events): 新しい順、エスケープ、別セッションの行は出ない、行が無ければ欄も出ない
+# 履歴(017 の task_events): 新しい順、エスケープ、別セッションの行は出ない、行が無ければ欄も出ない
 check("タスク詳細: 履歴が無ければ欄は出ない", "<h2>履歴</h2>" not in _TD3)
 _cx.executemany("INSERT INTO task_events (herdr_session, task_id, kind, old, new, actor, ref, created_at) VALUES (?,?,?,?,?,?,?,?)",
                 [("default", "T-3", "created", None, "todo", "human", None, "2026-01-01T00:00:00Z"),

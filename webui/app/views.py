@@ -11,7 +11,7 @@ from .config import JOB_RE, REFRESH_SEC, SCHED_LOGS, STALL_MIN, TASK_STALE_HOURS
 from .sanitize import clean, e
 from . import graph
 from .herdr import agent_key, agent_session, get_agents, read_agent, workspace_label
-from .data import badge_count, has_resolution, parse_ts, NOTIFY_POLL_SEC, QUEUED_WARN_SEC, outbox_rows, activity_for, agent_ops, agent_registry, stopped_agents, db_conn, needs_human, parse_jsonl, q, stalled, tail_lines, tasks_for_agent, urgent_items, LEDGER_MAX, LEDGER_RESULTS, approval_history, ledger_kinds, ledger_rows, ledger_summary
+from .data import badge_count, has_resolution, parse_ts, NOTIFY_POLL_SEC, QUEUED_WARN_SEC, outbox_rows, activity_for, agent_ops, agent_registry, stopped_agents, db_conn, needs_human, parse_jsonl, q, stalled, tail_lines, tasks_for_agent, urgent_items, held_message, held_messages, reminder_href, reminders_last, LEDGER_MAX, LEDGER_RESULTS, approval_history, ledger_kinds, ledger_rows, ledger_summary
 from .actions import NOTE_MAX
 from .jobview import agent_state, command_summary, job_about, job_defs, job_summary, mask, next_runs, prompt_file, send_task_decision
 from .jobs import DAY_PRESETS, DAY_TOKENS, INTERVAL_UNITS, interval_sec, interval_text, job_info, job_last, job_names
@@ -715,7 +715,7 @@ def page_task(tid, qs=None, ctx=None):
         if lk:
             body += "<h2>リンク</h2>" + table(["関係", "タスク", "題", "状態"],
                 [[e(x["rel"]), tlink(x["id"]), e(_head(x["title"], TITLE_MAX)), e(x["status"])] for x in lk])
-    # 履歴(016 の task_events。ADR 0003)。表の無い DB では出さない。新しい順に最大 HISTORY_MAX 件
+    # 履歴(017 の task_events。ADR 0003)。表の無い DB では出さない。新しい順に最大 HISTORY_MAX 件
     ev = q("SELECT id, kind, old, new, actor, ref, created_at FROM task_events WHERE task_id=? ORDER BY id DESC LIMIT ?", (tid, HISTORY_MAX))
     if ev:
         body += "<h2>履歴</h2>" + table(["id", "時刻", "種類", "前", "後", "変えた者", "元"],
@@ -740,11 +740,61 @@ def page_task(tid, qs=None, ctx=None):
     return f"タスク {clean(t['id'])}", body
 
 
+REM_STATUS_LABEL = {"new": "新規", "changed": "変化", "continuing": "継続"}
+
+
+def reminders_html():
+    """「忘れているかも」(tb reminders --publish の最新のまとめ)。まとめが無い・項目が無ければ何も出さない。読み取り専用。"""
+    rem = reminders_last()
+    if not rem or not rem["items"]:
+        return ""
+    rows = []
+    for it in rem["items"]:
+        href = reminder_href(it)
+        ref = f'<a href="{e(href)}">{e(it["ref"])}</a>' if href else e(it["ref"])
+        label = f'<span class=warn>{e(it["label"])}</span>' if it["p"] == 1 else e(it["label"])
+        st = REM_STATUS_LABEL[it["status"]] + (f'({it["day"]} 日目)' if it["status"] == "continuing" else "")
+        rows.append([label, e(it["what"]), e(it["who"] or "-"), e(it["due"] or "-"), ref, e(it["age"] or "-"), e(st)])
+    return ('<h2 id="reminders">忘れているかも</h2>'
+            + table(["優先", "何が", "誰の番", "期限", "参照", "経過", "前回から"], rows)
+            + f'<p class=note>{e(rem["at"])} の tb reminders --publish の結果(定期実行が更新する)。'
+            + (f'前回から解消 {rem["removed"]} 件。' if rem["removed"] else "")
+            + "この欄は読むだけで、agent には何も送りません。承認や質問への対応は、参照のリンク先の画面で。</p>")
+
+
+def held_html():
+    """保留した送信(受け手が後で tb inbox で読むもの)。行が無ければ何も出さない。本文は一覧に出さない。"""
+    rows = held_messages()
+    if not rows:
+        return ""
+    return ('<h3 id="held">保留した送信 (inbox)</h3>' + table(
+        ["id", "from", "宛先", "種別", "タスク", "時刻", "状態", ""],
+        [[f"I-{r['id']}", e(r["from_name"]), e(r["recipient"]), e(r["kind"]),
+          tlink(r["task_id"]) if r["task_id"] else "-", e(r["created_at"]),
+          "未読" if not r["read_at"] else f"既読 {e(r['read_at'])}",
+          f'<a href="/inbox?held={r["id"]}#held-body">本文を見る</a>'] for r in rows])
+        + "<p class=note>宛先の入力に打ち込まず保留した送信です。受け手は人に頼まれたときに tb inbox で読みます。"
+          "この画面は読むだけで、既読にも送信にもしません。</p>")
+
+
+def held_detail_html(qs):
+    """?held=<n> のときだけ、その 1 件の本文を出す(一覧には本文を出さない)。"""
+    hid = _one(qs, "held")
+    if not hid:
+        return ""
+    m = held_message(int(hid)) if hid.isdigit() and len(hid) <= 12 else None
+    if not m:
+        return '<p class=note id="held-body">保留した送信が見つかりません。</p>'
+    return (f'<h2 id="held-body">保留した送信 I-{m["id"]} の本文</h2>'
+            f'<p>{e(m["from_name"])} → {e(m["recipient"])} ({e(m["kind"])}) {e(m["created_at"])} / O-{m["outbox_id"]}</p>'
+            f'<pre>{e(m["text"])}</pre><p><a href="/inbox#held">閉じる</a></p>')
+
+
 def page_inbox(qs, ctx=None):
     ctx = {} if ctx is None else ctx
     comments, proxies, blocked = needs_human()
     ids = {c["id"] for c in comments}
-    body = resolve_notice(qs) + "<h2>承認待ち(どこで・どう承認するか)</h2>"
+    body = resolve_notice(qs) + held_detail_html(qs) + reminders_html() + "<h2>承認待ち(どこで・どう承認するか)</h2>"
     appr = [it for it in urgent_items() if it.get("kind") in APPROVAL_KINDS]
     body += table(["種別", "何が・中身・どう対応するか", "時刻"],
                   [[f'<span class=warn>{e(it["label"])}</span>', summary3(it), e(it["ts"])] for it in appr])
@@ -764,6 +814,7 @@ def page_inbox(qs, ctx=None):
         ["agent", "workspace", ""],
         [[alink(a, "#approval"), e(a.get("workspace_id")), f'<a href="/agents/{quote(agent_key(a), safe="")}#approval">承認待ちの内容を見る</a>']
          for a in blocked])
+    body += held_html()
     rest = [c for c in q("SELECT * FROM comments ORDER BY id DESC LIMIT 60") if c["id"] not in ids][:50]
     body += "<h2>直近の報告</h2>" + table(
         ["id", "種別", "タスク", "本文", "from", "時刻", "状態"],
@@ -1250,7 +1301,7 @@ def page_notifications(_qs):
     body += table(["種別", "何が・中身・どう対応するか", "時刻"],
                   [[f'<span class=warn>{e(it["label"])}</span>', summary3(it), e(it["ts"])] for it in items])
     body += ("<p class=note>対象: 未完了タスクの question/blocked 報告、pending-human の代行依頼、blocked の agent、"
-             f"working のまま {STALL_MIN} 分超の agent、最後の実行が失敗した定期実行。"
+             f"working のまま {STALL_MIN} 分超の agent、最後の実行が失敗した定期実行、tb reminders が急ぎとしたもの(期限切れ・今日・明日が期限)。"
              "通知は Web UI のタブが 1 つ開いている間だけ届きます(タブを閉じると止まる)。</p>")
     return "緊急通知", body
 

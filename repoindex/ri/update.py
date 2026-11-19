@@ -17,8 +17,9 @@ import os
 import shlex
 import subprocess
 import sys
+import time
 
-from . import cli, read, scan, store
+from . import cli, read, rollout, scan, store
 
 MAX_FILE_BYTES = 200_000     # これより大きいファイルは要約しない
 DIR_INPUT_BYTES = 20_000     # ディレクトリの要約に渡す中身の合計の上限
@@ -35,6 +36,23 @@ def git(path, *args, input=None):
 
 def head_of(path):
     return git(path, "rev-parse", "HEAD").strip()
+
+
+SETTING_KEYS = ("REPOINDEX_SUMMARIZER", "REPOINDEX_SUMMARIZER_DIR", "REPOINDEX_MODEL", "REPOINDEX_MAX_ATTEMPTS")
+
+
+def load_settings():
+    """<データの場所>/settings.conf(`KEY=VALUE`)を、環境変数に無いものだけ読む。scheduler から動くとき用。
+    読むのは決まったキーだけ。"""
+    p = os.path.join(store.data_dir(), "settings.conf")
+    if not os.path.exists(p):
+        return
+    with open(p, encoding="utf-8") as f:
+        for line in f:
+            k, sep, v = line.strip().partition("=")
+            k = k.strip()
+            if sep and k in SETTING_KEYS and not os.environ.get(k):
+                os.environ[k] = v.strip()
 
 
 def max_attempts():
@@ -172,8 +190,11 @@ def _final_rejected(con, rid, kind, rel, commit):
 
 def run(name, dry_run=False, check_only=False, out=sys.stdout, err=sys.stderr):
     """1 つのリポジトリを更新する。戻り値は終了コード(check_only では 0 = 変更あり、1 = 変更なし)。"""
+    t0 = time.monotonic()
+    load_settings()
     con = store.connect_rw()
     try:
+        rollout.require(con, 1, "update")
         row = con.execute("SELECT id, path, head_commit, granularity FROM repos WHERE name = ?", (name,)).fetchone()
         if not row:
             raise store.StoreError(f"リポジトリが登録されていません: {name}")
@@ -278,6 +299,8 @@ def run(name, dry_run=False, check_only=False, out=sys.stdout, err=sys.stderr):
         with con:
             con.execute("UPDATE repos SET head_commit = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')"
                         " WHERE id = ?", (new, rid))
+        rollout.record_run(con, rid, old, new, targets=len(targets), summarized=done, regenerated=regenerated,
+                           rejected=rejected, final_rejects=failed, missing=n_missing, seconds=time.monotonic() - t0)
         print(f"{name}: {(old or '-')[:12]} -> {new[:12]} 作成 {done} 件、作り直し {regenerated} 件、"
               f"検査で落ちた {rejected} 回、上限に達した {failed} 件、missing {n_missing} 件", file=out)
         return 0

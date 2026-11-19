@@ -20,7 +20,11 @@ CONF=${TB_CONFIG:-$TB_ROOT/config/projects.conf}
 HERDR_BIN=${HERDR_BIN:-$HERDR_DEFAULT_BIN}
 
 # 機能ごとのファイルは taskboard/lib/。読み込む順に意味があるのは db → core → transport だけ
+<<<<<<< HEAD
 for _m in db config core transport kinds tasks proxy activity comments digest schedwatch schedjobs send roles approvals risk alerts review agents models spawn limits shed handoff notify notifyrules compact prqueue gate whoami dbimport conv; do
+=======
+for _m in db config core transport kinds tasks proxy activity comments digest schedwatch schedjobs send roles approvals risk alerts review agents models spawn limits shed handoff notify compact prqueue gate whoami dbimport conv reminders; do
+>>>>>>> feat/task-events
   # shellcheck source=/dev/null
   source "$TB_ROOT/lib/$_m.sh"
 done
