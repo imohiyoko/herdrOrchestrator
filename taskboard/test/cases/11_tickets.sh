@@ -25,7 +25,7 @@ eq "tickets: rejected adds leave no rows" "$($TB list -p tk | wc -l | tr -d ' ')
 
 # --- list: 既定の列は変えない / --long / 絞り込み / 並び
 eq "tickets: default list columns unchanged" "$($TB list -p tk | head -1)" "$(printf '%s\ttodo\t-\tログイン刷新' "$e1")"
-eq "tickets: --long columns" "$($TB list -p tk --long | head -1 | cut -f1-5,8,9)" "$(printf '%s\ttodo\tepic\thigh\t-\tauth,ui\tログイン刷新' "$e1")"
+eq "tickets: --long columns" "$($TB list -p tk --long | head -1 | cut -f1-5,8,11)" "$(printf '%s\ttodo\tepic\thigh\t-\tauth,ui\tログイン刷新' "$e1")"
 eq "tickets: --long has created/updated" "$($TB list -p tk --long | head -1 | cut -f6,7 | grep -cE '^[0-9T:Z-]+'$'\t''[0-9T:Z-]+$')" "1"
 eq "tickets: filter by label" "$($TB list -p tk -l ui | cut -f1 | tr '\n' ' ')" "$e1 $s1 "
 eq "tickets: labels AND" "$($TB list -p tk -l ui -l auth | cut -f1)" "$e1"

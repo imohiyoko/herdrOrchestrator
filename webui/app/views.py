@@ -40,9 +40,10 @@ pre.mermaid{background:#fff}
 .inst{padding:2px 10px;border-radius:4px;font-weight:bold;background:#d0d7de;color:#1f2328}.inst-warn{background:#8a5a00;color:#fff;border:1px solid #fff}
 .doc{background:#fff;border:1px solid #d0d7de;padding:8px 24px;overflow-wrap:anywhere}
 .doc table{width:auto}.doc pre{background:#f6f8fa}.doc blockquote{border-left:4px solid #d0d7de;margin:0;padding:0 12px;color:#57606a}
+.card{background:#f6f8fa;border:1px solid #d0d7de;border-radius:4px;padding:4px 6px;margin:0 0 6px}
 .doc h2.md{font-size:20px;border-bottom:1px solid #d0d7de}.doc ul,.doc ol{padding-left:1.5em}.err{background:#ffebe9;border:1px solid #cf222e;padding:6px 10px}
 """
-NAV = [("/", "概要"), ("/notifications", "緊急通知"), ("/agents", "agent"), ("/tasks", "タスク"),
+NAV = [("/", "概要"), ("/notifications", "緊急通知"), ("/agents", "agent"), ("/tasks", "タスク"), ("/board", "ボード"),
        ("/inbox", "報告・承認待ち"), ("/outbox", "送信"), ("/docs", "ドキュメント"), ("/jobs", "定期実行"), ("/ledger", "送信履歴"), ("/perms", "権限"),
        ("/sessions", "セッション")]
 
@@ -557,6 +558,79 @@ def refs_html(raw):
     return "<br>".join(out) or "-"
 
 
+def has_sprints():
+    """sprints 表と tasks.sprint_id があるか(スキーマ 015 より前の DB では無い。tb を一度動かせば足される)。"""
+    return (bool(q("SELECT name FROM sqlite_master WHERE name='sprints'"))
+            and any(r.get("name") == "sprint_id" for r in q("PRAGMA table_info(tasks)")))
+
+
+SPRINT_RE = re.compile(r"S-[0-9]{1,9}")
+BOARD_COLS = ["todo", "in_progress", "review", "blocked", "done"]
+
+
+def page_board(qs, ctx=None):
+    """スプリントのボード(読み取りのみ)。状態ごとの列に、優先度順でカードを並べる。書き込みは手元の tb で行う。"""
+    if ctx is not None:
+        ctx["norefresh"] = True   # 入力欄があるので自動更新しない
+    if not has_sprints():
+        return "ボード", ('<p class=note>スプリントの表がまだありません。手元で <code>tb sprints</code> を一度実行すると作られます。</p>')
+    proj, sid, label = _one(qs, "project")[:100], _one(qs, "sprint"), _one(qs, "label")
+    errs = []
+    if sid and not SPRINT_RE.fullmatch(sid):
+        errs.append("スプリントは S-<番号> です"); sid = ""
+    if label and not LABEL_RE.fullmatch(label):
+        errs.append("ラベルは 40 文字までで、空白・カンマ・引用符を含みません"); label = ""
+    sprints = q("SELECT s.*, COUNT(t.id) AS n, SUM(t.status='done') AS done_n, COALESCE(SUM(t.points),0) AS pts,"
+                " COALESCE(SUM(CASE WHEN t.status='done' THEN t.points END),0) AS done_pts"
+                " FROM sprints s LEFT JOIN tasks t ON t.sprint_id=s.id" + (" WHERE s.project=?" if proj else "") +
+                " GROUP BY s.id ORDER BY CASE s.state WHEN 'active' THEN 1 WHEN 'planned' THEN 2 ELSE 3 END, s.project, s.id DESC",
+                (proj,) if proj else ())
+    cur = None
+    if sid:
+        cur = next((x for x in sprints if "S-" + str(x["id"]) == sid), None)
+        if cur is None:
+            errs.append(f"スプリント {sid} が見つかりません"); sid = ""
+    if cur is None:
+        cur = next((x for x in sprints if x["state"] == "active"), None)
+    body = err_html("。".join(errs)) * bool(errs)
+    projects = [r["project"] for r in q("SELECT DISTINCT project FROM sprints ORDER BY project")]
+    popts = '<option value="">(すべて)</option>' + "".join(f'<option value="{e(p_)}"{" selected" if p_ == proj else ""}>{e(p_)}</option>' for p_ in projects)
+    sopts = "".join(f'<option value="S-{int(x["id"])}"{" selected" if cur and x["id"] == cur["id"] else ""}>'
+                    f'S-{int(x["id"])} {e(x["project"])} / {e(x["name"])} [{e(x["state"])}]</option>' for x in sprints)
+    body += ('<form method=get action="/board"><p>'
+             f'<label>PJ <select name=project>{popts}</select></label> '
+             f'<label>スプリント <select name=sprint><option value="">(active なもの)</option>{sopts}</select></label> '
+             f'<label>ラベル <input type=text name=label value="{e(label)}" maxlength=40 size=12></label> '
+             '<button type=submit>表示</button> <a href="/board">解除</a></p></form>')
+    if cur is None:
+        body += "<p>表示するスプリントがありません(active なものが無いか、まだ作っていません)。手元で <code>tb sprint-add</code> / <code>tb sprint-start</code>。</p>"
+    else:
+        cid = int(cur["id"])
+        body += (f'<h2>S-{cid} {e(cur["name"])} <span class=note>[{e(cur["state"])}] {e(cur.get("start_date") or "-")} 〜 {e(cur.get("end_date") or "-")}'
+                 f'・{e(cur["project"])}</span></h2>')
+        if cur.get("goal"):
+            body += f"<p>目標: {e(cur['goal'])}</p>"
+        body += (f'<p>完了 {int(cur["done_n"] or 0)} / {int(cur["n"] or 0)} 件・ポイント {int(cur["done_pts"] or 0)} / {int(cur["pts"] or 0)}</p>')
+        rows = q("SELECT * FROM tasks WHERE sprint_id=? AND (?='' OR EXISTS (SELECT 1 FROM json_each(tasks.labels) WHERE value=?))"
+                 " ORDER BY CASE priority WHEN 'highest' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END, id"
+                 " LIMIT 300", (cid, label, label))
+
+        def card(t):
+            pts = f' <span class=note>{int(t["points"])}pt</span>' if t.get("points") is not None else ""
+            return (f'<div class=card>{tlink(t["id"])} {priority_html(t.get("priority"))} <span class=note>{e(t.get("type") or "")}</span>{pts}<br>'
+                    f'{e(_head(t["title"], TITLE_MAX))}<br><span class=note>{e(t.get("owner_agent") or "-")}</span> '
+                    f'{labels_html(t.get("labels"), lambda label: "/board?" + urlencode({"sprint": "S-" + str(cid), "label": label}))}</div>')
+        cols = [[card(t) for t in rows if t["status"] == c] for c in BOARD_COLS]
+        body += table([f"{c} ({len(cs)})" for c, cs in zip(BOARD_COLS, cols)], [["".join(cs) or "-" for cs in cols]])
+        body += ("<p class=note>読み取りのみ。カードの移動・スプリントへの出し入れは手元で <code>tb update &lt;id&gt; --status …</code> / "
+                 "<code>--sprint S-n</code>、閉じるのは <code>tb sprint-close S-n [--carry S-m]</code>。</p>")
+    body += "<h2>スプリント一覧</h2>" + table(["スプリント", "PJ", "名前", "状態", "期間", "完了 / 件数", "ポイント"],
+        [[f'<a href="/board?sprint=S-{int(x["id"])}">S-{int(x["id"])}</a>', e(x["project"]), e(x["name"]), e(x["state"]),
+          f'{e(x.get("start_date") or "-")} 〜 {e(x.get("end_date") or "-")}', f'{int(x["done_n"] or 0)} / {int(x["n"] or 0)}',
+          f'{int(x["done_pts"] or 0)} / {int(x["pts"] or 0)}'] for x in sprints])
+    return "ボード", body
+
+
 def db_conn_ok():
     c = db_conn()
     if c is None:
@@ -621,6 +695,9 @@ def page_task(tid, qs=None, ctx=None):
         info.append(("説明", f'<pre>{e(_head(t.get("description"), REPORT_MAX))}</pre>' if t.get("description") else "-"))
     if "refs" in t:
         info.append(("外部リンク", refs_html(t.get("refs"))))
+    if "sprint_id" in t:
+        info.append(("スプリント", f'<a href="/board?sprint=S-{int(t["sprint_id"])}">S-{int(t["sprint_id"])}</a>' if t.get("sprint_id") is not None else "バックログ"))
+        info.append(("ポイント", e(t.get("points")) if t.get("points") is not None else "-"))
     info.append(("summary", e(_head(t.get("summary"), REPORT_MAX))))
     info.append(("note", e(_head(t.get("note"), REPORT_MAX))))
     sh = task_stale(t)
@@ -1351,6 +1428,8 @@ def route(path, qs, ctx=None):
         return page_doc(qs, ctx)
     if path == "/tasks":
         return page_tasks(qs, ctx)
+    if path == "/board":
+        return page_board(qs, ctx)
     if path in STATIC:
         t, b = STATIC[path](qs)
         return t, b
