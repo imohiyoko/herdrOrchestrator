@@ -179,6 +179,7 @@ tb notify flush               承認待ち・定期まとめを積み、slack �
 tb notify ack N-<n> <hash> [--id X]   notifier agent(か人)が、投稿した結果を返す。hash は tb notify hash '<投稿した本文>' で出す。
                               送った本文と合わなければ警告のイベントを積む(終了コード 1)。ack が来ないものは再送し、上限で failed
 tb notify hash '<本文>'       本文の hash(12 桁)を出す
+tb notify rules [show | test E-<n> | run]   通知の規則(設定 notify-rules。tb config set notify-rules で人だけが書く)を見る・イベントに当てて試す(積まない)・今すぐ当てる
 tb notify event incident_opened|incident_closed <ID> [--title T] [--severity S]   障害の開・閉を積む(人だけ。障害対応の workspace を開く・閉じるスクリプトから使う)
 tb pr-queue add --branch <接頭辞>/<名> --body-file <本文> --title <題> [--repo <org/repo>] [--task T-…]   draft PR の依頼を置く(agent)。pending
 tb pr-queue list [--status S] [--json] / show <PQ-n>   キューを見る

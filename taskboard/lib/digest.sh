@@ -60,6 +60,14 @@ collect_digest() {
     key="notify-blocked:$id"; obs_seen "$key" && continue
     add_item "$DEFAULT_TARGET" obs "N-$id" "$key" "" notifyblock "N-$id 通知を止めた" "秘密らしい値($sev)を含むため外へ出していません(file には伏せて残した。tb notify events)"
   done < <(sql -separator $'\t' "SELECT id, COALESCE(blocked_reason,'') FROM notify_events WHERE blocked=1 AND type!='warning' ORDER BY id;")
+  # 2d. 通知の規則(lib/notifyrules.sh)で届け先に conductor を書いたチケットの通知。そのプロジェクトの指揮役へ(同じものは二度出さない)
+  while IFS=$'\t' read -r id tid project text; do
+    [[ -n $id ]] || continue
+    key="notify-conductor:$id"; obs_seen "$key" && continue
+    add_item "$(target_for "$project")" obs "N-$id" "$key" "$tid" rule "$tid 通知の規則" "${text#\[チケット\] }"
+  done < <(sql -separator $'\t' "SELECT n.id, e.task_id, COALESCE(t.project,''), replace(replace(n.text, char(10), ' '), char(9), ' ')
+             FROM notify_events n JOIN main.task_events e ON e.herdr_session=$SQS AND n.ref = 'E-' || e.id LEFT JOIN tasks t ON t.id=e.task_id
+             WHERE n.type='ticket' AND n.blocked=0 AND (' ' || n.sinks || ' ') LIKE '% conductor %' ORDER BY n.id;")
   # 3. 観測: turn が終わって DIGEST_IDLE_MIN 分たつのに in_progress のまま(done も報告もない)
   while IFS=$'\t' read -r id project owner key m; do
     [[ -n $id ]] || continue

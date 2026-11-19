@@ -634,6 +634,24 @@ time.sleep(3.2)
 _ids = [it["id"] for it in json.loads(cl.get("/api/notifications")[2])["items"] if it["id"][:2] in ("r:", "w:")]
 check("アラート: critical/high の解析結果と起動待ちだけ通知", _ids == ["r:1:t1", "w:3"], str(_ids))
 check("アラート: 題名はエスケープ", "API &lt;i&gt;5xx&lt;/i&gt;" in cl.get("/notifications")[2])
+# 通知の規則(notifyrules.sh)で届け先に webui を書いたチケットの通知: 直近 24 時間・webui を含むもの・このセッションだけ
+_c = sqlite3.connect(env["WEBUI_TB_DB"])
+_ne = "INSERT INTO notify_events (herdr_session,type,ref,text,hash,sinks,created_at) VALUES (?,?,?,?,'h',?,?)"
+_now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+_c.executemany(_ne, [("default", "ticket", "E-1", "[チケット] T-web-012 ログイン <b>x</b> — ラベル +notify / high / bug / 担当 -", "file webui", _now),
+                     ("default", "ticket", "E-2", "[チケット] T-web-013 slack だけ", "file slack", _now),
+                     ("default", "ticket", "E-3", "[チケット] T-web-014 古い", "webui", "2000-01-01T00:00:00Z"),
+                     ("other", "ticket", "E-4", "[チケット] T-web-015 別セッション", "webui", _now),
+                     ("default", "question", "C-1", "[質問] webui の文字があっても種別違い", "webui", _now)])
+_c.commit(); _c.close()
+time.sleep(3.2)
+_it = [it for it in json.loads(cl.get("/api/notifications")[2])["items"] if it["id"].startswith("n:")]
+check("規則の通知: webui を含む直近のチケットの通知だけ", [it["href"] for it in _it] == ["/tasks/T-web-012"] and _it[0]["kind"] == "ticket_rule", str(_it))
+check("規則の通知: /notifications でエスケープ", "ログイン &lt;b&gt;x&lt;/b&gt;" in cl.get("/notifications")[2])
+_c = sqlite3.connect(env["WEBUI_TB_DB"])
+_c.execute("DELETE FROM notify_events WHERE type IN ('ticket','question')")
+_c.commit(); _c.close()
+time.sleep(3.2)
 r = cl.get("/notify.js")
 check("/notify.js が 200 の JavaScript", r[0] == 200 and r[1].get("Content-Type", "").startswith("text/javascript")
       and "Notification" in r[2] and "/api/notifications" in r[2], str(r[:2]))

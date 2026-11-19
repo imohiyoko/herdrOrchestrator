@@ -137,6 +137,7 @@ cmd_add() {
        COMMIT;")
   [[ -n $out ]] || usage "add: 親の種別かスプリントが規則に合いません(並行して変わりました): ${parent:-$sprint}"
   printf '%s\n' "$out"
+  notify_rules_hook
 }
 
 # ---------- list ----------
@@ -244,6 +245,7 @@ cmd_claim() {
       account=COALESCE(NULLIF($(q "$account"),''), account), updated_at=$(q "$(now)")
     WHERE herdr_session=$SQS AND id=$(q "$id") AND status='todo'; SELECT changes();")
   [[ $changed == 1 ]] || die "claim できません(status が todo ではない): $id"
+  notify_rules_hook
   echo "$id claimed by $owner"
 }
 
@@ -327,6 +329,7 @@ cmd_update() {
     [[ -z $fparent || -z $(sql "SELECT 1 WHERE $(parent_cycle_sql "$fparent" "$id");") ]] || usage "親子が循環します: $id → $fparent"
     usage "update: 種別・親が規則に合いません(並行して変わりました): $id"
   fi
+  notify_rules_hook
   echo "$id updated"
 }
 
@@ -352,6 +355,7 @@ cmd_done() {
   sql "UPDATE main.tasks SET status='done', deliverables=$(q "$dj"), summary=$(q "$summary"),
          reported_at=NULL, updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id");"
   notify_hook notify_hook_task_done "$id"
+  notify_rules_hook
   echo "$id done (未報告。tb report $id を実行)"
 }
 
@@ -370,6 +374,7 @@ cmd_block() {
   [[ $cur != done ]] || die "done のタスクは block できません: $id"
   event_actor_resolve
   sql "UPDATE main.tasks SET status='blocked', note=NULLIF($(q "$reason"),''), updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id");"
+  notify_rules_hook
   echo "$id blocked"
 }
 
@@ -446,6 +451,7 @@ cmd_link() {
         SELECT $(q "$from"), $(q "$type"), $(q "$to"), $(q "$by"), $(q "$(now)"), $SQS WHERE NOT $cyc;
       SELECT changes(); COMMIT;")
   [[ ${out%%$'\n'*} == 0 ]] || usage "blocks が循環します: $from → $to"
+  notify_rules_hook
   [[ ${out##*$'\n'} == 1 ]] && echo "$from $type $to" || echo "$from $type $to(既にあります)"
 }
 cmd_unlink() {
@@ -453,6 +459,7 @@ cmd_unlink() {
   event_actor_resolve
   local n; n=$(sql "DELETE FROM main.task_links WHERE herdr_session=$SQS AND from_id=$(q "$1") AND link_type=$(q "$2") AND to_id=$(q "$3"); SELECT changes();")
   [[ $n == 1 ]] || die "そのリンクはありません: $1 $2 $3"
+  notify_rules_hook
   echo "unlinked $1 $2 $3"
 }
 

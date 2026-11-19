@@ -22,6 +22,7 @@ taskboard/config/compact.conf
 taskboard/config/sched-watch.conf
 taskboard/config/spawn-policy.conf
 taskboard/config/notify.conf
+taskboard/config/notify-rules.conf
 taskboard/config/repos.md
 taskboard/config/pr-queue.conf
 taskboard/config/risk-rules.conf
