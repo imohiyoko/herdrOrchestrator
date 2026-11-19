@@ -55,9 +55,12 @@ tb reminders --publish [--json]   まとめを出し、前回の記録(notify_se
 
 指揮官 → worker の送信(herdr agent prompt を直接打たない。送信者は herdr から決まり、config/routes.conf のルールで許可されたものだけ届く):
 tb send <宛先 agent 名> --text T [--task T-..] [--kind task|info|answer] [--json]
-         終了コード 0=送信済み 10=宛先使用中で outbox に積んだ 11=送信失敗で積んだ 4=ルールで拒否 20=人の承認待ち 3=送信者を特定できず未保存
+         delivery の設定(tb config show delivery)で hold なら宛先の入力に打たず inbox に置く(0。出力は held for)
+         終了コード 0=送信済み 10=宛先使用中で outbox に積んだ 11=送信失敗で積んだ 4=ルールで拒否 20=人の承認待ち 3=送信者を特定できず未保存 12=保留に失敗して積んだ
 tb flush            積まれた送信を届ける(tb digest も最初に呼ぶ)
 tb outbox [--status pending|queued|sent|denied] [--json]
+tb inbox [--unread] [--json]   自分宛てに保留された送信(delivery の設定で hold になったもの)の一覧。読めるのは自分宛てだけ
+tb inbox-read I-<n> [--json]   保留された送信を全文で読み、既読にする
 
 役割の配布(roles/。SessionStart hook は bin/tb-role-hook 経由):
 tb role-context --source startup|resume|clear|compact --session-id S   hook 用。渡すときだけ hook の JSON を出す。常に 0
