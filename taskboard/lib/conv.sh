@@ -73,7 +73,7 @@ conv_patterns_read() {
       conv_generalized "$id" "${c[i]}" || { CONV_PAT_ERRS+=("L$n $CONV_ERR"); v=ng; break; }
     done
     [[ $v == ok ]] || continue
-    if [[ " ${CONV_PAT[*]%%|*} " == *" $id "* ]]; then CONV_PAT_ERRS+=("L$n: id が重なっています: $id"); continue; fi
+    if [[ " ${CONV_PAT[*]+${CONV_PAT[*]%%|*}} " == *" $id "* ]]; then CONV_PAT_ERRS+=("L$n: id が重なっています: $id"); continue; fi
     CONV_PAT+=("$id|$state|$ev|${c[3]}|${c[4]}|${c[5]}|$concl|${c[7]}")
   done <"$f"
   return 0
@@ -245,7 +245,7 @@ cmd_conv-route() {
     conv_need_name "--${a%%:*}" "${a#*:}"
   done
   if conv_routes_file; then
-    out=$(awk -v mode=route -v table="$CONV_RT_FILE" -v ev="$ev" -v cp="$cp" -v dp="$dp" -v sv="$sv" -v dl="$dl" "$(_conv_routes_awk)" </dev/null); st=$?
+    st=0; out=$(awk -v mode=route -v table="$CONV_RT_FILE" -v ev="$ev" -v cp="$cp" -v dp="$dp" -v sv="$sv" -v dl="$dl" "$(_conv_routes_awk)" </dev/null) || st=$?
     rm -f "$CONV_RT_FILE"
     [[ $st -eq 0 ]] || die "振り分け表が読めません(conv-routes): ${out#ERR$'\t'}"
   else
@@ -287,7 +287,7 @@ cmd_conv-routes-set() {
   if ((shared)) && [[ -n $(config_env_file conv-routes) ]]; then die "TB_CONV_ROUTES でファイルを明示しているので --shared は使えません"; fi
   body=$(cat); new=$(mktemp); printf '%s\n' "$body" >"$new"
   if conv_routes_file; then cur=$CONV_RT_FILE; fi
-  out=$(awk -v mode=compare -v old="$cur" -v new="$new" "$(_conv_routes_awk)" </dev/null); st=$?
+  st=0; out=$(awk -v mode=compare -v old="$cur" -v new="$new" "$(_conv_routes_awk)" </dev/null) || st=$?
   rm -f "$new" ${cur:+"$cur"}
   [[ $st -eq 0 && $out != ERR* ]] || die "振り分け表を書けません: ${out#ERR$'\t'}"
   local -a r; IFS=$'\t' read -ra r <<<"$out"
@@ -365,7 +365,7 @@ cmd_conv-draft() {
     cat "$CONV_DIR/kinds/$kind/prompt.md"
     conv_patterns_read "$CONV_DIR/kinds/$kind/patterns.conf"
     local p n=0; local -a c
-    for p in "${CONV_PAT[@]}"; do
+    for p in ${CONV_PAT[@]+"${CONV_PAT[@]}"}; do
       IFS='|' read -ra c <<<"$p"
       [[ ${c[1]} == adopted ]] || continue
       ((n++ == 0)) && { echo; echo "## 採用済みのパターン(人が採用したもの)"; echo; }
@@ -483,11 +483,11 @@ cmd_conv-kinds() {
     conv_has_team "$k" && t=yes || t=no
     conv_patterns_read "$CONV_DIR/kinds/$k/patterns.conf"
     a=0 c=0
-    for p in "${CONV_PAT[@]}"; do [[ $p == *"|adopted|"* ]] && a=$((a + 1)) || c=$((c + 1)); done
+    for p in ${CONV_PAT[@]+"${CONV_PAT[@]}"}; do [[ $p == *"|adopted|"* ]] && a=$((a + 1)) || c=$((c + 1)); done
     rows+=("$k"$'\t'"team=$t"$'\t'"adopted=$a"$'\t'"candidate=$c"$'\t'"errors=${#CONV_PAT_ERRS[@]}")
   done < <(conv_kinds)
   if ((json)); then
-    printf '%s\n' "${rows[@]}" | jq -Rnc '[inputs | select(length > 0) | split("\t") | {kind: .[0], team: (.[1] == "team=yes"),
+    printf '%s\n' ${rows[@]+"${rows[@]}"} | jq -Rnc '[inputs | select(length > 0) | split("\t") | {kind: .[0], team: (.[1] == "team=yes"),
       adopted: (.[2] | ltrimstr("adopted=") | tonumber), candidate: (.[3] | ltrimstr("candidate=") | tonumber), errors: (.[4] | ltrimstr("errors=") | tonumber)}]'
   else
     ((${#rows[@]} == 0)) || printf '%s\n' "${rows[@]}"
@@ -503,8 +503,8 @@ cmd_conv-patterns() {
   conv_need_name 種別 "$kind"
   [[ -d $CONV_DIR/kinds/$kind ]] || die "種別がありません: $kind"
   conv_patterns_read "$CONV_DIR/kinds/$kind/patterns.conf"
-  for e in "${CONV_PAT_ERRS[@]}"; do echo "tb: patterns.conf $e" >&2; done
-  for p in "${CONV_PAT[@]}"; do
+  for e in ${CONV_PAT_ERRS[@]+"${CONV_PAT_ERRS[@]}"}; do echo "tb: patterns.conf $e" >&2; done
+  for p in ${CONV_PAT[@]+"${CONV_PAT[@]}"}; do
     ((all)) || [[ $p == *"|adopted|"* ]] || continue
     printf '%s\n' "${p//|/$'\t'}"
   done
@@ -520,10 +520,10 @@ cmd_conv-lint() {
     [[ -n $k ]] || continue
     conv_has_team "$k" || { echo "kinds/$k: prompt.md がありません(この種別は共通の土台だけで下書きされます)"; bad=1; }
     conv_patterns_read "$CONV_DIR/kinds/$k/patterns.conf"
-    for e in "${CONV_PAT_ERRS[@]}"; do echo "kinds/$k/patterns.conf $e"; bad=1; done
+    for e in ${CONV_PAT_ERRS[@]+"${CONV_PAT_ERRS[@]}"}; do echo "kinds/$k/patterns.conf $e"; bad=1; done
   done < <(conv_kinds)
   if conv_routes_file; then
-    out=$(awk -v mode=check -v table="$CONV_RT_FILE" "$(_conv_routes_awk)" </dev/null); st=$?
+    st=0; out=$(awk -v mode=check -v table="$CONV_RT_FILE" "$(_conv_routes_awk)" </dev/null) || st=$?
     rm -f "$CONV_RT_FILE"
     if [[ $st -ne 0 ]]; then echo "conv-routes: ${out#ERR$'\t'}"; bad=1
     else

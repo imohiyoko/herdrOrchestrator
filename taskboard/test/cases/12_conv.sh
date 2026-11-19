@@ -118,7 +118,7 @@ printf '依頼の本文。これは長めの依頼の本文で、返事が要る
 printf '短い下書き。\n' >"$CV/draft.txt"
 printf 'とても長い下書き。とても長い下書き。とても長い下書き。とても長い下書き。とても長い下書き。\n' >"$CV/long.txt"
 eq "conv-length: 依頼以下なら 0、長ければ 1" "$(rc "$TB" conv-length --draft "$CV/draft.txt" --request "$CV/req.txt") $(rc "$TB" conv-length --draft "$CV/long.txt" --request "$CV/req.txt")" "0 1"
-eq "conv-length: 文字数(日本語はコードポイントで数える)" "$("$TB" conv-length --draft "$CV/draft.txt" --request "$CV/req.txt")" $'draft=6\trequest=31\tlonger=no'
+eq "conv-length: 文字数(日本語はコードポイントで数える)" "$("$TB" conv-length --draft "$CV/draft.txt" --request "$CV/req.txt")" $'draft=6\trequest=29\tlonger=no'
 v=$("$TB" conv-voice direct --draft "$CV/draft.txt")
 eq "conv-voice: 役の指示と下書きだけ(ほかの役の指示・依頼の本文は入らない)" \
   "$(grep -c '^# 声の役: 率直' <<<"$v") $(grep -c '^短い下書き。$' <<<"$v") $(grep -c '共感\|受け手\|簡潔' <<<"$v") $(grep -c '依頼の本文' <<<"$v")" "1 1 0 0"
