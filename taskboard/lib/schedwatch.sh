@@ -9,11 +9,16 @@
 #                見張り系 = conf の WATCHER=1(WATCHER=0 なら対象外)。WATCHER が無ければ、tb limits の watchers を
 #                TARGET か、conf の COMMAND= の行に持つもの
 #   schedfail  : 有効なジョブで、直近 fail_window_min 分の実行(ran + sent + failed)が fail_min_runs 回以上あり、
-#                failed の割合が fail_rate_pct % 以上
+#                failed の割合が fail_rate_pct % 以上。
+#                exit 10(宛先が作業中で、tb が送らずに保留した)の failed は「待ち」として、分子にも分母にも入れない。
+#                待ちの回数は schedfail の本文に並べて出す。それ以外の exit(11 など)は失敗として数える
+#   schedwait  : 有効なジョブで、直近の記録が exit 10 の待ちだけになってから wait_max_min 分以上たった
+#                (宛先が長く作業中のまま、または止まっている。wait_max_min = 0 で出さない)
 # 同じ観測は、状態が変わるまで 1 回だけ(observations の key。条件が外れたら記録を消すので、また当てはまれば再び出る)。
 #   schedoff   key = schedwatch:off:<job>:<止まり始めの時刻(epoch)>
 #   schedstale key = schedwatch:stale:<job>:<基準の時刻(epoch)>   (基準 = 最後の ran。無ければ有効になって最初の記録)
 #   schedfail  key = schedwatch:fail:<job>
+#   schedwait  key = schedwatch:wait:<job>:<待ち始めの時刻(epoch)>
 # 設定: config/sched-watch.conf(無ければ .example、人だけが編集。再起動不要)。TB_SCHEDWATCH_<KEY 大文字> で上書きできる。
 # 場所: TB_SCHED_DIR(jobs / logs / settings の親。既定は scheduler/)、TB_SCHED_SHOW(show.sh の場所)。
 #       テストでは TB_SCHEDWATCH_NOW(epoch)で現在時刻を固定する。
@@ -49,10 +54,11 @@ sw_summarize() {
             - (($c.s + "1" | tonumber) * (($c.h | tonumber) * 3600 + ($c.m | tonumber) * 60)) end;
     split("\n")
     | map(fromjson? | select(type == "object" and (.dry_run | not) and (.ts | type == "string") and (.action | type == "string"))
-          | {e: (.ts | ep), a: .action})
+          | {e: (.ts | ep), a: .action, w: (.action == "failed" and .exit == 10)})
     | sort_by(.e) as $L
     | ([$L[] | select(.a == "skipped_disabled") | .e] | max) as $lastd
     | ([$L[] | select(.a != "skipped_disabled") | .e] | max) as $lastnd
+    | ([$L[] | select((.a == "ran" or .a == "sent" or .a == "failed") and (.w | not)) | .e] | max) as $lastrun
     | {
         n: ($L | length),
         last_action: ($L | last | .a),
@@ -62,7 +68,10 @@ sw_summarize() {
         last_ran: ([$L[] | select(.a == "ran" or .a == "sent") | .e] | max),
         enabled_since: ([$L[] | select(.a != "skipped_disabled" and .e > ($lastd // -1)) | .e] | min),
         ran_w: ([$L[] | select((.a == "ran" or .a == "sent") and .e >= ($now - $win))] | length),
-        failed_w: ([$L[] | select(.a == "failed" and .e >= ($now - $win))] | length)
+        failed_w: ([$L[] | select(.a == "failed" and (.w | not) and .e >= ($now - $win))] | length),
+        wait_w: ([$L[] | select(.w and .e >= ($now - $win))] | length),
+        wait_start: ([$L[] | select(.w and .e > ($lastrun // -1)) | .e] | min),
+        wait_count: ([$L[] | select(.w and .e > ($lastrun // -1))] | length)
       }' "$1" 2>/dev/null
 }
 
@@ -104,11 +113,12 @@ sw_command_value() {
 collect_sched_obs() {
   [[ $(sw_cfg enabled 1) == 1 ]] || return 0
   [[ -d $SW_DIR/jobs && -d $SW_DIR/logs && -f $SW_SHOW ]] || return 0
-  local off_min stale_min fail_win fail_runs fail_pct
+  local off_min stale_min fail_win fail_runs fail_pct wait_max
   off_min=$(sw_cfg disabled_min 30); stale_min=$(sw_cfg watch_stale_min 20)
   fail_win=$(sw_cfg fail_window_min 60); fail_runs=$(sw_cfg fail_min_runs 5); fail_pct=$(sw_cfg fail_rate_pct 50)
-  [[ $off_min =~ ^[0-9]+$ && $stale_min =~ ^[0-9]+$ && $fail_win =~ ^[0-9]+$ && $fail_runs =~ ^[0-9]+$ && $fail_pct =~ ^[0-9]+$ ]] \
-    || usage "sched-watch.conf の disabled_min / watch_stale_min / fail_window_min / fail_min_runs / fail_rate_pct は 0 以上の整数"
+  wait_max=$(sw_cfg wait_max_min 180)
+  [[ $off_min =~ ^[0-9]+$ && $stale_min =~ ^[0-9]+$ && $fail_win =~ ^[0-9]+$ && $fail_runs =~ ^[0-9]+$ && $fail_pct =~ ^[0-9]+$ && $wait_max =~ ^[0-9]+$ ]] \
+    || usage "sched-watch.conf の disabled_min / watch_stale_min / fail_window_min / fail_min_runs / fail_rate_pct / wait_max_min は 0 以上の整数"
   local now watchers conf job cfg log sum w is_watch enabled start end days tz dnum sec ws we ref key cur=""
   now=$(sw_now); watchers=$(limit_get watchers 2>/dev/null || true)
   for conf in "$SW_DIR"/jobs/*.conf; do
@@ -157,15 +167,22 @@ collect_sched_obs() {
         fi
       fi
     fi
-    # 3. 失敗が多い
-    local rans failed
-    failed=$(jq -r .failed_w <<<"$sum"); rans=$(( $(jq -r .ran_w <<<"$sum") + failed ))
+    # 3. 失敗が多い(exit 10 の待ちは分子にも分母にも入れない。回数は本文に並べる)
+    local rans failed waits wstart
+    failed=$(jq -r .failed_w <<<"$sum"); rans=$(( $(jq -r .ran_w <<<"$sum") + failed )); waits=$(jq -r .wait_w <<<"$sum")
     if ((rans > 0 && rans >= fail_runs && failed * 100 >= fail_pct * rans)); then
       key="schedwatch:fail:$job"; cur+="$(q "$key"),"
       obs_seen "$key" || add_item "$DEFAULT_TARGET" obs "sched" "$key" "" schedfail "scheduler 観測 / $job" \
-        "ジョブ $job の失敗が多い(直近 $fail_win 分で $rans 回実行して failed $failed 回 = $((failed * 100 / rans))%。しきい値 ${fail_pct}%。scheduler/logs/$job.log を確認)"
+        "ジョブ $job の失敗が多い(直近 $fail_win 分で $rans 回実行して failed $failed 回 = $((failed * 100 / rans))%。しきい値 ${fail_pct}%$( ((waits > 0)) && echo "。ほかに宛先の作業中で待った回(exit 10)が $waits 回あり、これは数えていない" )。scheduler/logs/$job.log を確認)"
+    fi
+    # 4. 宛先の作業中(exit 10)で待ったままの時間が長い
+    wstart=$(jq -r '.wait_start // empty' <<<"$sum")
+    if ((wait_max > 0)) && [[ -n $wstart ]] && ((now - wstart >= wait_max * 60)); then
+      key="schedwatch:wait:$job:$wstart"; cur+="$(q "$key"),"
+      obs_seen "$key" || add_item "$DEFAULT_TARGET" obs "sched" "$key" "" schedwait "scheduler 観測 / $job" \
+        "ジョブ $job が、宛先の作業中(exit 10)で $(((now - wstart) / 60)) 分送れていない(その間 $(jq -r .wait_count <<<"$sum") 回とも待ち)。宛先が止まっていないか確認。scheduler/logs/$job.log を確認"
     fi
   done
   # 条件が外れたものは記録を消す(再び当てはまったら、また送る)
-  sql "DELETE FROM main.observations WHERE herdr_session=$SQS AND kind IN ('schedoff','schedstale','schedfail') AND key NOT IN (${cur}'');"
+  sql "DELETE FROM main.observations WHERE herdr_session=$SQS AND kind IN ('schedoff','schedstale','schedfail','schedwait') AND key NOT IN (${cur}'');"
 }
