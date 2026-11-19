@@ -110,7 +110,7 @@ POST/PUT/DELETE/PATCH は 405。
 | `/agents/<名前>` | 状態、担当タスク、直近の出力(`herdr agent read`)、最終入力/停止、`session_id`、手元で開く `herdr agent attach`(`claude --resume` は会話が枝分かれするので出さない) |
 | `/tasks` | タスク一覧(読み取りのみ)。状態の件数サマリ(todo / in_progress / review / done / blocked)、`?project=` `?owner=`(担当 agent) `?status=` `?unreported=1`(未報告だけ) `?stale=1`(in_progress のまま 24 時間超更新が無い「停滞」だけ。しきい値は `app/config.py` の `TASK_STALE_HOURS`)で絞り込み、`?sort=`(`project` / `oldest` / `created` / `id`)で並び替え。既定の並びは優先順(未対応の報告があるもの → blocked → in_progress → review → todo → done)で、最大 300 件。超えたときは「N 件のうち 300 件だけ表示」と明示する。親子(parent_id)、session、報告の種別ごとの件数(人が未対応の question / blocked を強調)、成果物の数、停滞の目印を出す。題は先頭 80 文字だけ。期限・優先度は tb に無いので出さない |
 | `/tasks/<id>` | タスクの詳細: 親へのリンク・子タスクの一覧・session・成果物のパス・報告(先頭 1000 文字、人が対応済みにしたか)・代行依頼。報告の「対応済みにする」(`/resolve`)は既存の操作で、このページで増えた書き込みは無い |
-| `/inbox` | 要対応(question・blocked・pending-human・blocked の agent)を上に、直近の報告を下に |
+| `/inbox` | 要対応(question・blocked・pending-human・blocked の agent)を上に、直近の報告を下に。`tb reminders --publish` の結果があれば一番上に「忘れているかも」(優先度順。項目は既存の画面へリンク)、保留した送信(`inbox` 表)があれば「保留した送信」(本文は出さず、「本文を見る」で 1 件ずつ `/inbox?held=<n>`)。どちらも読むだけ |
 | `/docs` | agent が成果物として報告したドキュメント(ローカルのファイル)の一覧。新しい順、`?q=` で絞り込み |
 | `/docs/view?ref=<参照>` | そのドキュメントを読む。Markdown は整形して表示(Mermaid は図に。「元のテキストを表示」で切り替え)、フォルダなら中のファイル一覧 |
 | `/docs/view?path=<絶対パス>` | パスを指定して読む(agent の作業ディレクトリ配下だけ。`/docs` の入力欄から) |

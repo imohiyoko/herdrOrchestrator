@@ -18,10 +18,14 @@ def git(cwd, *args):
 
 
 class Case(unittest.TestCase):
+    STAGE = 4
+
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="repoindex-test-")
         self.data = os.path.join(self.tmp, "state", "herdr-repoindex")
-        self.env = dict(os.environ, REPOINDEX_DIR=self.data, GIT_CONFIG_GLOBAL="/dev/null",
+        self.sched = os.path.join(self.tmp, "scheduler")  # 本物の scheduler / launchd には触らない
+        self.env = dict(os.environ, REPOINDEX_DIR=self.data, REPOINDEX_SCHEDULER_DIR=self.sched,
+                        GIT_CONFIG_GLOBAL="/dev/null",
                         GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
                         GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid")
         self._old = os.environ.copy()
@@ -30,6 +34,8 @@ class Case(unittest.TestCase):
         self.repo = os.path.join(self.tmp, "src")
         os.makedirs(self.repo)
         git(self.repo, "init", "-q", "-b", "main")
+        if self.STAGE is not None:  # 段階のゲート(#110)を越えておく。段階を試すテストは STAGE = None
+            self.ri("stage", "set", str(self.STAGE), "--by", "test", "--measures", '{"test": 1}')
 
     def tearDown(self):
         os.environ.clear()
