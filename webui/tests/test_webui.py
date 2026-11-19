@@ -705,6 +705,18 @@ _cx.commit()
 _TD3 = cl.get("/tasks/T-3")[2]
 check("タスク詳細: 外部リンク(http(s) だけをリンクに)", 'href="https://acme.slack.com/archives/C1/p1"' in _TD3 and 'rel="noopener noreferrer"' in _TD3
       and 'href="javascript' not in _TD3 and "javascript:alert(1)" in _TD3)
+# 履歴(016 の task_events): 新しい順、エスケープ、別セッションの行は出ない、行が無ければ欄も出ない
+check("タスク詳細: 履歴が無ければ欄は出ない", "<h2>履歴</h2>" not in _TD3)
+_cx.executemany("INSERT INTO task_events (herdr_session, task_id, kind, old, new, actor, ref, created_at) VALUES (?,?,?,?,?,?,?,?)",
+                [("default", "T-3", "created", None, "todo", "human", None, "2026-01-01T00:00:00Z"),
+                 ("default", "T-3", "label_added", None, "<b>x</b>", "worker1", None, "2026-01-01T00:00:01Z"),
+                 ("other", "T-3", "status", "todo", "zz-other-session", "human", None, "2026-01-01T00:00:02Z")])
+_cx.commit()
+_TD3 = cl.get("/tasks/T-3")[2]
+check("タスク詳細: 履歴(新しい順・エスケープ)", "<h2>履歴</h2>" in _TD3 and "&lt;b&gt;x&lt;/b&gt;" in _TD3 and "<b>x</b>" not in _TD3
+      and _TD3.index("label_added") < _TD3.index("created</td>"))
+check("タスク詳細: 別セッションの履歴は出ない", "zz-other-session" not in _TD3)
+_cx.execute("DELETE FROM task_events")
 _cx.execute("UPDATE tasks SET type='task', priority='medium', labels='[]', refs='[]'")
 _cx.execute("DELETE FROM task_links")
 _cx.commit()

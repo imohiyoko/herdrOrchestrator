@@ -675,6 +675,9 @@ def resolve_notice(qs):
     return f"<p class=note>{e(RESOLVE_MSG[st])}</p>" if st in RESOLVE_MSG else ""
 
 
+HISTORY_MAX = 100
+
+
 def page_task(tid, qs=None, ctx=None):
     ctx = {} if ctx is None else ctx
     rows = q("SELECT * FROM tasks WHERE id=?", (tid,))
@@ -712,6 +715,14 @@ def page_task(tid, qs=None, ctx=None):
         if lk:
             body += "<h2>リンク</h2>" + table(["関係", "タスク", "題", "状態"],
                 [[e(x["rel"]), tlink(x["id"]), e(_head(x["title"], TITLE_MAX)), e(x["status"])] for x in lk])
+    # 履歴(016 の task_events。ADR 0003)。表の無い DB では出さない。新しい順に最大 HISTORY_MAX 件
+    ev = q("SELECT id, kind, old, new, actor, ref, created_at FROM task_events WHERE task_id=? ORDER BY id DESC LIMIT ?", (tid, HISTORY_MAX))
+    if ev:
+        body += "<h2>履歴</h2>" + table(["id", "時刻", "種類", "前", "後", "変えた者", "元"],
+            [[f"E-{x['id']}", e(x["created_at"]), e(x["kind"]), e(_head(x["old"], TITLE_MAX)), e(_head(x["new"], TITLE_MAX)),
+              e(x["actor"]), e(x["ref"])] for x in ev])
+        if len(ev) >= HISTORY_MAX:
+            body += f"<p class=note>新しい {HISTORY_MAX} 件だけです。全部は手元で <code>tb history {e(clean(str(tid)))}</code>。</p>"
     cm = q("SELECT * FROM comments WHERE task_id=? ORDER BY id DESC", (tid,))
     back = "/tasks/" + quote(str(tid), safe="")
     body += "<h2>報告</h2>" + counts_label(report_counts(tid).get(tid)) + table(
