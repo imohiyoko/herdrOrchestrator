@@ -1,0 +1,8 @@
+# 会話の学習(#97)の設定。tb config set conv-learn < このファイル で DB に置く(人だけ)
+# 設計: taskboard/docs/conversation-learning.md
+
+# 同じ向きの手直しが「別々の状況」で何回そろったら proposed(採用の提案)にするか。2 未満は 2 として扱う
+threshold = 3
+
+# 台帳とパターンに残さない語(人や組織の名前など)。カンマ区切り。英字の大文字で始まる語は別に名前の疑いとして弾く
+deny =
