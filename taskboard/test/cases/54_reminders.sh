@@ -121,6 +121,8 @@ out=$(TB_REMINDERS_TODAY=2026-03-12 $TB reminders --publish)
 eq "reminders: open PRs waiting for review" "$(grep -o 'org/repo#[0-9]*' <<<"$out" | tr '\n' ' ')" "org/repo#10 org/repo#7 "
 eq "reminders: secret redacted" "$(grep -c 'ghp_' <<<"$out") $(grep -c '伏せた秘密' <<<"$out") $(tail -1 <<<"$out" | cut -d: -f1)" "0 1 (秘密らしい値を伏せました"
 eq "reminders: secret redacted in the Web UI row" "$(rsql "SELECT value FROM notify_seen WHERE key='reminders:last';" | grep -c ghp_)" "0"
+out=$(TB_REMINDERS_TODAY=2026-03-12 $TB reminders --publish)
+eq "reminders: secret in a continuing item is redacted too" "$(grep -c 'ghp_' <<<"$out") $(TB_REMINDERS_TODAY=2026-03-12 $TB reminders --json | grep -c ghp_) $(rsql "SELECT value FROM notify_seen WHERE key='reminders:last';" | grep -c ghp_)" "0 0 0"
 eq "reminders: gh read-only listing" "$(tail -1 "$TMP/rem-gh.log")" "pr list --repo org/repo --state open --limit 30 --json number,title,isDraft,reviewDecision,createdAt"
 eq "reminders: bad flag" "$(rc $TB reminders --nope)" "2"
 eq "reminders: bad today" "$(TB_REMINDERS_TODAY=x rc $TB reminders)" "2"

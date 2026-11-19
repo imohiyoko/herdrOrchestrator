@@ -166,11 +166,12 @@ cmd_reminders() {
     return $REMINDERS_NO_CHANGE
   fi
   text=$(reminders_text "$diff")
-  # 秘密らしい値: 題に紛れ込んだものを伏せる(本文は載せていないが、題や PR の名前に入ることがある)
-  if notify_secret_scan "$text"; then
+  # 秘密らしい値: 題に紛れ込んだものを伏せる(本文は載せていないが、題や PR の名前に入ることがある)。
+  # 継続の項目は本文の行に出ないが、--json と Web UI の行には出るので、全項目の題もあわせて調べる
+  if notify_secret_scan "$text"$'\n'"$(jq -r '.items[] | .what, .who' <<<"$diff")"; then
     local kinds=$NOTIFY_HIT_KINDS
     text=$(notify_redact "$text")$'\n'"(秘密らしい値を伏せました: $kinds)"
-    local h; while IFS= read -r h; do [[ -n $h ]] && diff=$(jq -c --arg h "$h" '.items |= map(.what |= (split($h) | join("[伏せた秘密]")))' <<<"$diff"); done <<<"$NOTIFY_HITS"
+    local h; while IFS= read -r h; do [[ -n $h ]] && diff=$(jq -c --arg h "$h" '.items |= map((.what, .who) |= (split($h) | join("[伏せた秘密]")))' <<<"$diff"); done <<<"$NOTIFY_HITS"
   fi
   if [[ $mode == publish ]]; then
     local ts last; ts=$(now)
