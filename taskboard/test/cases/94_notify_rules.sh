@@ -91,6 +91,12 @@ eq "rules: conductor sink goes into the digest" "$(grep '^prompt conductor' "$FA
 : >"$FAKE_LOG"; FAKE_STATUS=idle $TB digest >/dev/null 2>&1
 eq "rules: conductor item is sent once" "$(grep -c "$b 通知の規則" "$FAKE_LOG")" "0"
 
+# 条件の無い規則(種類と届け先だけ)
+printf 'priority -> stdout\n' >"$TB_NOTIFY_RULES"
+n=$(nrcount); $TB update "$a" --priority low >/dev/null
+eq "rules: rule without conditions" "$(nrcount) $(nrlast)" "$((n + 1)) stdout | [チケット] $a 規則なし — 優先度 medium → low / low / task / 担当 -"
+eq "rules: show a rule without conditions" "$($TB notify rules | grep '^1 行目')" "$(printf '1 行目\tpriority -> stdout')"
+
 # 規則のファイルを手で壊しても、正しい行だけが効く(誤りは show に出る)
 printf 'label_added label=notify -> file\nnope -> file\n' >"$TB_NOTIFY_RULES"
 eq "rules: broken line shown, good line kept" "$($TB notify rules | grep -c '誤りのある行') $($TB notify rules | grep -c '^[0-9]* 行目')" "1 1"

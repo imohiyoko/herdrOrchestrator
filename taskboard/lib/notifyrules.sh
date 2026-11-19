@@ -18,7 +18,7 @@ NRULE_KEYS="type priority label project owner new old actor"
 NRULE_KINDS="created status title type priority owner due parent description label_added label_removed ref_added ref_removed link unlink comment overdue due_soon"
 NRULE_VAL_RE='^[^[:space:],"'"'"'<>;|&$`\\]{1,64}$'
 
-# 本文 → 規則の行(タブ区切り: 行番号 種類 条件(空白区切り) 届け先(空白区切り))。誤りは NRULE_ERR に 1 行ずつ。誤りがあれば 1
+# 本文 → 規則の行(\x1f 区切り: 行番号 種類 条件(空白区切り。空のこともある) 届け先(空白区切り))。タブにしないのは、read が連続するタブを 1 つにまとめて空の条件がずれるため。誤りは NRULE_ERR に 1 行ずつ。誤りがあれば 1
 nrule_parse() {  # $1=本文
   local body=$1 line n=0 lhs rhs kind c sinks s k v op tok conds err=0
   NRULE_ERR=""; NRULE_OUT=""
@@ -53,7 +53,7 @@ nrule_parse() {  # $1=本文
     done
     ((bad)) && { err=1; continue; }
     [[ -n $sinks ]] || { NRULE_ERR+="$n 行目: 届け先がありません"$'\n'; err=1; continue; }
-    NRULE_OUT+="$n"$'\t'"$kind"$'\t'"${conds% }"$'\t'"${sinks% }"$'\n'
+    NRULE_OUT+="$n"$'\x1f'"$kind"$'\x1f'"${conds% }"$'\x1f'"${sinks% }"$'\n'
   done <<<"$body"
   return $err
 }
@@ -132,13 +132,13 @@ nrule_describe() {  # $1=種類 $2=前 $3=後
 nrule_apply() {  # $1=from $2=to $3=dry
   local from=$1 to=$2 dry=${3:-0} ln kind conds sinks qs="" rows
   # 規則ごとの当たりを 1 つの問い合わせにまとめ(行: id 行番号 届け先)、イベントごとに届け先を合わせる(bash 3.2 でも動くよう連想配列は使わない)
-  while IFS=$'\t' read -r ln kind conds sinks; do
+  while IFS=$'\x1f' read -r ln kind conds sinks; do
     [[ -n $ln ]] || continue
-    qs+="${qs:+ UNION ALL }SELECT e.id, $ln, $(q "$sinks") FROM main.task_events e JOIN tasks t ON t.id=e.task_id
+    qs+="${qs:+ UNION ALL }SELECT e.id AS eid, $ln AS ln, $(q "$sinks") AS sinks FROM main.task_events e JOIN tasks t ON t.id=e.task_id
            WHERE e.herdr_session=$SQS AND e.id > $from AND e.id <= $to AND $(nrule_where "$kind" "$conds")"
   done <<<"$NRULE_OUT"
   [[ -n $qs ]] || return 0
-  rows=$(sql -separator $'\t' "SELECT * FROM ($qs) ORDER BY 1, 2;" | awk -F'\t' '
+  rows=$(sql -separator $'\t' "SELECT eid, ln, sinks FROM ($qs) ORDER BY eid, ln;" | awk -F'\t' '
     { if ($1 != cur) { if (cur != "") print cur "\t" s "\t" l; cur = $1; s = ""; l = ""; delete seen }
       n = split($3, a, " "); for (i = 1; i <= n; i++) if (!(a[i] in seen)) { seen[a[i]] = 1; s = s (s == "" ? "" : " ") a[i] }
       l = l (l == "" ? "" : ",") $2 }
@@ -199,7 +199,7 @@ notify_rules_cmd() {
       if ! nrule_parse "$body"; then printf '# 誤りのある行(飛ばしています):\n%s' "$(sed 's/^/#   /' <<<"$NRULE_ERR")"; echo; fi
       if [[ -z $NRULE_OUT ]]; then echo "(規則なし。今の決め打ちの通知だけが動きます)"; return 0; fi
       local ln kind conds sinks
-      while IFS=$'\t' read -r ln kind conds sinks; do
+      while IFS=$'\x1f' read -r ln kind conds sinks; do
         [[ -n $ln ]] && printf '%s 行目\t%s %s-> %s\n' "$ln" "$kind" "${conds:+$conds }" "$sinks"
       done <<<"$NRULE_OUT";;
     test)
