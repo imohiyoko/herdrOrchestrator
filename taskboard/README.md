@@ -85,8 +85,23 @@ tb update T-web-002 --add-label frontend --remove-label ui --priority highest
 - **外部リンク** `--ref [種類=]URL`: Slack のスレッド・PR・ドキュメントなどの URL を何個でも(`tb update --add-ref` / `--remove-ref <URL>` で付け外し)。種類を省くと URL から `slack` / `github` / `link` を決める。http(s) の URL だけ。`tb show` と Web UI の詳細(押せるリンク)に出る。
 - **担当の agent**: 既存の `--owner`(agent 名)と `--session`(その agent の会話 ID)で紐付く。`tb list --owner <agent>` で絞り込める。
 - **リンク** `tb link <from> blocks|relates|duplicates <to>`: `blocks` は claim を止める(先行タスクが done になれば claim できる)。blocks の循環は止める。`tb show` は向きつき(`blocks` / `blocked_by` など)で出す。
-- `tb list` の既定の出力(ID 状態 担当 題)は変えていない。種別・優先度・作成・更新・ラベルは `--long`(または `--json`)で出る。
+- `tb list` の既定の出力(ID 状態 担当 題)は変えていない。種別・優先度・作成・更新・ラベル・期日は `--long`(または `--json`)で出る。
 - Web UI のタスク一覧は 種別・優先度・ラベル・作成・更新 の列と、種別・優先度・ラベルの絞り込みを持つ。ラベルを押すとそのラベルで絞り込む。
+
+### 期日(期限切れ・期限間近)
+
+```sh
+tb add -p web -t "ログ掃除" --due 2026-12-01      # 期日は日付だけ(YYYY-MM-DD)。既定は期日なし
+tb update T-web-012 --due 2026-12-15            # 変える。--due '' で外す
+tb list --overdue                               # 期日が今日より前で done でないもの
+tb list --due-within 3 --sort due --long        # 今日〜3 日後が期日で done でないもの(0 は今日だけ)。--long の最後の列が期日
+```
+
+- 期日のないタスクは期限切れにも期限間近にもならない。done のタスクも出さない。
+- 「今日」は tb を動かす端末の地方時の日付。境界の確認やテストでは `TB_TODAY=YYYY-MM-DD` で固定できる。
+- 作業タスクに紐付かない締め切り(掃除の期限など)は、担当なしのタスク(`--owner` を付けない)に `--due` を付けて置く。
+- 存在しない日付(`2026-02-30`)や形式違い(`2026/12/01`)は使い方の誤り(終了コード 2)。
+- Web UI のタスク一覧は期日の列と「期限切れ」「期限間近(N 日以内)」の絞り込み、期日の近い順の並びを持つ。期限切れは赤で出す。
 
 ## 代行依頼(権限が足りないとき)
 
@@ -567,6 +582,16 @@ tb pr-queue scan [--dry-run] [--repo <org/repo>]                                
 - `add` は、ブランチが origin に実在すること(`PR_QUEUE_REPO_DIR` の clone で `git ls-remote`)を確かめ、確認できなければ登録しない。登録できる接頭辞は conf の `branch_prefixes`(既定は `agent/` だけ。広げるのは人。例: `agent/ feat/ fix/`)。`scan` が走査するのは先頭の接頭辞だけ。
 - 設定は `config/pr-queue.conf`(人だけ。`pr-queue.conf.example` を写して使う): `gh`、`deny_patterns`、`deny_exceptions`、`branch_prefixes`、`branch_prefix`(既定 `agent/`)、`body_root`(既定 `taskboard/data/pr-bodies`)、`body_first_line`、`auto_approve`(既定 0。1 なら scan で積んだものを承認済みにする)、`max_create_per_run`(既定 3)。
 
+## 会話チーム(下書きの層と振り分け表)
+
+人が読んで直してから送る返事の**下書き**を作る仕組み(issue #95 / #96)。送信・承認・状態の変更はしない。設計・書式・流れは [`conversation/README.md`](../conversation/README.md)。
+
+- 振り分け(誰に・いつ・どこで・どの種別か)は `tb conv-route`。5 つの区分の名前だけを受け取り、人が書く決定論の表(設定 `conv-routes`)で決める。表に無い依頼は推測せず「未登録(人の判断)」
+- 下書き(何を、どう言うか)は `tb conv-draft`。共通の土台(`conversation/_base.md`)+ 種別のチーム(`conversation/kinds/<種別>/prompt.md`)+ 採用済みのパターン。種別はファイルを足すだけで増やせる
+- 声の役(率直・共感・受け手・簡潔)は `tb conv-voice` で、役の指示と下書きだけを渡す。`tb conv-voice-check` で 3 点以内・長さの判定を確かめる
+- 振り分け表を変えるのは人だけ(`tb conv-routes-set`)。緩める・振り分け先を変える変更は `--approve-looser` が要る
+- 文面は DB・コメント・記録に書かない。`TB_CONV_TEAMS=off` でチームの層を止める
+
 ## 送信の記録
 
 tb が `herdr agent prompt` で送ろうとしたものは、結果にかかわらず `messages` に残る(`kind`=report|comment|digest|send|role|alert|scheduler|proposal、
@@ -582,11 +607,11 @@ tb が `herdr agent prompt` で送ろうとしたものは、結果にかかわ�
 ## 設定(`tb config`)
 
 運用の設定は DB の `config` 表に置き、キーで引く(schema/013)。シングルポート・マルチセッションでも、セッションごとに違う設定を持てる。
-本文は今までの conf ファイルの中身そのまま(書式は各節のとおり)。キーは `projects` / `approvals` / `grants` / `routes` / `limits` / `notify` / `compact` / `slash` / `sched-watch` / `spawn-policy` / `role-models`。
+本文は今までの conf ファイルの中身そのまま(書式は各節のとおり)。キーは `projects` / `approvals` / `grants` / `routes` / `limits` / `notify` / `compact` / `slash` / `sched-watch` / `spawn-policy` / `role-models` / `conv-routes`(会話の振り分け表。書くのは `tb conv-routes-set` だけ)。
 
 引く順(最初に見つかったもの):
 
-1. 環境変数で明示したファイル(`TB_CONFIG` / `TB_APPROVALS` / `TB_GRANTS` / `TB_ROUTES` / `TB_LIMITS` / `TB_NOTIFY_CONF` / `TB_COMPACT_CONF` / `TB_SCHEDWATCH_CONF` / `TB_SPAWN_POLICY` / `TB_ROLE_MODELS`。テストや一時の差し替え)
+1. 環境変数で明示したファイル(`TB_CONFIG` / `TB_APPROVALS` / `TB_GRANTS` / `TB_ROUTES` / `TB_LIMITS` / `TB_NOTIFY_CONF` / `TB_COMPACT_CONF` / `TB_SCHEDWATCH_CONF` / `TB_SPAWN_POLICY` / `TB_ROLE_MODELS` / `TB_CONV_ROUTES`。テストや一時の差し替え)
 2. DB の**このセッション**の行
 3. DB の**全セッション共通**の行(`herdr_session='*'`)
 4. checkout の `taskboard/config/<名前>.conf`(DB に取り込むまでの移行用。git 管理外)
@@ -621,6 +646,7 @@ tb config history approvals        # 変更の履歴(config_changes)
 | `lib/core.sh` | エラー終了・入力の検査・タスク行の取得・project ごとの指示役 |
 | `lib/transport.sh` | herdr との境界。herdr を実行するのはここの `herdr_call` だけ。送信と `messages` への記録(`herdr_send`)、`system-send` |
 | `lib/tasks.sh` | add / list / show / claim / update / done / block / report / pending |
+| `lib/conv.sh` | 会話チーム: 振り分け表(`tb conv-route` / `conv-routes-set`)・下書きの指示(`conv-draft`)・声の役(`conv-voice` / `conv-voice-check`)・パターンの台帳 |
 | `lib/proxy.sh` / `activity.sh` / `comments.sh` / `digest.sh` / `send.sh` / `roles.sh` / `approvals.sh` / `alerts.sh` / `review.sh` / `agents.sh` / `spawn.sh` / `limits.sh` / `shed.sh` / `handoff.sh` / `dbimport.sh` | 各節のコマンド |
 
 agent への送信も DB への書き込みも、すべて `tb` を通る。後で MCP サーバーなど別の経路を足すときは、`tb` のコマンドを呼ぶか `lib/transport.sh` を差し替えればよい。

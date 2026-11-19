@@ -12,7 +12,7 @@
 # 書くのは人だけ。環境変数でファイルを明示しているときはそのファイルを、そうでなければ DB のこのセッションの行(--shared なら共通の行)を書く。
 
 CONFIG_DIR=${TB_CONFIG_DIR:-$TB_ROOT/config}   # checkout の設定ファイルの置き場(テストで差し替え)
-CONFIG_KEYS="projects approvals grants routes limits notify compact slash sched-watch spawn-policy role-models"
+CONFIG_KEYS="projects approvals grants routes limits notify compact slash sched-watch spawn-policy role-models conv-routes"
 
 # キーの情報: CFG_ENV(上書きの環境変数)、CFG_FILE(checkout のファイル名)、CFG_EXAMPLE(1 なら .example も既定値として読む)
 config_key_info() {
@@ -29,6 +29,7 @@ config_key_info() {
     sched-watch)  CFG_ENV=TB_SCHEDWATCH_CONF; CFG_FILE=sched-watch.conf; CFG_EXAMPLE=1;;
     spawn-policy) CFG_ENV=TB_SPAWN_POLICY;    CFG_FILE=spawn-policy.conf; CFG_EXAMPLE=1;;
     role-models)  CFG_ENV=TB_ROLE_MODELS;     CFG_FILE=role-models.conf; CFG_EXAMPLE=1;;
+    conv-routes)  CFG_ENV=TB_CONV_ROUTES;     CFG_FILE=conv-routes.conf;;   # 会話の振り分け表(lib/conv.sh)。.example は既定値にしない(無ければすべて未登録)
     *) return 1;;
   esac
 }
@@ -154,6 +155,8 @@ config_change() {
   [[ -n $key ]] || usage "config $sub <キー> [--shared]"
   config_key_ok "$key"
   require_human "tb config $sub"
+  # 会話の振り分け表は、緩める変更の確かめと version の検査を通す tb conv-routes-set だけで書く(消すのは unset でよい)
+  [[ $key != conv-routes || $sub == unset ]] || die "conv-routes は tb conv-routes-set < 新しい表 で書きます(緩める変更は --approve-looser が要ります)"
   if ((shared)) && [[ -n $(config_env_file "$key") ]]; then die "$CFG_ENV でファイルを明示しているので --shared は使えません"; fi
   case $sub in
     unset)
