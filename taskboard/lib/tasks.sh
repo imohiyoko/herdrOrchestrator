@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # タスクの登録・状態遷移・報告(add / list / show / claim / update / done / block / report / pending)
-# と、チケットの構造(種別・優先度・ラベル・説明・リンク: link / unlink / tree / labels)
+# と、チケットの構造(種別・優先度・ラベル・説明・リンク: link / unlink / tree / labels)とスプリント(sprint-* / sprints / board)
 # bin/tb から source される。単体では実行しない。
 
 # ---------- チケットの構造(014)の小道具 ----------
@@ -76,6 +76,16 @@ hierarchy_ok_sql() {
   fi
   printf '(%s)' "$c"
 }
+# スプリントに入れてよいか: $1=S-<n> $2=project。同じ project で closed でないこと。数字の ID を出す
+sprint_for_task() {
+  valid_sprint "$1"
+  local n=${1#S-} st
+  st=$(sql "SELECT state||'|'||project FROM sprints WHERE id=$n;")
+  [[ -n $st ]] || die "スプリントが見つかりません: $1"
+  [[ ${st#*|} == "$2" ]] || usage "スプリント $1 は project ${st#*|} のものです(タスクは $2)"
+  [[ ${st%%|*} != closed ]] || usage "閉じたスプリントには入れられません: $1"
+  printf '%s' "$n"
+}
 # 優先度の並び(highest が先)。SQL の ORDER BY に使う
 PRIORITY_RANK="CASE priority WHEN 'highest' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END"
 # 実行者の名前(agent の pane なら herdr から引いた名前、人の端末なら human)
@@ -85,7 +95,7 @@ actor_name() {
 
 # ---------- add ----------
 cmd_add() {
-  local project="" title="" parent="" owner="" session="" account="" type=task priority=medium desc="" due="" labs=() refs=()
+  local project="" title="" parent="" owner="" session="" account="" type=task priority=medium desc="" due="" labs=() refs=() sprint="" points=""
   while [[ $# -gt 0 ]]; do
     case $1 in
       -p|--project) need_arg "$@"; project=$2; shift 2;;
@@ -96,6 +106,8 @@ cmd_add() {
       --desc|--description) need_arg "$@"; desc=$2; shift 2;;
       --ref)        need_arg "$@"; refs+=("$2"); shift 2;;
       --due)        need_arg "$@"; [[ -z $2 ]] || valid_due "$2"; due=$2; shift 2;;
+      --sprint)     need_arg "$@"; sprint=$2; shift 2;;
+      --points)     need_arg "$@"; valid_points "$2"; points=$2; shift 2;;
       --parent)     need_arg "$@"; parent=$2; shift 2;;
       --owner)      need_arg "$@"; owner=$2; shift 2;;
       --session)    need_arg "$@"; session=$2; shift 2;;
@@ -108,20 +120,22 @@ cmd_add() {
   blank "$title" && usage "add: -t <title> が必要です"
   if [[ -n $parent ]]; then valid_id "$parent"; require_task "$parent" >/dev/null; fi
   check_hierarchy "$type" "$parent"
+  local sid=""; [[ -z $sprint ]] || sid=$(sprint_for_task "$sprint" "$project")
   local lj rj; lj=$(labels_json ${labs[@]+"${labs[@]}"}); rj=$(refs_json ${refs[@]+"${refs[@]}"})
   event_actor_resolve
   local n=$(now) p out; p=$(q "$project")
   # 採番と挿入を 1 文で行い、同時 add でも重複しないようにする。親の種別の規則も同じ文で確かめる(HAVING)
   # ID は DB 全体で一意(採番は全セッションの行を見る。ここだけ herdr_session で絞らない)
-  out=$(sql "BEGIN IMMEDIATE; INSERT INTO main.tasks (id, project, title, owner_agent, session_id, account, parent_id, type, priority, labels, description, refs, due, created_at, updated_at, herdr_session)
+  out=$(sql "BEGIN IMMEDIATE; INSERT INTO main.tasks (id, project, title, owner_agent, session_id, account, parent_id, type, priority, labels, description, refs, due, sprint_id, points, created_at, updated_at, herdr_session)
        SELECT 'T-'||$p||'-'||printf('%03d', COALESCE(MAX(CAST(substr(id, length($p)+4) AS INTEGER)),0)+1),
               $p, $(q "$title"), NULLIF($(q "$owner"),''), NULLIF($(q "$session"),''), NULLIF($(q "$account"),''),
               NULLIF($(q "$parent"),''), $(q "$type"), $(q "$priority"), $(q "$lj"), NULLIF($(q "$desc"),''), $(q "$rj"), NULLIF($(q "$due"),''),
+              CAST(NULLIF($(q "$sid"),'') AS INTEGER), CAST(NULLIF($(q "$points"),'') AS INTEGER),
               $(q "$n"), $(q "$n"), $SQS
-       FROM main.tasks WHERE project=$p HAVING $(hierarchy_ok_sql "$type" "$parent");
+       FROM main.tasks WHERE project=$p HAVING $(hierarchy_ok_sql "$type" "$parent")${sid:+ AND EXISTS (SELECT 1 FROM sprints WHERE id=$sid AND state!='closed')};
        SELECT CASE WHEN changes()=1 THEN (SELECT id FROM main.tasks WHERE rowid=last_insert_rowid()) ELSE '' END;   -- rowid は表のもの(ビューには無い)
        COMMIT;")
-  [[ -n $out ]] || usage "add: 親の種別が規則に合いません(並行して変わりました): $parent"
+  [[ -n $out ]] || usage "add: 親の種別かスプリントが規則に合いません(並行して変わりました): ${parent:-$sprint}"
   printf '%s\n' "$out"
 }
 
@@ -143,6 +157,9 @@ cmd_list() {
                     done < <(jq -r '.[]' <<<"$lj"); shift 2;;
       --owner)      need_arg "$@"; where+=" AND owner_agent=$(q "$2")"; shift 2;;
       --parent)     need_arg "$@"; valid_id "$2"; where+=" AND parent_id=$(q "$2")"; shift 2;;
+      --sprint)     need_arg "$@"   # S-<n> か backlog(スプリントに入っていないもの)
+                    if [[ $2 == backlog ]]; then where+=" AND sprint_id IS NULL"; else valid_sprint "$2"; where+=" AND sprint_id=${2#S-}"; fi
+                    shift 2;;
       --overdue)    td=$(today) || exit $?; where+=" AND due IS NOT NULL AND due < $(q "$td") AND status!='done'"; shift;;
       --due-within) need_arg "$@"; [[ $2 =~ ^[0-9]{1,4}$ ]] || usage "list: --due-within は 0〜9999 の日数: $2"
                     td=$(today) || exit $?
@@ -169,7 +186,8 @@ cmd_list() {
     sql -json "SELECT * FROM tasks WHERE ($where) ORDER BY $order;" | jq -c '(. // [])[] | .deliverables |= fromjson | .labels |= fromjson | .refs |= fromjson'
   elif ((long)); then
     sql -separator $'\t' "SELECT id, status, type, priority, COALESCE(owner_agent,'-'), created_at, updated_at,
-        COALESCE((SELECT group_concat(value, ',') FROM json_each(tasks.labels)), '-'), replace(title, char(10), ' '), COALESCE(due, '-')
+        COALESCE((SELECT group_concat(value, ',') FROM json_each(tasks.labels)), '-'), replace(title, char(10), ' '), COALESCE(due, '-'),
+        COALESCE('S-'||sprint_id, '-'), COALESCE(points, '-')
       FROM tasks WHERE ($where) ORDER BY $order;"
   else
     sql -separator $'\t' "SELECT id, status, COALESCE(owner_agent,'-'), replace(title, char(10), ' ') FROM tasks WHERE ($where) ORDER BY $order;"
@@ -234,7 +252,7 @@ cmd_update() {
   [[ $# -ge 1 ]] || usage "update <id> [--status S] [--title T] [--owner N] [--session S] [--account A] [--parent ID] [--type T] [--priority P] [--desc D] [--due YYYY-MM-DD|''] [--label L ...] [--add-label L] [--remove-label L]"
   local id=$1; shift
   valid_id "$id"
-  local sets=() row cur ntype="" nparent="" setlab=() addlab=() rmlab=() relabel=0 addref=() rmref=()
+  local sets=() row cur ntype="" nparent="" setlab=() addlab=() rmlab=() relabel=0 addref=() rmref=() nsprint="-"
   while [[ $# -gt 0 ]]; do
     case $1 in
       --status)  need_arg "$@"; valid_status "$2"
@@ -255,13 +273,23 @@ cmd_update() {
       --add-label)      need_arg "$@"; addlab+=("$2"); shift 2;;
       --remove-label)   need_arg "$@"; rmlab+=("$2"); shift 2;;
       --add-ref)        need_arg "$@"; addref+=("$2"); shift 2;;      # <種類>=<URL> か URL
+      --sprint)         need_arg "$@"; nsprint=$2; shift 2;;          # S-<n>('' でバックログへ)
+      --points)         need_arg "$@"; [[ -z $2 ]] || valid_points "$2"; sets+=("points=CAST(NULLIF($(q "$2"),'') AS INTEGER)"); shift 2;;
       --remove-ref)     need_arg "$@"; valid_ref_url "$2"; rmref+=("$2"); shift 2;;   # URL で外す
       *) usage "update: 不明な引数 $1";;
     esac
   done
-  [[ ${#sets[@]} -gt 0 || $relabel == 1 || ${#addlab[@]} -gt 0 || ${#rmlab[@]} -gt 0 || ${#addref[@]} -gt 0 || ${#rmref[@]} -gt 0 ]] || usage "update: 変更する項目がありません"
+  [[ ${#sets[@]} -gt 0 || $relabel == 1 || ${#addlab[@]} -gt 0 || ${#rmlab[@]} -gt 0 || ${#addref[@]} -gt 0 || ${#rmref[@]} -gt 0 || $nsprint != - ]] || usage "update: 変更する項目がありません"
   row=$(require_task "$id"); cur=$(jq -r .status <<<"$row")
   [[ $cur != done ]] || die "done のタスクは update できません: $id"
+  local sguard=""
+  if [[ $nsprint != - ]]; then
+    if [[ -z $nsprint ]]; then sets+=("sprint_id=NULL")
+    else
+      local sn; sn=$(sprint_for_task "$nsprint" "$(jq -r .project <<<"$row")")
+      sets+=("sprint_id=$sn"); sguard=" AND EXISTS (SELECT 1 FROM sprints WHERE id=$sn AND state!='closed')"   # 書く時点でも閉じていない
+    fi
+  fi
   if [[ -n $ntype || -n $nparent ]]; then
     check_hierarchy "${ntype:-$(jq -r .type <<<"$row")}" "${nparent:-$(jq -r '.parent_id // empty' <<<"$row")}" "$id"
   fi
@@ -291,10 +319,11 @@ cmd_update() {
   fi
   event_actor_resolve
   local IFS=,
-  n=$(sql "BEGIN IMMEDIATE; UPDATE main.tasks SET ${sets[*]}, updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id")$guard;
+  n=$(sql "BEGIN IMMEDIATE; UPDATE main.tasks SET ${sets[*]}, updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id")$guard$sguard;
            SELECT changes(); COMMIT;")
   unset IFS
   if [[ $n != 1 ]]; then
+    [[ -z $sguard || -n $(sql "SELECT 1 FROM sprints WHERE id=${nsprint#S-} AND state!='closed';") ]] || usage "閉じたスプリントには入れられません: $nsprint"
     [[ -z $fparent || -z $(sql "SELECT 1 WHERE $(parent_cycle_sql "$fparent" "$id");") ]] || usage "親子が循環します: $id → $fparent"
     usage "update: 種別・親が規則に合いません(並行して変わりました): $id"
   fi
@@ -464,6 +493,129 @@ cmd_labels() {
   local qs="SELECT j.value AS label, SUM(t.status!='done') AS open, COUNT(*) AS total
             FROM tasks t, json_each(t.labels) j WHERE ($where) GROUP BY j.value ORDER BY j.value;"
   if ((json)); then sql -json "$qs" | jq -c '(. // [])[]'; else sql -separator $'\t' "$qs"; fi
+}
+
+# ---------- スプリント ----------
+# tb sprint-add -p <project> -n <名前> [--start YYYY-MM-DD] [--end YYYY-MM-DD] [--goal G] → S-<n>(planned)
+cmd_sprint-add() {
+  local project="" name="" start="" end="" goal=""
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      -p|--project) need_arg "$@"; project=$2; shift 2;;
+      -n|--name)    need_arg "$@"; name=$2; shift 2;;
+      --start)      need_arg "$@"; valid_due "$2"; start=$2; shift 2;;
+      --end)        need_arg "$@"; valid_due "$2"; end=$2; shift 2;;
+      --goal)       need_arg "$@"; goal=$2; shift 2;;
+      *) usage "sprint-add: 不明な引数 $1";;
+    esac
+  done
+  [[ -n $project ]] || usage "sprint-add: -p <project> が必要です"
+  valid_project "$project"
+  blank "$name" && usage "sprint-add: -n <名前> が必要です"
+  [[ -z $start || -z $end || ! $end < $start ]] || usage "sprint-add: --end は --start より後にする"
+  printf 'S-%s\n' "$(sql "INSERT INTO main.sprints (project, name, goal, start_date, end_date, created_at, herdr_session)
+    VALUES ($(q "$project"), $(q "$name"), NULLIF($(q "$goal"),''), NULLIF($(q "$start"),''), NULLIF($(q "$end"),''), $(q "$(now)"), $SQS);
+    SELECT last_insert_rowid();")"
+}
+sprint_row() { valid_sprint "$1"; local r; r=$(session_row sprints id "${1#S-}"); [[ -n $r ]] || die "スプリントが見つかりません: $1"; printf '%s' "$r"; }
+# tb sprint-start S-<n>: planned → active(同じ project の active は 1 つだけ)
+cmd_sprint-start() {
+  [[ $# -eq 1 ]] || usage "sprint-start S-<n>"
+  local row st n; row=$(sprint_row "$1"); st=$(jq -r .state <<<"$row")
+  [[ $st == planned ]] || die "planned のスプリントだけ始められます($st): $1"
+  n=$(sql "UPDATE main.sprints SET state='active', started_at=$(q "$(now)")
+           WHERE herdr_session=$SQS AND id=${1#S-} AND state='planned'
+             AND NOT EXISTS (SELECT 1 FROM sprints WHERE project=$(q "$(jq -r .project <<<"$row")") AND state='active');
+           SELECT changes();")
+  [[ $n == 1 ]] || die "project $(jq -r .project <<<"$row") には active なスプリントがあります(先に tb sprint-close)"
+  echo "$1 active"
+}
+# tb sprint-close S-<n> [--carry S-<m>]: 閉じる。終わっていないタスクは S-<m>(無ければバックログ)へ移す
+cmd_sprint-close() {
+  [[ $# -ge 1 ]] || usage "sprint-close S-<n> [--carry S-<m>]"
+  local id=$1 carry=""; shift
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --carry) need_arg "$@"; carry=$2; shift 2;;
+      *) usage "sprint-close: 不明な引数 $1";;
+    esac
+  done
+  local row st project to=NULL out; row=$(sprint_row "$id"); st=$(jq -r .state <<<"$row"); project=$(jq -r .project <<<"$row")
+  [[ $st != closed ]] || die "すでに閉じています: $id"
+  if [[ -n $carry ]]; then
+    [[ $carry != "$id" ]] || usage "sprint-close: 同じスプリントには移せません"
+    to=$(sprint_for_task "$carry" "$project")
+  fi
+  # 閉じる側・移す先が閉じていないことを書く時点で確かめる(並行した close と競っても二重に動かさない)
+  local ok="EXISTS (SELECT 1 FROM main.sprints WHERE herdr_session=$SQS AND id=${id#S-} AND state!='closed')"
+  [[ $to == NULL ]] || ok+=" AND EXISTS (SELECT 1 FROM main.sprints WHERE herdr_session=$SQS AND id=$to AND state!='closed')"
+  out=$(sql "BEGIN IMMEDIATE;
+    UPDATE main.tasks SET sprint_id=$to, updated_at=$(q "$(now)")
+      WHERE herdr_session=$SQS AND sprint_id=${id#S-} AND status!='done' AND $ok;
+    SELECT changes();
+    UPDATE main.sprints SET state='closed', closed_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=${id#S-} AND $ok;
+    SELECT changes();
+    COMMIT;")
+  [[ ${out##*$'\n'} == 1 ]] || die "sprint-close: $id か ${carry:-移す先} が並行して閉じられました"
+  out=${out%%$'\n'*}
+  echo "$id closed(未完了 $out 件を ${carry:-バックログ} へ)"
+}
+# tb sprints [-p project] [--state planned|active|closed] [--json]
+cmd_sprints() {
+  local where="1=1" json=0
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      -p|--project) need_arg "$@"; where+=" AND s.project=$(q "$2")"; shift 2;;
+      --state) need_arg "$@"; [[ " planned active closed " == *" $2 "* ]] || usage "state は planned / active / closed のどれか: $2"
+               where+=" AND s.state=$(q "$2")"; shift 2;;
+      --json) json=1; shift;;
+      *) usage "sprints: 不明な引数 $1";;
+    esac
+  done
+  local qs="SELECT 'S-'||s.id AS id, s.state, s.project, s.name, s.start_date, s.end_date, s.goal,
+              COUNT(t.id) AS tasks, SUM(t.status='done') AS done,
+              COALESCE(SUM(t.points),0) AS points, COALESCE(SUM(CASE WHEN t.status='done' THEN t.points END),0) AS done_points
+            FROM sprints s LEFT JOIN tasks t ON t.sprint_id=s.id WHERE ($where)
+            GROUP BY s.id ORDER BY s.project, CASE s.state WHEN 'active' THEN 1 WHEN 'planned' THEN 2 ELSE 3 END, s.id"
+  if ((json)); then sql -json "$qs;" | jq -c '(. // [])[] | .done //= 0'
+  else sql -separator $'\t' "SELECT id, state, project, name, COALESCE(start_date,'-')||'..'||COALESCE(end_date,'-'),
+         COALESCE(done,0)||'/'||tasks, done_points||'/'||points FROM ($qs);"; fi
+}
+# tb board [S-<n> | -p <project>] [-l ラベル] [--json]: 状態ごとの列。-p だけならその project の active なスプリント
+cmd_board() {
+  local sid="" project="" json=0 where="" l lj
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      -p|--project) need_arg "$@"; project=$2; shift 2;;
+      -l|--label) need_arg "$@"; lj=$(labels_json "$2")
+                  while IFS= read -r l; do
+                    [[ -n $l ]] && where+=" AND EXISTS (SELECT 1 FROM json_each(tasks.labels) WHERE value=$(q "$l"))"
+                  done < <(jq -r '.[]' <<<"$lj"); shift 2;;
+      --json) json=1; shift;;
+      S-*) valid_sprint "$1"; sid=$1; shift;;
+      *) usage "board: 不明な引数 $1";;
+    esac
+  done
+  if [[ -z $sid ]]; then
+    [[ -n $project ]] || usage "board S-<n> | board -p <project>"
+    sid=$(sql "SELECT 'S-'||id FROM sprints WHERE project=$(q "$project") AND state='active';")
+    [[ -n $sid ]] || die "project $project に active なスプリントがありません(tb sprints -p $project)"
+  fi
+  local row; row=$(sprint_row "$sid")
+  local qs="SELECT id, status, type, priority, COALESCE(owner_agent,'-') AS owner, points, labels, title FROM tasks
+            WHERE sprint_id=${sid#S-}$where ORDER BY $PRIORITY_RANK, id"
+  if ((json)); then
+    sql -json "$qs;" | jq -sc --argjson s "$row" --arg sid "$sid" \
+      '(.[0] // []) as $t | {sprint: ($s | .id = $sid | del(.herdr_session)),
+        columns: ([("todo","in_progress","review","blocked","done") as $c | {key: $c, value: [$t[] | select(.status == $c) | .labels |= fromjson]}] | from_entries)}'
+    return
+  fi
+  jq -r --arg sid "$sid" '"\($sid) \(.name) [\(.state)] \(.start_date // "-")..\(.end_date // "-")" + (if .goal then "\n目標: \(.goal)" else "" end)' <<<"$row"
+  local c
+  for c in todo in_progress review blocked done; do
+    printf '\n== %s ==\n' "$c"
+    sql -separator $'\t' "SELECT id, priority, owner, COALESCE(points,'-'), replace(title, char(10), ' ') FROM ($qs) WHERE status=$(q "$c");"
+  done
 }
 
 # ---------- history / events(018 の task_events。ADR 0003 の段 1) ----------

@@ -750,6 +750,31 @@ _cx.commit()
 _TD3 = cl.get("/tasks/T-3")[2]
 check("タスク詳細: 外部リンク(http(s) だけをリンクに)", 'href="https://acme.slack.com/archives/C1/p1"' in _TD3 and 'rel="noopener noreferrer"' in _TD3
       and 'href="javascript' not in _TD3 and "javascript:alert(1)" in _TD3)
+# スプリントとボード(019)
+_cx.execute("INSERT INTO sprints (id, project, name, goal, start_date, end_date, state, created_at, herdr_session) VALUES "
+            "(7, 'pj2', '第1スプリント " + XSS + "', 'ゴール', '2026-11-17', '2026-11-30', 'active', 't', 'default')")
+_cx.execute("INSERT INTO sprints (id, project, name, state, created_at, herdr_session) VALUES (8, 'pj2', '次', 'planned', 't', 'default')")
+_cx.execute("UPDATE tasks SET sprint_id=7, points=3 WHERE id='T-3'")
+_cx.execute("UPDATE tasks SET sprint_id=7, points=5 WHERE id='T-4'")
+_cx.execute("UPDATE tasks SET sprint_id=8 WHERE id='T-5'")
+_cx.commit()
+B = cl.get("/board")
+check("ボード: 200・ナビに出る・自動更新しない", B[0] == 200 and 'href="/board"' in B[2] and 'http-equiv="refresh"' not in B[2])
+check("ボード: 既定は active なスプリント(S-7)で、状態の列にカード", "<h2>S-7 " in B[2] and "in_progress (1)" in B[2] and "done (1)" in B[2]
+      and 'href="/tasks/T-3"' in B[2] and 'href="/tasks/T-5"' not in B[2].split("<h2>スプリント一覧</h2>")[0])
+check("ボード: 完了とポイントの集計", "完了 1 / 2 件・ポイント 5 / 8" in B[2])
+check("ボード: スプリント名はエスケープ", XSS not in B[2] and "&lt;script&gt;" in B[2])
+B8 = cl.get("/board?sprint=S-8")[2]
+check("ボード: スプリントを選ぶ", "<h2>S-8 " in B8 and 'href="/tasks/T-5"' in B8.split("<h2>スプリント一覧</h2>")[0])
+check("ボード: ラベルで絞る", 'href="/tasks/T-3"' in cl.get("/board?sprint=S-7&label=ui")[2] and
+      'href="/tasks/T-4"' not in cl.get("/board?sprint=S-7&label=ui")[2].split("<h2>スプリント一覧</h2>")[0])
+for bad in ["sprint=zz", "sprint=S-999", "label=a%20b", "project=%27%3B--"]:
+    r = cl.get("/board?" + bad)
+    check(f"ボード: 不正な指定 {bad} でも 200", r[0] == 200 and "'--" not in r[2], str(r[0]))
+check("タスク詳細: スプリントとポイント", 'href="/board?sprint=S-7"' in cl.get("/tasks/T-3")[2] and "バックログ" in cl.get("/tasks/T-1")[2])
+check("ボード: POST は 405", cl.raw("POST", "/board", {"a": "b"})[0] == 405)
+_cx.execute("UPDATE tasks SET sprint_id=NULL, points=NULL")
+_cx.execute("DELETE FROM sprints")
 # 履歴(018 の task_events): 新しい順、エスケープ、別セッションの行は出ない、行が無ければ欄も出ない
 check("タスク詳細: 履歴が無ければ欄は出ない", "<h2>履歴</h2>" not in _TD3)
 _cx.executemany("INSERT INTO task_events (herdr_session, task_id, kind, old, new, actor, ref, created_at) VALUES (?,?,?,?,?,?,?,?)",

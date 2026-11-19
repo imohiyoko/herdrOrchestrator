@@ -87,7 +87,9 @@ event_setup() {  # $1=変えた者
   printf "%s SELECT NEW.herdr_session, NEW.id, 'ref_added', NULL, json_extract(value,'\$.url'), %s, NULL, %s FROM json_each(NEW.refs);" "$ins" "$a" "$ts"
   printf 'END;'
   printf 'CREATE TEMP TRIGGER _tb_ev_tasks_u AFTER UPDATE ON main.tasks BEGIN '
-  col status status; col title title; col type type; col priority priority; col owner owner_agent; col due due; col parent parent_id
+  col status status; col title title; col type type; col priority priority; col owner owner_agent; col due due; col parent parent_id; col points points
+  # スプリント(019)は S-<n> で残す(NULL = バックログ)
+  printf "%s SELECT NEW.herdr_session, NEW.id, 'sprint', 'S-'||OLD.sprint_id, 'S-'||NEW.sprint_id, %s, NULL, %s WHERE OLD.sprint_id IS NOT NEW.sprint_id;" "$ins" "$a" "$ts"
   # 説明は本文を履歴に写さない(変わったことだけ)
   printf "%s SELECT NEW.herdr_session, NEW.id, 'description', NULL, NULL, %s, NULL, %s WHERE OLD.description IS NOT NEW.description;" "$ins" "$a" "$ts"
   printf "%s SELECT NEW.herdr_session, NEW.id, 'label_added', NULL, value, %s, NULL, %s FROM json_each(NEW.labels) WHERE value NOT IN (SELECT value FROM json_each(OLD.labels));" "$ins" "$a" "$ts"

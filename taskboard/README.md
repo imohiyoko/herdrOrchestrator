@@ -83,6 +83,7 @@ tb update T-web-002 --add-label frontend --remove-label ui --priority highest
 - **ラベル** `-l` / `--label`: 何個でも(繰り返しかカンマ区切り)。1〜40 文字で空白・カンマ・引用符は使えない(日本語は可)。agent は `tb list -l <ラベル>` で自分の分野のチケットだけを見られる。
 - **説明** `--desc`: 本文・受け入れ条件。`tb show` と Web UI の詳細に出る。
 - **外部リンク** `--ref [種類=]URL`: Slack のスレッド・PR・ドキュメントなどの URL を何個でも(`tb update --add-ref` / `--remove-ref <URL>` で付け外し)。種類を省くと URL から `slack` / `github` / `link` を決める。http(s) の URL だけ。`tb show` と Web UI の詳細(押せるリンク)に出る。
+- **スプリント**: `tb sprint-add -p web -n "Sprint 1" --start 2026-11-17 --end 2026-11-30 --goal "..."` で作り、`tb add/update --sprint S-n --points 3` で入れる(`--sprint ''` でバックログへ)。`tb sprint-start S-n` で始め(1 つの project で active は 1 つ)、`tb sprint-close S-n --carry S-m` で閉じると終わっていないタスクを次へ移す。`tb board -p web` で状態ごとの列、`tb sprints` で件数とポイント。Web UI の「ボード」(`/board`)にも同じ列が出る(読み取りのみ)。
 - **担当の agent**: 既存の `--owner`(agent 名)と `--session`(その agent の会話 ID)で紐付く。`tb list --owner <agent>` で絞り込める。
 - **リンク** `tb link <from> blocks|relates|duplicates <to>`: `blocks` は claim を止める(先行タスクが done になれば claim できる)。blocks の循環は止める。`tb show` は向きつき(`blocks` / `blocked_by` など)で出す。
 - `tb list` の既定の出力(ID 状態 担当 題)は変えていない。種別・優先度・作成・更新・ラベル・期日は `--long`(または `--json`)で出る。
@@ -113,7 +114,7 @@ tb events -p web --kind label_added --limit 20 --json   # このセッション�
 tb events --since E-120         # E-120 より後のもの(通知の規則などで続きから読む用)
 ```
 
-- **種類**: `created` / `status` / `title` / `type` / `priority` / `owner` / `due` / `parent` / `description` / `label_added` / `label_removed` / `ref_added` / `ref_removed` / `link` / `unlink` / `comment`。作成時のラベル・外部リンクも `label_added` / `ref_added` として残る。
+- **種類**: `created` / `status` / `title` / `type` / `priority` / `owner` / `due` / `parent` / `sprint` / `points` / `description` / `label_added` / `label_removed` / `ref_added` / `ref_removed` / `link` / `unlink` / `comment`。作成時のラベル・外部リンクも `label_added` / `ref_added` として残る。
 - **変えた者**: agent の pane からなら herdr から引いた agent 名(引けなければ `pane:<id>`。書き込みは止めない)、人の端末なら `human`。コメントは報告者、リンクは `task_links.created_by`。
 - **本文は写さない**: 説明は「変わった」ことだけ(前後は空)、コメントは種類と `C-<n>` だけ。
 - **残らないもの**: 報告(`reported_at`)・成果物・要約・担当の会話 ID・アカウント・`updated_at` だけの変化。tb 以外の書き込み(移行・`db-import`・手で開いた sqlite3)。この機能より前の変化。
