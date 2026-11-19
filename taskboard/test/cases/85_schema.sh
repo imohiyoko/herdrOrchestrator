@@ -11,6 +11,7 @@ rm -f "$TB_DB"; sqlite3 "$TB_DB" <"$HERE/../schema/001_initial.sql"
 sqlite3 "$TB_DB" "INSERT INTO tasks (id, project, title, created_at, updated_at) VALUES ('T-old-001','old','keep','t','t');
   INSERT INTO outbox (from_name, from_pane, from_session, target, kind, text, status, created_at) VALUES ('c','p','s','w','info','x','pending','t');"
 eq "schema: pre-versioned DB keeps rows" "$($TB show T-old-001 | jq -r .title) $(sqlite3 "$TB_DB" "SELECT status FROM outbox;") $(sqlite3 "$TB_DB" "PRAGMA user_version;")" "keep pending $latest"
+eq "schema: migrated rows get ticket defaults" "$($TB show T-old-001 | jq -c "[.type,.priority,.labels]")" "[\"task\",\"medium\",[]]"
 eq "schema: outbox index survives migration" "$(sqlite3 "$TB_DB" "SELECT COUNT(*) FROM sqlite_master WHERE name='outbox_status';")" "1"
 # 版が最新なら何も流さない(DDL を流すと sqlite_master が変わる)
 before=$(sqlite3 "$TB_DB" "PRAGMA schema_version;"); $TB list >/dev/null

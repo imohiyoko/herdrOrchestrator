@@ -62,6 +62,29 @@ tb whoami --short   # herdr セッション名だけ
 
 `project` は英数字と `_` のみ。ID は project ごとに 001 から採番される。
 
+### チケットの構造(種別・優先度・ラベル・説明・リンク)
+
+Jira に近い形でタスクを整理できる。状態(todo / in_progress / review / done / blocked)と遷移は変えない。
+
+```bash
+tb add -p web -t "ログイン刷新" --type epic --priority high -l auth,ui
+tb add -p web -t "ログイン画面" --type story --parent T-web-001 -l ui --desc "受け入れ条件: ..."
+tb add -p web -t "テストを書く" --type subtask --parent T-web-002
+tb link T-web-003 blocks T-web-002        # T-web-002 は T-web-003 が done になるまで claim できない
+tb list -l ui --sort priority --long      # ラベルで絞る(複数はすべてを持つもの)。作成・更新の時刻も出る
+tb tree T-web-001                         # epic から下を字下げで
+tb labels                                 # 使われているラベルと件数
+tb update T-web-002 --add-label frontend --remove-label ui --priority highest
+```
+
+- **種別** `--type`: `epic` / `story` / `task`(既定)/ `bug` / `subtask`。epic は親を持たない。subtask は親が必須で、親は story / task / bug。subtask は誰の親にもなれない。親子の循環は止める。
+- **優先度** `--priority`: `highest` / `high` / `medium`(既定)/ `low` / `lowest`。`tb list --sort priority` と Web UI の「優先度が高い順」で並ぶ。
+- **ラベル** `-l` / `--label`: 何個でも(繰り返しかカンマ区切り)。1〜40 文字で空白・カンマ・引用符は使えない(日本語は可)。agent は `tb list -l <ラベル>` で自分の分野のチケットだけを見られる。
+- **説明** `--desc`: 本文・受け入れ条件。`tb show` と Web UI の詳細に出る。
+- **リンク** `tb link <from> blocks|relates|duplicates <to>`: `blocks` は claim を止める(先行タスクが done になれば claim できる)。blocks の循環は止める。`tb show` は向きつき(`blocks` / `blocked_by` など)で出す。
+- `tb list` の既定の出力(ID 状態 担当 題)は変えていない。種別・優先度・作成・更新・ラベルは `--long`(または `--json`)で出る。
+- Web UI のタスク一覧は 種別・優先度・ラベル・作成・更新 の列と、種別・優先度・ラベルの絞り込みを持つ。ラベルを押すとそのラベルで絞り込む。
+
 ## 代行依頼(権限が足りないとき)
 
 仕様は利用側のプロンプトで定める。

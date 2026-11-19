@@ -1,14 +1,62 @@
 # shellcheck shell=bash
 # タスクの登録・状態遷移・報告(add / list / show / claim / update / done / block / report / pending)
+# と、チケットの構造(種別・優先度・ラベル・説明・リンク: link / unlink / tree / labels)
 # bin/tb から source される。単体では実行しない。
+
+# ---------- チケットの構造(014)の小道具 ----------
+# 引数(それぞれカンマ区切り可)→ ラベルの JSON 配列(重複なし・辞書順)。不正なラベルは usage で止める
+labels_json() {
+  local a p out=()
+  for a in "$@"; do
+    local IFS=,; read -ra parts <<<"$a"; unset IFS
+    for p in "${parts[@]}"; do
+      p=${p#"${p%%[![:space:]]*}"}; p=${p%"${p##*[![:space:]]}"}
+      [[ -z $p ]] && continue
+      valid_label "$p"; out+=("$p")
+    done
+  done
+  jq -nc '$ARGS.positional | unique' --args ${out[@]+"${out[@]}"}
+}
+# 種別と親の組み合わせ。$1=種別 $2=親の ID(無ければ空) $3=自分の ID(add では空)
+# epic は親を持たない / subtask は親が必須で、親は epic でも subtask でもない / subtask は誰の親にもなれない
+check_hierarchy() {
+  local type=$1 parent=$2 self=${3-} ptype
+  if [[ -n $parent ]]; then
+    [[ $type != epic ]] || usage "epic は親を持てません"
+    ptype=$(sql "SELECT type FROM tasks WHERE id=$(q "$parent");")
+    [[ $ptype != subtask ]] || usage "subtask は親にできません: $parent"
+    [[ ! ( $type == subtask && $ptype == epic ) ]] || usage "subtask の親は story / task / bug にする(epic の直下には置けない): $parent"
+  else
+    [[ $type != subtask ]] || usage "subtask には --parent が必要です"
+  fi
+  if [[ -n $self && $type == subtask ]]; then
+    [[ $(sql "SELECT COUNT(*) FROM tasks WHERE parent_id=$(q "$self");") == 0 ]] || usage "子のあるタスクは subtask にできません: $self"
+  fi
+  if [[ -n $self && -n $parent ]]; then   # 親をたどって自分に戻るなら循環
+    [[ -z $(sql "WITH RECURSIVE up(id, d) AS (SELECT $(q "$parent"), 0 UNION ALL
+        SELECT t.parent_id, up.d+1 FROM tasks t JOIN up ON t.id=up.id WHERE t.parent_id IS NOT NULL AND up.d<100)
+        SELECT 1 FROM up WHERE id=$(q "$self") LIMIT 1;") ]] || usage "親子が循環します: $self → $parent"
+  fi
+  return 0
+}
+# 優先度の並び(highest が先)。SQL の ORDER BY に使う
+PRIORITY_RANK="CASE priority WHEN 'highest' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END"
+# 実行者の名前(agent の pane なら herdr から引いた名前、人の端末なら human)
+actor_name() {
+  if [[ -n ${HERDR_PANE_ID:-} ]]; then resolve_label || return 3; printf '%s' "$LABEL_NAME"; else printf human; fi
+}
 
 # ---------- add ----------
 cmd_add() {
-  local project="" title="" parent="" owner="" session="" account=""
+  local project="" title="" parent="" owner="" session="" account="" type=task priority=medium desc="" labs=()
   while [[ $# -gt 0 ]]; do
     case $1 in
       -p|--project) need_arg "$@"; project=$2; shift 2;;
       -t|--title)   need_arg "$@"; title=$2; shift 2;;
+      --type)       need_arg "$@"; valid_type "$2"; type=$2; shift 2;;
+      --priority)   need_arg "$@"; valid_priority "$2"; priority=$2; shift 2;;
+      -l|--label)   need_arg "$@"; labs+=("$2"); shift 2;;
+      --desc|--description) need_arg "$@"; desc=$2; shift 2;;
       --parent)     need_arg "$@"; parent=$2; shift 2;;
       --owner)      need_arg "$@"; owner=$2; shift 2;;
       --session)    need_arg "$@"; session=$2; shift 2;;
@@ -20,38 +68,77 @@ cmd_add() {
   valid_project "$project"
   blank "$title" && usage "add: -t <title> が必要です"
   if [[ -n $parent ]]; then valid_id "$parent"; require_task "$parent" >/dev/null; fi
+  check_hierarchy "$type" "$parent"
+  local lj; lj=$(labels_json ${labs[@]+"${labs[@]}"})
   local n=$(now) p; p=$(q "$project")
   # 採番と挿入を 1 文で行い、同時 add でも重複しないようにする
   # ID は DB 全体で一意(採番は全セッションの行を見る。ここだけ herdr_session で絞らない)
-  sql "INSERT INTO main.tasks (id, project, title, owner_agent, session_id, account, parent_id, created_at, updated_at, herdr_session)
+  sql "INSERT INTO main.tasks (id, project, title, owner_agent, session_id, account, parent_id, type, priority, labels, description, created_at, updated_at, herdr_session)
        SELECT 'T-'||$p||'-'||printf('%03d', COALESCE(MAX(CAST(substr(id, length($p)+4) AS INTEGER)),0)+1),
               $p, $(q "$title"), NULLIF($(q "$owner"),''), NULLIF($(q "$session"),''), NULLIF($(q "$account"),''),
-              NULLIF($(q "$parent"),''), $(q "$n"), $(q "$n"), $SQS
+              NULLIF($(q "$parent"),''), $(q "$type"), $(q "$priority"), $(q "$lj"), NULLIF($(q "$desc"),''),
+              $(q "$n"), $(q "$n"), $SQS
        FROM main.tasks WHERE project=$p;
        SELECT id FROM main.tasks WHERE rowid=last_insert_rowid();   -- rowid は表のもの(ビューには無い)"
 }
 
 # ---------- list ----------
+# 既定の出力(タブ区切り: ID 状態 担当 題)は変えない。--long で 種別・優先度・作成・更新・ラベルも出す
 cmd_list() {
-  local project="" status="" json=0 where="1=1"
+  local project="" status="" json=0 long=0 sort="" where="1=1" order="project, id" l
   while [[ $# -gt 0 ]]; do
     case $1 in
       -p|--project) need_arg "$@"; project=$2; shift 2;;
       -s|--status)  need_arg "$@"; status=$2; shift 2;;
+      --type)       need_arg "$@"; valid_type "$2"; where+=" AND type=$(q "$2")"; shift 2;;
+      --priority)   need_arg "$@"; valid_priority "$2"; where+=" AND priority=$(q "$2")"; shift 2;;
+      -l|--label)   need_arg "$@"   # 複数指定はすべてを持つもの(AND)。カンマ区切りも同じ
+                    l=$(labels_json "$2")
+                    for l in $(jq -r '.[]' <<<"$l"); do
+                      where+=" AND EXISTS (SELECT 1 FROM json_each(tasks.labels) WHERE value=$(q "$l"))"
+                    done; shift 2;;
+      --owner)      need_arg "$@"; where+=" AND owner_agent=$(q "$2")"; shift 2;;
+      --parent)     need_arg "$@"; valid_id "$2"; where+=" AND parent_id=$(q "$2")"; shift 2;;
+      --sort)       need_arg "$@"; sort=$2; shift 2;;
+      --long)       long=1; shift;;
       --json)       json=1; shift;;
       *) usage "list: 不明な引数 $1";;
     esac
   done
   [[ -z $project ]] || where+=" AND project=$(q "$project")"
   if [[ -n $status ]]; then valid_status "$status"; where+=" AND status=$(q "$status")"; fi
+  case $sort in
+    "") ;;
+    priority) order="$PRIORITY_RANK, updated_at DESC, id";;
+    updated)  order="updated_at DESC, id";;
+    created)  order="created_at DESC, id";;
+    id)       order="id";;
+    *) usage "list: --sort は priority / updated / created / id のどれか: $sort";;
+  esac
   if ((json)); then
-    sql -json "SELECT * FROM tasks WHERE ($where) ORDER BY project, id;" | jq -c '(. // [])[] | .deliverables |= fromjson'
+    sql -json "SELECT * FROM tasks WHERE ($where) ORDER BY $order;" | jq -c '(. // [])[] | .deliverables |= fromjson | .labels |= fromjson'
+  elif ((long)); then
+    sql -separator $'\t' "SELECT id, status, type, priority, COALESCE(owner_agent,'-'), created_at, updated_at,
+        COALESCE((SELECT group_concat(value, ',') FROM json_each(tasks.labels)), '-'), replace(title, char(10), ' ')
+      FROM tasks WHERE ($where) ORDER BY $order;"
   else
-    sql -separator $'\t' "SELECT id, status, COALESCE(owner_agent,'-'), replace(title, char(10), ' ') FROM tasks WHERE ($where) ORDER BY project, id;"
+    sql -separator $'\t' "SELECT id, status, COALESCE(owner_agent,'-'), replace(title, char(10), ' ') FROM tasks WHERE ($where) ORDER BY $order;"
   fi
 }
 
 # ---------- show ----------
+# リンクを向きつきで: blocks / blocked_by / relates / duplicates / duplicated_by。相手の題と状態も付ける
+task_links_json() {
+  local i; i=$(q "$1")
+  sql -json "SELECT CASE WHEN l.from_id=$i THEN l.link_type
+                         WHEN l.link_type='blocks' THEN 'blocked_by'
+                         WHEN l.link_type='duplicates' THEN 'duplicated_by' ELSE 'relates' END AS rel,
+                    t.id, t.title, t.status
+             FROM task_links l JOIN tasks t ON t.id = CASE WHEN l.from_id=$i THEN l.to_id ELSE l.from_id END
+             WHERE l.from_id=$i OR l.to_id=$i ORDER BY l.id;" |
+    jq -sc '(.[0] // []) | group_by(.rel) | map({key: .[0].rel, value: map(del(.rel))}) | from_entries'
+}
+
 cmd_show() {
   [[ $# -eq 1 ]] || usage "show <id>"
   valid_id "$1"
@@ -60,7 +147,8 @@ cmd_show() {
   if [[ -n $sid ]]; then   # 担当 agent の最終活動(tasks.session_id と agent_activity.session_id を結ぶ)
     act=$(sql -json "$(act_select 10) WHERE session_id=$(q "$sid");" | jq -c '.[0] // null')
   fi
-  jq --argjson a "${act:-null}" '.deliverables |= fromjson | .activity = $a' <<<"$row"
+  local links; links=$(task_links_json "$1")
+  jq --argjson a "${act:-null}" --argjson l "$links" '.deliverables |= fromjson | .labels |= fromjson | .activity = $a | .links = $l' <<<"$row"
 }
 
 # ---------- claim ----------
@@ -78,6 +166,10 @@ cmd_claim() {
   done
   blank "$owner" && usage "claim: --owner が必要です"
   require_task "$id" >/dev/null
+  local blockers
+  blockers=$(sql "SELECT group_concat(t.id||'('||t.status||')', ', ') FROM task_links l JOIN tasks t ON t.id=l.from_id
+                  WHERE l.to_id=$(q "$id") AND l.link_type='blocks' AND t.status!='done';")
+  [[ -z $blockers ]] || die "claim できません(先に終わらせるタスクがあります: $blockers): $id"
   local changed
   changed=$(sql "UPDATE main.tasks SET status='in_progress', owner_agent=$(q "$owner"),
       session_id=COALESCE(NULLIF($(q "$session"),''), session_id),
@@ -89,10 +181,10 @@ cmd_claim() {
 
 # ---------- update ----------
 cmd_update() {
-  [[ $# -ge 1 ]] || usage "update <id> [--status S] [--title T] [--owner N] [--session S] [--account A] [--parent ID]"
+  [[ $# -ge 1 ]] || usage "update <id> [--status S] [--title T] [--owner N] [--session S] [--account A] [--parent ID] [--type T] [--priority P] [--desc D] [--label L ...] [--add-label L] [--remove-label L]"
   local id=$1; shift
   valid_id "$id"
-  local sets=() row cur
+  local sets=() row cur ntype="" nparent="" setlab=() addlab=() rmlab=() relabel=0
   while [[ $# -gt 0 ]]; do
     case $1 in
       --status)  need_arg "$@"; valid_status "$2"
@@ -104,13 +196,28 @@ cmd_update() {
       --account) need_arg "$@"; sets+=("account=NULLIF($(q "$2"),'')"); shift 2;;
       --parent)  need_arg "$@"; valid_id "$2"; require_task "$2" >/dev/null
                  [[ $2 != "$id" ]] || usage "update: 自分自身を parent にできません"
-                 sets+=("parent_id=$(q "$2")"); shift 2;;
+                 nparent=$2; sets+=("parent_id=$(q "$2")"); shift 2;;
+      --type)     need_arg "$@"; valid_type "$2"; ntype=$2; sets+=("type=$(q "$2")"); shift 2;;
+      --priority) need_arg "$@"; valid_priority "$2"; sets+=("priority=$(q "$2")"); shift 2;;
+      --desc|--description) need_arg "$@"; sets+=("description=NULLIF($(q "$2"),'')"); shift 2;;
+      -l|--label)       need_arg "$@"; relabel=1; setlab+=("$2"); shift 2;;   # 置き換え(--label '' で全部外す)
+      --add-label)      need_arg "$@"; addlab+=("$2"); shift 2;;
+      --remove-label)   need_arg "$@"; rmlab+=("$2"); shift 2;;
       *) usage "update: 不明な引数 $1";;
     esac
   done
-  [[ ${#sets[@]} -gt 0 ]] || usage "update: 変更する項目がありません"
+  [[ ${#sets[@]} -gt 0 || $relabel == 1 || ${#addlab[@]} -gt 0 || ${#rmlab[@]} -gt 0 ]] || usage "update: 変更する項目がありません"
   row=$(require_task "$id"); cur=$(jq -r .status <<<"$row")
   [[ $cur != done ]] || die "done のタスクは update できません: $id"
+  if [[ -n $ntype || -n $nparent ]]; then
+    check_hierarchy "${ntype:-$(jq -r .type <<<"$row")}" "${nparent:-$(jq -r '.parent_id // empty' <<<"$row")}" "$id"
+  fi
+  if [[ $relabel == 1 || ${#addlab[@]} -gt 0 || ${#rmlab[@]} -gt 0 ]]; then
+    local base add rm
+    if ((relabel)); then base=$(labels_json "${setlab[@]}"); else base=$(jq -c '.labels | fromjson' <<<"$row"); fi
+    add=$(labels_json ${addlab[@]+"${addlab[@]}"}); rm=$(labels_json ${rmlab[@]+"${rmlab[@]}"})
+    sets+=("labels=$(q "$(jq -nc --argjson b "$base" --argjson a "$add" --argjson r "$rm" '($b + $a | unique) - $r')")")
+  fi
   local IFS=,
   sql "UPDATE main.tasks SET ${sets[*]}, updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id");"
   echo "$id updated"
@@ -206,4 +313,71 @@ cmd_pending() {
           done < <(sql -separator $'\t' "SELECT 'C-'||c.id, COALESCE(t.project,''), '['||c.kind||'] '||substr(replace(replace(c.text, char(10), ' '), char(9), ' '),1,80)
             FROM comments c LEFT JOIN tasks t ON t.id=c.task_id WHERE c.delivered_at IS NULL ORDER BY c.id;");;
   esac
+}
+
+# ---------- link / unlink ----------
+# tb link <from> blocks|relates|duplicates <to>。blocks は「to は from が done になるまで claim できない」
+link_args() {
+  [[ $# -eq 3 ]] || usage "$LINK_CMD <from-id> blocks|relates|duplicates <to-id>"
+  valid_id "$1"; valid_id "$3"
+  [[ " $LINK_TYPES " == *" $2 "* ]] || usage "リンクの種類は $LINK_TYPES のどれか: $2"
+  [[ $1 != "$3" ]] || usage "自分自身とはリンクできません: $1"
+  require_task "$1" >/dev/null; require_task "$3" >/dev/null
+}
+cmd_link() {
+  LINK_CMD=link link_args "$@"
+  local from=$1 type=$2 to=$3 by
+  if [[ $type == blocks ]]; then   # to から blocks をたどって from に着くなら循環
+    [[ -z $(sql "WITH RECURSIVE r(id) AS (SELECT $(q "$to") UNION SELECT l.to_id FROM task_links l JOIN r ON l.from_id=r.id WHERE l.link_type='blocks')
+        SELECT 1 FROM r WHERE id=$(q "$from") LIMIT 1;") ]] || usage "blocks が循環します: $from → $to"
+  fi
+  by=$(actor_name) || return $?
+  local n; n=$(sql "INSERT OR IGNORE INTO main.task_links (from_id, link_type, to_id, created_by, created_at, herdr_session)
+      VALUES ($(q "$from"), $(q "$type"), $(q "$to"), $(q "$by"), $(q "$(now)"), $SQS); SELECT changes();")
+  [[ $n == 1 ]] && echo "$from $type $to" || echo "$from $type $to(既にあります)"
+}
+cmd_unlink() {
+  LINK_CMD=unlink link_args "$@"
+  local n; n=$(sql "DELETE FROM main.task_links WHERE herdr_session=$SQS AND from_id=$(q "$1") AND link_type=$(q "$2") AND to_id=$(q "$3"); SELECT changes();")
+  [[ $n == 1 ]] || die "そのリンクはありません: $1 $2 $3"
+  echo "unlinked $1 $2 $3"
+}
+
+# ---------- tree ----------
+# tb tree <id>: そのタスクと子孫を字下げで。tb tree -p <project>: その project の親のないタスクから
+cmd_tree() {
+  local root="" project=""
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      -p|--project) need_arg "$@"; project=$2; shift 2;;
+      -*) usage "tree: 不明な引数 $1";;
+      *) [[ -z $root ]] || usage "tree <id> | tree -p <project>"; valid_id "$1"; root=$1; shift;;
+    esac
+  done
+  [[ -n $root || -n $project ]] || usage "tree <id> | tree -p <project>"
+  local seed
+  if [[ -n $root ]]; then require_task "$root" >/dev/null; seed="id=$(q "$root")"
+  else seed="parent_id IS NULL AND project=$(q "$project")"; fi
+  sql -separator $'\t' "WITH RECURSIVE t(id, d, path) AS (
+      SELECT id, 0, id FROM tasks WHERE $seed
+      UNION ALL SELECT c.id, t.d+1, t.path||'/'||c.id FROM tasks c JOIN t ON c.parent_id=t.id WHERE t.d < 20)
+    SELECT substr('                                        ', 1, t.d*2)||x.id, x.type, x.priority, x.status,
+           COALESCE(x.owner_agent,'-'), replace(x.title, char(10), ' ')
+    FROM t JOIN tasks x ON x.id=t.id ORDER BY t.path;"
+}
+
+# ---------- labels ----------
+# 使われているラベルと件数(done を除いた件数 / 全部)
+cmd_labels() {
+  local where="1=1" json=0
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      -p|--project) need_arg "$@"; where+=" AND t.project=$(q "$2")"; shift 2;;
+      --json) json=1; shift;;
+      *) usage "labels: 不明な引数 $1";;
+    esac
+  done
+  local qs="SELECT j.value AS label, SUM(t.status!='done') AS open, COUNT(*) AS total
+            FROM tasks t, json_each(t.labels) j WHERE ($where) GROUP BY j.value ORDER BY j.value;"
+  if ((json)); then sql -json "$qs" | jq -c '(. // [])[]'; else sql -separator $'\t' "$qs"; fi
 }
