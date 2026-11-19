@@ -16,6 +16,7 @@ agent は役割を `tb role-show` で読む(ファイルを直接読まない。
 | `watcher.md` / `analyst.md` | 見張り役(定期の見回り、軽いモデル)/ 解析役(アラート 1 件ごとに tb が起動) |
 | `sweeper.md` | 判定役(定期実行、軽いモデル。動いている agent に「止めてよいか」の印 `tb agent-flag` を付ける。停止はしない) |
 | `auditor.md` | 会計役(定期実行。`tb review-pack` を読み、設定役=人事に改善提案 `tb proposal`) |
+| `drafter.md` | 下書き役(人が送る返事の下書きを作る。送信はしない。`conversation/README.md`) |
 | `map.conf` | agent 名のパターン → 役割ファイル(例: `worker-* = worker`)。`<agent 名>.md` が無いときに使う。`tb agent-new --role R` で作った agent は `R.md` が map.conf より先に効く |
 
 渡される内容は `_common.md` + その agent の役割ファイル。どちらも無ければ何も渡さない。
