@@ -103,6 +103,7 @@ tb alert-approve A-<n> [--always]          人が解析役の起動を承認(--a
 tb alert-result A-<n> --severity critical|high|medium|low --summary S [--report F]   解析役が緊急度と結果を返す(担当の解析役か人だけ)
 tb alert-dispatch                          承認・上限待ちを進める(tb digest も呼ぶ)
 tb alert-close A-<n>                       人が閉じる
+  (アラートは project alert のチケット T-alert-NNN でもある。状態は上のコマンドだけが変え、tb done などでは変えない)
 tb system-send <宛先> --text T --job J      scheduler 用。agent の pane からは使えない
 tb sched-job [list | show <job> [--settings]]   scheduler のジョブ定義・上書き設定の出どころと本文(DB の sched-job:<job> > jobs/<job>.conf)
 tb sched-job set|edit|unset <job> [--settings] [--shared]   DB に書く / 消す(人だけ。scheduler が読めるか確かめてから書く。履歴は history)
@@ -114,6 +115,7 @@ tb review-pack [--since ISO] [--mark]      生ログではなく集計と上位�
 tb proposal --role <roles のファイル|-> --title T (--text X|--text-file F)   改善提案を設定役へ送る
 tb proposals [P-<n>] [--status open|applied|rejected]
 tb proposal-resolve P-<n> --status applied|rejected [--note N]   設定役か人だけ
+  (提案は project proposal のチケット T-proposal-NNN でもある。担当は設定役)
 
 agent の停止・復活・新規作成(台帳 agents。人の端末からはそのまま、agent の pane からは approvals の agent:<op>:<名前>):
 tb peek <agent 名> [--lines N]   agent の直近の出力を読む(1〜200 行、既定 40)。人と本人はそのまま、ほかの agent は approvals の agent:read:<名前>(agent:read:@<役割> も可)が allow のときだけ(終了コード 20)。記録は read_log

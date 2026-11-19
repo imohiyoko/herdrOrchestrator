@@ -22,14 +22,25 @@ SQS=$(q "$SESS")
 # - main.<表> への書き込みの見張り(一時トリガー)。別のセッションの行を足す・変える・消すと ABORT で止まる(絞り忘れが黙って他人の行を変えない)
 # 書き込みは main.<表> と書く(ビューには書けない: SQLite が「cannot modify … because it is a view」で止める)。
 # ビュー経由で書かない(INSTEAD OF トリガーにしない)のは、changes() / last_insert_rowid() / RETURNING がビュー経由では効かないため
+# 例外は taskboard/sql/session_views の互換ビュー(020 の alerts / proposals。中身はチケットと小さな表)。main にビューとしてあり、
+# 同じ名前の一時ビュー(このセッションの行だけ)を作る。書き込みは main.<ビュー> に書き、スキーマの INSTEAD OF トリガーが表へ振り分ける
 SESSION_TABLES_FILE=$TB_ROOT/sql/session_tables
+SESSION_VIEWS_FILE=$TB_ROOT/sql/session_views
 session_tables() { grep -v '^#' "$SESSION_TABLES_FILE" | grep -E '^[a-z_]+$'; }
+session_views() { [[ -f $SESSION_VIEWS_FILE ]] || return 0; grep -v '^#' "$SESSION_VIEWS_FILE" | grep -E '^[a-z_]+$'; }
 # 一覧のうち、この DB に herdr_session 列つきで今ある表(壊れた・古い DB でも、ある表だけで動く)。
 # tb の main が init_db の後に 1 回だけ引く(sql() の中で引くと $(...) のたびに引き直すため)。hook の touch は sql_all だけなので引かない
 session_tables_present() {
   local want; want=$(session_tables | sed "s/.*/'&'/" | paste -sd, -)
   [[ -n $want ]] || return 0
   sql_all "SELECT m.name FROM sqlite_master m WHERE m.type='table' AND m.name IN ($want)
+    AND EXISTS (SELECT 1 FROM pragma_table_info(m.name) p WHERE p.name='herdr_session') ORDER BY m.name;" 2>/dev/null || true
+}
+# 互換ビューのうち、この DB に main のビューとして今あるもの(020 の前の DB では表のままなので、表として扱われる)
+session_views_present() {
+  local want; want=$(session_views | sed "s/.*/'&'/" | paste -sd, -)
+  [[ -n $want ]] || return 0
+  sql_all "SELECT m.name FROM sqlite_master m WHERE m.type='view' AND m.name IN ($want)
     AND EXISTS (SELECT 1 FROM pragma_table_info(m.name) p WHERE p.name='herdr_session') ORDER BY m.name;" 2>/dev/null || true
 }
 session_setup() {
@@ -45,6 +56,10 @@ session_setup() {
     printf "CREATE TEMP TRIGGER _tb_guard_%s_i BEFORE INSERT ON main.%s WHEN NOT (NEW.herdr_session %s) BEGIN SELECT RAISE(ABORT,'%s(%s)'); END;" "$t" "$t" "$ok" "$m" "$t"
     printf "CREATE TEMP TRIGGER _tb_guard_%s_u BEFORE UPDATE ON main.%s WHEN NOT (OLD.herdr_session %s AND NEW.herdr_session %s) BEGIN SELECT RAISE(ABORT,'%s(%s)'); END;" "$t" "$t" "$ok" "$ok" "$m" "$t"
     printf "CREATE TEMP TRIGGER _tb_guard_%s_d BEFORE DELETE ON main.%s WHEN NOT (OLD.herdr_session %s) BEGIN SELECT RAISE(ABORT,'%s(%s)'); END;" "$t" "$t" "$ok" "$m" "$t"
+  done
+  # 互換ビュー: 読みの一時ビューだけ(書き込みの見張りは振り分け先の表に付いている)
+  for t in $(session_views_present); do
+    printf "CREATE TEMP VIEW %s AS SELECT * FROM main.%s WHERE herdr_session=%s;" "$t" "$t" "$SQS"
   done
 }
 SESSION_SETUP=

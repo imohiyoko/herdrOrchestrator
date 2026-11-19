@@ -19,15 +19,25 @@ _TABLE_RE = re.compile(r"[a-z_]{1,64}")
 
 
 SESSION_TABLES = os.path.join(HERDR_ROOT, "taskboard", "sql", "session_tables")
+SESSION_VIEWS = os.path.join(HERDR_ROOT, "taskboard", "sql", "session_views")
+
+
+def _name_list(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return [t for t in (x.strip() for x in f) if t and not t.startswith("#") and _TABLE_RE.fullmatch(t)]
+    except OSError:
+        return []
 
 
 def session_tables():
     """herdr_session 列を持つ表の一覧(taskboard/sql/session_tables。tb の sql() と同じものを読む)。"""
-    try:
-        with open(SESSION_TABLES, encoding="utf-8") as f:
-            return [t for t in (x.strip() for x in f) if t and not t.startswith("#") and _TABLE_RE.fullmatch(t)]
-    except OSError:
-        return []
+    return _name_list(SESSION_TABLES)
+
+
+def session_compat_views():
+    """互換ビューの一覧(taskboard/sql/session_views。020 の alerts / proposals。中身はチケットと小さな表)。"""
+    return _name_list(SESSION_VIEWS)
 
 
 def session_views(c, session):
@@ -40,6 +50,12 @@ def session_views(c, session):
     for (t,) in c.execute("SELECT m.name FROM main.sqlite_master m WHERE m.type='table' AND EXISTS "
                           "(SELECT 1 FROM pragma_table_info(m.name) p WHERE p.name='herdr_session')").fetchall():
         if t in want:
+            c.execute(f"CREATE TEMP VIEW {t} AS SELECT * FROM main.{t} WHERE herdr_session={lit}")
+    # 互換ビュー(main のビュー)も同じ名前の一時ビューで絞る。020 の前の DB では表なので上で扱われる
+    want_v = set(session_compat_views())
+    for (t,) in c.execute("SELECT m.name FROM main.sqlite_master m WHERE m.type='view' AND EXISTS "
+                          "(SELECT 1 FROM pragma_table_info(m.name) p WHERE p.name='herdr_session')").fetchall():
+        if t in want_v:
             c.execute(f"CREATE TEMP VIEW {t} AS SELECT * FROM main.{t} WHERE herdr_session={lit}")
 
 

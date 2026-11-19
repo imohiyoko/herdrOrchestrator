@@ -104,8 +104,12 @@ cmd_proposal() {
   if [[ -n $tfile ]]; then [[ -f $tfile && -r $tfile ]] || die "--text-file を読めません: $tfile"; text=$(head -c 20000 "$tfile"); fi
   blank "$text" && usage "proposal: --text か --text-file が必要です"
   resolve_label || return 3
-  local id; id=$(sql "INSERT INTO main.proposals (herdr_session, role_file, title, text, status, by_name, created_at) VALUES
-    ($SQS, $(q "$role"), $(q "$title"), $(q "$text"), 'open', $(q "$LABEL_NAME"), $(q "$(now)")); SELECT last_insert_rowid();")
+  # proposals はチケット(project proposal)と proposal_details の互換ビュー(020)。INSTEAD OF トリガーが両方に書く。
+  # ビュー経由では last_insert_rowid() が使えないので、同じトランザクションで振った番号を読む。チケットの担当は設定役
+  local id; id=$(sql "BEGIN IMMEDIATE; INSERT INTO main.proposals (herdr_session, role_file, title, text, status, by_name, created_at) VALUES
+    ($SQS, $(q "$role"), $(q "$title"), $(q "$text"), 'open', $(q "$LABEL_NAME"), $(q "$(now)"));
+    UPDATE main.tasks SET owner_agent=$(q "$HR_NAME") WHERE herdr_session=$SQS AND id=(SELECT task_id FROM main.proposal_details WHERE proposal_no=(SELECT MAX(proposal_no) FROM main.proposal_details));
+    SELECT MAX(proposal_no) FROM main.proposal_details; COMMIT;")
   local r=0; proposal_deliver "$id" >/dev/null 2>&1 || r=$?
   echo "P-$id $([[ $r == 0 ]] && echo delivered || echo saved-undelivered)"
 }
@@ -123,7 +127,7 @@ cmd_proposals() {
   if [[ ${1:-} =~ ^P-[0-9]+$ ]]; then
     local row; row=$(session_row proposals id "${1#P-}")
     [[ -n $row ]] || die "提案が見つかりません: $1"
-    jq -r '"P-\(.id) [\(.status)] roles/\(.role_file)  \(.title)\n提案: \(.by_name) / \(.created_at)\(if .note then "\n対応: \(.note)" else "" end)\n\n\(.text)"' <<<"$row"
+    jq -r '"P-\(.id) [\(.status)] roles/\(.role_file)  \(.title)\n提案: \(.by_name) / \(.created_at)  チケット: \(.task_id // "-")\(if .note then "\n対応: \(.note)" else "" end)\n\n\(.text)"' <<<"$row"
     return 0
   fi
   local where="1=1"

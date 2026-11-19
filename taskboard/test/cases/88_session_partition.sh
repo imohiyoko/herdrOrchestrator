@@ -65,25 +65,33 @@ sqlite3 "$OLD" "INSERT INTO tasks (id, project, title, parent_id, created_at, up
   INSERT INTO messages (kind, ref, target, body, result, created_at) VALUES ('comment','C-1','c','b','sent','t'), ('task','T-pj-002','c','b','sent','t');
   INSERT INTO notify_events (type, ref, severity, text, hash, sinks, slack_status, created_at) VALUES ('comment','C-1','info','x','h','file','sent','t');
   INSERT INTO notify_sends (event_id, via, at) VALUES (1,'file','t');
-  INSERT INTO agents (name, herdr_session, state, killable, created_by, created_at, updated_at, role, model) VALUES ('wk','imp','stopped','unknown','h','t','t','worker','opus');"
+  INSERT INTO agents (name, herdr_session, state, killable, created_by, created_at, updated_at, role, model) VALUES ('wk','imp','stopped','unknown','h','t','t','worker','opus');
+  INSERT INTO alerts (fingerprint, title, source, status, count, first_seen, last_seen) VALUES ('fo','old alert','cli','new',1,'t','t');
+  INSERT INTO messages (kind, ref, target, body, result, created_at) VALUES ('alert','A-1','c','b','sent','t');
+  INSERT INTO proposals (role_file, title, text, status, by_name, created_at) VALUES ('-','old proposal','x','open','au','t');"
 before=$(sqlite3 "$OLD" .dump | cksum)
 HERDR_SESSION=main "$TB" add -p pj -t 'main 1' >/dev/null; HERDR_SESSION=main "$TB" add -p pj -t 'main 2' >/dev/null
+TB_APPROVALS=/dev/null HERDR_SESSION=main "$TB" alert --title 'main alert' >/dev/null 2>&1
 FAKE_AGENTS='[{"pane_id":"wM:p1","name":"wm","agent_session":{"value":"sm1"}}]' HERDR_PANE_ID=wM:p1 HERDR_SESSION=main "$TB" comment T-pj-001 --kind progress --text 'main c' >/dev/null 2>&1
 export FAKE_AGENTS='[{"pane_id":"wK:p1","name":"wk","agent_status":"idle","agent_session":{"value":"s-new"}}]'
 HERDR_SESSION=imp "$TB" agents >/dev/null; unset FAKE_AGENTS
 out=$(HERDR_SESSION=imp "$TB" db-import "$OLD" --dry-run)
-eq "db-import --dry-run: reports and writes nothing" "$(grep -c 'T-pj-001 -> T-pj-003' <<<"$out") $(psql "SELECT COUNT(*) FROM tasks;")" "1 2"
+eq "db-import --dry-run: reports and writes nothing" "$(grep -c 'T-pj-001 -> T-pj-003' <<<"$out") $(psql "SELECT COUNT(*) FROM tasks WHERE project='pj';")" "1 2"
 out=$(HERDR_SESSION=imp "$TB" db-import "$OLD"); r=$?
 eq "db-import: exit 0" "$r" "0"
-eq "db-import: colliding task IDs move to the next free numbers; the rest keep theirs" "$(psql "SELECT id||'='||herdr_session||'='||COALESCE(parent_id,'-') FROM tasks ORDER BY id;" | tr '\n' ' ')" \
+eq "db-import: colliding task IDs move to the next free numbers; the rest keep theirs" "$(psql "SELECT id||'='||herdr_session||'='||COALESCE(parent_id,'-') FROM tasks WHERE project NOT IN ('alert','proposal') ORDER BY id;" | tr '\n' ' ')" \
   "T-pj-001=main=- T-pj-002=main=- T-pj-003=imp=- T-pj-004=imp=T-pj-003 T-zz-001=imp=- "
 eq "db-import: integer IDs are shifted after the shared DB's; references follow" \
   "$(psql "SELECT id||':'||task_id||':'||herdr_session FROM comments ORDER BY id; SELECT ref FROM messages ORDER BY id; SELECT id||':'||ref FROM notify_events; SELECT event_id FROM notify_sends;" | tr '\n' ' ')" \
-  "1:T-pj-001:main 2:T-pj-004:imp C-2 T-pj-004 1:C-2 1 "
-eq "db-import: the session sees the imported rows" "$(HERDR_SESSION=imp "$TB" list | cut -f1 | tr '\n' ' ')" "T-pj-003 T-pj-004 T-zz-001 "
+  "1:T-pj-001:main 2:T-pj-004:imp C-2 T-pj-004 A-2 1:C-2 1 "
+eq "db-import: alerts and proposals come as tickets; numbers and ticket IDs move after the shared DB's" \
+  "$(psql "SELECT 'A-'||alert_no||'='||task_id||'='||herdr_session FROM alert_details ORDER BY alert_no; SELECT 'P-'||proposal_no||'='||task_id FROM proposal_details;" | tr '\n' ' ')" \
+  "A-1=T-alert-001=main A-2=T-alert-002=imp P-1=T-proposal-001 "
+eq "db-import: the imported alert reads through the view" "$(HERDR_SESSION=imp "$TB" alerts | cut -f1,7 | tr '\t\n' '  ')" "A-2 old alert "
+eq "db-import: the session sees the imported rows (alerts and proposals as tickets)" "$(HERDR_SESSION=imp "$TB" list | cut -f1 | tr '\n' ' ')" "T-alert-002 T-pj-003 T-pj-004 T-proposal-001 T-zz-001 "
 eq "db-import: an agent already in the ledger keeps its row; empty values come from the old DB" "$(psql "SELECT session_id||'|'||COALESCE(role,'-')||'|'||COALESCE(model,'-') FROM agents WHERE name='wk';")" "s-new|worker|opus"
 eq "db-import: the old DB is only read" "$(sqlite3 "$OLD" .dump | cksum)" "$before"
-eq "db-import: the same file twice is refused" "$(HERDR_SESSION=imp "$TB" db-import "$OLD" 2>&1 | grep -c '取り込み済み') $(psql "SELECT COUNT(*) FROM tasks;")" "1 5"
+eq "db-import: the same file twice is refused" "$(HERDR_SESSION=imp "$TB" db-import "$OLD" 2>&1 | grep -c '取り込み済み') $(psql "SELECT COUNT(*) FROM tasks WHERE project NOT IN ('alert','proposal');")" "1 5"
 eq "db-import: a DB of the new format is refused" "$(HERDR_SESSION=x "$TB" db-import "$TMP/partition.db" 2>&1 | grep -c '旧形式')" "1"
 eq "db-import: the shared DB itself is refused" "$(HERDR_SESSION=x "$TB" db-import "$TB_DB" 2>&1 | grep -c '同じ DB')" "1"
 eq "db-import: not from an agent pane" "$(FAKE_AGENTS='[{"pane_id":"wK:p1","name":"wk"}]' HERDR_PANE_ID=wK:p1 HERDR_SESSION=imp rc "$TB" db-import "$OLD")" "1"
