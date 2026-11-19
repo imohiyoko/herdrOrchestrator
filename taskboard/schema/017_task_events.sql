@@ -1,4 +1,4 @@
--- 016: チケットの履歴(task_events)。チケットを変える書き込みと同じトランザクションで 1 件ずつ残す(ADR 0003 の段 1)。
+-- 017: チケットの履歴(task_events)。チケットを変える書き込みと同じトランザクションで 1 件ずつ残す(ADR 0003 の段 1)。
 -- 書くのは tb の接続の一時トリガー(lib/db.sh の event_setup)。tasks / comments / task_links への書き込みから作る。
 -- 追記だけ(消さない・書き換えない)。既存のタスクの過去の履歴は無い(この移行より後の変化だけが残る)。
 CREATE TABLE IF NOT EXISTS task_events (
