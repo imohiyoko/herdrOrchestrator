@@ -97,8 +97,10 @@ sw_hms() {
 
 # conf の COMMAND= の値だけを出す(1 行 1 値)。引用符で始まれば閉じ引用符までの内側、無ければ最初の " #" の前まで。
 # 行末の コメント(COMMAND=x # watchx)の語は含めない。bash の while read だけで書く(awk・sed の方言に依存しない)
+# $1=ジョブ名。本文は DB の sched-job:<job>(tb sched-job)か jobs/<job>.conf(sj_lookup)
 sw_command_value() {
   local line v q
+  sj_lookup "$1" 0 || return 0
   while IFS= read -r line || [[ -n $line ]]; do
     [[ $line =~ ^[[:space:]]*COMMAND=(.*)$ ]] || continue
     v=${BASH_REMATCH[1]}; q=${v:0:1}
@@ -108,12 +110,12 @@ sw_command_value() {
       v=${v%% \#*}; v=${v%%$'\t'\#*}
     fi
     printf '%s\n' "$v"
-  done <"$1"
+  done <<<"$SJ_BODY"
 }
 
 collect_sched_obs() {
   [[ $(sw_cfg enabled 1) == 1 ]] || return 0
-  [[ -d $SW_DIR/jobs && -d $SW_DIR/logs && -f $SW_SHOW ]] || return 0
+  [[ -d $SW_DIR/logs && -f $SW_SHOW ]] || return 0
   local off_min stale_min fail_win fail_runs fail_pct wait_max
   off_min=$(sw_cfg disabled_min 30); stale_min=$(sw_cfg watch_stale_min 20)
   fail_win=$(sw_cfg fail_window_min 60); fail_runs=$(sw_cfg fail_min_runs 5); fail_pct=$(sw_cfg fail_rate_pct 50)
@@ -125,10 +127,10 @@ collect_sched_obs() {
   fail_runs=$((10#$fail_runs)); fail_pct=$((10#$fail_pct)); wait_max=$((10#$wait_max))
   local now watchers conf job cfg log sum w is_watch enabled start end days tz dnum sec ws we ref key cur=""
   now=$(sw_now); watchers=$(limit_get watchers 2>/dev/null || true)
-  for conf in "$SW_DIR"/jobs/*.conf; do
-    [[ -f $conf ]] || continue
-    job=$(basename "$conf" .conf)
-    cfg=$(JOBS_DIR=$SW_DIR/jobs LOG_DIR=$SW_DIR/logs SCHED_SETTINGS_DIR=$SW_DIR/settings bash "$SW_SHOW" "$job" 2>/dev/null) || continue
+  # ジョブ = DB の sched-job:<job> と jobs/*.conf の和(tb sched-job)
+  while IFS= read -r job <&3; do
+    [[ -n $job ]] || continue
+    cfg=$(TB_DB=$DB JOBS_DIR=$SW_DIR/jobs LOG_DIR=$SW_DIR/logs SCHED_SETTINGS_DIR=$SW_DIR/settings bash "$SW_SHOW" "$job" 2>/dev/null) || continue
     jq -e . >/dev/null 2>&1 <<<"$cfg" || continue
     enabled=$(jq -r .enabled <<<"$cfg"); log=$SW_DIR/logs/$job.log
     [[ -f $log ]] || continue
@@ -142,7 +144,7 @@ collect_sched_obs() {
       0) ;;
       *) for w in $watchers; do
            [[ $(jq -r .target <<<"$cfg") == "$w" ]] && is_watch=1
-           sw_command_value "$conf" | grep -qwF -- "$w" && is_watch=1
+           sw_command_value "$job" | grep -qwF -- "$w" && is_watch=1
          done ;;
     esac
     if [[ $enabled == false ]]; then
@@ -186,7 +188,8 @@ collect_sched_obs() {
       obs_seen "$key" || add_item "$DEFAULT_TARGET" obs "sched" "$key" "" schedwait "scheduler 観測 / $job" \
         "ジョブ $job が、宛先の作業中(exit 10)で $(((now - wstart) / 60)) 分送れていない(その間 $(jq -r .wait_count <<<"$sum") 回とも待ち)。宛先が止まっていないか確認。scheduler/logs/$job.log を確認"
     fi
-  done
+  done 3< <( { sql "SELECT DISTINCT substr(key, 11) FROM main.config WHERE key LIKE 'sched-job:%' AND herdr_session IN ($SQS, '*');"
+              for conf in "$SW_DIR"/jobs/*.conf; do [[ -f $conf ]] && basename "$conf" .conf; done; } | grep -E "$SJ_JOB_RE" | sort -u)
   # 条件が外れたものは記録を消す(再び当てはまったら、また送る)
   sql "DELETE FROM main.observations WHERE herdr_session=$SQS AND kind IN ('schedoff','schedstale','schedfail','schedwait') AND key NOT IN (${cur}'');"
 }

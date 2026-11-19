@@ -195,7 +195,7 @@ def make_db(path):
         c.executescript(open(f, encoding="utf-8").read().replace("@SESSION@", "'default'"))
         c.execute(f"PRAGMA user_version={int(os.path.basename(f)[:3])}")  # tb と同じく版を記録(tb が移行し直さない)
     session_fill(c)
-    c.execute("INSERT INTO tasks VALUES ('T-1','pj','題 " + XSS + "','alpha','11111111-2222-3333-4444-555555555555',"
+    c.execute("INSERT INTO tasks (id,project,title,owner_agent,session_id,account,status,parent_id,deliverables,summary,note,reported_at,created_at,updated_at,herdr_session) VALUES ('T-1','pj','題 " + XSS + "','alpha','11111111-2222-3333-4444-555555555555',"
               "NULL,'in_progress',NULL,'[\"a.md\"]',NULL,NULL,NULL,'2026-11-06T00:00:00Z','2026-11-06T00:00:00Z','default')")
     c.execute("INSERT INTO comments (task_id,kind,text,from_name,from_pane,from_session,created_at) VALUES "
               "('T-1','question','質問 " + XSS + "','alpha','w1:p1','s','2026-11-06T00:00:00Z')")
@@ -372,7 +372,7 @@ _c.execute("INSERT INTO messages (kind,ref,target,body,result,created_at) VALUES
 
 # タスク一覧の fixture(親子・担当・PJ・未報告・停滞・長い題・長い報告)
 _now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-_t_ins = "INSERT INTO tasks VALUES (?,?,?,?,NULL,NULL,?,?,'[]',NULL,NULL,?,?,?,'default')"
+_t_ins = "INSERT INTO tasks (id,project,title,owner_agent,session_id,account,status,parent_id,deliverables,summary,note,reported_at,created_at,updated_at,herdr_session) VALUES (?,?,?,?,NULL,NULL,?,?,'[]',NULL,NULL,?,?,?,'default')"
 for _row in [("T-2", "pj", "親 " + XSS, "beta", "todo", None, None, _now_iso, _now_iso),
              ("T-3", "pj2", "子", "alpha", "in_progress", "T-2", "2026-11-07T00:00:00Z", _now_iso, _now_iso),
              ("T-4", "pj2", "x" * 200 + "TITLETAIL", "alpha", "done", "T-2", "2026-11-07T00:00:00Z", _now_iso, _now_iso),
@@ -655,7 +655,35 @@ check("タスク: 親子の表示(親リンクと子の件数)", '<a href="/task
 check("タスク: 報告の種別ごとの件数と未対応", "progress 2" in TL[2] and "question 1" in TL[2] and "未対応 1" in TL[2])
 check("タスク: 題は先頭 80 文字だけ", "TITLETAIL" not in TL[2] and ("x" * 80) in TL[2] and ("x" * 100) not in TL[2])
 check("タスク: 題の HTML はエスケープ", XSS not in TL[2] and "&lt;script&gt;" in TL[2])
-check("タスク: 期限・優先度の列は無い", "期限" not in TL[2].split("<table>")[1].split("</tr>")[0] and "優先度" not in TL[2].split("<table>")[1].split("</tr>")[0])
+_th = TL[2].split("</form>", 1)[1].split("</tr>")[0]
+check("タスク: 種別・優先度・ラベル・作成の列があり、期限の列は無い", all(x in _th for x in ("種別", "優先度", "ラベル", "作成", "更新")) and "期限" not in _th)
+# チケットの構造(014): 種別・優先度・ラベルで絞る、ラベルは押すと絞り込み、優先度順
+_cx.execute("UPDATE tasks SET type='epic', priority='high', labels='[\"ui\",\"auth\"]' WHERE id='T-2'")
+_cx.execute("UPDATE tasks SET type='story', priority='highest', labels='[\"ui\"]' WHERE id='T-3'")
+_cx.execute("INSERT INTO task_links (from_id, link_type, to_id, created_by, created_at, herdr_session) VALUES ('T-5','blocks','T-3','human','t','default')")
+_cx.commit()
+check("タスク: 種別で絞る", _ids("/tasks?type=epic") == ["T-2"])
+check("タスク: 優先度で絞る", _ids("/tasks?priority=highest") == ["T-3"])
+check("タスク: ラベルで絞る", sorted(_ids("/tasks?label=ui")) == ["T-2", "T-3"] and _ids("/tasks?label=auth") == ["T-2"])
+check("タスク: ラベル + 担当", _ids("/tasks?label=ui&owner=alpha") == ["T-3"])
+check("タスク: ラベルは絞り込みのリンク", 'href="/tasks?label=ui"' in cl.get("/tasks")[2])
+check("タスク: 優先度順", _ids("/tasks?sort=priority")[:2] == ["T-3", "T-2"])
+for bad in ["type=zz", "priority=x", "label=a%20b", "label=%27%3B--"]:
+    r = cl.get("/tasks?" + bad)
+    check(f"タスク: 不正な絞り込み {bad} でも 200 でエラー表示", r[0] == 200 and "class=err" in r[2] and "'--" not in r[2], str(r[0]))
+_TD3 = cl.get("/tasks/T-3")[2]
+check("タスク詳細: 種別・優先度・ラベル・リンク", "<th>種別</th><td>story</td>" in _TD3 and 'href="/tasks?label=ui"' in _TD3
+      and "<h2>リンク</h2>" in _TD3 and "blocked by" in _TD3 and 'href="/tasks/T-5"' in _TD3)
+check("タスク詳細: リンクは相手側にも出る", "<h2>リンク</h2>" in cl.get("/tasks/T-5")[2] and "blocks" in cl.get("/tasks/T-5")[2])
+_cx.execute("UPDATE tasks SET refs=? WHERE id='T-3'", (json.dumps([{"kind": "slack", "url": "https://acme.slack.com/archives/C1/p1"},
+                                                                  {"kind": "x", "url": "javascript:alert(1)"}]),))
+_cx.commit()
+_TD3 = cl.get("/tasks/T-3")[2]
+check("タスク詳細: 外部リンク(http(s) だけをリンクに)", 'href="https://acme.slack.com/archives/C1/p1"' in _TD3 and 'rel="noopener noreferrer"' in _TD3
+      and 'href="javascript' not in _TD3 and "javascript:alert(1)" in _TD3)
+_cx.execute("UPDATE tasks SET type='task', priority='medium', labels='[]', refs='[]'")
+_cx.execute("DELETE FROM task_links")
+_cx.commit()
 for bad in ["status=zzz", "owner=a%20b%3Cx", "sort=zz", "project=%27%3B--", "unreported=%27"]:
     r = cl.get("/tasks?" + bad)
     check(f"タスク: 不正な絞り込み {bad} でも 200", r[0] == 200 and "'--" not in r[2], str(r[0]))
@@ -970,6 +998,30 @@ r = cl.raw("POST", "/jobs/job1", {**good, "start": "18:00:30", "end": "18:00", "
 check("終了 HH:MM はその分の 59 秒までなので 18:00:30-18:00 は可", r[0] == 302, str(r[0]))
 r = cl.raw("POST", "/jobs/job1", {"action": "reset", "csrf": cl.csrf("/jobs/job1")})
 check("conf の値に戻すと settings を消す", r[0] == 302 and not os.path.exists(SET) and "10 分おき" in cl.get("/jobs")[2])
+# DB にある定義(tb sched-job。config 表の sched-job:<job>)。一覧・詳細に出て、上書き設定は DB に書く(履歴つき)
+_c = sqlite3.connect(env["WEBUI_TB_DB"])
+_sess = "default"   # このプロセスのセッション(HERDR_SESSION も herdr-session ファイルも無い)
+_c.execute("INSERT INTO config (herdr_session, key, body, updated_by, updated_at) VALUES (?, 'sched-job:dbjob', ?, 'human', 'x')",
+           (_sess, "# DB-ABOUT 説明\nCOMMAND='echo db'\nWINDOW=09:00-21:00\nINTERVAL_MIN=20\nTZ=Asia/Tokyo\n"))
+_c.commit(); _c.close()
+check("DB の定義: 一覧に出る(実際の間隔)", "dbjob" in cl.get("/jobs")[2] and "20 分おき / 09:00-21:00 / daily" in cl.get("/jobs")[2])
+_dj = cl.get("/jobs/dbjob")
+check("DB の定義: 詳細に説明とコマンドが出る", _dj[0] == 200 and "DB-ABOUT 説明" in _dj[2] and "echo db" in _dj[2])
+r = cl.raw("POST", "/jobs/dbjob", {**good, "csrf": cl.csrf("/jobs/dbjob")})
+_c = sqlite3.connect(env["WEBUI_TB_DB"])
+_sb = _c.execute("SELECT body FROM config WHERE key='sched-settings:dbjob'").fetchall()
+_hist = _c.execute("SELECT how FROM config_changes WHERE key='sched-settings:dbjob'").fetchall()
+_c.close()
+check("DB の定義: 上書き設定は DB に(ファイルは作らない)、履歴が残る", r[0] == 302 and _sb and "INTERVAL_MIN=15" in _sb[0][0]
+      and not os.path.exists(os.path.join(env["WEBUI_SCHED_SETTINGS"], "dbjob.settings")) and _hist == [("set",)], str((r[:2], _sb, _hist)))
+check("DB の定義: 一覧に反映", "15 分おき / 10:00-18:00 / weekdays" in cl.get("/jobs")[2])
+r = cl.raw("POST", "/jobs/dbjob", {**good, "start": "25:00", "csrf": cl.csrf("/jobs/dbjob")})
+check("DB の定義: 不正な入力は 400 で書かない", r[0] == 400)
+r = cl.raw("POST", "/jobs/dbjob", {"action": "reset", "csrf": cl.csrf("/jobs/dbjob")})
+_c = sqlite3.connect(env["WEBUI_TB_DB"])
+_left = _c.execute("SELECT COUNT(*) FROM config WHERE key='sched-settings:dbjob'").fetchone()[0]
+_c.close()
+check("DB の定義: 戻すと DB の上書き設定を消す", r[0] == 302 and _left == 0 and "20 分おき" in cl.get("/jobs")[2])
 check("tasks のフィルタ", "T-1" in cl.get("/tasks?project=pj&status=in_progress")[2] and "T-1" not in cl.get("/tasks?status=done")[2])
 check("フィルタ値の XSS", "<script>" not in cl.get("/tasks?project=%3Cscript%3E")[2])
 
@@ -1401,7 +1453,7 @@ for host in ("127.0.0.1", "localhost"):
 env, dm = make_env("multi", HERDR_SESSION="alpha", FAKE_HERDR_SESSION_LOG=os.path.join(TMP, "multi-herdr-sessions.log"))
 make_db(env["WEBUI_TB_DB"])   # make_db の行は default
 _c = sqlite3.connect(env["WEBUI_TB_DB"])
-_c.execute("INSERT INTO tasks VALUES ('T-9','pj','beta だけの題','w','sid-b',NULL,'in_progress',NULL,'[]',NULL,NULL,NULL,"
+_c.execute("INSERT INTO tasks (id,project,title,owner_agent,session_id,account,status,parent_id,deliverables,summary,note,reported_at,created_at,updated_at,herdr_session) VALUES ('T-9','pj','beta だけの題','w','sid-b',NULL,'in_progress',NULL,'[]',NULL,NULL,NULL,"
            "'2026-11-06T00:00:00Z','2026-11-06T00:00:00Z','beta')")
 _c.execute("INSERT INTO config (herdr_session, key, body, updated_by, updated_at) VALUES ('*', 'projects', 'x', 'h', '2026-11-06T00:00:00Z')")
 _c.commit()

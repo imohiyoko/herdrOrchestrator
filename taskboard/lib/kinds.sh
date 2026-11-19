@@ -45,6 +45,16 @@ kind_model_valid() {  # $1=kind $2=モデル名
 
 kind_herdr_kind() { echo "$1"; }
 
+# モデルの切り替え方(tb model-set)。kind -> 方法 の表。方法の無い kind は 1(呼び出し側は "not supported" で何も変えない)
+#   claude: revive(止めて、同じ会話を --model 付きで復活。会話中の /model はユーザー単位の既定を書き換えるので使わない)
+#   codex / gemini: まだ無い(引数での指定と会話の再開が確かめられていない。docs/model-switch.md)
+kind_model_switch() {  # $1=kind
+  case $1 in
+    claude) echo revive;;
+    *) return 1;;
+  esac
+}
+
 kind_launch_into() {  # $1=配列名 $2=kind $3=session $4=モデル。kind_launch_args の出力を配列に入れる(bash 3.2 でも動くよう mapfile を使わない)
   local _l; eval "$1=()"
   while IFS= read -r _l; do eval "$1+=(\"\$_l\")"; done < <(kind_launch_args "$2" "$3" "$4")

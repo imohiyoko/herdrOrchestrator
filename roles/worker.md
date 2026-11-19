@@ -2,6 +2,7 @@
 
 指揮官から渡されたタスクを 1 つずつ進めます。
 
+- 自分の分野のチケットは `tb list -l <ラベル> --long` で絞って見る。中身・受け入れ条件・先行タスクは `tb show <task-id>`(`links.blocked_by` が done でないと claim できない)
 - 着手: `tb claim <task-id> --owner <自分の agent 名> --session <session id>`
 - 途中経過は `tb comment <task-id> --kind progress --text '...'`(10 分おきにまとめて指揮官に届く)
 - 終わったら `tb done <task-id> -d <成果物> -m '要約'` と `tb comment <task-id> --kind done --text '要約' --deliverables '<成果物>'`

@@ -62,6 +62,32 @@ tb whoami --short   # herdr セッション名だけ
 
 `project` は英数字と `_` のみ。ID は project ごとに 001 から採番される。
 
+### チケットの構造(種別・優先度・ラベル・説明・リンク)
+
+Jira に近い形でタスクを整理できる。状態(todo / in_progress / review / done / blocked)と遷移は変えない。
+
+```bash
+tb add -p web -t "ログイン刷新" --type epic --priority high -l auth,ui
+tb add -p web -t "ログイン画面" --type story --parent T-web-001 -l ui --desc "受け入れ条件: ..." \
+       --ref https://example.slack.com/archives/C01/p123 --ref pr=https://github.com/o/r/pull/12
+tb add -p web -t "テストを書く" --type subtask --parent T-web-002
+tb link T-web-003 blocks T-web-002        # T-web-002 は T-web-003 が done になるまで claim できない
+tb list -l ui --sort priority --long      # ラベルで絞る(複数はすべてを持つもの)。作成・更新の時刻も出る
+tb tree T-web-001                         # epic から下を字下げで
+tb labels                                 # 使われているラベルと件数
+tb update T-web-002 --add-label frontend --remove-label ui --priority highest
+```
+
+- **種別** `--type`: `epic` / `story` / `task`(既定)/ `bug` / `subtask`。epic は親を持たない。subtask は親が必須で、親は story / task / bug。subtask は誰の親にもなれない。親子の循環は止める。
+- **優先度** `--priority`: `highest` / `high` / `medium`(既定)/ `low` / `lowest`。`tb list --sort priority` と Web UI の「優先度が高い順」で並ぶ。
+- **ラベル** `-l` / `--label`: 何個でも(繰り返しかカンマ区切り)。1〜40 文字で空白・カンマ・引用符は使えない(日本語は可)。agent は `tb list -l <ラベル>` で自分の分野のチケットだけを見られる。
+- **説明** `--desc`: 本文・受け入れ条件。`tb show` と Web UI の詳細に出る。
+- **外部リンク** `--ref [種類=]URL`: Slack のスレッド・PR・ドキュメントなどの URL を何個でも(`tb update --add-ref` / `--remove-ref <URL>` で付け外し)。種類を省くと URL から `slack` / `github` / `link` を決める。http(s) の URL だけ。`tb show` と Web UI の詳細(押せるリンク)に出る。
+- **担当の agent**: 既存の `--owner`(agent 名)と `--session`(その agent の会話 ID)で紐付く。`tb list --owner <agent>` で絞り込める。
+- **リンク** `tb link <from> blocks|relates|duplicates <to>`: `blocks` は claim を止める(先行タスクが done になれば claim できる)。blocks の循環は止める。`tb show` は向きつき(`blocks` / `blocked_by` など)で出す。
+- `tb list` の既定の出力(ID 状態 担当 題)は変えていない。種別・優先度・作成・更新・ラベルは `--long`(または `--json`)で出る。
+- Web UI のタスク一覧は 種別・優先度・ラベル・作成・更新 の列と、種別・優先度・ラベルの絞り込みを持つ。ラベルを押すとそのラベルで絞り込む。
+
 ## 代行依頼(権限が足りないとき)
 
 仕様は利用側のプロンプトで定める。
@@ -228,7 +254,11 @@ tb agent-approve L-<n> [--always] / tb agent-reject L-<n>      # 人だけ
 
 - **新規作成**: 専用の workspace(label = 名前)を作り、その pane で `herdr agent start <名前> --kind <kind> [-- ...]`(`--kind` 省略時は claude。claude は従来どおり `-- --model M`)。kind ごとの違いは `lib/kinds.sh` のアダプタだけが持ち、対応していない指定は終了コード 12 で止まる。表と設計は [docs/agent-kinds.md](docs/agent-kinds.md)(`tb agent-kinds` でも見える)。
   `--cwd` の既定は `TB_AGENT_CWD`(既定このリポジトリ)。`--role R` は `roles/R.md` を台帳に残し、SessionStart hook がそれを渡す(復活後も同じ)。
-  `--prompt` は起動後に最初の指示として送る
+  `--prompt` は起動後に最初の指示として送る。
+  起動に失敗したときは、最後の `herdr agent start` のエラーコードと短いメッセージ(`TB_SPAWN_ERR_MAX`、既定 200 文字まで)を出す。
+  失敗した回ごとに「時刻・名前・エラーコード」の 1 行を `spawn-errors.log`(DB と同じディレクトリ。`TB_SPAWN_LOG` で変更)に足す。指示の本文や引数は書かない。
+  エラーコードに `not_ready` / `blocked` を含む(初回の確認画面などで、agent が人の操作を待っている)ときは、やり直さず workspace も閉じない。
+  台帳に pane を残し、herdr でその pane を開いて答えるよう案内する(終了コード 11。最初の指示は送らない)
 - **停止**: その agent の pane を `herdr pane close` で閉じる(herdr に agent 単体の停止は無い)。止める前に session と cwd(hook の記録を優先)を台帳に残す。
   止められるのは **killable=yes で、未完了(in_progress / review / blocked)のタスクを持っていない**ときだけ。人は `--force` で例外にできる。自分自身は止められない
 - **復活**: 台帳の cwd で新しい workspace を作り、`claude --resume <session>` で同じ会話から再開する(claude の場合。再開できない kind は終了コード 12 で止まり、`--fresh` なら新しい会話)。
@@ -247,6 +277,27 @@ tb agent-approve L-<n> [--always] / tb agent-reject L-<n>      # 人だけ
   `ask` なら `L-<n>` として人の承認待ちに積む(終了コード 20。Web UI の緊急通知と agent 一覧に出る)。`allow` ならそのまま実行する(停止の前提はそれでも確かめる)。`--force` は人だけ
 - herdr のセッション(`HERDR_SESSION`、プリセットの `# session:`)ごとに台帳を分けて扱う。別セッションの agent は同期で「止まった」扱いにせず、操作するときは `HERDR_SESSION=<名前>` を付けるよう案内する
 - 実行したもの・断ったもの・承認待ちは `agent_ops` にすべて残る。終了コード: 0 実行済み / 1 拒否・前提違い / 11 herdr の失敗 / 20 承認待ち
+
+### モデルの切り替え(`tb model-set`)と役割の既定(`role-models`)
+
+```
+tb model-set <名前 | @役割 | --all> <モデル> [--dry-run]
+tb model-set <名前 | @役割 | --all> --reset [--dry-run]
+```
+
+- **仕組み**: idle / done の agent だけを、止めて同じ会話を `--model <モデル>` 付きで復活させる。ユーザー単位の設定(`~/.claude/settings.json` など)は変えない。
+  Claude Code の会話中の `/model` は、選んだモデルをユーザー単位の既定として保存し、以後に起動するすべての agent に効いてしまうので使わない。
+  切り替えると、その会話のプロンプトキャッシュは使えなくなる(切り替えた直後の 1 回は費用が大きい)。そのことを 1 行で出す
+- **1 体ごとに 1 行**: `changed (…)` / `skipped (理由)` / `not supported (…)` / `pending L-<n>`。working・blocked は飛ばす。実行した本人と指揮官は対象から外す。
+  止まっている agent は台帳のモデルだけを変える(次の `tb agent-revive` から効く)
+- **kind ごとの方法**: `lib/kinds.sh` の `kind_model_switch`(kind → 方法の表)。いまは claude だけ(revive)。方法の無い kind は何も変えず `not supported`(終了コード 12)
+- **承認**: 操作名は `agent:model:<名前>`(既定 ask。`agent:model:@worker = allow` のように役割でも書ける)。agent の pane からは allow のときだけ実行し、ask なら `L-<n>` で人の承認待ち。
+  `--all` は人が実行しても常に承認待ちに積む(自動では実行しない)。記録は `agent_ops` の op=revive、`args` に `model_set:1` とモデル(スキーマは変えていない)
+- **モデルの決まり方**(起動・復活のとき。上が勝つ): 明示の `--model` > 台帳の値(明示の指定で書いた値) > 役割の既定(`tb config` の `role-models`) > agent の CLI の既定。
+  役割の既定は台帳に書かない。`role-models` を変えても台帳に値がある agent は変わらない。`--reset` で台帳の値を消すと、次の起動・復活から役割の既定になる
+- `role-models` の書式は `<役割の glob> = <モデル>`(上から見て最初に一致した行。例は `config/role-models.conf.example`)。`tb config set / edit` で書くときに検査する
+- 注意: tb を通さずに同じ名前で agent を起動し直し、herdr が別の kind を教えたときは、台帳の行が別の個体とみなされ、モデルの値が消える(`agent_sync`)
+- 終了コード: 0 / 1(1 体だけ指定して飛ばした)/ 11 herdr の失敗 / 12 対応していない kind / 20 承認待ち。検証の手順は [docs/model-switch.md](docs/model-switch.md)
 
 ### agent の関係グラフ(`tb agents --graph`)とロール
 
@@ -512,11 +563,11 @@ tb が `herdr agent prompt` で送ろうとしたものは、結果にかかわ�
 ## 設定(`tb config`)
 
 運用の設定は DB の `config` 表に置き、キーで引く(schema/013)。シングルポート・マルチセッションでも、セッションごとに違う設定を持てる。
-本文は今までの conf ファイルの中身そのまま(書式は各節のとおり)。キーは `projects` / `approvals` / `grants` / `routes` / `limits` / `notify` / `compact` / `sched-watch` / `spawn-policy`。
+本文は今までの conf ファイルの中身そのまま(書式は各節のとおり)。キーは `projects` / `approvals` / `grants` / `routes` / `limits` / `notify` / `compact` / `sched-watch` / `spawn-policy` / `role-models`。
 
 引く順(最初に見つかったもの):
 
-1. 環境変数で明示したファイル(`TB_CONFIG` / `TB_APPROVALS` / `TB_GRANTS` / `TB_ROUTES` / `TB_LIMITS` / `TB_NOTIFY_CONF` / `TB_COMPACT_CONF` / `TB_SCHEDWATCH_CONF` / `TB_SPAWN_POLICY`。テストや一時の差し替え)
+1. 環境変数で明示したファイル(`TB_CONFIG` / `TB_APPROVALS` / `TB_GRANTS` / `TB_ROUTES` / `TB_LIMITS` / `TB_NOTIFY_CONF` / `TB_COMPACT_CONF` / `TB_SCHEDWATCH_CONF` / `TB_SPAWN_POLICY` / `TB_ROLE_MODELS`。テストや一時の差し替え)
 2. DB の**このセッション**の行
 3. DB の**全セッション共通**の行(`herdr_session='*'`)
 4. checkout の `taskboard/config/<名前>.conf`(DB に取り込むまでの移行用。git 管理外)
