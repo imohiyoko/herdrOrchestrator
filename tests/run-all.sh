@@ -4,21 +4,21 @@
 #   tests/run-all.sh -j 4            すべてを 4 本ずつ並列に流す
 #   tests/run-all.sh <組> ...        指定した組だけ流す(CI は組ごとに別のジョブで流す)
 #   tests/run-all.sh --list          組の名前を JSON の配列で出す(CI の matrix 用)
-# 組: misc(tests/ の小さなもの)/ taskboard-<名前>(taskboard/test/shards の組)/ webui / scheduler / setup
+# 組: misc(tests/ の小さなもの)/ taskboard-<名前>(taskboard/test/shards の組)/ webui / scheduler / setup / repoindex
 set -uo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 
 suites() {
   echo misc
   bash "$ROOT/taskboard/test/run.sh" --list-shards | sed 's/^/taskboard-/'
-  printf '%s\n' webui scheduler setup
+  printf '%s\n' webui scheduler setup repoindex
 }
 # 組 1 つ分のコマンド(1 行 1 コマンド)
 suite_cmds() {
   case $1 in
     misc)        printf '%s\n' "bash tests/test_env.sh" "bash tests/test_instance.sh" "python3 tests/test_webui_queries.py";;
     taskboard-*) echo "bash taskboard/test/run.sh --shard ${1#taskboard-}";;
-    webui|scheduler|setup) echo "bash $1/tests/run.sh";;
+    webui|scheduler|setup|repoindex) echo "bash $1/tests/run.sh";;
     *) return 1;;
   esac
 }

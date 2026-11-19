@@ -8,6 +8,6 @@ load_job "${1:-}"
 days_to_nums >/dev/null
 jq -nc --arg job "$JOB" --arg kind "$([ -n "${COMMAND:-}" ] && echo command || echo prompt)" --arg target "${TARGET:-}" \
   --argjson interval "${INTERVAL_MIN:-null}" --argjson interval_sec "$INTERVAL_SEC" --arg start "$START" --arg end "$END" --arg days "$DAYS" \
-  --argjson enabled "$ENABLED" --arg tz "$TZ" --arg watcher "${WATCHER:-}" \
-  --argjson overridden "$([ -e "$SETTINGS_DIR/$JOB.settings" ] && echo true || echo false)" \
-  '{job:$job,kind:$kind,target:$target,interval_min:$interval,interval_sec:$interval_sec,start:$start,end:$end,days:$days,enabled:($enabled==1),tz:$tz,watcher:(if $watcher=="" then null else $watcher end),overridden:$overridden}'
+  --argjson enabled "$ENABLED" --arg tz "$TZ" --arg watcher "${WATCHER:-}" --argjson gate "$([ -n "$GATE" ] && echo true || echo false)" \
+  --argjson overridden "$([ "$SETTINGS_SRC" != none ] && echo true || echo false)" --arg source "$JOB_SRC" --arg ssource "$SETTINGS_SRC" \
+  '{job:$job,kind:$kind,target:$target,interval_min:$interval,interval_sec:$interval_sec,start:$start,end:$end,days:$days,enabled:($enabled==1),tz:$tz,watcher:(if $watcher=="" then null else $watcher end),gate:$gate,overridden:$overridden,source:$source,settings_source:$ssource}'

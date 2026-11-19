@@ -12,7 +12,7 @@
 # 書くのは人だけ。環境変数でファイルを明示しているときはそのファイルを、そうでなければ DB のこのセッションの行(--shared なら共通の行)を書く。
 
 CONFIG_DIR=${TB_CONFIG_DIR:-$TB_ROOT/config}   # checkout の設定ファイルの置き場(テストで差し替え)
-CONFIG_KEYS="projects approvals grants routes limits notify compact sched-watch spawn-policy conv-routes"
+CONFIG_KEYS="projects approvals grants routes limits notify compact sched-watch spawn-policy role-models conv-routes"
 
 # キーの情報: CFG_ENV(上書きの環境変数)、CFG_FILE(checkout のファイル名)、CFG_EXAMPLE(1 なら .example も既定値として読む)
 config_key_info() {
@@ -27,6 +27,7 @@ config_key_info() {
     compact)      CFG_ENV=TB_COMPACT_CONF;    CFG_FILE=compact.conf; CFG_EXAMPLE=1;;
     sched-watch)  CFG_ENV=TB_SCHEDWATCH_CONF; CFG_FILE=sched-watch.conf; CFG_EXAMPLE=1;;
     spawn-policy) CFG_ENV=TB_SPAWN_POLICY;    CFG_FILE=spawn-policy.conf; CFG_EXAMPLE=1;;
+    role-models)  CFG_ENV=TB_ROLE_MODELS;     CFG_FILE=role-models.conf; CFG_EXAMPLE=1;;
     conv-routes)  CFG_ENV=TB_CONV_ROUTES;     CFG_FILE=conv-routes.conf;;   # 会話の振り分け表(lib/conv.sh)。.example は既定値にしない(無ければすべて未登録)
     *) return 1;;
   esac
@@ -75,9 +76,13 @@ config_has() { config_lookup "$1"; }
 config_source() { config_lookup "$1" >/dev/null || true; printf '%s' "$CFG_SRC"; }
 
 # 書く(人だけが呼ぶ)。$1=キー $2=本文 $3=how(履歴に残す) [$4=共通の行に書くなら 1]
+# キーごとの検査 config_validate_<キー>(- は _)があれば、書く前に通す(だめなら何も書かない)
 config_put() {
   local key=$1 body=$2 how=$3 shared=${4:-0} f tmp hs
   config_key_info "$key" || die "不明な設定のキー: $key"
+  if declare -F "config_validate_${key//-/_}" >/dev/null; then
+    "config_validate_${key//-/_}" "$body" || die "$key の本文に問題があるため書きませんでした"
+  fi
   f=${!CFG_ENV:-}
   if [[ -n $f ]]; then   # ファイルを明示しているときはそのファイルを書く(DB には書かない)
     [[ ! -L $f ]] || die "$(basename "$f") がシンボリックリンクです: $f"
