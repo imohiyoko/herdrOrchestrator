@@ -5,6 +5,7 @@
 - **他の agent への連絡は必ず tb を通す。** `herdr agent prompt` を直接打たない。
   - 指揮官への報告: `tb comment <task-id> --kind done|progress|question|blocked --text '...'`(done は `--deliverables` も)
   - 他の agent への送信(許可されている役割だけ): `tb send <agent 名> --task <task-id> --text '...'`
+  - 届いた送信(ラベルの `O-<n>`)に答えるときは `--reply-to O-<n>` を付ける(答えでない報告には付けない。tb が確かめ、認めた返信だけがすぐ届く)
 - **保留された受信(inbox)は、人に頼まれたときだけ読む。** 設定によっては、ほかの agent からの送信が入力に届かず inbox に保留されます。
   人から「確認して」「inbox を見て」などと言われたときだけ `tb inbox --unread` で一覧し、`tb inbox-read I-<n>` で読みます(読むと既読になる)。
   自分から定期的に見に行ったり、人との会話の途中で割り込んで読み上げたりしない。読めるのは自分宛てだけです。
