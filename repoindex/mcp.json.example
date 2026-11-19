@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "repoindex": {
-      "command": "/path/to/heardrOrchestrator/repoindex/bin/repoindex",
+      "command": "/path/to/herdrOrchestrator/repoindex/bin/repoindex",
       "args": ["serve"]
     }
   }
