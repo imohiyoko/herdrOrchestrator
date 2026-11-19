@@ -41,6 +41,22 @@ check_hierarchy() {
 parent_cycle_sql() {
   printf "EXISTS (WITH RECURSIVE up(id) AS (SELECT %s UNION SELECT t.parent_id FROM tasks t JOIN up ON t.id=up.id WHERE t.parent_id IS NOT NULL) SELECT 1 FROM up WHERE id=%s)" "$(q "$1")" "$(q "$2")"
 }
+# check_hierarchy と同じ規則を、書き込みの文の条件(SQL)にする。書き込みと同じトランザクションで評価して、並行する変更で規則を破らない
+# $1=種別 $2=親(空可) $3=自分(add では空)
+hierarchy_ok_sql() {
+  local type=$1 parent=$2 self=${3-} c="1"
+  if [[ -n $parent ]]; then
+    c+=" AND NOT EXISTS (SELECT 1 FROM tasks WHERE id=$(q "$parent") AND (type='subtask' OR ($(q "$type")='subtask' AND type='epic')))"
+  fi
+  if [[ -n $self ]]; then
+    case $type in
+      subtask) c+=" AND NOT EXISTS (SELECT 1 FROM tasks WHERE parent_id=$(q "$self"))";;
+      epic)    c+=" AND NOT EXISTS (SELECT 1 FROM tasks WHERE parent_id=$(q "$self") AND type='subtask')";;
+    esac
+    [[ -z $parent ]] || c+=" AND NOT $(parent_cycle_sql "$parent" "$self")"
+  fi
+  printf '(%s)' "$c"
+}
 # 優先度の並び(highest が先)。SQL の ORDER BY に使う
 PRIORITY_RANK="CASE priority WHEN 'highest' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END"
 # 実行者の名前(agent の pane なら herdr から引いた名前、人の端末なら human)
@@ -72,16 +88,19 @@ cmd_add() {
   if [[ -n $parent ]]; then valid_id "$parent"; require_task "$parent" >/dev/null; fi
   check_hierarchy "$type" "$parent"
   local lj; lj=$(labels_json ${labs[@]+"${labs[@]}"})
-  local n=$(now) p; p=$(q "$project")
-  # 採番と挿入を 1 文で行い、同時 add でも重複しないようにする
+  local n=$(now) p out; p=$(q "$project")
+  # 採番と挿入を 1 文で行い、同時 add でも重複しないようにする。親の種別の規則も同じ文で確かめる(HAVING)
   # ID は DB 全体で一意(採番は全セッションの行を見る。ここだけ herdr_session で絞らない)
-  sql "INSERT INTO main.tasks (id, project, title, owner_agent, session_id, account, parent_id, type, priority, labels, description, created_at, updated_at, herdr_session)
+  out=$(sql "BEGIN IMMEDIATE; INSERT INTO main.tasks (id, project, title, owner_agent, session_id, account, parent_id, type, priority, labels, description, created_at, updated_at, herdr_session)
        SELECT 'T-'||$p||'-'||printf('%03d', COALESCE(MAX(CAST(substr(id, length($p)+4) AS INTEGER)),0)+1),
               $p, $(q "$title"), NULLIF($(q "$owner"),''), NULLIF($(q "$session"),''), NULLIF($(q "$account"),''),
               NULLIF($(q "$parent"),''), $(q "$type"), $(q "$priority"), $(q "$lj"), NULLIF($(q "$desc"),''),
               $(q "$n"), $(q "$n"), $SQS
-       FROM main.tasks WHERE project=$p;
-       SELECT id FROM main.tasks WHERE rowid=last_insert_rowid();   -- rowid は表のもの(ビューには無い)"
+       FROM main.tasks WHERE project=$p HAVING $(hierarchy_ok_sql "$type" "$parent");
+       SELECT CASE WHEN changes()=1 THEN (SELECT id FROM main.tasks WHERE rowid=last_insert_rowid()) ELSE '' END;   -- rowid は表のもの(ビューには無い)
+       COMMIT;")
+  [[ -n $out ]] || usage "add: 親の種別が規則に合いません(並行して変わりました): $parent"
+  printf '%s\n' "$out"
 }
 
 # ---------- list ----------
@@ -222,14 +241,20 @@ cmd_update() {
     sets+=("labels=(SELECT json_group_array(value) FROM (SELECT value FROM (SELECT value FROM json_each($base) UNION SELECT value FROM json_each($(q "$add")))
               WHERE value NOT IN (SELECT value FROM json_each($(q "$rm"))) ORDER BY value))")
   fi
-  # 親を変えるときは、循環の検査と書き込みを 1 つの書き込みトランザクションで行う(並行する付け替えで循環を作らない)
-  local guard="" n
-  [[ -z $nparent ]] || guard=" AND NOT $(parent_cycle_sql "$nparent" "$id")"
+  # 種別・親を変えるときは、規則(循環を含む)の検査と書き込みを 1 つの書き込みトランザクションで行う(並行する変更で規則を破らない)
+  local guard="" n ftype fparent
+  if [[ -n $ntype || -n $nparent ]]; then
+    ftype=${ntype:-$(jq -r .type <<<"$row")}; fparent=${nparent:-$(jq -r '.parent_id // empty' <<<"$row")}
+    guard=" AND $(hierarchy_ok_sql "$ftype" "$fparent" "$id")"
+  fi
   local IFS=,
   n=$(sql "BEGIN IMMEDIATE; UPDATE main.tasks SET ${sets[*]}, updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id")$guard;
            SELECT changes(); COMMIT;")
   unset IFS
-  [[ $n == 1 ]] || usage "親子が循環します: $id → $nparent"
+  if [[ $n != 1 ]]; then
+    [[ -z $fparent || -z $(sql "SELECT 1 WHERE $(parent_cycle_sql "$fparent" "$id");") ]] || usage "親子が循環します: $id → $fparent"
+    usage "update: 種別・親が規則に合いません(並行して変わりました): $id"
+  fi
   echo "$id updated"
 }
 
