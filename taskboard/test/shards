@@ -6,4 +6,4 @@
 gate:    98_gate.sh 99_gate_ingest.sh 99_gate_review_events.sh 99_compact.sh 99_ready.sh 99_layout.sh
 prqueue: 93_prqueue.sh 95_review.sh 95_review_governance.sh 97_roles_db.sh 97_roles_multi.sh 97_roles_session.sh 97_peek.sh 97_grants.sh
 notify:  94_notify.sh 96_limits.sh 10_tasks.sh 20_proxy.sh
-agents:  60_send.sh 90_alerts.sh 97_agents.sh 97_agents_graph.sh 97_kind_adapter.sh 98_agent_restart.sh 98_agent_spawn.sh
+agents:  60_send.sh 90_alerts.sh 97_agents.sh 97_agents_graph.sh 97_kind_adapter.sh 98_agent_restart.sh 98_agent_spawn.sh 98_model_set.sh

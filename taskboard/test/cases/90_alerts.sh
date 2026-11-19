@@ -36,7 +36,7 @@ eq "digest: undelivered alert result" "$([[ $msg == *'A-1 解析結果 / critica
 eq "digest: new alerts listed" "$([[ $msg == *'A-3 アラート / '* ]] && echo ok || echo "$msg")" "ok"
 eq "digest: result marked delivered" "$(alsql "SELECT result_delivered_at IS NOT NULL FROM alerts WHERE id=1;")" "1"
 printf 'alert:analyze = allow\n' >"$TB_APPROVALS"
-eq "alert: start failure → queued with note" "$(TB_ANALYST_MAX=5 FAKE_START_RC=1 HERDR_PANE_ID=wX:p1 $TB alert --title 'new one' | cut -d' ' -f3) $(alsql "SELECT note FROM alerts WHERE id=4;")" "queued agent を起動できない"
+eq "alert: start failure → queued with note" "$(TB_ANALYST_MAX=5 FAKE_START_RC=1 HERDR_PANE_ID=wX:p1 $TB alert --title 'new one' | cut -d' ' -f3) $(alsql "SELECT note FROM alerts WHERE id=4;")" "queued agent を起動できない(exit 1)"
 eq "alert-close: human" "$(HERDR_PANE_ID= $TB alert-close A-4)" "A-4 closed"
 eq "alert: cli (no pane) allowed" "$(HERDR_PANE_ID= $TB alert --title 'from monitor script' | cut -d' ' -f2) $(alsql "SELECT source FROM alerts ORDER BY id DESC LIMIT 1;")" "new cli"
 # scheduler 用

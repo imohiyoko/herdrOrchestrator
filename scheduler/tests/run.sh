@@ -231,6 +231,42 @@ ok "gen-plist --dispatch: 1 本の plist に dispatch.sh とジョブ名" "$(gre
 OUT_DIR="$TMP/gen" bash bin/gen-plist.sh --dispatch fast nosuchjob >/dev/null 2>&1; ok "gen-plist --dispatch: 無いジョブは止める" "$?" 2
 mkcmd dispatch "COMMAND='true'"; OUT_DIR="$TMP/gen" bash bin/gen-plist.sh dispatch >/dev/null 2>&1; ok "ジョブ名 dispatch は予約済み" "$?" 2; rm -f "$JOBS_DIR/dispatch.conf"
 
+# ---- 発火条件(GATE)。順序: 窓・間隔・曜日 → ENABLED → GATE → SKIP_IF → ロック → 発火
+gjob() { printf "TARGET=dummy\nPROMPT='do the thing'\nWINDOW=09:00-21:00\nINTERVAL_MIN=5\n%s\n" "$2" >"$JOBS_DIR/$1.conf"; }
+gjob g0 "GATE='true'"
+gjob g1 "GATE='exit 3'"
+gjob gslow "GATE='sleep 5'
+GATE_TIMEOUT=1"
+gjob gmiss "GATE='/nonexistent/gate-cmd'"
+gjob goff "GATE='touch $TMP/gate-ran'
+ENABLED=0"
+gjob gsecret "GATE='echo SECRET-OUT; echo SECRET-ERR >&2; exit 1'"
+gjob gbad "GATE='true'
+GATE_TIMEOUT=0"
+check "GATE なし: 今と同じく発火"        sent         t      "$THU 12:00" idle
+check "GATE が 0: 発火"                 sent         g0     "$THU 12:00" idle
+check "GATE が 0 以外: 発火しない"       skipped_gate g1     "$THU 12:00" idle
+check "GATE の時間切れ: 発火しない"      skipped_gate gslow  "$THU 12:00" idle
+check "GATE の起動失敗: 発火しない"      skipped_gate gmiss  "$THU 12:00" idle
+check "GATE が 0 のときだけ SKIP_IF を見る" skipped_state g0   "$THU 12:00" working
+check "GATE が 0 以外なら SKIP_IF より先に止まる" skipped_gate g1 "$THU 12:00" working
+check "窓の外では GATE を見ない"          skipped_window g1   "$THU 22:00" idle
+ok "理由: exit / timeout / 起動失敗" "$(for j in g1 gslow gmiss; do DRY_RUN=1 NOW="$THU 12:00" FAKE_STATE=idle bash bin/tick.sh $j | jq -r .reason; done | tr '\n' '|')" "gate exit 3|gate timeout after 1s|gate could not start (exit 127)|"
+DRY_RUN=1 NOW="$THU 12:00" bash bin/tick.sh goff >/dev/null
+ok "ENABLED=0 なら GATE を実行しない" "$([ -e "$TMP/gate-ran" ] && echo ran || echo not)" not
+rm -f "$LOG_DIR/gsecret.log"; NOW="$THU 12:00" bash bin/tick.sh gsecret
+ok "GATE の出力はログに残さない" "$(jq -r .action "$LOG_DIR/gsecret.log") $(grep -c SECRET "$LOG_DIR/gsecret.log")" "skipped_gate 0"
+bash bin/tick.sh gbad >/dev/null 2>&1; ok "GATE_TIMEOUT=0 はエラー(exit 2)" "$?" 2
+ok "show.sh: gate の有無" "$(bash bin/show.sh g1 | jq -c .gate) $(bash bin/show.sh t | jq -c .gate)" "true false"
+# コマンド型: GATE が 0 以外なら、コマンドもロックも触らない
+printf "COMMAND='touch %s/gcmd-ran'\nWINDOW=00:00-23:59\nINTERVAL_MIN=2\nGATE='false'\n" "$TMP" >"$JOBS_DIR/gcmd.conf"
+NOW="$THU 12:00" bash bin/tick.sh gcmd
+ok "コマンド型: GATE で止めるとコマンドを実行しない" "$(jq -r .action "$LOG_DIR/gcmd.log") $([ -e "$TMP/gcmd-ran" ] && echo ran || echo not) $([ -e "$LOG_DIR/gcmd.lock.d" ] && echo locked || echo free)" "skipped_gate not free"
+sed -i.bak "s/GATE='false'/GATE='true'/" "$JOBS_DIR/gcmd.conf"; rm -f "$JOBS_DIR/gcmd.conf.bak"
+NOW="$THU 12:00" bash bin/tick.sh gcmd
+ok "コマンド型: GATE が 0 なら実行" "$(tail -n1 "$LOG_DIR/gcmd.log" | jq -r .action) $([ -e "$TMP/gcmd-ran" ] && echo ran || echo not)" "ran ran"
+rm -f "$JOBS_DIR"/g*.conf
+
 # ---- DB のジョブ定義(tb sched-job。config 表の sched-job:<job> / sched-settings:<job>)
 SJ="$TMP/sj"; mkdir -p "$SJ/jobs" "$SJ/settings" "$SJ/logs"
 export TB_SCHED_DIR="$SJ" HERDR_STATE_DIR_SAVE="${XDG_STATE_HOME:-}" XDG_STATE_HOME="$TMP/state"

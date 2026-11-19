@@ -118,7 +118,7 @@ load_job() {
     JOB_SRC=file
     [ -f "$JOB_CONF" ] || die "ジョブ定義がない: $JOB_CONF"
   fi
-  unset TARGET PROMPT PROMPT_FILE COMMAND COMMAND_TIMEOUT WINDOW START END INTERVAL_MIN INTERVAL_SEC DAYS SKIP_IF TZ ENABLED WATCHER
+  unset TARGET PROMPT PROMPT_FILE COMMAND COMMAND_TIMEOUT GATE GATE_TIMEOUT WINDOW START END INTERVAL_MIN INTERVAL_SEC DAYS SKIP_IF TZ ENABLED WATCHER
   if [ "$JOB_SRC" = db ]; then
     eval "$job_body"   # 本文は conf と同じ(bash の変数代入)。人が tb sched-job で書いたもの
   else
@@ -156,6 +156,9 @@ load_job() {
   export TZ
   : "${COMMAND_TIMEOUT:=60}"
   [[ "$COMMAND_TIMEOUT" =~ ^[0-9]+$ ]] && ((COMMAND_TIMEOUT > 0)) || die "$JOB: COMMAND_TIMEOUT は正の整数(秒)"
+  # GATE: 任意の発火条件(シェル 1 行)。終了コード 0 のときだけ発火する。conf にだけ書ける(settings・Web UI からは変えられない)
+  : "${GATE:=}" "${GATE_TIMEOUT:=10}"
+  [[ "$GATE_TIMEOUT" =~ ^[0-9]+$ ]] && ((GATE_TIMEOUT > 0)) || die "$JOB: GATE_TIMEOUT は正の整数(秒)"
   if [ -n "${COMMAND:-}" ]; then
     [ -z "${TARGET:-}${PROMPT:-}${PROMPT_FILE:-}" ] || die "$JOB: COMMAND は TARGET/PROMPT/PROMPT_FILE と同時に指定できない"
     TARGET=""   # COMMAND 型は agent を使わない

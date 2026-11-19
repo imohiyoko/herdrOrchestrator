@@ -1,0 +1,11 @@
+# 役割ごとの既定のモデル(<役割の glob> = <モデル>)。編集するのは人だけ(tb config edit role-models)。再起動は要らない。
+# 実際に読むのは DB の行(tb config set / edit)か role-models.conf。無ければこの .example(何も書いていない = 役割の既定なし)。
+# 上から見て、agent の役割(tb agents --group role で見える。複数あればどれか)に最初に一致した行のモデルを使う。
+# モデルの決まり方(上が勝つ): 明示の --model > 台帳の値(tb model-set で書く。--reset で消す) > この表 > agent の CLI の既定
+# この表は台帳に書かない。表を変えても、台帳にモデルがある agent は変わらない(変えるなら tb model-set <対象> --reset)。
+# モデルの指定に対応していない kind(codex / gemini)には使わない。
+#
+# 例:
+# sweeper = haiku
+# analyst* = sonnet
+# worker = sonnet
