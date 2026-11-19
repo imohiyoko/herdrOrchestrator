@@ -14,6 +14,7 @@ kind が違っても `tb agent-new` / `tb agent-revive --model` のコマンド�
 | `lib/agents.sh` `agent_register` / `agent_sync` | kind を渡していない(列の既定値 `claude` 任せ) | 登録時に kind を書く。sync は herdr の `agent` 欄を使う(無ければ claude) |
 | `lib/alerts.sh` | 解析役は claude で起動 | 既定 kind を明示して渡す(動作は同じ) |
 | `lib/compact.sh` | `/compact` を送り、`~/.claude/projects/*/<session>.jsonl` で文脈の大きさを測る | claude 以外は理由を出してスキップ |
+| `lib/slash.sh` | 許可リストのスラッシュコマンドを送る(`tb slash`) | claude 以外は `not-supported(kind=..)` を出して送らない |
 | `lib/spawn.sh` | 子の `model` を `MODEL_RE` で検査 | 変更なし(子は常に既定 kind = claude) |
 | `schema/004_agents.sql` | `kind TEXT NOT NULL DEFAULT 'claude'` | **変更なし**(列は既にある) |
 | `bin/tb-hook` / `tb touch` | Claude Code の hook(`session_id` など)を読む | 変更なし。hook を持たない kind は活動記録が付かない(下記) |
@@ -34,6 +35,7 @@ kind が違っても `tb agent-new` / `tb agent-revive --model` のコマンド�
 | 起動中のモデル変更の可否 | `kind_supports K live-model` | 表示のみ。tb は起動中のモデル変更を行わない(変更は復活時の `--model` だけ) |
 | session 識別の取り方 | `kind_session_source` | herdr `agent list` の `agent_session.value`(全 kind 共通) |
 | compact の可否 | `kind_supports K compact` | `/compact` と claude の transcript に依存する |
+| slash の可否 | `kind_supports K slash` | スラッシュコマンドの書式は claude のものだけを確かめている |
 
 対応しない項目の要求は `kind_require K 項目` が止める。
 

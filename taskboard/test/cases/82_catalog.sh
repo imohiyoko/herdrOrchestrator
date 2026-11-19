@@ -11,7 +11,7 @@ REPO=$HERE/../..
 _ct() { local s=$1; s="${s#"${s%%[![:space:]]*}"}"; printf '%s' "${s%"${s##*[![:space:]]}"}"; }
 
 # 期待する操作名(動的に組み立てられる部分の一覧。コードの定義から読めるものは読む)
-EXP_AGENT_OPS="new stop revive spawn compact model"    # run_op の case と spawn / compact / model-set
+EXP_AGENT_OPS="new stop revive spawn compact model slash"   # run_op の case と spawn / compact / model-set / slash
 EXP_SETUP_STEPS="hooks scheduler webui launchctl"       # setup/CLAUDE.md の手順
 EXP_GATE_ACTIONS="merge approve execute"                # gate.sh の --action と execute
 SEND_KINDS_CODE=$(sed -n 's/^SEND_KINDS="\(.*\)"$/\1/p' "$TBROOT/lib/send.sh")
