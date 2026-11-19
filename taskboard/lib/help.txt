@@ -11,6 +11,7 @@ tb tree <id> | tree -p <project>   親子を字下げで(ID 種別 優先度 状
 tb labels [-p project] [--json]    使われているラベルと件数(ラベル 未完了 全部)
 tb history <id> [--json]           チケットの履歴(E-番号 時刻 タスク 種類 前 後 変えた者 元)。作成・状態・題・種別・優先度・担当・期日・親・説明・ラベル・外部リンク・リンク・コメント
 tb events [--since E-n] [--kind K] [-p project] [--limit N(既定 50)] [--json]   このセッションの履歴を古い順に
+tb due-scan [-p project] [--within N(既定 1)]   期限切れ(overdue)・期限間近(due_soon: 今日〜N 日後)のタスクに履歴のイベントを 1 日 1 回ずつ残す(通知の規則の材料。tb notify flush も呼ぶ)
 tb link <from> blocks|relates|duplicates <to>   blocks なら to は from が done になるまで claim できない
 tb unlink <from> <種類> <to>
 tb sprint-add -p <project> -n <名前> [--start YYYY-MM-DD] [--end YYYY-MM-DD] [--goal G]   → S-<n>(planned)
