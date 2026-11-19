@@ -1,0 +1,47 @@
+name: go
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  # herdrctl(ADR 0002)を 3 つの OS の上でテストする。Windows でも毎回動くことを確かめる
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    name: go test (${{ matrix.os }})
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test ./...
+      - run: go run ./cmd/herdrctl version
+  # 配布する 6 つ(darwin・windows・linux × amd64・arm64)が全部ビルドできるか。リリースと同じ設定で、公開はしない
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --snapshot --clean
+  # ブランチ保護で必須にする 1 つのチェック
+  go-all:
+    if: always()
+    needs: [test, snapshot]
+    runs-on: ubuntu-latest
+    steps:
+      - run: '[ "${{ needs.test.result }}" = success ] && [ "${{ needs.snapshot.result }}" = success ]'
