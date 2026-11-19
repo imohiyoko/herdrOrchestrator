@@ -97,3 +97,30 @@ eq "tickets: label * is matched literally" "$($TB list -p tk5 -l '*' | cut -f1)"
 # 付け外しは書く時点の labels に当てる
 $TB update "$tg" --add-label x >/dev/null; $TB update "$tg" --add-label y --remove-label '*' >/dev/null
 eq "tickets: add/remove applies to stored labels" "$($TB show "$tg" | jq -c .labels)" '["x","y"]'
+
+# --- 並行する更新: 事前検査のあと書き込みの直前に別の更新が確定しても、規則を破らない
+# PATH に置いた sqlite3 の包みが、tb の書き込みトランザクション(BEGIN IMMEDIATE)の直前に 1 度だけ RACE_SQL を確定させる
+_real_sqlite=$(command -v sqlite3); mkdir -p "$TMP/race-bin"
+cat >"$TMP/race-bin/sqlite3" <<WRAP
+#!/usr/bin/env bash
+if [[ -n \${RACE_SQL-} && ! -e \$RACE_MARK && "\$*" == *"BEGIN IMMEDIATE;"* ]]; then
+  : >"\$RACE_MARK"; "$_real_sqlite" "\$TB_DB" "\$RACE_SQL"
+fi
+exec "$_real_sqlite" "\$@"
+WRAP
+chmod +x "$TMP/race-bin/sqlite3"
+ra=$($TB add -p tk6 -t a); rb=$($TB add -p tk6 -t b)
+eq "tickets(race): --type epic loses to a parent set in between" \
+  "$(PATH="$TMP/race-bin:$PATH" RACE_MARK=$TMP/race1 RACE_SQL="UPDATE tasks SET parent_id='$rb' WHERE id='$ra'" rc $TB update "$ra" --type epic)" "2"
+eq "tickets(race): no epic with a parent" "$($TB show "$ra" | jq -c '[.type,.parent_id]')" "[\"task\",\"$rb\"]"
+rc_=$($TB add -p tk6 -t c --type story); rd=$($TB add -p tk6 -t d --type story)
+eq "tickets(race): parent set loses to a subtask change in between" \
+  "$(PATH="$TMP/race-bin:$PATH" RACE_MARK=$TMP/race2 RACE_SQL="UPDATE tasks SET type='subtask', parent_id='$rd' WHERE id='$rc_'" rc $TB update "$ra" --parent "$rc_")" "2"
+eq "tickets(race): subtask did not become a parent" "$($TB show "$ra" | jq -r .parent_id)" "$rb"
+re=$($TB add -p tk6 -t e); rf=$($TB add -p tk6 -t f)
+eq "tickets(race): blocks cycle loses to the reverse link in between" \
+  "$(PATH="$TMP/race-bin:$PATH" RACE_MARK=$TMP/race3 RACE_SQL="INSERT INTO task_links (from_id,link_type,to_id,created_by,created_at,herdr_session) VALUES ('$rf','blocks','$re','t','t',(SELECT herdr_session FROM tasks WHERE id='$re'))" rc $TB link "$re" blocks "$rf")" "2"
+eq "tickets(race): only the reverse link exists" "$(sqlite3 "$TB_DB" "SELECT from_id||'>'||to_id FROM task_links WHERE from_id IN ('$re','$rf');")" "$rf>$re"
+$TB update "$re" --add-label keep >/dev/null
+PATH="$TMP/race-bin:$PATH" RACE_MARK=$TMP/race4 RACE_SQL="UPDATE tasks SET labels='[\"keep\",\"other\"]' WHERE id='$re'" $TB update "$re" --add-label mine >/dev/null
+eq "tickets(race): concurrent label add is kept" "$($TB show "$re" | jq -c .labels)" '["keep","mine","other"]'
