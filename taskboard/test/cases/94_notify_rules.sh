@@ -109,6 +109,8 @@ nrsql "INSERT INTO task_events (herdr_session, task_id, kind, new, actor, ref, c
   SELECT herdr_session, id, 'pr_merged', 'acme/widgets#7', 'system', 'https://github.com/acme/widgets/pull/7', strftime('%Y-%m-%dT%H:%M:%SZ','now') FROM tasks WHERE id='$od';"
 $TB notify flush >/dev/null
 eq "rules: pr_merged from pr-watch fires" "$(nrcount) $(nrlast)" "$((n + 1)) webui | [チケット] $od 期限切れ — PR acme/widgets#7 がマージされた / medium / task / 担当 -"
+printf '# 先頭のコメント\npr_merged new=acme/widgets#7 -> stdout  # 値の # は残し、空白の後の # はコメント\n' >"$TB_NOTIFY_RULES"
+eq "rules: '#' inside a value is kept, '#' after a space is a comment" "$($TB notify rules | grep '^2 行目' | cut -f2) $($TB notify rules | grep -c '誤りのある行')" "pr_merged new=acme/widgets#7 -> stdout 0"
 
 # 規則のファイルを手で壊しても、正しい行だけが効く(誤りは show に出る)
 printf 'label_added label=notify -> file\nnope -> file\n' >"$TB_NOTIFY_RULES"

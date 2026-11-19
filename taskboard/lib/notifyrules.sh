@@ -24,8 +24,9 @@ nrule_parse() {  # $1=本文
   NRULE_ERR=""; NRULE_OUT=""
   while IFS= read -r line || [[ -n $line ]]; do
     n=$((n + 1))
-    line=${line%%#*}; line=$(trim "$line")
-    [[ -n $line ]] || continue
+    # コメントは行頭か空白の後の # から。値の中の #(new=acme/widgets#7 など PR の識別子)は残す
+    line=${line%%[[:space:]]#*}; line=$(trim "$line")
+    [[ -n $line && $line != \#* ]] || continue
     if [[ $line != *"->"* ]]; then NRULE_ERR+="$n 行目: -> がありません"$'\n'; err=1; continue; fi
     lhs=$(trim "${line%%->*}"); rhs=$(trim "${line#*->}")
     [[ $rhs != *"->"* ]] || { NRULE_ERR+="$n 行目: -> が 2 つあります"$'\n'; err=1; continue; }
