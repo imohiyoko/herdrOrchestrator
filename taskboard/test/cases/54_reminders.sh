@@ -28,6 +28,9 @@ HERDR_PANE_ID=wW:p1 $TB comment "$r1" --kind blocked --text 'blocked body' >/dev
 env -u HERDR_PANE_ID $TB resolve C-2 >/dev/null
 $TB claim "$r2" --owner worker1 >/dev/null
 rsql "UPDATE tasks SET updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now','-30 hours') WHERE id='$r2';"
+# 停滞は最後の動き(更新か履歴のイベント)で決まる。claim の履歴も古くしておく
+evold() { rsql "UPDATE task_events SET created_at=strftime('%Y-%m-%dT%H:%M:%SZ','now','-40 hours') WHERE task_id='$r2';"; }
+evold
 rsql "INSERT INTO outbox (herdr_session, from_name, from_pane, from_session, target, kind, text, status, created_at)
       VALUES ('default', 'conductor', 'p', 's', 'worker1', 'info', 'outbox body', 'pending', strftime('%Y-%m-%dT%H:%M:%SZ','now','-2 hours'));"
 printf '%s\n' '# 期限' 'deadline = 2026-03-09 | cleanup branch' 'deadline = 2026-05-01 | far away' 'garbage line' 'deadline = 2026-13-40 | bad date' >"$TB_REMINDERS_DEADLINES"
@@ -55,6 +58,7 @@ eq "reminders: same state, same summary" "$($TB reminders --publish | sed 1d)" "
 
 # 新しい項目
 HERDR_PANE_ID=wW:p1 $TB comment "$r2" --kind question --text 'another' >/dev/null
+evold   # 報告も動きに数えるが、ここでは停滞の項目を変えずに新しい項目だけを見る
 eq "reminders: new item → check 0" "$(rc $TB reminders --check)" "0"
 out=$($TB reminders --publish)
 eq "reminders: only the new item gets a row" "$(sed -n '3,$p' <<<"$out" | grep -c ' | ')" "1"
@@ -124,6 +128,29 @@ out=$(TB_TODAY=2026-03-12 $TB reminders --publish)
 eq "reminders: secret in a continuing item is redacted too" "$(grep -c 'ghp_' <<<"$out") $(TB_TODAY=2026-03-12 $TB reminders --json | grep -c ghp_) $(rsql "SELECT value FROM notify_seen WHERE key='reminders:last';" | grep -c ghp_)" "0 0 0"
 eq "reminders: gh read-only listing" "$(tail -1 "$TMP/rem-gh.log")" "pr list --repo org/repo --state open --limit 30 --json number,title,isDraft,reviewDecision,createdAt"
 eq "reminders: bad flag" "$(rc $TB reminders --nope)" "2"
+rm -f "$TB_REPOS_FILE"
+
+# 変更依頼が付いたままの PR(tb pr-watch がチケットの履歴に残す pr_changes。段 4c / 5)。後で approve されれば消える
+pc=$($TB add -p rm -t 'PR のチケット'); $TB update "$pc" --owner worker1 >/dev/null
+rsql "INSERT INTO task_events (herdr_session, task_id, kind, new, actor, ref, created_at) VALUES
+  ('default', '$pc', 'pr_opened', 'org/repo#20', 'system', 'u', '2026-03-12T00:00:00Z'),
+  ('default', '$pc', 'pr_changes', 'org/repo#20', 'system', 'u', '2026-03-12T01:00:00Z'),
+  ('other', '$pc', 'pr_changes', 'org/repo#21', 'system', 'u', '2026-03-12T01:00:00Z');"
+j=$(TB_TODAY=2026-03-12 $TB reminders --json)
+eq "reminders: PR with changes requested is the owner's turn" "$(jq -r '[.items[] | select(.key | startswith("prchg:")) | "\(.p) \(.who) \(.ref) \(.what)"] | join(",")' <<<"$j")" "2 worker1 $pc 変更依頼の PR: org/repo#20 ($pc PR のチケット)"
+rsql "INSERT INTO task_events (herdr_session, task_id, kind, new, actor, ref, created_at) VALUES ('default', '$pc', 'pr_approved', 'org/repo#20', 'system', 'u', '2026-03-12T02:00:00Z');"
+eq "reminders: approved later → gone" "$(TB_TODAY=2026-03-12 $TB reminders --json | jq -r '[.items[] | select(.key | startswith("prchg:"))] | length')" "0"
+
+# 期限ファイルをチケットにする(tb deadlines-import。人だけ。同じ題・期日は作らない。取り込んだ行はファイルからは出さない)
+printf '%s\n' 'deadline = 2026-03-20 | 契約の更新' 'deadline = 2026-13-40 | bad date' >"$TB_REMINDERS_DEADLINES"
+eq "deadlines-import: refused from an agent pane" "$(FAKE_AGENTS='[{"pane_id":"wW:p1","name":"worker1"}]' HERDR_PANE_ID=wW:p1 rc $TB deadlines-import)" "1"
+eq "deadlines-import: dry-run writes nothing" "$(env -u HERDR_PANE_ID $TB deadlines-import --dry-run | tail -1) $(rsql "SELECT COUNT(*) FROM tasks WHERE project='deadline';")" "作成 1 件 / 取り込み済み 0 件(dry-run: 何も書いていません) 0"
+out=$(env -u HERDR_PANE_ID $TB deadlines-import)
+dl=$(rsql "SELECT id FROM tasks WHERE project='deadline';")
+eq "deadlines-import: ticket with due and label, no owner" "$(grep -c "^add $dl: 2026-03-20 | 契約の更新" <<<"$out") $($TB show "$dl" | jq -r '[.due, (.labels|join(",")), (.owner_agent // "-")] | join(" ")')" "1 2026-03-20 deadline -"
+eq "deadlines-import: twice is a no-op" "$(env -u HERDR_PANE_ID $TB deadlines-import | tail -1) $(rsql "SELECT COUNT(*) FROM tasks WHERE project='deadline';")" "作成 0 件 / 取り込み済み 1 件 1"
+j=$(TB_TODAY=2026-03-18 $TB reminders --json)
+eq "reminders: an imported line shows once, as the ticket" "$(jq -r '[.items[] | select(.what | contains("契約の更新")) | .ref] | join(",")' <<<"$j")" "$dl"
 eq "reminders: bad today" "$(TB_TODAY=x rc $TB reminders)" "2"
 
 unset TB_REMINDERS_DEADLINES TB_TODAY TB_REPOS_FILE TB_GH_BIN

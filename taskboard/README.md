@@ -217,9 +217,13 @@ tb reminders --publish     # まとめを出し、記録を更新する
 
 - **材料**(すべて読むだけ): 未対応の質問・ブロック報告(未完了のタスク)/ 承認待ち(送信 `O-` / agent 操作 `L-` / 代行依頼 / 解析役の起動 `A-`)/
   レビュー待ちの PR(許可リスト `taskboard/config/repos.md` のリポジトリで、開いていて draft でなく、承認も変更依頼もないもの。`gh pr list` で読むだけ)/
-  停滞したタスク(`in_progress` のまま `TB_REMINDERS_STALE_HOURS`(既定 24)時間更新がない。Web UI の「停滞」と同じ)/
+  停滞したタスク(`in_progress` のまま `TB_REMINDERS_STALE_HOURS`(既定 24)時間動きがない。動きは更新と履歴 `task_events`(報告のコメントも入る))/
+  変更依頼が付いたままの PR(`tb pr-watch` がチケットの履歴に残した、その PR の最後の出来事が `pr_changes`。担当の番)/
   宛先に届いていない送信(`queued` のまま `TB_DIGEST_QUEUED_SEC` 秒)/ 未読の保留メッセージ(`inbox` 表があれば。宛先と送り手と種別だけ)/ 期限(`tasks.due`。`tb list --overdue` / `--due-within` と同じ「今日」。タスクにしない期限は
   `taskboard/config/deadlines.conf` に `deadline = YYYY-MM-DD | 題` の行で書く。`TB_REMINDERS_DEADLINES` で場所を変えられる)
+- **期限ファイルをチケットにする**: `tb deadlines-import [-p project(既定 deadline)] [--dry-run]`(人だけ)で、期限ファイルの行を担当なし・期日つき・ラベル `deadline` のチケットにする。
+  同じ題・同じ期日のチケットがあれば作らない(何度流してもよい)。ファイルは書き換えない。取り込んだ行はファイルからは出さず、チケットの期限として載る
+  (`tb due-scan` の期限のイベントと通知の規則も、ほかのチケットと同じに効く)
 - **優先度**: 急ぎ(期限切れ・今日・明日)→ 人の番(質問・承認待ち・レビュー)→ 停滞 → 待ち・予定(届いていない送信、`TB_REMINDERS_DUE_DAYS`(既定 7)日以内の期限)。
   同じ優先度の中は期限、古い順。列は 優先 / 何が / 誰の番 / 期限 / 参照 / 経過
 - **重複の抑え**: 項目ごとに決まったキー(`q:<id>` / `o:<id>` / `pr:<repo>#<n>` / `due:<タスク>` など)と状態を `reminders:state` に残す。

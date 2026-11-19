@@ -3,7 +3,8 @@
 #
 # - 読み取り専用。書くのは notify_seen の自分の行(キーが reminders: で始まるもの)だけ
 # - 材料: 未対応の質問・ブロック報告 / 承認待ち(送信・agent 操作・代行依頼・アラートの解析役)/ 宛先に届いていない送信 /
-#         停滞したタスク / 期限(tasks.due 列があれば。無くても期限ファイル)/ 未読の保留メッセージ(inbox 表があれば)/
+#         停滞したタスク(最後の動きは更新と履歴 task_events)/ 期限(tasks.due 列があれば。無くても期限ファイル)/ 未読の保留メッセージ(inbox 表があれば)/
+#         変更依頼が付いたままの PR(tb pr-watch がチケットの履歴に残したもの)/
 #         許可リストのリポジトリの、レビュー待ちの PR(gh で読むだけ)
 # - 本文は出さない。題(短い見出し)と参照 ID だけ。出す前に秘密らしい値を探して伏せる(notify と同じ規則)
 # - 出力は stdout と、Web UI が読む行(notify_seen の reminders:last)。agent にも外にも送らない
@@ -47,8 +48,21 @@ reminders_collect_db() {
     FROM proxy_requests WHERE status='pending-human'")
   parts+=("SELECT 2, 'a:'||id, status, '解析役の起動待ち: ' || title, '人', '', 'A-'||id, last_seen
     FROM alerts WHERE status='awaiting-approval'")
-  parts+=("SELECT 3, 'stall:'||id, status || ':' || updated_at, '停滞: ' || id || ' ' || title, COALESCE(owner_agent, '-'), '', id, updated_at
-    FROM tasks WHERE status='in_progress' AND (julianday('now') - julianday(updated_at)) * 24 > $REMINDERS_STALE_HOURS")
+  # 停滞: in_progress のまま、最後の動き(更新か、履歴のイベント。報告のコメントも履歴に入る)から時間が経ったもの
+  local last="updated_at"
+  if reminders_has_col task_events task_id; then   # チケットの履歴(018)。一時ビューが無いので herdr_session で絞る
+    last="MAX(updated_at, COALESCE((SELECT MAX(e.created_at) FROM main.task_events e WHERE e.herdr_session=$SQS AND e.task_id=tasks.id), ''))"
+  fi
+  parts+=("SELECT 3, 'stall:'||id, status || ':' || $last, '停滞: ' || id || ' ' || title, COALESCE(owner_agent, '-'), '', id, $last
+    FROM tasks WHERE status='in_progress' AND (julianday('now') - julianday($last)) * 24 > $REMINDERS_STALE_HOURS")
+  # 変更依頼が付いたままの PR(tb pr-watch がチケットに残した最後の PR の出来事が pr_changes。ADR 0003 の段 4c)。担当の番
+  if reminders_has_col task_events task_id; then
+    parts+=("SELECT 2, 'prchg:'||e.task_id||':'||e.new, 'E-'||e.id, '変更依頼の PR: ' || e.new || ' (' || e.task_id || ' ' || t.title || ')',
+        COALESCE(t.owner_agent, '人'), '', e.task_id, e.created_at
+      FROM main.task_events e JOIN tasks t ON t.id=e.task_id
+      WHERE e.herdr_session=$SQS AND e.kind='pr_changes' AND t.status != 'done'
+        AND e.id = (SELECT MAX(x.id) FROM main.task_events x WHERE x.herdr_session=$SQS AND x.task_id=e.task_id AND x.new=e.new AND x.kind LIKE 'pr\_%' ESCAPE '\')")
+  fi
   parts+=("SELECT 4, 'queue:'||id, status, '宛先に届いていない送信: ' || from_name || ' → ' || target || ' (' || kind || ')', target, '', 'O-'||id, created_at
     FROM outbox WHERE status='queued' AND (julianday('now') - julianday(created_at)) * 86400 >= $DIGEST_QUEUED_SEC")
   if reminders_has_col tasks due; then   # 期日の列(schema 015)。done のタスクと期日なしは載せない
@@ -68,22 +82,65 @@ reminders_collect_db() {
   sql -json "SELECT * FROM ($all);" | jq -c '(. // [])[]'
 }
 
-# 期限ファイル(期限の列が無い・タスクにしない期限のため)。「deadline = YYYY-MM-DD | 題」。それ以外の行は読み飛ばす
-reminders_collect_file() {
+# 期限ファイルの行を読む。「deadline = YYYY-MM-DD | 題」。それ以外の行は読み飛ばす。出力: 日付<TAB>題
+reminders_deadline_lines() {
   [[ -f $REMINDERS_DEADLINES ]] || return 0
-  local line d label key st today; today=$(reminders_today)
+  local line
   while IFS= read -r line || [[ -n $line ]]; do
     line=$(trim "${line%%#*}")
     [[ $line =~ ^deadline[[:space:]]*=[[:space:]]*([0-9]{4}-[0-9]{2}-[0-9]{2})[[:space:]]*\|(.*)$ ]] || continue
-    d=${BASH_REMATCH[1]}; label=$(trim "${BASH_REMATCH[2]}")
-    [[ -n $label ]] || continue
+    [[ -n $(trim "${BASH_REMATCH[2]}") ]] || continue
+    printf '%s\t%s\n' "${BASH_REMATCH[1]}" "$(trim "${BASH_REMATCH[2]}")"
+  done <"$REMINDERS_DEADLINES"
+}
+# 同じ題・同じ期日のチケットがあるか(tb deadlines-import で取り込んだ行は、チケットの期限として載るのでファイルからは出さない)
+reminders_deadline_ticket() {  # $1=日付 $2=題 → チケット ID か空
+  reminders_has_col tasks due || return 0
+  sql "SELECT id FROM tasks WHERE due=$(q "$1") AND title=$(q "$2") ORDER BY id LIMIT 1;"
+}
+
+# 期限ファイル(タスクにしていない期限のため)。チケットにした行(tb deadlines-import)は出さない
+reminders_collect_file() {
+  [[ -f $REMINDERS_DEADLINES ]] || return 0
+  local d label key st today; today=$(reminders_today)
+  while IFS=$'\t' read -r d label; do
+    [[ -n $d && -n $label ]] || continue
+    [[ -z $(reminders_deadline_ticket "$d" "$label") ]] || continue
     st=$(sql "SELECT CASE WHEN date($(q "$d")) IS NULL THEN 'bad' WHEN date($(q "$d")) > date($(q "$today"), '+$REMINDERS_DUE_DAYS days') THEN 'later'
                 ELSE $(reminders_due_sql "$(q "$d")") END;")
     [[ $st == bad || $st == later ]] && continue
     key="due:f:$(printf '%s' "$label" | sha256 | cut -c1-10)"
     jq -nc --arg key "$key" --arg st "$st" --arg d "$d" --arg label "$label" \
       '{p: (if $st == "soon" then 4 else 1 end), key: $key, sig: ($st + ":" + $d), what: ("期限: " + $label), who: "人", due: $d, ref: ("deadline " + $d), since: ""}'
-  done <"$REMINDERS_DEADLINES"
+  done < <(reminders_deadline_lines)
+}
+
+# tb deadlines-import [-p project] [--dry-run]: 期限ファイルの行を、担当なしで期日つきのチケットにする(ADR 0003 の段 5。人だけ)。
+# 同じ題・同じ期日のチケットが既にあれば作らない(何度流してもよい)。ファイルは書き換えない(取り込んだ行は reminders がファイルからは出さなくなる)。
+# チケットは種別 task・ラベル deadline。期限の通知は他のチケットと同じ(tb due-scan の overdue / due_soon、通知の規則、tb reminders)
+cmd_deadlines-import() {
+  local project=deadline dry=0
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      -p|--project) need_arg "$@"; valid_project "$2"; project=$2; shift 2;;
+      --dry-run) dry=1; shift;;
+      *) usage "deadlines-import [-p project(既定 deadline)] [--dry-run]";;
+    esac
+  done
+  require_human "tb deadlines-import"
+  reminders_has_col tasks due || die "deadlines-import: この DB には期日の列がありません(スキーマが古い)"
+  [[ -f $REMINDERS_DEADLINES ]] || { echo "期限ファイルがありません: $REMINDERS_DEADLINES"; return 0; }
+  local d label have n=0 m=0 id
+  while IFS=$'\t' read -r d label; do
+    [[ -n $d && -n $label ]] || continue
+    [[ $(sql "SELECT date($(q "$d")) IS $(q "$d");") == 1 ]] || { echo "skip(日付が正しくない): $d | $label"; continue; }
+    have=$(reminders_deadline_ticket "$d" "$label")
+    if [[ -n $have ]]; then echo "skip(取り込み済み $have): $d | $label"; m=$((m + 1)); continue; fi
+    if ((dry)); then echo "add(dry-run): $d | $label"; n=$((n + 1)); continue; fi
+    id=$(cmd_add -p "$project" -t "$label" --due "$d" -l deadline) || die "deadlines-import: チケットを作れませんでした: $label"
+    echo "add $id: $d | $label"; n=$((n + 1))
+  done < <(reminders_deadline_lines)
+  echo "作成 $n 件 / 取り込み済み $m 件$( ((dry)) && echo '(dry-run: 何も書いていません)')"
 }
 
 # 許可リスト(notify と同じ repos.md)のリポジトリで、開いていて draft でなく、まだ承認も変更依頼もない PR。gh で読むだけ
