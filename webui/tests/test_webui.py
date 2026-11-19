@@ -582,11 +582,9 @@ check("未ログインの /outbox は /login へ", Client(port).get("/outbox")[0
 # 報告・承認待ち: 保留した送信(inbox)と「忘れているかも」(tb reminders の結果)。どちらも読むだけ、データがあるときだけ出す
 _ib = cl.get("/inbox")[2]
 check("inbox: データが無ければ保留・忘れているかもの欄は出ない", "保留した送信" not in _ib and "忘れているかも" not in _ib)
-check("inbox: inbox 表が無い DB でも本文の指定は 200", cl.get("/inbox?held=1")[0] == 200)
+check("inbox: 保留が無いときも本文の指定は 200", cl.get("/inbox?held=1")[0] == 200)
 _c = sqlite3.connect(env["WEBUI_TB_DB"])
-_c.executescript("""CREATE TABLE inbox (id INTEGER PRIMARY KEY AUTOINCREMENT, herdr_session TEXT NOT NULL DEFAULT '', outbox_id INTEGER NOT NULL,
-  recipient TEXT NOT NULL, from_name TEXT NOT NULL, kind TEXT NOT NULL, task_id TEXT, text TEXT NOT NULL, rule TEXT NOT NULL, created_at TEXT NOT NULL, read_at TEXT);
-INSERT INTO inbox (herdr_session,outbox_id,recipient,from_name,kind,task_id,text,rule,created_at,read_at) VALUES
+_c.executescript("""INSERT INTO inbox (herdr_session,outbox_id,recipient,from_name,kind,task_id,text,rule,created_at,read_at) VALUES
   ('default',7,'assistant','conductor','info','T-1','HELD-BODY <script>alert(9)</script>','r','2026-11-06T01:00:00Z',NULL),
   ('default',8,'assistant','<b>bob</b>','answer',NULL,'READ-BODY','r','2026-11-06T02:00:00Z','2026-11-06T03:00:00Z'),
   ('other',9,'assistant','conductor','info',NULL,'OTHER-BODY','r','2026-11-06T04:00:00Z',NULL);""")
@@ -623,7 +621,7 @@ check("inbox: 欄に操作フォームを置かない", "<form" not in _rm and "
 _it = [it for it in json.loads(cl.get("/api/notifications")[2])["items"] if it["id"].startswith("rm:")]
 check("通知: 急ぎ(期限切れ・今日・明日)の項目だけ緊急通知に出る", [it["id"] for it in _it] == ["rm:due:T-1:2026-11-05"] and _it[0]["href"] == "/tasks/T-1", str(_it))
 _c = sqlite3.connect(env["WEBUI_TB_DB"])
-_c.executescript("DROP TABLE inbox; DELETE FROM notify_seen WHERE key='reminders:last';")
+_c.executescript("DELETE FROM inbox; DELETE FROM notify_seen WHERE key='reminders:last';")
 _c.commit(); _c.close()
 time.sleep(3.2)
 _c = sqlite3.connect(env["WEBUI_TB_DB"])
@@ -770,7 +768,7 @@ _cx.commit()
 _TD3 = cl.get("/tasks/T-3")[2]
 check("タスク詳細: 外部リンク(http(s) だけをリンクに)", 'href="https://acme.slack.com/archives/C1/p1"' in _TD3 and 'rel="noopener noreferrer"' in _TD3
       and 'href="javascript' not in _TD3 and "javascript:alert(1)" in _TD3)
-# 履歴(017 の task_events): 新しい順、エスケープ、別セッションの行は出ない、行が無ければ欄も出ない
+# 履歴(018 の task_events): 新しい順、エスケープ、別セッションの行は出ない、行が無ければ欄も出ない
 check("タスク詳細: 履歴が無ければ欄は出ない", "<h2>履歴</h2>" not in _TD3)
 _cx.executemany("INSERT INTO task_events (herdr_session, task_id, kind, old, new, actor, ref, created_at) VALUES (?,?,?,?,?,?,?,?)",
                 [("default", "T-3", "created", None, "todo", "human", None, "2026-01-01T00:00:00Z"),

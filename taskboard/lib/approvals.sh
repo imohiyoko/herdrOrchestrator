@@ -187,6 +187,8 @@ cmd_reject() {
   local oid=${1#O-}
   require_human "tb reject"
   [[ $(sql "SELECT status FROM outbox WHERE id=$oid;") == pending ]] || die "O-$oid は承認待ちではありません"
-  sql "UPDATE main.outbox SET status='denied', reason=reason||' / 人が却下 $(now)' WHERE herdr_session=$SQS AND id=$oid;"
+  # 却下した返信は「返信済み」に数えない(元の送信にもう一度返信できる)
+  sql "UPDATE main.outbox SET status='denied', reason=reason||' / 人が却下 $(now)',
+         reply_check=CASE WHEN reply_check='ok' THEN '人が却下' ELSE reply_check END WHERE herdr_session=$SQS AND id=$oid;"
   echo "O-$oid rejected"
 }

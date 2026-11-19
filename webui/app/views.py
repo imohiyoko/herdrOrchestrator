@@ -715,7 +715,7 @@ def page_task(tid, qs=None, ctx=None):
         if lk:
             body += "<h2>リンク</h2>" + table(["関係", "タスク", "題", "状態"],
                 [[e(x["rel"]), tlink(x["id"]), e(_head(x["title"], TITLE_MAX)), e(x["status"])] for x in lk])
-    # 履歴(017 の task_events。ADR 0003)。表の無い DB では出さない。新しい順に最大 HISTORY_MAX 件
+    # 履歴(018 の task_events。ADR 0003)。表の無い DB では出さない。新しい順に最大 HISTORY_MAX 件
     ev = q("SELECT id, kind, old, new, actor, ref, created_at FROM task_events WHERE task_id=? ORDER BY id DESC LIMIT ?", (tid, HISTORY_MAX))
     if ev:
         body += "<h2>履歴</h2>" + table(["id", "時刻", "種類", "前", "後", "変えた者", "元"],

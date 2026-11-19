@@ -57,7 +57,7 @@ session_setup_load() {
   event_setup_load
 }
 
-# ---------- チケットの履歴(017 の task_events。ADR 0003 の段 1) ----------
+# ---------- チケットの履歴(018 の task_events。ADR 0003 の段 1) ----------
 # tb の接続ごとに一時トリガーを作り、tasks / comments / task_links への書き込みと同じトランザクションで task_events に 1 件ずつ残す。
 # 一時トリガーにするのは、変えた者(EVENT_ACTOR)を接続ごとに埋め込むため(main のトリガーは一時の表を読めない)。
 # トリガーの中では表に main. を付けられない(SQLite の制約)ので、task_events には同じ名前の一時ビューを作らない(session_setup)。

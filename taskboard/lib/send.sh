@@ -67,22 +67,25 @@ _route_rules() {
 
 # ---------- delivery(今届ける / 保留する。config の delivery キー) ----------
 # 各行は "<送信者のパターン> -> <宛先のパターン> : <種別>=<now|hold> ..."(パターンは routes と同じ。種別は task info answer、* は残り全部)
+# reply は tb が確かめた返信(--reply-to)だけに効く(* では決めない。reply= の行が無ければ種別で決まる)
 #   coordinator -> assistant : info=hold answer=hold task=now
 #   @worker     -> assistant : *=hold
 # 送信者と宛先が一致し、その種別(無ければ *)を書いた最初の行で決まる。どの行にも当たらなければ now(今までどおり)。
 # キーが無ければ判定もしない(今までどおり)。役割を確かめられない行に当たったら hold に倒す(人と話している相手の入力を邪魔しない)。
 # 判定の順は routes → approvals → delivery(outbox_deliver が届ける直前に決める。承認のあとや flush でも同じ)
 DELIVERY_MODE=now DELIVERY_RULE=""
-delivery_mode() {  # $1=送信者 $2=宛先 $3=種別 → DELIVERY_MODE / DELIVERY_RULE
+delivery_mode() {  # $1=送信者 $2=宛先 $3=種別 [$4=1 なら確かめた返信] → DELIVERY_MODE / DELIVERY_RULE
   DELIVERY_MODE=now; DELIVERY_RULE="delivery: 設定なし"
   config_has delivery || return 0
   local rc=0 pinned=0
   if [[ ${#ROLE_PIN_N[@]} -eq 0 ]]; then role_pin "$1" "$2"; pinned=1; fi
-  _delivery_rules "$@" || rc=$?
+  # 確かめた返信は、reply=<now|hold> を明示した行があればそれで決まる(* では決めない)。無ければ種別で決める
+  if [[ ${4:-0} == 1 ]] && _delivery_rules "$1" "$2" reply exact; then :
+  else _delivery_rules "$1" "$2" "$3" || rc=$?; fi
   ((pinned == 0)) || role_unpin
   return $rc
 }
-# 行の中から種別の値を引く。$1=指定の並び $2=種別 → 値(now|hold)を出す。書いていなければ 1
+# 行の中から種別の値を引く。$1=指定の並び $2=種別 [$3=exact なら * を見ない] → 値(now|hold)を出す。書いていなければ 1
 _delivery_pick() {
   local tok k v star="" toks
   read -ra toks <<<"${1//,/ }"   # glob を展開しない(*=hold がファイル名に化けない)
@@ -91,18 +94,18 @@ _delivery_pick() {
     k=${tok%%=*}; v=${tok#*=}
     [[ $v == now || $v == hold ]] || continue
     [[ $k == "$2" ]] && { printf '%s' "$v"; return 0; }
-    [[ $k == '*' && -z $star ]] && star=$v
+    [[ $k == '*' && -z $star && ${3:-} != exact ]] && star=$v
   done
   [[ -n $star ]] || return 1
   printf '%s' "$star"
 }
-_delivery_rules() {
-  local from=$1 to=$2 kind=$3 line pair spec l r v
+_delivery_rules() {  # $1=送信者 $2=宛先 $3=種別 [$4=exact: その種別を明示した行だけ。当たらなければ 1]
+  local from=$1 to=$2 kind=$3 exact=${4:-} line pair spec l r v
   while IFS= read -r line || [[ -n $line ]]; do
     line=$(trim "${line%%#*}"); [[ $line == *"->"*:* ]] || continue
     pair=${line%%:*}; spec=$(trim "${line#*:}")
     l=$(trim "${pair%%->*}"); r=$(trim "${pair#*->}")
-    v=$(_delivery_pick "$spec" "$kind") || continue
+    v=$(_delivery_pick "$spec" "$kind" "$exact") || continue
     local m1=0 m2=1
     name_matches "$from" "$l" || m1=$?
     if ((m1 == 0)); then m2=0; name_matches "$to" "$r" || m2=$?; fi
@@ -110,6 +113,7 @@ _delivery_rules() {
     ((m1 == 0 && m2 == 0)) || continue
     DELIVERY_MODE=$v; DELIVERY_RULE="delivery: $l -> $r : $kind=$v"; return 0
   done < <(config_text delivery)
+  [[ -z $exact ]] || return 1
   DELIVERY_RULE="delivery: $from -> $to に一致する行がない(now)"
 }
 
@@ -136,7 +140,7 @@ outbox_hold() {  # $1=outbox.id $2=送信者 $3=宛先 $4=種別 $5=task(空可)
 }
 
 outbox_deliver() {  # $1=outbox.id → 0 送信済み・保留済み(DELIVER_HELD に I-<n>)/ 10 / 11 / 12 保留に失敗
-  local oid=$1 row st from pane target kind tid text msg
+  local oid=$1 row st from pane target kind tid text msg re="" isreply=0
   DELIVER_HELD=""
   row=$(session_row outbox id "$oid")
   [[ -n $row ]] || die "outbox が見つかりません: O-$oid"
@@ -144,8 +148,9 @@ outbox_deliver() {  # $1=outbox.id → 0 送信済み・保留済み(DELIVER_HEL
   [[ $st == queued ]] || { echo "O-$oid は $st です"; return 0; }
   from=$(jq -r .from_name <<<"$row"); pane=$(jq -r .from_pane <<<"$row"); target=$(jq -r .target <<<"$row")
   kind=$(jq -r .kind <<<"$row"); tid=$(jq -r '.task_id // "-"' <<<"$row"); text=$(jq -r .text <<<"$row")
-  msg="[from: $from / $pane / $tid / $kind] $(oneline "$text" "$SEND_MAX")"
-  delivery_mode "$from" "$target" "$kind"
+  if [[ $(jq -r '.reply_check // ""' <<<"$row") == ok ]]; then isreply=1; re=" re O-$(jq -r .reply_to <<<"$row")"; fi
+  msg="[from: $from / $pane / $tid / $kind / O-$oid$re] $(oneline "$text" "$SEND_MAX")"
+  delivery_mode "$from" "$target" "$kind" "$isreply"
   if [[ $DELIVERY_MODE == hold ]]; then
     outbox_hold "$oid" "$from" "$target" "$kind" "$(jq -r '.task_id // ""' <<<"$row")" "$text" "$DELIVERY_RULE" "$msg"; return $?
   fi
@@ -158,13 +163,14 @@ outbox_deliver() {  # $1=outbox.id → 0 送信済み・保留済み(DELIVER_HEL
 #             12 保留しようとして inbox に書けなかった(outbox に積んだまま)/ 4 ルールで拒否(記録のみ)
 #             20 人の承認待ち(approvals.conf が ask。人が tb approve O-<n>) / 3 送信者を特定できず未保存
 cmd_send() {
-  [[ $# -ge 1 ]] || usage "send <宛先 agent 名> --text T [--task T-..] [--kind task|info|answer] [--json]"
-  local target=$1 text="" tid="" kind=task json=0; shift
+  [[ $# -ge 1 ]] || usage "send <宛先 agent 名> --text T [--task T-..] [--kind task|info|answer] [--reply-to O-<n>] [--json]"
+  local target=$1 text="" tid="" kind=task json=0 reply=""; shift
   while [[ $# -gt 0 ]]; do
     case $1 in
       --text) need_arg "$@"; text=$2; shift 2;;
       --task) need_arg "$@"; tid=$2; shift 2;;
       --kind) need_arg "$@"; kind=$2; shift 2;;
+      --reply-to) need_arg "$@"; reply=$2; shift 2;;
       --json) json=1; shift;;
       --from|--from-*|--name|--pane|--session) usage "send: 送信者は herdr から自動で決まります。$1 は指定できません";;
       *) usage "send: 不明な引数 $1";;
@@ -173,6 +179,7 @@ cmd_send() {
   [[ $target =~ ^[A-Za-z0-9._-]{1,64}$ ]] || usage "send: 宛先は agent 名(英数字と . _ -): $target"
   [[ " $SEND_KINDS " == *" $kind "* ]] || usage "send: --kind は $SEND_KINDS のどれか"
   blank "$text" && usage "send: --text が必要です"
+  [[ -z $reply || $reply =~ ^O-[0-9]{1,18}$ ]] || usage "send: --reply-to は O-<n>(返信する元の送信): $reply"
   [[ -z $tid ]] || { valid_id "$tid"; require_task "$tid" >/dev/null; }
   resolve_label || return 3
   [[ $target != "$LABEL_NAME" ]] || usage "send: 自分自身には送れません"
@@ -191,10 +198,29 @@ cmd_send() {
     risk_collect "$LABEL_NAME" "$target" "$kind" "$text"; risk_eval
     reason+=" / $(risk_oneline)"
   fi
-  oid=$(sql "INSERT INTO main.outbox (herdr_session, from_name, from_pane, from_session, target, kind, task_id, text, status, reason, created_at)
+  # --reply-to の主張は本文ではなく DB で確かめる(1 文で決めて書く: 同時に 2 つ来ても、ok になるのは 1 つ)。
+  # ok の条件: 元の送信があり、「この送信の宛先 → この送信の送信者」で、届いていて(sent)、まだ ok の返信が無い
+  local rid=NULL rcheck=NULL
+  if [[ -n $reply ]]; then
+    rid=$((10#${reply#O-}))
+    rcheck="CASE
+      WHEN $(q "$status")='denied' THEN 'ルールで拒否された送信'
+      WHEN NOT EXISTS (SELECT 1 FROM outbox WHERE id=$rid) THEN '元の送信 $reply が見つからない'
+      WHEN NOT EXISTS (SELECT 1 FROM outbox WHERE id=$rid AND from_name=$(q "$target") AND target=$(q "$LABEL_NAME"))
+        THEN $(q "$reply は $target から $LABEL_NAME への送信ではない")
+      WHEN (SELECT status FROM outbox WHERE id=$rid) != 'sent' THEN '$reply はまだ届いていない(' || (SELECT status FROM outbox WHERE id=$rid) || ')'
+      WHEN EXISTS (SELECT 1 FROM outbox WHERE reply_to=$rid AND reply_check='ok')
+        THEN '$reply には返信済み(O-' || (SELECT MIN(id) FROM outbox WHERE reply_to=$rid AND reply_check='ok') || ')'
+      ELSE 'ok' END"
+  fi
+  oid=$(sql "INSERT INTO main.outbox (herdr_session, from_name, from_pane, from_session, target, kind, task_id, text, status, reason, created_at, reply_to, reply_check)
     VALUES ($SQS, $(q "$LABEL_NAME"), $(q "$LABEL_PANE"), $(q "$LABEL_SESSION"), $(q "$target"), $(q "$kind"), NULLIF($(q "$tid"),''),
-            $(q "$text"), $(q "$status"), $(q "$reason"), $(q "$(now)"));
+            $(q "$text"), $(q "$status"), $(q "$reason"), $(q "$(now)"), $rid, $rcheck);
     SELECT last_insert_rowid();")
+  if [[ -n $reply ]]; then
+    rcheck=$(sql "SELECT reply_check FROM outbox WHERE id=$oid;")
+    [[ $rcheck == ok || $status == denied ]] || echo "tb: --reply-to $reply を返信と認めませんでした($rcheck)。返信ではない送信として通常の規則(delivery)で扱います: O-$oid" >&2
+  fi
   if [[ $status == denied ]]; then
     echo "tb: 送信を拒否しました($reason): O-$oid" >&2
     rc=4

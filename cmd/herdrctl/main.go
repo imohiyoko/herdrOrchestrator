@@ -3,18 +3,23 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 
+	"github.com/imohiyoko/herdrorchestrator/internal/env"
+	"github.com/imohiyoko/herdrorchestrator/internal/store"
 	"github.com/imohiyoko/herdrorchestrator/internal/version"
 )
 
 const usage = `usage: herdrctl <command>
 
 commands:
-  version   版・コミット・ビルド日時・OS/アーキテクチャを出す
-  help      この一覧を出す
+  version     版・コミット・ビルド日時・OS/アーキテクチャを出す
+  db status   tasks.db の場所と版を出す(JSON。DB は変えない・作らない)
+  db migrate  tasks.db のスキーマを最新にする(tb と同じスキーマ。TB_DB で場所を変える)
+  help        この一覧を出す
 `
 
 // 終了コードは tb に合わせる: 0 成功 / 1 エラー / 2 使い方の誤り
@@ -27,11 +32,50 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "version", "--version", "-v":
 		fmt.Fprintln(stdout, version.String())
 		return 0
+	case "db":
+		return runDB(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0
 	default:
 		fmt.Fprintf(stderr, "herdrctl: 不明なコマンド: %s\n%s", args[0], usage)
+		return 2
+	}
+}
+
+func runDB(args []string, stdout, stderr io.Writer) int {
+	if len(args) != 1 {
+		fmt.Fprint(stderr, usage)
+		return 2
+	}
+	path := env.TBDB()
+	switch args[0] {
+	case "status":
+		st, err := store.Inspect(path)
+		if err != nil {
+			fmt.Fprintf(stderr, "herdrctl: %v\n", err)
+			return 1
+		}
+		enc := json.NewEncoder(stdout)
+		enc.SetEscapeHTML(false)
+		enc.Encode(st)
+		return 0
+	case "migrate":
+		db, err := store.Open(path, env.SessionName(), nil)
+		if err != nil {
+			fmt.Fprintf(stderr, "herdrctl: %v\n", err)
+			return 1
+		}
+		defer db.Close()
+		v, err := db.UserVersion()
+		if err != nil {
+			fmt.Fprintf(stderr, "herdrctl: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "%s: user_version=%d\n", path, v)
+		return 0
+	default:
+		fmt.Fprintf(stderr, "herdrctl: 不明なコマンド: db %s\n%s", args[0], usage)
 		return 2
 	}
 }
