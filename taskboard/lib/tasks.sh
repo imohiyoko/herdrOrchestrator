@@ -512,3 +512,39 @@ cmd_events() {
   # 最新の N 件を古い順に
   events_out "$json" "id IN (SELECT id FROM main.task_events WHERE herdr_session=$SQS AND $where ORDER BY id DESC LIMIT $limit)" "ORDER BY id"
 }
+
+# ---------- due-scan(期限のイベント。ADR 0003 の段 3) ----------
+# tb due-scan [-p project] [--within N]: 期日が今日より前(overdue)と、今日〜N 日後(due_soon。既定 1 = 今日と明日)の done でないタスクに、
+# 履歴のイベントを 1 日 1 回ずつ残す(変えた者 system、元 day:<今日>)。期日なし・done は出さない。通知の規則(notify-rules)の材料になる。
+# 「今日」は tb を動かす端末の地方時の日付(TB_TODAY で固定できる)。tb notify flush も呼ぶ。出力: overdue <件数> due_soon <件数>
+cmd_due-scan() {
+  local within=1 td out project=""
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      -p|--project) need_arg "$@"; valid_project "$2"; project=$2; shift 2;;
+      --within) need_arg "$@"; [[ $2 =~ ^[0-9]{1,3}$ ]] || usage "due-scan: --within は 0〜999 の日数: $2"; within=$((10#$2)); shift 2;;
+      *) usage "due-scan: 不明な引数 $1";;
+    esac
+  done
+  td=$(today) || exit $?
+  out=$(due_scan_sql "$td" "$within" "$project")
+  notify_rules_hook
+  echo "$out"
+}
+due_scan_sql() {  # $1=今日 $2=日数 [$3=project] → "overdue <n> due_soon <m>"
+  local td=$1 within=$2 ts day pw=""; ts=$(q "$(now)"); day=$(q "day:$1")
+  [[ -z ${3:-} ]] || pw=" AND t.project=$(q "$3")"
+  local seen="NOT EXISTS (SELECT 1 FROM main.task_events e WHERE e.herdr_session=$SQS AND e.task_id=t.id AND e.kind=%s AND e.ref=$day)"
+  # shellcheck disable=SC2059
+  sql "BEGIN IMMEDIATE;
+    INSERT INTO main.task_events (herdr_session, task_id, kind, old, new, actor, ref, created_at)
+      SELECT $SQS, t.id, 'overdue', NULL, t.due, 'system', $day, $ts FROM tasks t
+      WHERE t.due IS NOT NULL AND t.status!='done' AND t.due < $(q "$td")$pw AND $(printf "$seen" "'overdue'") ORDER BY t.due, t.id;
+    SELECT 'overdue ' || changes();
+    INSERT INTO main.task_events (herdr_session, task_id, kind, old, new, actor, ref, created_at)
+      SELECT $SQS, t.id, 'due_soon', NULL, t.due, 'system', $day, $ts FROM tasks t
+      WHERE t.due IS NOT NULL AND t.status!='done' AND t.due >= $(q "$td") AND t.due <= date($(q "$td"), '+$within days')
+       $pw AND $(printf "$seen" "'due_soon'") ORDER BY t.due, t.id;
+    SELECT 'due_soon ' || changes();
+    COMMIT;" | paste -sd' ' -
+}

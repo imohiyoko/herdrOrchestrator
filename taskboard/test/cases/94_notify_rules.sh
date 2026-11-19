@@ -96,6 +96,12 @@ printf 'priority -> stdout\n' >"$TB_NOTIFY_RULES"
 n=$(nrcount); $TB update "$a" --priority low >/dev/null
 eq "rules: rule without conditions" "$(nrcount) $(nrlast)" "$((n + 1)) stdout | [チケット] $a 規則なし — 優先度 medium → low / low / task / 担当 -"
 eq "rules: show a rule without conditions" "$($TB notify rules | grep '^1 行目')" "$(printf '1 行目\tpriority -> stdout')"
+# 期限のイベント(tb due-scan)も規則に当たる
+printf 'overdue -> webui\n' >"$TB_NOTIFY_RULES"
+od=$($TB add -p nr -t "期限切れ" --due 2026-01-01)
+n=$(nrcount)
+TB_TODAY=2026-01-05 $TB due-scan >/dev/null
+eq "rules: overdue from due-scan fires" "$(nrcount) $(nrlast)" "$((n + 1)) webui | [チケット] $od 期限切れ — 期限切れ(期日 2026-01-01) / medium / task / 担当 -"
 
 # 規則のファイルを手で壊しても、正しい行だけが効く(誤りは show に出る)
 printf 'label_added label=notify -> file\nnope -> file\n' >"$TB_NOTIFY_RULES"

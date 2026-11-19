@@ -616,6 +616,7 @@ cmd_notify() {
       require_human "tb notify flush"
       notify_on || { echo "notify: off(何もしません)"; return 0; }
       notify_periodic || true
+      ( td=$(today) && due_scan_sql "$td" 1 ) >/dev/null 2>&1 || true   # 期限のイベント(tb due-scan。1 日 1 回ずつ)
       notify_rules_run || true   # 通知の規則(lib/notifyrules.sh)の取りこぼし
       notify_flush_slack || true
       echo "notify: flushed"; return 0;;
