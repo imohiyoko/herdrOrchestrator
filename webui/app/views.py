@@ -587,7 +587,7 @@ def page_tasks(qs, ctx=None):
 
 
 def has_due():
-    """tasks に期日の列があるか(スキーマ 016 より前の DB では無い)。"""
+    """tasks に期日の列があるか(スキーマ 017 より前の DB では無い)。"""
     return any(r.get("name") == "due" for r in q("PRAGMA table_info(tasks)"))
 
 
@@ -629,7 +629,7 @@ def refs_html(raw):
 
 
 def has_sprints():
-    """sprints 表と tasks.sprint_id があるか(スキーマ 016 より前の DB では無い。tb を一度動かせば足される)。"""
+    """sprints 表と tasks.sprint_id があるか(スキーマ 017 より前の DB では無い。tb を一度動かせば足される)。"""
     return (bool(q("SELECT name FROM sqlite_master WHERE name='sprints'"))
             and any(r.get("name") == "sprint_id" for r in q("PRAGMA table_info(tasks)")))
 
