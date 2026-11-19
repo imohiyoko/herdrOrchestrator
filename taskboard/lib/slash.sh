@@ -71,6 +71,8 @@ slash_send_one() {  # $1=宛先 $2=コマンド名 $3=依頼者 [$4=承認待ち
   local name=$1 cmd=$2 by=$3 lid=${4:-} text pane r=0 args msg
   text="/$cmd${SL_ARGS:+ $SL_ARGS}"
   args=$(jq -nc --arg c "$cmd" --arg a "$SL_ARGS" '{command:$c, args:$a}')
+  # 承認待ちの行は、承認時の許可リストで実際に送る引数に書き換える(承認待ちの間に固定の引数が変わりうる)
+  [[ -z $lid ]] || sql "UPDATE main.agent_ops SET args=$(q "$args") WHERE herdr_session=$SQS AND id=$lid;"
   pane=$(jq -r --arg n "$name" '[.[] | select(.name==$n)][0].pane_id // ""' <<<"$LIVE_AGENTS")
   if [[ $SL_CHECK == screen ]]; then slash_deliver "$name" "$text" "slash:$cmd:$name" slash none || r=$?
   else slash_deliver "$name" "$text" "slash:$cmd:$name" slash busy || r=$?; fi
@@ -78,7 +80,8 @@ slash_send_one() {  # $1=宛先 $2=コマンド名 $3=依頼者 [$4=承認待ち
     0) if [[ $SL_CHECK == screen || -n $SL_OK ]] && ! slash_screen_check "${pane:-$name}" "$SL_OK"; then r=1; msg="failed($SLASH_WHY)"
        else msg=sent; fi;;
     1) msg="failed(処理の開始を確認できない。pane を見てください)";;
-    10) SLASH_LINE="$name skip(busy)"; return 10;;
+    10) record_op slash "$name" "$args" "$by" 1 "$(oneline "$text: 送らず(送る直前に宛先が使用中)" 200)" "$lid"
+        SLASH_LINE="$name skip(busy)"; return 10;;
     *) msg="failed(送信に失敗)"; r=1;;
   esac
   record_op slash "$name" "$args" "$by" "$r" "$(oneline "$text: $msg" 200)" "$lid"
@@ -98,7 +101,9 @@ slash_resolve() {
     st=$(jq -r --arg n "$1" '[.[] | select(.name==$n)][0].agent_status // ""' <<<"$LIVE_AGENTS")
     case $st in idle|done) ;; *) printf '%s\t%s\n' "$1" "skip(${st:-unknown})"; return 0;; esac
     ck=$(sql "SELECT COALESCE(kind,'$KIND_DEFAULT') FROM agents WHERE name=$(q "$1");")
-    kind_supports "${ck:-$KIND_DEFAULT}" slash || { printf '%s\t%s\n' "$1" "not-supported(kind=$ck)"; return 0; }
+    # 台帳に無い個体(名前が台帳の規則に合わない解析役など)は kind を確かめられないので送らない
+    [[ -n $ck ]] || { printf '%s\t%s\n' "$1" "not-supported(kind unknown: not in the agents ledger)"; return 0; }
+    kind_supports "$ck" slash || { printf '%s\t%s\n' "$1" "not-supported(kind=$ck)"; return 0; }
     printf '%s\t\n' "$1"
   }
   if ((all)); then
@@ -232,7 +237,6 @@ slash_approve() {
     fi
     r=0; slash_send_one "$name" "$cmd" "$by" "$id" || r=$?
     out=$SLASH_LINE
-    if ((r == 10)); then record_op slash "$target" "$args" "$by" 1 "skip(busy) / 人が承認" "$id"; fi
   done < <(slash_resolve 0 "$by" "$target")
   echo "L-$id: $out"
   ((r == 0)) || return 11

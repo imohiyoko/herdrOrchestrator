@@ -67,6 +67,7 @@ FAKE_PROMPT_MODE=swallow-always $TB slash compact worker1 --apply >/dev/null 2>&
 eq "slash: prompt not accepted → failed" "$r $(slsql "SELECT status FROM agent_ops WHERE op='slash' ORDER BY id DESC LIMIT 1;")" "11 failed"
 export TB_PROMPT_VERIFY_SEC=0
 eq "slash: herdr says working right before send → skip(busy)" "$(FAKE_STATUS=working $TB slash compact worker1 --apply 2>&1)" "worker1 skip(busy)"
+eq "slash: busy right before send is recorded as not sent" "$(slsql "SELECT status||' '||(result LIKE '%使用中%') FROM agent_ops WHERE op='slash' ORDER BY id DESC LIMIT 1;")" "failed 1"
 
 # ---- agent の pane から: approvals を見る。ask なら宛先ごとに L-<n>
 : >"$FAKE_LOG"
@@ -102,6 +103,19 @@ eq "slash: approved --all skips busy / unsupported / conductor" "$(grep -c '^wor
 eq "slash: approved --all recorded per target and summarized" "$(($(slsql "SELECT COUNT(*) FROM agent_ops WHERE op='slash' AND target!='*';") - before)) $(slsql "SELECT status FROM agent_ops WHERE id=${lid#L-};")" "2 done"
 lid=$(HERDR_PANE_ID=wS:p1 $TB slash mcp --all --apply 2>/dev/null | sed -n 's/^\(L-[0-9]*\) pending.*/\1/p')
 eq "slash: --all from an agent is held too" "${lid:+L} $(slsql "SELECT requested_by FROM agent_ops WHERE id=${lid#L-};")" "L sweeper"
+
+# ---- 承認待ちの間に固定の引数が変わったら、今の行で送り、承認の行の args も送ったものにする
+lid=$(HERDR_PANE_ID=wS:p1 $TB slash login worker1 --apply 2>/dev/null | sed -n 's/^worker1 pending \(L-[0-9]*\).*/\1/p')
+sed -i.bak 's/^login   | --check |/login   | --status |/' "$TB_SLASH_CONF"
+: >"$FAKE_LOG"
+FAKE_READ_TEXT='Logged in' $TB agent-approve "$lid" >/dev/null 2>&1
+eq "slash: approval uses the current fixed args and records them" "$(sl_sent worker1 '/login --status') $(slsql "SELECT json_extract(args,'$.args') FROM agent_ops WHERE id=${lid#L-};")" "1 --status"
+
+# ---- 台帳に無い個体(名前が台帳の規則に合わない)は kind を確かめられないので送らない
+: >"$FAKE_LOG"
+lid=$($TB slash mcp --all --apply 2>/dev/null | sed -n 's/^\(L-[0-9]*\) pending.*/\1/p')
+out=$(FAKE_AGENTS="[$(sl_ag worker1 wW1:p1),$(sl_ag analyst-A1 wA:p1)]" $TB agent-approve "$lid" 2>&1)
+eq "slash: agent not in the ledger is not sent" "$(grep -c '^analyst-A1 not-supported(kind unknown' <<<"$out") $(sl_sent analyst-A1 /mcp) $(sl_sent worker1 /mcp)" "1 0 1"
 
 # ---- 承認待ちの間に許可リストから外されたら送らない
 lid=$(HERDR_PANE_ID=wS:p1 $TB slash compact worker1 --apply 2>/dev/null | sed -n 's/^worker1 pending \(L-[0-9]*\).*/\1/p')
