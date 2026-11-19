@@ -173,7 +173,8 @@ tb pr-watch                   許可リスト(config/repos.md、TB_REPOS_FILE)�
 会話の学習(#97。組と台帳は DB にも checkout にも置かず $TB_CONV_STATE_DIR(既定 ~/.local/state/herdr/conv、700)。設計: docs/conversation-learning.md):
 tb conv-pair-add --kind K --draft-file F --final-file F --situation S --intent I --posted [--points-offered N --points-accepted M]
          人が送ったあとにだけ、下書きと送った文の組を記録する(人だけ)。→ "<pair-id> <編集の割合>"。下書きが空なら人が一から書いた組
-tb conv-pairs [--kind K] [--json] / conv-pair-show <pair-id>   組の一覧(本文は出さない) / 記録と本文
+tb conv-pairs [--kind K] [--json]   組の一覧(本文は出さない)
+tb conv-pair-show <pair-id>   組の記録と本文(この機械の中だけで読む)
 tb conv-candidate-add --kind K --direction D --desc 説明 --evidence human-edit|human-written|other-source|agent-generated (--pair ID | --ref 説明)
          [--situation S --intent I --ending E --conclusion first|last --avoid A] [--permissive]
          手直し 1 つを候補の証拠にする。agent-generated は記録するが数えない。別々の状況で conv-learn の threshold(既定 3)回そろえば proposed

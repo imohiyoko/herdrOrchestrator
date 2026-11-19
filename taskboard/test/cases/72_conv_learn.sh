@@ -36,7 +36,7 @@ cadd() { $TB conv-candidate-add --kind thanks --direction conclusion-first --des
 eq "conv-candidate-add: human-edit は組が要る" "$(rc cadd --evidence human-edit)" "2"
 eq "conv-candidate-add: 1 件目は candidate" "$(cadd --evidence human-edit --pair "$p1" | cut -f2,3)" "candidate	1/3"
 eq "conv-candidate-add: 同じ組をもう一度足しても数は増えない" "$(cadd --evidence human-edit --pair "$p1" 2>/dev/null | cut -f3)" "1/3"
-for i in 1 2 3 4; do cadd --evidence agent-generated --ref "声の役割の指摘 $i" >/dev/null; done
+for i in い ろ は に; do cadd --evidence agent-generated --ref "声の役割の指摘$i" >/dev/null; done
 eq "conv-candidate-add: agent-generated は数えない" "$($TB conv-ledger --kind thanks --json | jq -r '.[0] | "\(.counted) \(.evidence["agent-generated"]) \(.state)"')" "1 4 candidate"
 eq "conv-candidate-adopt: 1 回の手直しでは採用しない" "$(rc $TB conv-candidate-adopt thanks conclusion-first --situation 受け取りの連絡 --intent 受け取ったと伝える)" "1"
 p1b=$(padd thanks "$CW/d1" "$CW/f1" "山田さんから 2026-11-19 に PR 123 のレビュー https://example.com/x")
@@ -92,12 +92,12 @@ eq "conv-gate: 段階 2 では送らない" "$(rc $TB conv-gate thanks --action 
 eq "conv-gate: severity high は段階 1 まで" "$(rc $TB conv-gate thanks --action save-draft --severity high --source-vis org --dest-vis team)" "4"
 eq "conv-gate: 組織の外へは段階 1 まで" "$(rc $TB conv-gate thanks --action save-draft --source-vis external --dest-vis external)" "4"
 eq "conv-stage-set: stage3 の一覧に無ければ段階 3 にしない" "$(rc $TB conv-stage-set thanks 3 --reason x --override)" "4"
-sed -i.bak 's/^stage3 = .*/stage3 = thanks:teammate/' "$TB_CONV_STAGES"
+sed -i.bak 's/^stage3 =.*/stage3 = thanks:teammate/' "$TB_CONV_STAGES"
 eq "conv-stage-set: 段階 2 の日数が足りなければ上げない" "$(rc $TB conv-stage-set thanks 3 --reason x)" "4"
 eq "conv-stage-set: --override なら記録して上げる" "$($TB conv-stage-set thanks 3 --reason 人が判断 --override)" "thanks: 段階 2 → 3 (override)"
 eq "conv-gate: 段階 3 でも post は ask(1 通ごとの承認)" "$(rc $TB conv-gate thanks --action post --counterpart teammate --source-vis org --dest-vis team) $($TB conv-gate thanks --action post --counterpart teammate --source-vis org --dest-vis team | head -1)" "20 ask"
 eq "conv-gate: 一覧に無い相手には送らない" "$(rc $TB conv-gate thanks --action post --counterpart customer --source-vis org --dest-vis team)" "4"
-sed -i.bak 's/^stage3 = .*/stage3 =/' "$TB_CONV_STAGES"
+sed -i.bak 's/^stage3 =.*/stage3 =/' "$TB_CONV_STAGES"
 eq "conv-gate: 一覧から消せば段階 2 の扱い(送らない・保存はできる)" "$(rc $TB conv-gate thanks --action post --counterpart teammate --source-vis org --dest-vis team) $(rc $TB conv-gate thanks --action save-draft --source-vis org --dest-vis team)" "4 0"
 
 # high の種別は設定で段階 1 より上にしない
