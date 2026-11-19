@@ -94,17 +94,6 @@ killable_of() {
       ELSE 'yes' END FROM agents WHERE name=$(q "$1");"
 }
 
-# 呼び出し元: 人なら REQ_BY=human。agent の pane なら REQ_BY=<agent 名>
-REQ_BY=""
-requester() {
-  local n=""
-  if [[ -n ${HERDR_PANE_ID:-} ]]; then
-    n=$(pane_owner_name "$HERDR_PANE_ID") || die "herdr agent list に失敗したため、実行者を特定できません"
-  fi
-  [[ $n != human ]] || die "agent 名 human は予約名です(人と区別できないため、この agent からの操作は受けません)"
-  REQ_BY=${n:-human}
-}
-
 # 実行してよいか。人なら 0。agent なら approvals の agent:<op>:<名前>: allow → 0、ask → L-<n> を積んで 20
 authorize_op() {  # $1=op $2=対象 $3=引数の JSON
   requester

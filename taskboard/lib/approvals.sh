@@ -89,14 +89,6 @@ _approval_rules() {
   fi
 }
 
-# 人の端末からの実行か(agent の pane からは承認・設定変更をさせない)
-require_human() {
-  local pane=${HERDR_PANE_ID:-} n
-  [[ -n $pane ]] || return 0
-  n=$(pane_owner_name "$pane") || die "$1: herdr agent list に失敗したため、人の端末からの実行か確かめられません"
-  [[ -z $n ]] || die "$1 は人が自分の端末で実行します(agent '$n' の pane からは実行できません)"
-}
-
 # tb approval <操作> [--to 宛先 --text 本文 [--kind K] [--task T-..]]: 1 行目 ask|allow、2 行目 rule:。終了コード 0=allow / 20=ask
 # --to と --text があるときだけ、続けて risk: 行(リスク評価。第 1 段は参考値で、1 行目と終了コードには影響しない)を出す
 cmd_approval() {

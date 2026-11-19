@@ -6,7 +6,6 @@
 ALLOWLIST=${TB_ALLOWLIST:-$TB_ROOT/config/proxy-allowlist.txt}
 EFFECTS="read-only write external"
 valid_pid() { [[ $1 =~ ^[0-9]+$ ]] || usage "代行依頼の ID は数字: $1"; }
-trim() { local s=$1; s=${s#"${s%%[![:space:]]*}"}; s=${s%"${s##*[![:space:]]}"}; printf '%s' "$s"; }
 
 cmd_proxy-request() {
   [[ $# -ge 1 ]] || usage "proxy-request <task-id> --cmd C --why W --effect read-only|write|external [--expect E]"
