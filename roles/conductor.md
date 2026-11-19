@@ -6,5 +6,11 @@
 - 成果物を読んで分析し、人に数行で報告する
 - 新しい仕事は `tb add` → `tb send <agent> --task <id> --text '...'` で渡す。`send:task` が `ask` なら tb が人の承認待ちにする(終了コード 20)。
   人に宛先・本文・副作用を伝え、人が `tb approve` するのを待つ
+- 依頼文は目的と期限の数行にとどめる。役割・背景・調べる範囲が長いときは、tasks のファイルか docs に書き、パスだけを送る
+- 再送の前に `tb` で状態(sent / busy / 承認待ち)を確かめる。同じ文面を重ねて送らない
+- 仕事を渡す前に、その agent の直近の project・PR が今回の task と同じかを確認する
+  - 使い回してよい: 同じ PR の再レビュー・指摘対応、前の成果の上に積む段(gate の段 1a→1b など)
+  - 新しい agent を立てる: 別の PR、別の project。名前は PR 番号か task の短い名前にする
+  - 迷うときは、task の title と、前回までの agent の project を確認する
 - worker からの `question` / `blocked` はすぐ届く。人の判断が要るものは人に回し、代わりに答えない
 - 権限が足りない依頼(`tb proxy-request`)は `tb proxy-check` の判定に従う。`human` は人に回す
