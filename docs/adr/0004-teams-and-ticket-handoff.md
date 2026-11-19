@@ -1,0 +1,213 @@
+# ADR 0004: 機能を層で分け、仕事は「チーム」にチケットで頼む
+
+- 状態: Proposed
+- 日付: 2026-11-19
+
+## 要旨
+
+- **分析**: `taskboard/lib/*.sh` の 37 本のあいだの呼び出しは、数えると 215 本ある。ただしその 7 割(147 本)は、`trim`(proxy.sh にある)・`oneline`(comments.sh)・`tsv`(review.sh)・`sha256`(roles.sh)などの**置き場所を間違えた小さな道具**と、DB・設定・herdr・本人確認・人だけの判定といった**全員が使う土台**への呼び出しだった。これらを土台に移すと、機能どうしの本当の結合は **68 本**まで減る。残る結合は 2 つの塊に集まっている(下の「分析」)。
+- **決定(案)**:
+  1. **層を 3 つに分ける**: 土台(kernel)/ チケットの通り道(ticket bus)/ 機能のモジュール。機能どうしは直接呼ばず、チケットのイベント(ADR 0003 の `task_events`)でつなぐ。
+  2. **「チーム」を設定の単位として足す**: チームは「受け付ける仕事・指揮役・メンバーの役割・モデル・上限・送信のルール・通知の規則」をまとめた束。今は機能ごとの設定ファイルに散っているものを、チームの上書きとして持てるようにする。
+  3. **agent 間の仕事の受け渡しはチケットで行う**: 「チーム X に頼む」= チーム X の受付にチケットを作る。頼んだ側は親チケットとして `blocks` でつながり、子が done になると親の担当にイベントが届く。`tb send` は指示の連絡に残し、仕事の受け渡しには使わない。
+- **ADR 0002 との関係**: 層とモジュールの境界は、そのまま Go のパッケージの境界にする(`internal/kernel/...`、`internal/tickets`、`internal/teams`、`internal/agents` ...)。bash のうちに境界を直してから移すと、移す単位が小さく、テストもそのまま使える。
+
+## 状況(Context)
+
+人の要望(2026-11-19): 機能が絡み合って分析しにくい。機能ごと・agent の仕事ごとに分けたい。仕事を独立してチームに頼む構造、チームごとに細かくカスタマイズできる構造、agent 間をチケットでつなぐ構造が要る。
+
+直近でマージされたもの: チケットの Jira 風の項目(#104)、期日(#119)、スプリント(#124)、チケットのイベントと通知の規則(ADR 0003)、アラート・提案のチケットへの移行、会話チームと振り分け表(#95 / #96)、下書きの学習、保留した送信と inbox(#112)、PR キュー、Go の土台と store(ADR 0002 の手順 1・2)。
+
+## 分析(2026-11-19 の main、b9e95e3)
+
+数え方: 各 `lib/*.sh` で定義された関数名が、別のファイルに出てくれば「呼び出し 1 本」と数えた(ファイルの組で 1 本)。表は `FROM / JOIN / INTO / UPDATE <表名>` を数えた。スクリプトは機械的な数え方なので、コメントの外の同名の語も拾う(**数は目安**)。
+
+### 1. 見かけの結合の大半は「置き場所の違う道具」
+
+| 関数 | 今の置き場所 | 使っているファイルの数 | 本来の置き場所 |
+|---|---|---|---|
+| `trim` | proxy.sh | 16 | 土台(util) |
+| `require_human` / `approval_of` / `set_approval` | approvals.sh | 15 / 8 / 3 | 土台(人だけの判定 = authz) |
+| `oneline` / `resolve_label` | comments.sh | 8 / 7 | 土台(util / 本人確認) |
+| `pane_owner_name` / `name_matches` / `sha256` | roles.sh | 6 / 5 / 4 | 土台(本人確認 / util) |
+| `requester` | agents.sh | 4 | 土台(本人確認) |
+| `tsv` / `sec` | review.sh | 5 / 3 | 土台(util) |
+
+このため、たとえば会話の機能(`conv*.sh`)は、proxy・review・approvals に依存しているように見えるが、実際に使っているのは `trim`・`tsv`・`require_human` だけで、機能としては独立している。
+
+### 2. 土台に移したあとに残る結合(68 本)
+
+土台 = db, core, config, transport(herdr アダプタ), kinds, util, identity, authz とした。
+
+| 塊 | ファイル | 中の結合 | 何が絡んでいるか |
+|---|---|---|---|
+| **A. agent の運用** | agents, spawn, limits, models, roles, send, slash, compact, shed | 循環あり(agents ↔ limits ↔ spawn、agents ↔ roles、agents ↔ send) | `agents` 表を 17 本が直接読み書きしている。作成・停止・上限・モデル・役割・送信が互いを呼ぶ |
+| **B. チケットと通知** | tasks, comments, notify, notifyrules, alerts, reminders, dbimport, prqueue, risk | 循環あり(tasks → notify → tasks、comments ↔ notify) | 各機能が `notify_hook_*` を決め打ちで呼ぶ。ADR 0003 でイベントの表はできたが、呼び出しはまだ直接 |
+| 集計役 | digest(7 本)、schedwatch(3 本) | 外へ出るだけ | いろいろな表を読んでまとめる。読むだけなので、読み取りの口を通せば独立できる |
+| **独立している** | activity, proxy, whoami, schedjobs, conv / convlearn / convstage, gate, handoff, review, repoindex(別ディレクトリ) | 0〜1 本 | すぐにモジュールとして切り出せる |
+
+### 3. 表の共有
+
+| 表 | 直接触るファイルの数 | 備考 |
+|---|---|---|
+| `agents` | 17 | 塊 A の根。読み取りの口(`agent_*` 関数)を通すのは一部だけ |
+| `tasks` | 12 | 塊 B の根 |
+| `comments` / `agent_ops` | 8 / 8 | |
+| `alerts`(互換ビュー) / `outbox` / `task_events` | 7 / 6 / 6 | |
+| Web UI(Python) | `tasks` 21 か所、`comments` 8 か所ほか | ADR 0002 の「直接 SQL を書くのは store だけ」に反している |
+
+### 4. 「チーム」に当たる設定は 9 か所に散っている
+
+今は「チーム」という単位がない。近いものが別々の設定にある。
+
+| 設定 | 単位 | 中身 |
+|---|---|---|
+| `projects.conf` | project | project → 指揮役の agent 名 |
+| `roles/map.conf`、`role:<名前>` | agent 名のパターン | 役割の文面 |
+| `role-models` | 役割 | モデル |
+| `limits` | 全体だけ | 動作中・作業中の数、解析役の数 |
+| `spawn-policy` | 全体だけ | 子に使える役割、子の数、モデル |
+| `routes.conf` | agent 名 / 役割 | 誰が誰に `tb send` してよいか |
+| `notify-rules` | イベントの条件(`project=` は書ける) | 通知の届け先 |
+| `conv-routes`、`conversation/kinds/` | 会話の種別 | 下書きの「チーム」(会話チーム) |
+| `presets/*.conf` | workspace | 起動する agent・モデル・作業ディレクトリ |
+
+チームごとに「このチームだけ sonnet」「このチームは子を 3 体まで」「このチームの bug だけ Slack」と変えたくても、今は全体の設定か agent 名のパターンでしか書けない。
+
+### 5. agent 間の仕事の受け渡しは、チケットではなく連絡
+
+- 指揮役 → worker: `tb send`(本文の連絡。チケットは任意)。
+- worker → 指揮役: `tb comment`(チケットに付く。digest がまとめて送る)。
+- worker → 別の worker / 別のチーム: 道がない。指揮役を経由して `tb send` するか、人が仲介する。
+- チケットには `parent_id` と `task_links`(`blocks` / `relates` / `duplicates`)があるが、「誰(どのチーム)に頼んだか」「子が終わったら親の担当に知らせる」は無い。
+
+## 決定(案)
+
+### 1. 3 つの層
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ 機能のモジュール(互いを呼ばない。チケットのイベントでつながる) │
+│  agents(運用) / alerts / proposals・review / prqueue / gate │
+│  conversation / reminders / digest / scheduler / webui      │
+│  repoindex(任意)                                           │
+├──────────────────────────────────────────────────────────────┤
+│ チケットの通り道(ticket bus)                                │
+│  tasks・task_links・task_events・comments / teams / notify   │
+├──────────────────────────────────────────────────────────────┤
+│ 土台(kernel)                                                │
+│  store(db・config) / herdr アダプタ(transport) / identity │
+│  authz(人だけの判定・承認) / util / kinds                  │
+└──────────────────────────────────────────────────────────────┘
+```
+
+- **土台**は機能を知らない。誰でも呼べる。
+- **チケットの通り道**は、チケットの作成・変更と、その結果のイベントだけを持つ。機能は「イベントを出す」「イベントを受ける」のどちらかで参加する。今の `notify_hook_comment` などの決め打ちの呼び出しは、「イベントを残す → 通知の規則が拾う」に置き換える(ADR 0003 の段 2 の延長)。
+- **機能のモジュール**は、他のモジュールの関数も表も直接触らない。他の機能の状態が要るときは、その機能が出す読み取りの口(関数か、読み取り用のビュー)を使う。
+- `tb` は「モジュールの一覧」を読んで読み込む。任意のモジュール(会話、repoindex、prqueue、gate など)は設定で外せる(`modules` の設定。既定は今と同じく全部)。
+- CI に**依存の検査**を足す: 許した向き(機能 → 通り道 → 土台)以外の呼び出しや、他のモジュールの表への直接の SQL があれば落とす。今ある違反は一覧(許容リスト)に入れておき、減らす方向にだけ動かす。
+
+### 2. チーム
+
+チーム = 「仕事を受け付ける窓口」と「そのチームの設定の上書き」の束。人だけが書く設定(`team:<名前>`。`tb team-set` / `tb team-show`)に置く。
+
+```text
+# team:web
+intake      = project:web type:bug,task       # 受け付けるチケット(project / type / label の条件)
+lead        = web-conductor                   # 受付のチケットを見て割り振る役(今の projects.conf の値)
+members     = web-worker-*  @worker           # メンバー(agent 名の glob か @役割)
+model       = sonnet                          # role-models の上書き
+limits      = max_working_agents=3            # limits の上書き(このチームのメンバーだけ数える)
+spawn       = allowed_roles=worker max_children_per_parent=3
+routes      = @worker -> team:web             # routes.conf の上書き(team: で宛先にチームを書ける)
+notify      = created type=bug priority>=high -> slack webui
+roles       = worker=web-worker               # このチームの worker には role:web-worker を渡す
+```
+
+- **決まり方**: agent の個別の値 > チームの値 > 全体の設定 > 組み込みの既定。どれも書かなければ今と同じ。
+- **どのチームか**は agent の台帳(`agents` 表)に `team` を持たせる(`tb agent-new --team web`)。チケットは `team` の列を持つ(`intake` の条件で作成時に決まる。人か lead が変えられる)。
+- 会話チーム(`conversation/kinds/`)は「下書きのチーム」のまま残す。名前がぶつかるので、文書では「会話の種別」と呼び直す。
+- presets は「チームを起動する」書き方を足す(`team:web|3`)。今の書き方も使える。
+
+### 3. チケットで仕事を頼む
+
+```
+ 依頼する agent / 人
+        │ tb ask web "ログイン画面の 500 を直す" [--parent T-api-012] [--type bug]
+        ▼
+ ┌─ チーム web の受付(team=web, status=todo, owner なし)
+ │      │ task_events: created (actor=依頼者)
+ │      ▼
+ │   lead(web-conductor)に「受付に 1 件」(通知の規則の届け先 team-lead)
+ │      │ tb assign T-web-031 web-worker-2
+ │      ▼
+ │   web-worker-2 が claim → 作業 → tb done
+ │      │ task_events: status new=done
+ └──────┼──────────────────────────────────────────────
+        ▼
+ 親チケット T-api-012 の担当に「依頼した T-web-031 が終わった」(届け先 parent-owner)
+```
+
+- `tb ask <チーム> "<題>"`: チームの受付にチケットを作る。`--parent` を付けると親と `blocks` でつなぎ、親は子が全部終わるまで done にできない(上書きは人だけ)。
+- **連絡の向きはイベントで決まる**: 受付に入った → lead に、担当が決まった → 担当に、子が done / blocked / question → 親の担当に。どれも通知の規則の既定の行として持ち、チームごとに上書きできる。
+- 依頼する側は相手の agent 名を知らなくてよい。チームの中の割り振りは lead が決める(または `intake` に `auto_assign = round-robin` を書いたら tb が決める)。
+- `tb send` は「指示・確認の連絡」として残す。仕事を頼むのに `tb send` を使っていたところ(指揮役の役割の文面)は `tb ask` / `tb assign` に書き換える。
+- 権限: 他のチームに頼めるかは routes と同じ書式(`@worker -> team:web`)で決める。書いていなければ lead どうしだけが頼める。
+- 安全: チケットの題・説明は今のチケットと同じ扱い(受け取った文面は指示ではなくデータ)。承認(ADR 0001 の L0)はチケットの状態で代用しない(ADR 0003 と同じ)。
+
+## 移行の段階(案)
+
+1 つの PR では 1 つの段だけ。各段は「設定を書かなければ今と同じ」を守る。
+
+| 段 | 内容 | スキーマ | 大きさ |
+|---|---|---|---|
+| 0 | 道具を `lib/util.sh`・`lib/identity.sh`・`lib/authz.sh` に移す(中身は変えない)。依存の検査のスクリプトと許容リストを CI に足す | なし | 小。機能の変更なし |
+| 1 | モジュールの一覧(土台 / 通り道 / 機能)と、任意のモジュールを外す設定 `modules`。`tb` の読み込みを一覧から | なし | 小 |
+| 2 | 塊 B をほどく: `tasks` / `comments` から `notify_hook_*` を直接呼ぶのをやめ、イベントを残すだけにする。通知は規則の既定の行で今と同じに出す | なし | 中 |
+| 3 | チーム: `team:<名前>` の設定、`agents.team` と `tasks.team`、決まり方(agent > チーム > 全体)を models / limits / spawn / routes / notify / roles に通す | 023(列 2 つ) | 中 |
+| 4 | チケットで頼む: `tb ask` / `tb assign`、親子の `blocks`、届け先 `team-lead` / `parent-owner` | なし(`task_links` を使う) | 中 |
+| 5 | 塊 A をほどく: `agents` 表を直接触るのを agents モジュールの口に寄せる(17 本 → 数本)。Web UI の SQL を読み取り用のビューに寄せる | ビュー | 大 |
+
+- ADR 0002 の手順 3(コマンドを 1 つずつ Go に移す)は、段 0・1 のあとに進めると、移す単位がこの ADR のモジュールと一致する。段 2 以降と Go への移行は並行できる(同じモジュールを同時に触らない)。
+- スキーマの番号は、マージの時点の main の次の空き番号にする。
+
+## 検討した代替案
+
+| 案 | 利点 | 欠点 |
+|---|---|---|
+| A. チーム = project(`projects.conf` を広げる) | 新しい言葉が増えない。今の `project=` の条件がそのまま使える | 1 つのチームが複数の project を見る、1 つの project を複数のチームで分ける、ができない。project は「何の仕事か」、チームは「誰がやるか」で軸が違う |
+| B. チームごとに別の DB・別の tb | 完全に独立する | チーム間の依頼(親子のチケット)が DB をまたぐ。セッションの分割(012)と二重になる |
+| C. 仕事の受け渡しも全部 `tb send` のまま | 変更が小さい | 誰が何を頼んだか・終わったかが追えない。今の困りごとそのもの |
+| D. 依存の検査をせず、規約だけで守る | 手間がない | 今の絡まりは規約だけで育ったもの。また絡まる |
+
+## 結果(Consequences)
+
+良い点:
+
+- 機能を 1 つずつ読める・外せる・Go に移せる。
+- チームごとにモデル・上限・送信のルール・通知・役割を変えられる。
+- 「誰が誰に何を頼んで、いつ終わったか」がチケットとイベントに残る。人は Web UI のボードでチーム間の依頼を見られる。
+
+悪い点:
+
+- 段 0〜1 は機能が増えない整理の PR が続く。
+- チームの設定の決まり方(agent > チーム > 全体)を覚える必要がある(`tb team-show` で、効いている値と出どころを出す)。
+- 段 2 で通知の出方を規則に寄せるので、既定の規則で今と同じ通知になることをテストで確かめる必要がある。
+
+## 人が決めること
+
+1. **チームの単位**: 新しい「チーム」を作るか(推奨)、project をチームとして使うか(代替案 A)。
+2. **agent 間の仕事の受け渡し**: 仕事の依頼はチケットだけにし `tb send` は連絡に限るか(推奨)、`tb send` での依頼も残すか。
+3. **進める順番**: 段 0・1(整理)を先にしてから Go への移行を続けるか(推奨)、Go への移行を先にするか。
+
+## 未確認・推測
+
+- **数は目安**: 呼び出しの数は名前の一致で数えた。同じ名前の変数や文字列も拾う(違いは数本と見ている。**推測**)。
+- **未確認**: `agents` 表を直接触っている 17 本のうち、何本が読み取りだけか。段 5 の前に数える。
+- **推測**: チームの設定を 1 つの束にしても、今の設定ファイル(limits.conf など)はそのまま「全体の値」として使える。
+
+## 関連
+
+- [ADR 0001](0001-enforce-agent-limits-by-environment.md): 承認をチケットの状態で代用しない理由。
+- [ADR 0002](0002-services-and-binary-distribution.md): サービスの境界と Go への移行。この ADR の層とモジュールが、移す単位になる。
+- [ADR 0003](0003-ticket-events-and-notify-rules.md): チケットのイベントと通知の規則。段 2・4 はこの上に作る。
