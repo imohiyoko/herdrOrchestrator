@@ -74,10 +74,11 @@ def cmd_repo_add(a):
         return _err("データの置き場所がこのリポジトリの中にあります")
     con = store.connect_rw()
     with con:
-        con.execute("INSERT INTO repos(name, path) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET path = excluded.path,"
-                    " updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')", (a.name, top))
+        con.execute("INSERT INTO repos(name, path, granularity) VALUES (?, ?, ?) ON CONFLICT(name) DO UPDATE SET"
+                    " path = excluded.path, granularity = excluded.granularity,"
+                    " updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')", (a.name, top, a.granularity))
     con.close()
-    print(f"ok: {a.name} -> {top}")
+    print(f"ok: {a.name} -> {top}(granularity={a.granularity})")
     return 0
 
 
@@ -94,8 +95,8 @@ def cmd_repo_remove(a):
 
 def cmd_repo_list(a):
     con = store.connect_rw()
-    for name, path, head in con.execute("SELECT name, path, head_commit FROM repos ORDER BY name"):
-        print(f"{name}\t{path}\t{head or '-'}")
+    for name, path, head, gran in con.execute("SELECT name, path, head_commit, granularity FROM repos ORDER BY name"):
+        print(f"{name}\t{path}\t{head or '-'}\t{gran}")
     con.close()
     return 0
 
@@ -178,6 +179,27 @@ def cmd_scan(a):
     return 0
 
 
+def cmd_update(a):
+    from . import update
+    if a.all:
+        con = store.connect_rw()
+        names = [r[0] for r in con.execute("SELECT name FROM repos ORDER BY name")]
+        con.close()
+    elif a.name:
+        names = [a.name]
+    else:
+        return _err("update <名前> か update --all", 2)
+    if a.check:  # 変更があるか(0 = ある、1 = ない)。scheduler の GATE に使う
+        return 0 if any(update.run(n, check_only=True) == 0 for n in names) else 1
+    rc = 0
+    for n in names:
+        try:
+            rc = max(rc, update.run(n, dry_run=a.dry_run))
+        except store.StoreError as e:
+            rc = max(rc, _err(f"{n}: {e}"))
+    return rc
+
+
 def cmd_purge(a):
     """元に戻す: データのディレクトリごと消す。ほかの部品は何も依存していない。"""
     d = store.data_dir()
@@ -218,7 +240,10 @@ def build_parser():
     sp.add_parser("init", help="DB を作る・版を上げる").set_defaults(fn=cmd_init)
     sp.add_parser("status", help="置き場所・権限・件数を確かめる(読み取りのみ)").set_defaults(fn=cmd_status)
     s = sp.add_parser("repo-add", help="索引に入れるリポジトリを登録する(人が選ぶ)")
-    s.add_argument("name"); s.add_argument("path"); s.set_defaults(fn=cmd_repo_add)
+    s.add_argument("name"); s.add_argument("path")
+    s.add_argument("--granularity", choices=["dir", "file"], default="dir",
+                   help="dir = ディレクトリだけ(既定)/ file = ファイルも")
+    s.set_defaults(fn=cmd_repo_add)
     s = sp.add_parser("repo-remove", help="リポジトリとその要約をすべて消す")
     s.add_argument("name"); s.set_defaults(fn=cmd_repo_remove)
     sp.add_parser("repo-list").set_defaults(fn=cmd_repo_list)
@@ -227,6 +252,11 @@ def build_parser():
     s.add_argument("--path", required=True); s.add_argument("--commit", required=True)
     s.add_argument("--symbol"); s.add_argument("--file-hash"); s.add_argument("--model"); s.add_argument("--boundaries")
     s.set_defaults(fn=cmd_put)
+    s = sp.add_parser("update", help="git の差分で要約を更新する(REPOINDEX_SUMMARIZER が要る)")
+    s.add_argument("name", nargs="?"); s.add_argument("--all", action="store_true")
+    s.add_argument("--dry-run", action="store_true", help="stale / missing の印だけ付け、要約は作らない")
+    s.add_argument("--check", action="store_true", help="変更があるかだけ(0 = ある、1 = ない)。何も書かない")
+    s.set_defaults(fn=cmd_update)
     s = sp.add_parser("rejections", help="安全の検査で落ちた要約(理由の符号だけ)")
     s.add_argument("--repo"); s.add_argument("--limit", type=int, default=50); s.set_defaults(fn=cmd_rejections)
     s = sp.add_parser("scan", help="標準入力の本文を検査だけする(保存しない)")

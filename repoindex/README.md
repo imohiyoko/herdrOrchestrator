@@ -53,6 +53,48 @@ MCP の stdio サーバー。agent ごとに 1 プロセスを起動する形で
 DB を読み取り専用で開いても、WAL の `-shm` には同じユーザーの読み書きが要る(作る側が `0600` で作る)。
 読み取り側と更新側は同時に動かしてよい(WAL。読み取り側は更新前の版を読む)。
 
+## 更新(#107)
+
+```
+repoindex/bin/repoindex repo-add <名前> <パス> [--granularity dir|file]   # 既定 dir(ディレクトリだけ)
+repoindex/bin/repoindex update <名前> | --all     # 差分で更新
+repoindex/bin/repoindex update --all --check      # 変更があるかだけ(0 = ある、1 = ない)。何も書かない
+repoindex/bin/repoindex update <名前> --dry-run   # stale / missing の印だけ付け、要約は作らない
+```
+
+1. 索引を進めたコミット(`repos.head_commit`)と今の `HEAD` の差分を取る(初回は全体)。
+2. 変わったファイルの要約(とそのシンボルの要約)、その親ディレクトリの要約を `stale` にする。消えたもの・名前を変えた元・除外されるようになったものは `missing`。
+3. 変わったものだけを作り直す。保存の前に必ず安全の検査(落ちたら作り直す。下)。
+4. 最後に `head_commit` を進める。変わったものが無ければ何もしない(要約のコマンドを 1 回も呼ばない)。
+
+**要約を作るコマンドは人が設定する**(リポジトリの中身をモデルに送る判断そのもの)。未設定なら何も送らず、印を付けるだけで索引は進めない。
+
+| 環境変数 | 中身 |
+|---|---|
+| `REPOINDEX_SUMMARIZER` | 要約のコマンド。標準入力に中身(ファイルの本文、またはディレクトリの直下のファイル名と各先頭 40 行)。環境変数 `REPOINDEX_KIND`(dir / file)`REPOINDEX_PATH` `REPOINDEX_ATTEMPT` が付く。標準出力の 1 行目が `boundaries: auth,external` なら境界として読む |
+| `REPOINDEX_SUMMARIZER_DIR` | ディレクトリの要約だけ別のコマンド(例: ファイルは軽いモデル、境界とファイルどうしの関係を見るディレクトリは強いモデル) |
+| `REPOINDEX_MODEL` | 記録用のモデル名(要約の行に残る) |
+| `REPOINDEX_MAX_ATTEMPTS` | 検査で落ちたときの試行の上限(既定 3、最大 10) |
+
+- 除外するパスは名前も中身も入力にしない。200 KB を超えるファイルとバイナリも入れない。
+- 細かさ: 大きなリポジトリは `dir`(既定)、小さなものは `file`。生成物と vendor はパスの規則で外す。
+- 検査で落ちたら、同じ入力で作り直す(落ちた本文は入力に入れない。検査は毎回最初から、弱めない)。
+  上限に達したら理由の符号だけを `rejections` に残し、標準エラーに 1 行で知らせる。同じコミットではもう作り直さない。
+
+### 鮮度
+
+結果の `freshness.reasons` に次が付く(どれか 1 つでもあれば `stale: true`)。
+
+| 理由 | 意味 |
+|---|---|
+| `stale` / `missing` | 更新が印を付けた(作り直し待ち / ソースが消えた) |
+| `old_format` | 要約の書式の版が今より古い |
+| `file_changed` / `file_missing` | 今の `HEAD` のファイルが、要約を作ったときと違う / 無い(git の blob hash で比べる) |
+| `changed_since_summary` | ディレクトリ(と hash の無い要約)の中が、要約を作ったコミットから変わった |
+| `source_unavailable` | 元のリポジトリを読めない |
+
+`repoindex_freshness` は、リポジトリごとに索引のコミットと今の `HEAD`(`index_behind`)を返す。変わっていないファイルの要約は、古いコミットで作ったものでも stale にしない。
+
 ## 取り込みの安全(#108)
 
 要約は `put`(と後の更新)で保存する前に、必ず `ri/scan.py` を通る。落ちたら**本文は保存しない**。
