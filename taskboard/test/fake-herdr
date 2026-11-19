@@ -19,7 +19,7 @@ case "$1 $2" in
   "agent read")
     printf 'read %s\t%s\n' "$3" "${*:4}" >>"${FAKE_LOG:?}"
     [[ ${FAKE_READ_RC:-0} == 0 ]] || exit "$FAKE_READ_RC"
-    echo "screen of $3";;
+    if [[ -n ${FAKE_READ_TEXT:-} ]]; then printf '%s\n' "$FAKE_READ_TEXT"; else echo "screen of $3"; fi;;
   "agent send-keys")
     printf 'keys %s\t%s\n' "$3" "${*:4}" >>"${FAKE_LOG:?}"
     # swallow-once: 失われた Enter の代わりに、これで初めて送信される(= 動き出す)

@@ -12,7 +12,7 @@
 # 書くのは人だけ。環境変数でファイルを明示しているときはそのファイルを、そうでなければ DB のこのセッションの行(--shared なら共通の行)を書く。
 
 CONFIG_DIR=${TB_CONFIG_DIR:-$TB_ROOT/config}   # checkout の設定ファイルの置き場(テストで差し替え)
-CONFIG_KEYS="projects approvals grants routes limits notify compact sched-watch spawn-policy"
+CONFIG_KEYS="projects approvals grants routes limits notify compact slash sched-watch spawn-policy"
 
 # キーの情報: CFG_ENV(上書きの環境変数)、CFG_FILE(checkout のファイル名)、CFG_EXAMPLE(1 なら .example も既定値として読む)
 config_key_info() {
@@ -25,6 +25,7 @@ config_key_info() {
     notify)       CFG_ENV=TB_NOTIFY_CONF;     CFG_FILE=notify.conf;;
     limits)       CFG_ENV=TB_LIMITS;          CFG_FILE=limits.conf; CFG_EXAMPLE=1;;
     compact)      CFG_ENV=TB_COMPACT_CONF;    CFG_FILE=compact.conf; CFG_EXAMPLE=1;;
+    slash)        CFG_ENV=TB_SLASH_CONF;      CFG_FILE=slash.conf; CFG_EXAMPLE=1;;
     sched-watch)  CFG_ENV=TB_SCHEDWATCH_CONF; CFG_FILE=sched-watch.conf; CFG_EXAMPLE=1;;
     spawn-policy) CFG_ENV=TB_SPAWN_POLICY;    CFG_FILE=spawn-policy.conf; CFG_EXAMPLE=1;;
     *) return 1;;

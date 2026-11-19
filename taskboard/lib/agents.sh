@@ -628,6 +628,7 @@ cmd_agent-approve() {
   row=$(session_row agent_ops id "$id")
   [[ -n $row ]] || die "操作が見つかりません: L-$id"
   [[ $(jq -r .status <<<"$row") == pending ]] || die "L-$id は承認待ちではありません($(jq -r .status <<<"$row"))"
+  if [[ $(jq -r .op <<<"$row") == slash ]]; then slash_approve "$id" "$row" "$always"; return; fi   # tb slash(lib/slash.sh)
   op=$(jq -r .op <<<"$row"); target=$(jq -r .target <<<"$row"); args=$(jq -r .args <<<"$row"); by=$(jq -r .requested_by <<<"$row")
   if [[ $op == new && -n $(jq -r '.spawn.parent // ""' <<<"$args") ]]; then spawn_recheck "$id" "$args" || return 1
   elif [[ $op == new || $op == revive ]]; then limits_refuse_running 1 || return 4   # 承認待ちの間に上限へ達していたら、承認待ちのまま残す

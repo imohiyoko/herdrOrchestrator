@@ -391,6 +391,25 @@ tb spawn-freeze / tb spawn-unfreeze                                        # 人
 - 親子は `agents.spawned_by` / `spawn_task` に残る。子の `tb comment` は指揮官への本文の先頭に `spawned_by: <親>` が付く
 - `tb digest` が知らせる: 子の数が上限の 1 つ手前以上(全体、または 1 体の親)/ 親のタスクが done・blocked なのに子が動いている。子がいなければ何も出さない
 
+### スラッシュコマンドの一括送信(`tb slash`)
+
+MCP の再接続・再認証や `/compact` のように、agent のセッションの中でしか実行できないスラッシュコマンドを、選んだ agent にまとめて送る(#94)。
+
+```
+tb slash --list                         # 許可リスト
+tb slash mcp worker1 @reviewer          # dry-run(既定)。宛先ごとに would-send / skip(理由) を出す
+tb slash mcp worker1 @reviewer --apply  # 送る。1 体 1 行: sent / skip(理由) / not-supported(kind=..) / failed(理由) / pending L-<n>
+tb slash mcp --all --apply              # 全 agent。L-<n> を積むだけで、人が tb agent-approve L-<n> するまで何も送らない
+```
+
+- 送れるのは許可リスト(`config/slash.conf`。無ければ `slash.conf.example`、`tb config` で DB に置ける)に `allow` で載っているコマンドだけ。載っていない名前と `deny` の行(`/model` など、ユーザーの既定も変わる副作用の大きいもの)は送らない。呼び出す側は引数を足せない(固定の引数だけ)
+- 宛先は agent 名・`@<役割>`・`--all`。いまの herdr セッションの agent だけ。実行者自身と指揮官は常に除く。idle/done でない agent は理由つきで飛ばす。kind が対応していなければ `not-supported`
+- 承認: 人の端末からはそのまま送る。agent の pane からは `approvals.conf` の `agent:slash:<コマンド>:<宛先>`(`@<役割>` も可、既定 ask)を見て、ask なら宛先ごとに `L-<n>`(終了コード 20)
+- 送り方は `tb compact-check` と同じ(状態を見直してから送り、受け付けを確かめる)。確認はコマンドごと: `busy` は動き出したか(動かなければ Enter を 1 回だけ補う)、`screen` は Enter を補わずに画面を読み、エラーの行(`Unknown command` / `Error:` / `failed`)や成功の印を見る
+- 記録は `agent_ops`(op=slash。宛先・依頼者・時刻・結果)。画面の出力は 200 字以内の状態の 1 行だけで、本文は残さない(`tb agent-ops` で見る)
+- 終了コード: 0 送った(飛ばした宛先があっても)/ 1 許可リストに無い・deny / 11 送ったが失敗した宛先がある / 20 承認待ちを積んだ
+- 外すとき: `config/slash.conf` を消すか行を `deny` にする(ほかの機能には影響しない)
+
 ## 制限(動作 agent 数など)
 
 動作中の agent の数や、障害・解析役・子 agent の同時数を、人が 1 か所で絞れるようにする。値は `config/limits.conf`(人だけが編集。再起動は要らない。tb が毎回読む)。
@@ -538,7 +557,7 @@ tb が `herdr agent prompt` で送ろうとしたものは、結果にかかわ�
 ## 設定(`tb config`)
 
 運用の設定は DB の `config` 表に置き、キーで引く(schema/013)。シングルポート・マルチセッションでも、セッションごとに違う設定を持てる。
-本文は今までの conf ファイルの中身そのまま(書式は各節のとおり)。キーは `projects` / `approvals` / `grants` / `routes` / `limits` / `notify` / `compact` / `sched-watch` / `spawn-policy`。
+本文は今までの conf ファイルの中身そのまま(書式は各節のとおり)。キーは `projects` / `approvals` / `grants` / `routes` / `limits` / `notify` / `compact` / `slash` / `sched-watch` / `spawn-policy`。
 
 引く順(最初に見つかったもの):
 
@@ -546,7 +565,7 @@ tb が `herdr agent prompt` で送ろうとしたものは、結果にかかわ�
 2. DB の**このセッション**の行
 3. DB の**全セッション共通**の行(`herdr_session='*'`)
 4. checkout の `taskboard/config/<名前>.conf`(DB に取り込むまでの移行用。git 管理外)
-5. `<名前>.conf.example`(projects / approvals / limits / compact / sched-watch / spawn-policy。コードと一緒に版を合わせる既定値)
+5. `<名前>.conf.example`(projects / approvals / limits / compact / slash / sched-watch / spawn-policy。コードと一緒に版を合わせる既定値)
 
 ```bash
 tb config                          # キーごとの出どころ(db:<セッション> / db:* / file:<パス> / example:<パス> / none)
