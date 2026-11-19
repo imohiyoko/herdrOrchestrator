@@ -52,7 +52,7 @@ compact_usage_sum() {  # $1=transcript の 1 行 → トークン数(読めな�
 }
 
 cmd_compact-check() {
-  local apply=0 name st sid tok line self="" thr minint last ex enabled act excl conductors ck
+  local apply=0 name st sid tok line self="" r thr minint last ex enabled act excl conductors ck
   while [[ $# -gt 0 ]]; do
     case $1 in
       --dry-run) apply=0; shift;;
@@ -89,8 +89,9 @@ cmd_compact-check() {
     if ((! apply)); then echo "$name $tok would-compact(dry-run)"; continue; fi
     # 送る直前に状態を見直す(herdr_send が idle/done でなければ送らない)。--prompt と同じ経路なので送信後の確認(Enter の補い)も同じ
     act=sent; line=""
-    if herdr_send "$name" "/compact" "compact:$name" compact >/dev/null 2>&1; then
-      herdr_verify_prompt "$name" || line=" (処理の開始を確認できない。pane を見てください)"
+    r=0; slash_deliver "$name" "/compact" "compact:$name" compact busy || r=$?   # tb slash と同じ送信の経路(lib/slash.sh)
+    if ((r <= 1)); then
+      ((r == 0)) || line=" (処理の開始を確認できない。pane を見てください)"
       record_op compact "$name" "$(jq -nc --argjson t "$tok" '{tokens:$t}')" "${self:-human}" 0 "compact sent at $tok tokens$line"
     else
       act="skip(busy or send failed)"
