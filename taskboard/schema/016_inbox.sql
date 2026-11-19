@@ -1,4 +1,4 @@
--- 015: 送信の「今届ける / 保留する」(delivery 設定)と、保留した送信を受け手が読む inbox(tb inbox)。
+-- 016: 送信の「今届ける / 保留する」(delivery 設定)と、保留した送信を受け手が読む inbox(tb inbox)。
 -- 保留した送信は宛先の入力に打ち込まず、ここに置く。outbox の行は sent(届け先 = inbox)になり、reason に I-<n> が残る(outbox の制約は変えない)。
 -- 読めるのは宛先の agent だけ(tb inbox / tb inbox-read が pane から決まる名前で絞る)。read_at が NULL なら未読。
 CREATE TABLE IF NOT EXISTS inbox (
