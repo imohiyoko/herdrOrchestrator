@@ -64,3 +64,10 @@ eq "sprints(race): task still in backlog" "$($TB show "$d" | jq -r .sprint_id)" 
 eq "sprints(race): add into a sprint closed in between" \
   "$(PATH="$TMP/race-bin2:$PATH" RACE_MARK=$TMP/srace2 RACE_SQL="UPDATE sprints SET state='closed' WHERE id=$($TB sprint-add -p sp -n s4 | cut -c3-)" rc $TB add -p sp -t late --sprint "S-$(sqlite3 "$TB_DB" "SELECT MAX(id) FROM sprints;")")" "2"
 eq "sprints(race): no task added" "$($TB list -p sp | grep -c late)" "0"
+# close の移す先が並行して閉じられたら、何も動かさず失敗する
+c1=$($TB sprint-add -p sp -n c1); c2=$($TB sprint-add -p sp -n c2); ct=$($TB add -p sp -t carry-me --sprint "$c1")
+eq "sprints(race): carry target closed in between" \
+  "$(PATH="$TMP/race-bin2:$PATH" RACE_MARK=$TMP/srace3 RACE_SQL="UPDATE sprints SET state='closed' WHERE id=${c2#S-}" rc $TB sprint-close "$c1" --carry "$c2")" "1"
+eq "sprints(race): task not moved into the closed sprint" "$($TB show "$ct" | jq -r .sprint_id)" "${c1#S-}"
+eq "sprints(race): source sprint stays open" "$(sqlite3 "$TB_DB" "SELECT state FROM sprints WHERE id=${c1#S-};")" "planned"
+eq "sprints: close twice fails" "$($TB sprint-close "$c1" >/dev/null; rc $TB sprint-close "$c1")" "1"

@@ -271,9 +271,9 @@ cmd_update() {
       -l|--label)       need_arg "$@"; relabel=1; setlab+=("$2"); shift 2;;   # 置き換え(--label '' で全部外す)
       --add-label)      need_arg "$@"; addlab+=("$2"); shift 2;;
       --remove-label)   need_arg "$@"; rmlab+=("$2"); shift 2;;
-      --add-ref)        need_arg "$@"; addref+=("$2"); shift 2;;
+      --add-ref)        need_arg "$@"; addref+=("$2"); shift 2;;      # <種類>=<URL> か URL
       --sprint)         need_arg "$@"; nsprint=$2; shift 2;;          # S-<n>('' でバックログへ)
-      --points)         need_arg "$@"; [[ -z $2 ]] || valid_points "$2"; sets+=("points=CAST(NULLIF($(q "$2"),'') AS INTEGER)"); shift 2;;      # <種類>=<URL> か URL
+      --points)         need_arg "$@"; [[ -z $2 ]] || valid_points "$2"; sets+=("points=CAST(NULLIF($(q "$2"),'') AS INTEGER)"); shift 2;;
       --remove-ref)     need_arg "$@"; valid_ref_url "$2"; rmref+=("$2"); shift 2;;   # URL で外す
       *) usage "update: 不明な引数 $1";;
     esac
@@ -540,12 +540,18 @@ cmd_sprint-close() {
     [[ $carry != "$id" ]] || usage "sprint-close: 同じスプリントには移せません"
     to=$(sprint_for_task "$carry" "$project")
   fi
+  # 閉じる側・移す先が閉じていないことを書く時点で確かめる(並行した close と競っても二重に動かさない)
+  local ok="EXISTS (SELECT 1 FROM main.sprints WHERE herdr_session=$SQS AND id=${id#S-} AND state!='closed')"
+  [[ $to == NULL ]] || ok+=" AND EXISTS (SELECT 1 FROM main.sprints WHERE herdr_session=$SQS AND id=$to AND state!='closed')"
   out=$(sql "BEGIN IMMEDIATE;
     UPDATE main.tasks SET sprint_id=$to, updated_at=$(q "$(now)")
-      WHERE herdr_session=$SQS AND sprint_id=${id#S-} AND status!='done';
+      WHERE herdr_session=$SQS AND sprint_id=${id#S-} AND status!='done' AND $ok;
     SELECT changes();
-    UPDATE main.sprints SET state='closed', closed_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=${id#S-};
+    UPDATE main.sprints SET state='closed', closed_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=${id#S-} AND $ok;
+    SELECT changes();
     COMMIT;")
+  [[ ${out##*$'\n'} == 1 ]] || die "sprint-close: $id か ${carry:-移す先} が並行して閉じられました"
+  out=${out%%$'\n'*}
   echo "$id closed(未完了 $out 件を ${carry:-バックログ} へ)"
 }
 # tb sprints [-p project] [--state planned|active|closed] [--json]
