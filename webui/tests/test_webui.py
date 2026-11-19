@@ -750,7 +750,7 @@ _cx.commit()
 _TD3 = cl.get("/tasks/T-3")[2]
 check("タスク詳細: 外部リンク(http(s) だけをリンクに)", 'href="https://acme.slack.com/archives/C1/p1"' in _TD3 and 'rel="noopener noreferrer"' in _TD3
       and 'href="javascript' not in _TD3 and "javascript:alert(1)" in _TD3)
-# 履歴(017 の task_events): 新しい順、エスケープ、別セッションの行は出ない、行が無ければ欄も出ない
+# 履歴(018 の task_events): 新しい順、エスケープ、別セッションの行は出ない、行が無ければ欄も出ない
 check("タスク詳細: 履歴が無ければ欄は出ない", "<h2>履歴</h2>" not in _TD3)
 _cx.executemany("INSERT INTO task_events (herdr_session, task_id, kind, old, new, actor, ref, created_at) VALUES (?,?,?,?,?,?,?,?)",
                 [("default", "T-3", "created", None, "todo", "human", None, "2026-01-01T00:00:00Z"),

@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# チケットの履歴(017 の task_events。ADR 0003 の段 1)。project は ev / ev2 だけを使う
+# チケットの履歴(018 の task_events。ADR 0003 の段 1)。project は ev / ev2 だけを使う
 unset HERDR_PANE_ID
 evk() { $TB history "$1" --json | jq -r '[.kind, (.old // "-"), (.new // "-"), .actor] | join(" ")'; }
 
