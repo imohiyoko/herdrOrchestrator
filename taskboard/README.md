@@ -613,6 +613,7 @@ tb comment / alert / done / 障害の開閉 / pr-watch / 定期 ──▶ notify
 
 - **既定は off。** 使うには `config/notify.conf.example` を `config/notify.conf`(gitignore 済み・任意)にコピーして編集し、`tb notify on`(人の端末から)。優先は 環境変数 `TB_NOTIFY_<キー大文字>` > `notify.conf` > 既定
 - イベント: アラート登録 / アラートの調査結果 / PR の作成・approve・変更依頼・マージ(`tb pr-watch`) / question・blocked / done(成果物つき) / 障害の開・閉 / 承認待ち(L-/O- の番号と件数だけ) / 定期まとめ。progress と見回りの差分は積まない
+- **PR をチケットに結ぶ**: `tb pr-watch` が見つけた PR の作成・approve・変更依頼・マージは、その PR の URL(`https://github.com/<repo>/pull/<n>`)を外部リンク(`--ref`)に持つチケットと、PR の題に書かれたチケット ID の履歴にも残る(`pr_opened` / `pr_approved` / `pr_changes` / `pr_merged`、変えた者 `system`)。チケットの状態は変えない(マージで done にするかは人か担当が決める)。通知の規則(`pr_merged label=release -> slack` など)の材料になる
 - 本文は 1 行の短い日本語(タスク ID・重大度・要約・成果物のパス)。制御文字を除き、`@here` `@channel` と `<...>` は無効化、リンクは文字列のまま。生ログ・コードの囲みは落とす(`strip_raw_logs`)
 - **秘密の値は常に止める(設定で変えられない)**: トークン・AWS のキー ID・秘密鍵のヘッダ・`key=value` 形式の秘密・長い base64/16 進を含むイベントは、slack にも webhook にも出さない。`data/notify/<日付>.md` に伏せた形だけを残し、`tb digest` で指揮官(人)に知らせる
 - 伏せ字(`mask_*`): メールは既定で伏せる。リポジトリ名・IP・アカウント ID・ホスト名は、人の決定で既定は**伏せない**(必要なら on)
@@ -655,7 +656,7 @@ label_added label=urgent actor=human -> slack           # 人が付けたとき�
 comment new=question                -> webui
 ```
 
-- **イベントの種類**: `tb history` の種類(created / status / label_added / priority / comment など)か `*`。
+- **イベントの種類**: `tb history` の種類(created / status / label_added / priority / comment など。`tb due-scan` の overdue / due_soon、`tb pr-watch` の pr_opened / pr_approved / pr_changes / pr_merged も)か `*`。
 - **条件**: `type=` `priority=` `priority>=` `label=` `project=` `owner=` `new=` `old=` `actor=`。すべて満たした行が当たる。`label=` は、label_added / label_removed では付け外したラベルそのもの、ほかのイベントでは「今そのラベルを持っている」。`actor=` は名前か `human` / `system` / `agent`。
 - **届け先**: `file` `stdout` `slack`(ほかの通知と同じ経路)、`webui`(Web UI の緊急通知と Chrome 通知に 24 時間出す)、`conductor`(そのプロジェクトの指揮役への次のまとめ = `tb digest`)。当たった行の届け先を合わせ、イベント 1 件につき通知 1 件(種別 `ticket`)。
 - **本文**: `[チケット] T-web-012 ログイン画面 — ラベル +notify / high / bug / 担当 worker-2`。ID・題・イベント・優先度・種別・担当だけで、説明やコメントの本文は載せない。秘密の検出・伏せ字・頻度の上限は他の通知と同じく必ず通る。
