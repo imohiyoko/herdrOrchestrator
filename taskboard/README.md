@@ -228,7 +228,11 @@ tb agent-approve L-<n> [--always] / tb agent-reject L-<n>      # 人だけ
 
 - **新規作成**: 専用の workspace(label = 名前)を作り、その pane で `herdr agent start <名前> --kind <kind> [-- ...]`(`--kind` 省略時は claude。claude は従来どおり `-- --model M`)。kind ごとの違いは `lib/kinds.sh` のアダプタだけが持ち、対応していない指定は終了コード 12 で止まる。表と設計は [docs/agent-kinds.md](docs/agent-kinds.md)(`tb agent-kinds` でも見える)。
   `--cwd` の既定は `TB_AGENT_CWD`(既定このリポジトリ)。`--role R` は `roles/R.md` を台帳に残し、SessionStart hook がそれを渡す(復活後も同じ)。
-  `--prompt` は起動後に最初の指示として送る
+  `--prompt` は起動後に最初の指示として送る。
+  起動に失敗したときは、最後の `herdr agent start` のエラーコードと短いメッセージ(`TB_SPAWN_ERR_MAX`、既定 200 文字まで)を出す。
+  失敗した回ごとに「時刻・名前・エラーコード」の 1 行を `spawn-errors.log`(DB と同じディレクトリ。`TB_SPAWN_LOG` で変更)に足す。指示の本文や引数は書かない。
+  エラーコードに `not_ready` / `blocked` を含む(初回の確認画面などで、agent が人の操作を待っている)ときは、やり直さず workspace も閉じない。
+  台帳に pane を残し、herdr でその pane を開いて答えるよう案内する(終了コード 11。最初の指示は送らない)
 - **停止**: その agent の pane を `herdr pane close` で閉じる(herdr に agent 単体の停止は無い)。止める前に session と cwd(hook の記録を優先)を台帳に残す。
   止められるのは **killable=yes で、未完了(in_progress / review / blocked)のタスクを持っていない**ときだけ。人は `--force` で例外にできる。自分自身は止められない
 - **復活**: 台帳の cwd で新しい workspace を作り、`claude --resume <session>` で同じ会話から再開する(claude の場合。再開できない kind は終了コード 12 で止まり、`--fresh` なら新しい会話)。

@@ -188,6 +188,10 @@ do_agent_new() {  # name cwd model role prompt killable by [spawned_by spawn_tas
   agent_register "$name" "$cwd" "$model" "$role" "$by" "$kill" "$why" "$kind"
   local -a args=(); kind_launch_into args "$kind" "" "$model"
   if ! herdr_spawn "$kind" "$name" "$cwd" ${args[@]+"${args[@]}"}; then
+    if ((SPAWN_KEPT)); then   # 人の操作待ち: pane は残っているので台帳にも残す(最初の指示は送らない)
+      sql "UPDATE main.agents SET pane_id=$(q "$SPAWN_PANE"), spawned_by=NULLIF($(q "$sby"),''), spawn_task=NULLIF($(q "$stask"),'') WHERE herdr_session=$SQS AND name=$(q "$name");"
+      OP_OUT="$name: $SPAWN_ERR${prompt:+。最初の指示は未送信(答えたあと tb send などで送る)}"; return 11
+    fi
     sql "DELETE FROM main.agents WHERE herdr_session=$SQS AND name=$(q "$name");"
     OP_OUT="$name を起動できません: $SPAWN_ERR"; return 11
   fi
@@ -243,6 +247,10 @@ do_agent_revive() {  # name fresh model prompt by
   local -a args=(); kind_launch_into args "$kind" "$sess" "$model"
   agent_register "$name" "$cwd" "$model" "" "$by" unknown "" "$kind"
   if ! herdr_spawn "$kind" "$name" "$cwd" ${args[@]+"${args[@]}"}; then
+    if ((SPAWN_KEPT)); then
+      sql "UPDATE main.agents SET pane_id=$(q "$SPAWN_PANE") WHERE herdr_session=$SQS AND name=$(q "$name");"
+      OP_OUT="$name: $SPAWN_ERR${prompt:+。最初の指示は未送信(答えたあと tb send などで送る)}"; return 11
+    fi
     sql "UPDATE main.agents SET state='stopped', stopped_at=$(q "$(now)") WHERE herdr_session=$SQS AND name=$(q "$name");"
     OP_OUT="$name を起動できません: $SPAWN_ERR"; return 11
   fi
