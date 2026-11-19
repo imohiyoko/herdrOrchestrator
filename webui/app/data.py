@@ -371,6 +371,14 @@ def urgent_items():
                               "body": _short(f"working のまま。最終入力 {act.get('last_prompt_at')}"),
                               "how": "agent の画面で直近の出力を見て、止まっていれば pane で続きを指示する(要らなければ停止)",
                               "href": f"/agents/{quote(k, safe='')}", "ts": clean(act.get("last_prompt_at") or "")})
+        rem = reminders_last()
+        for it in (rem["items"] if rem else []):
+            if it["p"] != 1:
+                continue
+            items.append({"id": f"rm:{it['key']}:{it['due']}", "kind": "reminder_due", "label": "期限(忘れているかも)",
+                          "title": _short(it["what"], 80), "body": _short(f"期限 {it['due'] or '-'} / 誰の番: {it['who'] or '-'} / {it['ref']}"),
+                          "how": "期限を過ぎた・今日か明日が期限。片付けるか、期限を見直す(一覧は「報告・承認待ち」の「忘れているかも」)",
+                          "href": reminder_href(it) or "/inbox#reminders", "ts": it["due"]})
         for n, r in failed_jobs():
             items.append({"id": f"j:{n}:{clean(r.get('ts'))}", "kind": "job_failed", "label": "定期実行の失敗",
                           "title": n, "body": _short(r.get("reason") or "failed"),
@@ -378,6 +386,85 @@ def urgent_items():
                           "href": "/jobs/" + quote(n), "ts": clean(r.get("ts") or "")})
         return items[:NOTIFY_MAX]
     return cached("urgent", load)
+
+
+# ---- 保留した送信(inbox 表。tb send の delivery=hold)と、忘れているかもしれないもの(tb reminders --publish の結果)。読み取り専用
+HELD_MAX = 100
+HELD_TEXT_MAX = 20000
+_REM_PRIO = {1: "急ぎ", 2: "人の番", 3: "停滞", 4: "待ち・予定"}
+_REM_STATUS = ("new", "changed", "continuing")
+
+
+def has_inbox():
+    """inbox 表(受け手の列つき)があるか。保留の配送より前の DB では無い。"""
+    return any(r.get("name") == "recipient" for r in q("PRAGMA table_info(inbox)"))
+
+
+# inbox は別の変更で足す表。tests/test_webui_queries.py(本物のスキーマで SELECT を EXPLAIN する)が、
+# 表の無いスキーマでも落ちないよう、SELECT の文字列を FROM の前で分けて書く(has_inbox() で確かめてから読む)。
+_HELD_COLS = "SELECT id, outbox_id, from_name, recipient, kind, task_id, created_at, read_at"
+
+
+def held_messages():
+    """保留した送信の一覧。新しい順に最大 HELD_MAX 件。本文(text)は返さない(見るのは held_message で 1 件ずつ)。
+    セッションは明示して絞る(inbox が一時ビューの一覧に無い DB でも、別のセッションの行を出さない)。"""
+    if not has_inbox():
+        return []
+    rows = q(_HELD_COLS + " FROM main.inbox WHERE herdr_session=? ORDER BY id DESC LIMIT ?", (reqctx.session(), HELD_MAX))
+    return [{k: (v if k in ("id", "outbox_id") else clean("" if v is None else v)) for k, v in r.items()} for r in rows]
+
+
+def held_message(hid):
+    """1 件の本文つき(このセッションの行だけ)。無ければ None。"""
+    if not has_inbox():
+        return None
+    rows = q(_HELD_COLS + ", text FROM main.inbox WHERE herdr_session=? AND id=?", (reqctx.session(), hid))
+    if not rows:
+        return None
+    r = rows[0]
+    out = {k: (v if k in ("id", "outbox_id") else clean("" if v is None else v)) for k, v in r.items()}
+    out["text"] = out["text"][:HELD_TEXT_MAX]
+    return out
+
+
+def reminders_last():
+    """tb reminders --publish が残した最新のまとめ(notify_seen の reminders:last)。無い・壊れていれば None。
+    値はすべて clean 済み。p は 1〜4、status は new / changed / continuing のどれか(それ以外の項目は捨てる)。"""
+    rows = q("SELECT value, updated_at FROM notify_seen WHERE key='reminders:last'")
+    if not rows:
+        return None
+    try:
+        d = json.loads(rows[0]["value"])
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(d, dict) or not isinstance(d.get("items"), list):
+        return None
+    items = []
+    for it in d["items"]:
+        if not isinstance(it, dict) or it.get("p") not in _REM_PRIO or it.get("status") not in _REM_STATUS:
+            continue
+        day = it.get("day")
+        items.append({"p": it["p"], "label": _REM_PRIO[it["p"]], "status": it["status"],
+                      "day": day if isinstance(day, int) and day > 0 else 1,
+                      **{k: _short(it.get(k), 120) for k in ("key", "what", "who", "due", "ref", "age")}})
+    removed = d.get("removed") if isinstance(d.get("removed"), list) else []
+    return {"at": _short(d.get("at"), 40), "full": d.get("full") is True, "removed": len(removed), "items": items}
+
+
+def reminder_href(it):
+    """項目の行き先(既存の画面へ。同じものをこの欄で繰り返さない)。無ければ None。"""
+    k, ref = it.get("key", ""), it.get("ref", "")
+    if k.startswith(("q:", "o:", "p:", "a:")):
+        return "/inbox"
+    if k.startswith("l:"):
+        return "/agents#ops"
+    if k.startswith("queue:"):
+        return "/outbox"
+    if k.startswith("inbox:") and ref.startswith("I-") and ref[2:].isdigit():
+        return "/inbox?held=" + ref[2:]
+    if k.startswith(("stall:", "due:T-")) and re.fullmatch(r"T-[A-Za-z0-9_-]{1,80}", ref):
+        return "/tasks/" + quote(ref, safe="")
+    return None
 
 
 # ---- 送信履歴(messages 表。tb が送ろうとしたものすべて。読み取り専用)

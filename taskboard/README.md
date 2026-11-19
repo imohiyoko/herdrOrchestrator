@@ -186,6 +186,31 @@ tb digests [D-<n>] [--json]  # 送ったまとめの一覧 / 全文
 - 本文中の `[` `]` `|` は `(` `)` `/` に置き換える(項目ラベルの偽装防止)
 - 宛先が `idle` / `done` 以外なら送らず、すべて次回に持ち越す。終了コード 0 / 10 / 11 は `report` と同じ
 
+## 忘れているかもしれないもの(reminders)
+
+人の番になっているものは、質問・承認待ち・キュー・期限などあちこちに散らばる。`tb reminders` はそれを読むだけで 1 つのまとめにする。
+agent にも外にも送らない。出力は stdout と、Web UI の「報告・承認待ち」の「忘れているかも」の欄(`notify_seen` の `reminders:last` を読む)。
+定期実行の例は `scheduler/jobs/reminders.conf.example`。
+
+```bash
+tb reminders               # 今の一覧(記録は変えない)。--json で項目を JSON に
+tb reminders --check       # 前回の publish から出すものが増えた・変わった・消えた、または今日の全件がまだなら 0。それ以外は 3(何も出さない)
+tb reminders --publish     # まとめを出し、記録を更新する
+```
+
+- **材料**(すべて読むだけ): 未対応の質問・ブロック報告(未完了のタスク)/ 承認待ち(送信 `O-` / agent 操作 `L-` / 代行依頼 / 解析役の起動 `A-`)/
+  レビュー待ちの PR(許可リスト `taskboard/config/repos.md` のリポジトリで、開いていて draft でなく、承認も変更依頼もないもの。`gh pr list` で読むだけ)/
+  停滞したタスク(`in_progress` のまま `TB_REMINDERS_STALE_HOURS`(既定 24)時間更新がない。Web UI の「停滞」と同じ)/
+  宛先に届いていない送信(`queued` のまま `TB_DIGEST_QUEUED_SEC` 秒)/ 未読の保留メッセージ(`inbox` 表があれば。宛先と送り手と種別だけ)/ 期限(`tasks.due`。`tb list --overdue` / `--due-within` と同じ「今日」。タスクにしない期限は
+  `taskboard/config/deadlines.conf` に `deadline = YYYY-MM-DD | 題` の行で書く。`TB_REMINDERS_DEADLINES` で場所を変えられる)
+- **優先度**: 急ぎ(期限切れ・今日・明日)→ 人の番(質問・承認待ち・レビュー)→ 停滞 → 待ち・予定(届いていない送信、`TB_REMINDERS_DUE_DAYS`(既定 7)日以内の期限)。
+  同じ優先度の中は期限、古い順。列は 優先 / 何が / 誰の番 / 期限 / 参照 / 経過
+- **重複の抑え**: 項目ごとに決まったキー(`q:<id>` / `o:<id>` / `pr:<repo>#<n>` / `due:<タスク>` など)と状態を `reminders:state` に残す。
+  前回と同じ項目は `継続: C-3(2 日目), O-5(1 日目)` の 1 行にまとめ、新しい項目・状態や期限の段階が変わった項目だけを行で出す。
+  1 日 1 回(その日の最初の publish)は全件。当てはまらなくなった項目は記録から消し、見出しに「解消 N」と数だけ出す
+- **本文は出さない**: 報告や送信の本文は載せず、題と参照 ID だけ。出す前に秘密らしい値を探し(`tb notify` と同じ規則)、見つかれば伏せる
+- 書くのは `notify_seen` の `reminders:state` / `reminders:last` / `reminders:full-day` だけ。期限の判定に使う日は手元の地方時の日付(`TB_TODAY` で固定できる)
+
 ## 指揮官 → worker の送信(send)
 
 agent 同士は `herdr agent prompt` を直接打たず、`tb send` を通す。tb が送信者を特定し、ルールを当て、記録してから送る。
@@ -202,8 +227,31 @@ tb outbox [--status queued|sent|denied] [--json]
 - 届く文面は `[from: <名前> / <pane> / <task-id か -> / <kind>] <本文>`(1 行化、`[from:` の偽装は無効化、`TB_SEND_MAX` 字まで)
 - 宛先が `idle` / `done` 以外なら `outbox` に積み、`tb flush` で古い順に届ける(同じ宛先の後続は追い越さない)
 - 拒否したものも `outbox` に `denied` と根拠(`reason`)つきで残る
-- 終了コード: 0 送信済み / 10 宛先使用中で積んだ / 11 送信失敗で積んだ / 4 ルールで拒否 / 20 人の承認待ち(approvals)/ 3 送信者を特定できず未保存
+- 終了コード: 0 送信済み(または保留した)/ 10 宛先使用中で積んだ / 11 送信失敗で積んだ / 12 保留に失敗して積んだ / 4 ルールで拒否 / 20 人の承認待ち(approvals)/ 3 送信者を特定できず未保存
 - agent に `herdr agent prompt` を直接打たせないようにするには、その agent の Claude Code 設定で拒否する(`conductor/README.md`)
+
+### 今届ける / 保留する(delivery)と inbox
+
+人と話している agent に、ほかの agent からの送信が来るたびに割り込まれないよう、送信者・宛先・種別ごとに「今届ける(now)」か「保留する(hold)」かを設定 `delivery` で決める(例: `config/delivery.conf.example`。`tb config set delivery < 本文`)。
+
+```
+coordinator -> assistant : info=hold answer=hold task=now
+@worker     -> assistant : *=hold
+```
+
+- パターンは routes と同じ(glob と `@<役割>`)。種別は `task` / `info` / `answer`、`*` はそれ以外の全部。送信者と宛先が一致し、その種別(無ければ `*`)を書いた最初の行で決まる。どの行にも当たらなければ now
+- **キーが無ければ今までどおり**(すべて今届ける)。役割を確かめられない行に当たったら hold に倒す
+- 判定の順は routes → approvals → delivery。承認待ちの送信は、承認したあとにこの規則で決まる(`tb flush` でも同じ)
+- hold の送信は宛先の入力に打ち込まず `inbox` 表に置き、送信は成功(終了コード 0、出力は `O-<n> held for <宛先> (I-<m>)`)。outbox の行は `sent` になり、`reason` に `→ inbox I-<m>` が残る。messages には種別 `hold` で残る
+- inbox に書けなかったときは終了コード 12 で送信者に知らせ、outbox は `queued` のまま(次の `tb flush` で再び保留を試す。黙って捨てない)
+
+```bash
+tb inbox [--unread] [--json]      # 自分宛てに保留された送信の一覧(読み手は pane から決まる)
+tb inbox-read I-<n> [--json]      # 全文を読み、既読にする
+```
+
+- 読めるのは自分宛てだけ(送信者も、ほかの agent も読めない。ほかの宛ての ID は「見つからない」)
+- 受け手は、人に頼まれたとき(「確認して」など)だけ読む(`roles/_common.md`)
 
 ## 人の承認(approvals)
 
@@ -564,6 +612,16 @@ tb pr-queue scan [--dry-run] [--repo <org/repo>]                                
 - `add` は、ブランチが origin に実在すること(`PR_QUEUE_REPO_DIR` の clone で `git ls-remote`)を確かめ、確認できなければ登録しない。登録できる接頭辞は conf の `branch_prefixes`(既定は `agent/` だけ。広げるのは人。例: `agent/ feat/ fix/`)。`scan` が走査するのは先頭の接頭辞だけ。
 - 設定は `config/pr-queue.conf`(人だけ。`pr-queue.conf.example` を写して使う): `gh`、`deny_patterns`、`deny_exceptions`、`branch_prefixes`、`branch_prefix`(既定 `agent/`)、`body_root`(既定 `taskboard/data/pr-bodies`)、`body_first_line`、`auto_approve`(既定 0。1 なら scan で積んだものを承認済みにする)、`max_create_per_run`(既定 3)。
 
+## 会話チーム(下書きの層と振り分け表)
+
+人が読んで直してから送る返事の**下書き**を作る仕組み(issue #95 / #96)。送信・承認・状態の変更はしない。設計・書式・流れは [`conversation/README.md`](../conversation/README.md)。
+
+- 振り分け(誰に・いつ・どこで・どの種別か)は `tb conv-route`。5 つの区分の名前だけを受け取り、人が書く決定論の表(設定 `conv-routes`)で決める。表に無い依頼は推測せず「未登録(人の判断)」
+- 下書き(何を、どう言うか)は `tb conv-draft`。共通の土台(`conversation/_base.md`)+ 種別のチーム(`conversation/kinds/<種別>/prompt.md`)+ 採用済みのパターン。種別はファイルを足すだけで増やせる
+- 声の役(率直・共感・受け手・簡潔)は `tb conv-voice` で、役の指示と下書きだけを渡す。`tb conv-voice-check` で 3 点以内・長さの判定を確かめる
+- 振り分け表を変えるのは人だけ(`tb conv-routes-set`)。緩める・振り分け先を変える変更は `--approve-looser` が要る
+- 文面は DB・コメント・記録に書かない。`TB_CONV_TEAMS=off` でチームの層を止める
+
 ## 送信の記録
 
 tb が `herdr agent prompt` で送ろうとしたものは、結果にかかわらず `messages` に残る(`kind`=report|comment|digest|send|role|alert|scheduler|proposal、
@@ -579,11 +637,11 @@ tb が `herdr agent prompt` で送ろうとしたものは、結果にかかわ�
 ## 設定(`tb config`)
 
 運用の設定は DB の `config` 表に置き、キーで引く(schema/013)。シングルポート・マルチセッションでも、セッションごとに違う設定を持てる。
-本文は今までの conf ファイルの中身そのまま(書式は各節のとおり)。キーは `projects` / `approvals` / `grants` / `routes` / `limits` / `notify` / `compact` / `sched-watch` / `spawn-policy` / `role-models`。
+本文は今までの conf ファイルの中身そのまま(書式は各節のとおり)。キーは `projects` / `approvals` / `grants` / `routes` / `delivery` / `limits` / `notify` / `compact` / `sched-watch` / `spawn-policy` / `role-models` / `conv-routes`(会話の振り分け表。書くのは `tb conv-routes-set` だけ)。
 
 引く順(最初に見つかったもの):
 
-1. 環境変数で明示したファイル(`TB_CONFIG` / `TB_APPROVALS` / `TB_GRANTS` / `TB_ROUTES` / `TB_LIMITS` / `TB_NOTIFY_CONF` / `TB_COMPACT_CONF` / `TB_SCHEDWATCH_CONF` / `TB_SPAWN_POLICY` / `TB_ROLE_MODELS`。テストや一時の差し替え)
+1. 環境変数で明示したファイル(`TB_CONFIG` / `TB_APPROVALS` / `TB_GRANTS` / `TB_ROUTES` / `TB_LIMITS` / `TB_NOTIFY_CONF` / `TB_COMPACT_CONF` / `TB_SCHEDWATCH_CONF` / `TB_SPAWN_POLICY` / `TB_ROLE_MODELS` / `TB_CONV_ROUTES`。テストや一時の差し替え)
 2. DB の**このセッション**の行
 3. DB の**全セッション共通**の行(`herdr_session='*'`)
 4. checkout の `taskboard/config/<名前>.conf`(DB に取り込むまでの移行用。git 管理外)
@@ -618,6 +676,7 @@ tb config history approvals        # 変更の履歴(config_changes)
 | `lib/core.sh` | エラー終了・入力の検査・タスク行の取得・project ごとの指示役 |
 | `lib/transport.sh` | herdr との境界。herdr を実行するのはここの `herdr_call` だけ。送信と `messages` への記録(`herdr_send`)、`system-send` |
 | `lib/tasks.sh` | add / list / show / claim / update / done / block / report / pending |
+| `lib/conv.sh` | 会話チーム: 振り分け表(`tb conv-route` / `conv-routes-set`)・下書きの指示(`conv-draft`)・声の役(`conv-voice` / `conv-voice-check`)・パターンの台帳 |
 | `lib/proxy.sh` / `activity.sh` / `comments.sh` / `digest.sh` / `send.sh` / `roles.sh` / `approvals.sh` / `alerts.sh` / `review.sh` / `agents.sh` / `spawn.sh` / `limits.sh` / `shed.sh` / `handoff.sh` / `dbimport.sh` | 各節のコマンド |
 
 agent への送信も DB への書き込みも、すべて `tb` を通る。後で MCP サーバーなど別の経路を足すときは、`tb` のコマンドを呼ぶか `lib/transport.sh` を差し替えればよい。
@@ -682,7 +741,7 @@ HERDR_SESSION=<その checkout のセッション> tb db-import /path/to/checkou
 
 `TB_DB`(DB パス。既定は全セッション共有の `~/.local/state/herdr/tasks.db`) / `TB_CONFIG`(projects.conf) / `HERDR_BIN`(herdr の実体。既定 `herdr`) / `TB_SCHEMA_DIR`(テスト用)
 DB パスと herdr の既定値は部品で共通の [`lib/herdr-env.sh`](../lib/herdr-env.sh)(Python は `lib/herdr_env.py`)で決まる。
-`TB_ROUTES`(routes.conf) / `TB_HR_NAME`(hr) / `TB_SCHED_LOGS` / `TB_REVIEW_TOP`(8) / `TB_ANALYST_MAX`(2) / `TB_ANALYST_CWD` / `TB_ANALYST_MODEL` / `TB_AGENT_CWD` / `TB_SWEEPER_PATTERN`(`sweeper*`) / `TB_LIMITS`(limits.conf) / `TB_LIMIT_<キー大文字>`(各制限の上書き) / `TB_HANDOFF_DIR`(handoff の置き場) / `TB_SPAWN_RETRY_SEC`(3) / `TB_APPROVALS`(approvals.conf) / `TB_ROLES`(roles/) / `TB_ROLE_MAX`(12000) / `TB_SEND_MAX`(4000) / `TB_IMMEDIATE_KINDS`(既定 `question blocked`) / `TB_DIGEST_IDLE_MIN`(10) / `TB_DIGEST_STUCK_MIN`(30) / `TB_DIGEST_ITEM_MAX`(160) / `TB_DIGEST_MSG_MAX`(1800)
+`TB_ROUTES`(routes.conf) / `TB_DELIVERY`(delivery.conf) / `TB_HR_NAME`(hr) / `TB_SCHED_LOGS` / `TB_REVIEW_TOP`(8) / `TB_ANALYST_MAX`(2) / `TB_ANALYST_CWD` / `TB_ANALYST_MODEL` / `TB_AGENT_CWD` / `TB_SWEEPER_PATTERN`(`sweeper*`) / `TB_LIMITS`(limits.conf) / `TB_LIMIT_<キー大文字>`(各制限の上書き) / `TB_HANDOFF_DIR`(handoff の置き場) / `TB_SPAWN_RETRY_SEC`(3) / `TB_APPROVALS`(approvals.conf) / `TB_ROLES`(roles/) / `TB_ROLE_MAX`(12000) / `TB_SEND_MAX`(4000) / `TB_IMMEDIATE_KINDS`(既定 `question blocked`) / `TB_DIGEST_IDLE_MIN`(10) / `TB_DIGEST_STUCK_MIN`(30) / `TB_DIGEST_ITEM_MAX`(160) / `TB_DIGEST_MSG_MAX`(1800)
 
 ## テスト
 
