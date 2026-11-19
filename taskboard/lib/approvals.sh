@@ -174,7 +174,8 @@ cmd_approve() {
   ((always)) && set_approval allow "send:$kind:$target" >/dev/null && echo "send:$kind:$target = allow(今後は承認なし)"
   local r=0; outbox_deliver "$oid" >/dev/null || r=$?
   case $r in
-    0) echo "O-$oid approved and sent to $target";;
+    0) if [[ -n $DELIVER_HELD ]]; then echo "O-$oid approved and held for $target ($DELIVER_HELD)"; else echo "O-$oid approved and sent to $target"; fi;;
+    12) echo "O-$oid approved but holding failed (queued)"; return 12;;
     11) echo "tb: O-$oid は承認済みですが宛先 '$target' に届けられません(上の理由を見てください。queued のまま。直したら tb flush)" >&2
         echo "O-$oid approved but delivery failed (queued)"; return 11;;
     *) echo "O-$oid approved (宛先使用中のため queued。tb flush で届く)";;

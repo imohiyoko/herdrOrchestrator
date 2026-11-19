@@ -9,6 +9,7 @@ comments
 config
 config_changes
 digests
+inbox
 messages
 notify_events
 notify_seen

@@ -1,4 +1,4 @@
--- 016: agent_ops に op=slash(tb slash が送った、または承認待ちのスラッシュコマンド。#94)を足す。CHECK 制約は作り直しでしか変えられない
+-- 017: agent_ops に op=slash(tb slash が送った、または承認待ちのスラッシュコマンド。#94)を足す。CHECK 制約は作り直しでしか変えられない
 -- 列・索引は 012(herdr_session)までの形をそのまま保つ
 CREATE TABLE agent_ops_new (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,

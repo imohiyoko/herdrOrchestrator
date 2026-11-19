@@ -28,7 +28,7 @@ tb proxy-check <id>   1 行目が allow(自動代行可)か human(人に回す)�
 
 agent の活動記録(hook から。bin/tb-hook 経由が基本):
 tb db-import <旧 DB> [--session <名前>] [--dry-run]   旧形式(checkout ごと)の DB を、共有の DB の 1 セッション(既定は今のセッション)の行として取り込む。人の端末だけ。元の DB は読むだけ
-tb config [list]   設定(projects / approvals / grants / routes / limits / notify / compact / slash / sched-watch / spawn-policy / role-models / conv-routes)の出どころを出す。引く順: 環境変数で明示したファイル > DB のこのセッションの行 > DB の共通の行(*) > checkout の taskboard/config/<名前> > .example
+tb config [list]   設定(projects / approvals / grants / routes / delivery / limits / notify / compact / slash / sched-watch / spawn-policy / role-models / conv-routes)の出どころを出す。引く順: 環境変数で明示したファイル > DB のこのセッションの行 > DB の共通の行(*) > checkout の taskboard/config/<名前> > .example
 tb config show <キー> | history <キー>   今効いている本文 / 変更の履歴
 tb config set <キー> [--shared] < 本文 | edit <キー> [--shared] | unset <キー> [--shared]   DB のこのセッションの行(--shared なら全セッション共通の行)を書く・消す。人の端末だけ
 tb config import [--dry-run]   checkout の taskboard/config/*.conf を、全セッション共通の行として DB に取り込む(共通の行が既にあるキーは飛ばす)。人の端末だけ
@@ -49,12 +49,18 @@ tb resolve C-<n> [-m メモ]   question/blocked の報告を対応済みにす�
 tb digest [--dry-run]   未配送の報告・未報告の done・観測した事象(turn 終了後も in_progress / 長時間 working / blocked)を
                         指揮官ごとに 1 通にまとめて送る。宛先が使用中なら送らず次回へ持ち越す。終了コード 0 / 10 / 11
 tb digests [D-<n>] [--json]   送ったまとめの一覧 / 全文
+tb reminders [--json]   人が忘れているかもしれないもの(期限・質問・承認待ち・レビュー待ちの PR・停滞・届いていない送信・未読の保留メッセージ)を優先度順に出す。何も書かない
+tb reminders --check     出すものがあれば 0、無ければ 3(何も出さず、何も書かない。定期実行で --check || exit 0)
+tb reminders --publish [--json]   まとめを出し、前回の記録(notify_seen の reminders:*)を更新する。同じ項目は「継続(N 日目)」の 1 行。1 日 1 回は全件
 
 指揮官 → worker の送信(herdr agent prompt を直接打たない。送信者は herdr から決まり、config/routes.conf のルールで許可されたものだけ届く):
 tb send <宛先 agent 名> --text T [--task T-..] [--kind task|info|answer] [--json]
-         終了コード 0=送信済み 10=宛先使用中で outbox に積んだ 11=送信失敗で積んだ 4=ルールで拒否 20=人の承認待ち 3=送信者を特定できず未保存
+         delivery の設定(tb config show delivery)で hold なら宛先の入力に打たず inbox に置く(0。出力は held for)
+         終了コード 0=送信済み 10=宛先使用中で outbox に積んだ 11=送信失敗で積んだ 4=ルールで拒否 20=人の承認待ち 3=送信者を特定できず未保存 12=保留に失敗して積んだ
 tb flush            積まれた送信を届ける(tb digest も最初に呼ぶ)
 tb outbox [--status pending|queued|sent|denied] [--json]
+tb inbox [--unread] [--json]   自分宛てに保留された送信(delivery の設定で hold になったもの)の一覧。読めるのは自分宛てだけ
+tb inbox-read I-<n> [--json]   保留された送信を全文で読み、既読にする
 
 役割の配布(roles/。SessionStart hook は bin/tb-role-hook 経由):
 tb role-context --source startup|resume|clear|compact --session-id S   hook 用。渡すときだけ hook の JSON を出す。常に 0
