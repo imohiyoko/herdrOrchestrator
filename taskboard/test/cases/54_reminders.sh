@@ -97,7 +97,7 @@ eq "reminders: stage change (today → overdue) shown on full list" "$(grep "$d2
 rsql "UPDATE tasks SET due=NULL;"
 
 # 保留した送信の受信箱(別の変更で足す表)。表があれば未読だけ読む。本文は出さない。別のセッションの行は読まない
-rsql "CREATE TABLE inbox (id INTEGER PRIMARY KEY AUTOINCREMENT, herdr_session TEXT NOT NULL DEFAULT '', outbox_id INTEGER NOT NULL, recipient TEXT NOT NULL,
+rsql "CREATE TABLE IF NOT EXISTS inbox (id INTEGER PRIMARY KEY AUTOINCREMENT, herdr_session TEXT NOT NULL DEFAULT '', outbox_id INTEGER NOT NULL, recipient TEXT NOT NULL,
         from_name TEXT NOT NULL, kind TEXT NOT NULL, task_id TEXT, text TEXT NOT NULL, rule TEXT NOT NULL, created_at TEXT NOT NULL, read_at TEXT);
       INSERT INTO inbox (herdr_session, outbox_id, recipient, from_name, kind, text, rule, created_at, read_at) VALUES
         ('default', 1, 'assistant', 'conductor', 'info', 'held body', 'r', '2026-03-12T00:00:00Z', NULL),
