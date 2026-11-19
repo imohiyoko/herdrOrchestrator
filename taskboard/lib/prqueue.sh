@@ -15,6 +15,10 @@
 #   add --base で明示もできる(既定の base か、conf の base_allow の形に合うブランチだけ。origin に実在すること)。
 #   決めた base と決め方は add のときに行へ書いて固定する(人は show で見て承認する)。approve と run でかけ直し、
 #   既定ブランチが変わった・許可から外れた・origin に無いときは作らず理由を残す(取得の失敗だけは行に触らず次の回)。
+# 積み重ね(#134 の第一段): add --depends-on PQ-<n> で、下の行の head(ブランチ)を base にする(base_source = stack)。
+#   上の行は、下の行が PR になる(created)まで待つ(行は触らない)。下が却下・失敗なら上も却下。作る前に、下のブランチが origin にあり、
+#   下の PR を作ったときに検査した SHA(head_sha)のままであることを確かめる。違えば作らず理由を残す(積み直し=force push は人がする。自動ではしない)。
+#   マージの順(下から)と、base が既定ブランチでない PR では CI が走らないことがある点は、show に出すだけ(見張りはしない)。
 PQ_BASE_FIXED=main
 PQ_BASE=$PQ_BASE_FIXED   # いま処理している行の base(pq_base_check が行ごとに入れる)
 PQ_MAX_BODY=102400
@@ -158,10 +162,26 @@ pq_resolve_base() {
   PQ_NEW_BASE=$want; PQ_NEW_SRC=explicit
 }
 
-# 行の base をかけ直して PQ_BASE に入れる(approve と run が、origin と同期する前に呼ぶ)。$1=行(JSON)
-# 0 使える / 1 使えない(PQ_REASON。run では却下)/ 2 確かめられない(PQ_REASON。行は触らず次の回)
+# 積み重ねの base を決める(add --depends-on)。$1=下の行の id $2=head のブランチ $3=リポジトリ。PQ_NEW_BASE / PQ_NEW_SRC に入れて 0。使えなければ PQ_REASON で 1
+pq_resolve_stack() {
+  local low st rc
+  PQ_NEW_BASE=""; PQ_NEW_SRC=""; PQ_REASON=""
+  low=$(pq_row "$1"); [[ -n $low ]] || { PQ_REASON="下の行が見つからない: PQ-$1"; return 1; }
+  [[ $(jq -r .repo <<<"$low") == "$3" ]] || { PQ_REASON="下の PQ-$1 は別のリポジトリ"; return 1; }
+  st=$(jq -r .status <<<"$low")
+  [[ $st =~ ^(pending|approved|created)$ ]] || { PQ_REASON="下の PQ-$1 は $st(積めるのは pending / approved / created の上だけ)"; return 1; }
+  [[ $st != created || -n $(jq -r '.head_sha // empty' <<<"$low") ]] || { PQ_REASON="下の PQ-$1 は作成時のコミットが記録されていない(この機能より前に作った PR)"; return 1; }
+  PQ_NEW_BASE=$(jq -r .branch <<<"$low")
+  [[ $PQ_NEW_BASE != "$2" ]] || { PQ_REASON="下の PQ-$1 と同じブランチ"; return 1; }
+  pq_origin_state "$PQ_NEW_BASE" && rc=0 || rc=$?
+  ((rc == 0)) || { PQ_REASON="下のブランチ($PQ_NEW_BASE)が origin に見つからない(か、確認できない)"; return 1; }
+  PQ_NEW_SRC=stack
+}
+
+# 行の base をかけ直して PQ_BASE に入れる(approve と run が、origin と同期する前に呼ぶ)。$1=行(JSON) $2=approve なら、下の行を待っているだけのときは通す
+# 0 使える / 1 使えない(PQ_REASON。run では却下)/ 2 確かめられない・下の行を待っている(PQ_REASON。行は触らず次の回)
 pq_base_check() {
-  local row=$1 base src rc def
+  local row=$1 base src rc def low lst lsha cur
   base=$(jq -r '.base // empty' <<<"$row"); src=$(jq -r '.base_source // empty' <<<"$row")
   PQ_BASE=$PQ_BASE_FIXED; PQ_REASON=""
   if [[ -z $base && -z $src ]]; then return 0; fi   # base を持たない古い行は今までどおり main
@@ -176,6 +196,24 @@ pq_base_check() {
     explicit)
       pq_default_base || return 2
       pq_base_allowed "$base" "$PQ_DEF_BASE" || { PQ_REASON="base($base)が許可されていない(既定の base か base_allow の形だけ)"; return 1; };;
+    stack)
+      low=$(jq -r '.depends_on // empty' <<<"$row")
+      [[ $low =~ ^[0-9]+$ ]] || { PQ_REASON="積み重ねの下の行が記録されていない"; return 1; }
+      low=$(pq_row "$low"); [[ -n $low ]] || { PQ_REASON="下の行(PQ-$(jq -r .depends_on <<<"$row"))が見つからない"; return 1; }
+      [[ $(jq -r .branch <<<"$low") == "$base" && $(jq -r .repo <<<"$low") == "$(jq -r .repo <<<"$row")" ]] \
+        || { PQ_REASON="base が下の行のブランチと合わない(行が書き換えられている)"; return 1; }
+      lst=$(jq -r .status <<<"$low"); lsha=$(jq -r '.head_sha // empty' <<<"$low")
+      case $lst in
+        rejected|failed) PQ_REASON="下の PQ-$(jq -r .id <<<"$low") が $lst(上の PR も作らない)"; return 1;;
+        created) [[ -n $lsha ]] || { PQ_REASON="下の PQ-$(jq -r .id <<<"$low") の作成時のコミットが記録されていない"; return 1; };;
+        *) if [[ ${2:-} != approve ]]; then PQ_REASON="下の PQ-$(jq -r .id <<<"$low") がまだ PR になっていない($lst。待つ)"; return 2; fi;;
+      esac
+      if [[ -n $lsha ]]; then
+        cur=$(pq_origin_sha "$base") && rc=0 || { pq_origin_state "$base" && rc=2 || rc=$?; }
+        ((rc == 2)) && { PQ_REASON="下のブランチ($base)を origin で確かめられない"; return 2; }
+        ((rc == 0)) || { PQ_REASON="下のブランチ($base)が origin に無い(マージで消えた等。base を決め直して登録し直す)"; return 1; }
+        [[ $cur == "$lsha" ]] || { PQ_REASON="下のブランチ($base)が、下の PR を作ったときのコミットから変わった(積み直しは人がする)"; return 1; }
+      fi;;
     *) PQ_REASON="base の決め方が不明: $src"; return 1;;
   esac
   pq_origin_state "$base" && rc=0 || rc=$?
@@ -419,7 +457,7 @@ pq_origin_has() {
 }
 
 pq_add() {
-  local branch="" file="" title="" repo="" task="" base="" by id root dir abs n repos
+  local branch="" file="" title="" repo="" task="" base="" dep="" by id root dir abs n repos
   while [[ $# -gt 0 ]]; do
     case $1 in
       --branch) need_arg "$@"; branch=$2; shift 2;;
@@ -428,10 +466,12 @@ pq_add() {
       --repo) need_arg "$@"; repo=$2; shift 2;;
       --task) need_arg "$@"; task=$2; shift 2;;
       --base) need_arg "$@"; base=$2; shift 2;;
+      --depends-on) need_arg "$@"; dep=$(pq_ref "$2"); shift 2;;
       *) usage "pr-queue add: 不明な引数 $1";;
     esac
   done
-  [[ -n $branch && -n $file && -n $title ]] || usage "pr-queue add --branch <接頭辞/…> --body-file <body_root の中のファイル> --title <題> [--repo <org/repo>] [--task T-…] [--base <ブランチ>]"
+  [[ -n $branch && -n $file && -n $title ]] || usage "pr-queue add --branch <接頭辞/…> --body-file <body_root の中のファイル> --title <題> [--repo <org/repo>] [--task T-…] [--base <ブランチ> | --depends-on PQ-<n>]"
+  [[ -z $base || -z $dep ]] || usage "pr-queue add: --base と --depends-on は一緒に使えません"
   pq_valid_branch "$branch" || die "pr-queue: ブランチは $(pq_prefix_list) のどれかで始め、英数字と . _ - / だけにします: $branch"
   [[ $title != *$'\n'* && $title != *$'\r'* ]] && ! blank "$title" && ((${#title} <= 200)) || die "pr-queue: 題は 1 行・200 字まで"
   [[ -z $task ]] || valid_id "$task"
@@ -444,15 +484,16 @@ pq_add() {
   grep -qxF -- "$repo" <<<"$repos" || die "pr-queue: リポジトリが許可リストにありません: $repo"
   pq_repo_dir_ok || die "pr-queue: $PQ_REASON"
   pq_origin_has "$branch" || die "pr-queue: ブランチが origin に見つからない(か、確認できない)。先に push してください: $branch"
-  pq_resolve_base "$base" "$branch" || die "pr-queue: $PQ_REASON"
+  if [[ -n $dep ]]; then pq_resolve_stack "$dep" "$branch" "$repo" || die "pr-queue: $PQ_REASON"
+  else pq_resolve_base "$base" "$branch" || die "pr-queue: $PQ_REASON"; dep=""; fi
   root=$(pq_body_root) || die "pr-queue: 本文のルート(body_root)が見つかりません"
   [[ ! -L $file && -f $file ]] || die "pr-queue: 本文ファイルが無い(かシンボリックリンク): $file"
   dir=$(cd "$(dirname "$file")" && pwd -P); abs=$dir/$(basename "$file")
   [[ $abs == "$root"/* ]] || die "pr-queue: 本文ファイルは body_root の中だけ: $file"
   (($(wc -c <"$abs") <= PQ_MAX_BODY)) || die "pr-queue: 本文が大きすぎます(100KB まで)"
   if [[ -n ${HERDR_PANE_ID:-} ]]; then by=$(pane_owner_name "$HERDR_PANE_ID" 2>/dev/null || true); by=${by:-unknown}; else by=human; fi
-  id=$(sql "INSERT INTO main.pr_queue (herdr_session, repo,branch,base,base_source,title,body_file,body_sha256,task_id,requested_by,status,created_at)
-    VALUES ($SQS, $(q "$repo"),$(q "$branch"),$(q "$PQ_NEW_BASE"),$(q "$PQ_NEW_SRC"),$(q "$title"),$(q "$abs"),$(q "$(pq_sha "$abs")"),NULLIF($(q "$task"),''),$(q "$by"),'pending',$(q "$(now)")); SELECT last_insert_rowid();")
+  id=$(sql "INSERT INTO main.pr_queue (herdr_session, repo,branch,base,base_source,depends_on,title,body_file,body_sha256,task_id,requested_by,status,created_at)
+    VALUES ($SQS, $(q "$repo"),$(q "$branch"),$(q "$PQ_NEW_BASE"),$(q "$PQ_NEW_SRC"),${dep:-NULL},$(q "$title"),$(q "$abs"),$(q "$(pq_sha "$abs")"),NULLIF($(q "$task"),''),$(q "$by"),'pending',$(q "$(now)")); SELECT last_insert_rowid();")
   echo "PQ-$id pending"
 }
 
@@ -467,14 +508,19 @@ pq_list() {
   done
   [[ -z $status || $status =~ ^(pending|approved|rejected|created|failed)$ ]] || usage "pr-queue: status は pending|approved|rejected|created|failed"
   local where=""; [[ -z $status ]] || where="WHERE status=$(q "$status")"
-  if ((json)); then sql -json "SELECT id,repo,branch,base,base_source,title,task_id,requested_by,status,last_error,attempts,pr_url,created_at FROM pr_queue $where ORDER BY id;" | jq -c '.[]?'
+  if ((json)); then sql -json "SELECT id,repo,branch,base,base_source,depends_on,title,task_id,requested_by,status,last_error,attempts,pr_url,created_at FROM pr_queue $where ORDER BY id;" | jq -c '.[]?'
   else sql -separator $'\t' "SELECT 'PQ-'||id, status, branch, title, COALESCE(base,'main') FROM pr_queue $where ORDER BY id;"; fi
 }
 
 pq_show() {
   [[ $# -eq 1 ]] || usage "pr-queue show <PQ-n>"
   local id row; id=$(pq_ref "$1"); row=$(pq_row "$id"); [[ -n $row ]] || die "見つかりません: PQ-$id"
-  jq -r '"PQ-\(.id) \(.status)\nrepo: \(.repo)\nbranch: \(.branch)  → base: \(.base // "main")(\({fixed:"固定",default:"origin の既定ブランチ",explicit:"指定"}[.base_source // "fixed"] // .base_source)。draft)\ntitle: \(.title)\nbody: \(.body_file)\ntask: \(.task_id // "-")  依頼: \(.requested_by)\n試行: \(.attempts)  PR: \(.pr_url // "-")\n理由/エラー: \(.last_error // "-")"' <<<"$row"
+  jq -r '"PQ-\(.id) \(.status)\nrepo: \(.repo)\nbranch: \(.branch)  → base: \(.base // "main")(\({fixed:"固定",default:"origin の既定ブランチ",explicit:"指定",stack:"PQ-\(.depends_on) の上に積む"}[.base_source // "fixed"] // .base_source)。draft)\ntitle: \(.title)\nbody: \(.body_file)\ntask: \(.task_id // "-")  依頼: \(.requested_by)\n試行: \(.attempts)  PR: \(.pr_url // "-")\n理由/エラー: \(.last_error // "-")"' <<<"$row"
+  local dep ups
+  dep=$(jq -r '.depends_on // empty' <<<"$row")
+  [[ -z $dep ]] || echo "積み重ね: 下は PQ-$dep($(sql "SELECT status FROM pr_queue WHERE id=$dep;"))。マージは下から。base が既定ブランチでない PR では CI が走らないことがある"
+  ups=$(sql "SELECT group_concat('PQ-'||id||'('||status||')', ' ') FROM pr_queue WHERE depends_on=$id;")
+  [[ -z $ups ]] || echo "上に積まれている: $ups(この PR を先にマージする)"
 }
 
 pq_approve() {
@@ -483,7 +529,7 @@ pq_approve() {
   local id row st; id=$(pq_ref "$1"); row=$(pq_row "$id"); [[ -n $row ]] || die "見つかりません: PQ-$id"
   st=$(jq -r .status <<<"$row"); [[ $st == pending ]] || die "PQ-$id は $st です(承認できるのは pending だけ)"
   pq_repo_dir_ok || die "PQ-$id は承認しません: $PQ_REASON"
-  pq_base_check "$row" || die "PQ-$id は承認しません: $PQ_REASON"
+  pq_base_check "$row" approve || die "PQ-$id は承認しません: $PQ_REASON"
   pq_sync_origin "$(jq -r .branch <<<"$row")" 0 || die "PQ-$id は承認しません: $PQ_REASON"
   if ! pq_guard "$row"; then die "PQ-$id はガードに落ちるため承認しません: $PQ_REASON"; fi
   sql "UPDATE main.pr_queue SET status='approved', decided_at=$(q "$(now)"), last_error=NULL WHERE herdr_session=$SQS AND id=$id AND status='pending';"
@@ -586,7 +632,7 @@ pq_run() {
     out=$("$gh" pr create --repo "$repo" --base "$PQ_BASE" --head "$branch" --title "$title" --body-file "$file" --draft 2>/dev/null) && rc=0 || rc=$?
     if ((rc == 0)); then
       url=$(grep -Eo 'https://[^[:space:]]+/pull/[0-9]+' <<<"$out" | head -n 1 || true)
-      sql "UPDATE main.pr_queue SET status='created', pr_url=NULLIF($(q "$url"),''), last_error=NULL, executed_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$id AND status='approved';"
+      sql "UPDATE main.pr_queue SET status='created', pr_url=NULLIF($(q "$url"),''), head_sha=$(q "$checked"), last_error=NULL, executed_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$id AND status='approved';"
       echo "PQ-$id created${url:+: $url}"; made=$((made+1))
     elif ((rc == PQ_AUTH_RC)); then pq_auth_locked 0; locked=1; break
     else

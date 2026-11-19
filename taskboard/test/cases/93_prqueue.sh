@@ -289,7 +289,7 @@ eq "retry: only failed rows (created / pending are refused)" "$(rc $TB pr-queue 
 eq "retry: human puts a failed row back to approved, attempts reset" "$($TB pr-queue retry PQ-$fid | cut -d'(' -f1) $(pqsql "SELECT status||attempts FROM pr_queue WHERE id=$fid;")" "PQ-$fid approved approved0"
 : >"$FAKE_GH_LOG"; $TB pr-queue run >/dev/null 2>&1
 eq "retry: the guards still run, and the next run picks it up" "$(pqgh 'pr create') $(pqsql "SELECT status FROM pr_queue WHERE id=$fid;")" "1 created"
-eq "retry: no schema change (pr_queue columns unchanged)" "$(pqsql "SELECT group_concat(name) FROM pragma_table_info('pr_queue');")" "id,repo,branch,title,body_file,body_sha256,task_id,requested_by,status,last_error,attempts,pr_url,created_at,decided_at,executed_at,herdr_session,base,base_source"
+eq "retry: no schema change (pr_queue columns unchanged)" "$(pqsql "SELECT group_concat(name) FROM pragma_table_info('pr_queue');")" "id,repo,branch,title,body_file,body_sha256,task_id,requested_by,status,last_error,attempts,pr_url,created_at,decided_at,executed_at,herdr_session,base,base_source,depends_on,head_sha"
 unset PR_QUEUE_CONF
 
 # ---- ブランチ登録の拡張: 接頭辞を conf で列挙(既定は agent/ のみ)。登録時に origin に実在するかを確かめる(fail-closed)
@@ -566,6 +566,77 @@ pqbody bs9; pqadd agent/bs9 bs9 >/dev/null; bs9=$(pqid); $TB pr-queue approve $b
 pqsql "UPDATE pr_queue SET base='develop' WHERE id=$bs9;"
 : >"$FAKE_GH_LOG"; $TB pr-queue run >/dev/null 2>&1
 eq "base: a fixed row whose base was rewritten is rejected" "$(pqst $bs9) $(pqgh 'pr create')" "rejected 0"
+unset PR_QUEUE_CONF
+
+# ---- 積み重ね(#134 の第一段): add --depends-on で下の行の head を base にする。下が PR になってから、下のコミットが変わっていないことを確かめて作る
+export PR_QUEUE_CONF=$TMP/pq-stack.conf; printf '%s\n' "$PQ_RULE" >"$PR_QUEUE_CONF"
+mkup() { git -C "$R" checkout -q -B "$1" "$2"; mkdir -p "$R/terraform"; printf '%s\n' "$1" >"$R/terraform/${1//\//-}.tf"; git -C "$R" add .; git -C "$R" commit -q -m "上 $1"; git -C "$R" push -q --force origin "$1" 2>/dev/null; git -C "$R" checkout -q main; }
+pqhead() { pqsql "SELECT COALESCE(head_sha,'') FROM pr_queue WHERE id=$1;"; }
+pqbody sk1; pqadd agent/sk1 sk1 >/dev/null; sk1=$(pqid)
+mkup agent/sk2 agent/sk1; pqbody sk2
+pqadd agent/sk2 sk2 --depends-on PQ-$sk1 >/dev/null; sk2=$(pqid)
+eq "stack: --depends-on records the lower entry and uses its branch as the base" \
+  "$(pqsql "SELECT base||','||base_source||','||depends_on FROM pr_queue WHERE id=$sk2;")" "agent/sk1,stack,$sk1"
+eq "stack: show tells the chain both ways (and the merge order)" \
+  "$($TB pr-queue show $sk2 | grep -c "base: agent/sk1(PQ-$sk1 の上に積む") $($TB pr-queue show $sk2 | grep -c "下は PQ-$sk1(pending)。マージは下から") $($TB pr-queue show $sk1 | grep -c "上に積まれている: PQ-$sk2(pending)")" "1 1 1"
+pqbody sk9
+eq "stack: refused with --base, on a missing entry, on a rejected entry, on itself as head" \
+  "$(rc pqadd agent/sk9 sk9 --depends-on PQ-$sk1 --base main) $(rc pqadd agent/sk9 sk9 --depends-on PQ-99999) $(rc pqadd agent/sk9 sk9 --depends-on PQ-$bs9) $(rc pqadd agent/sk1 sk9 --depends-on PQ-$sk1)" "2 1 1 1"
+eq "stack: refused adds queued nothing" "$(pqsql "SELECT COUNT(*) FROM pr_queue WHERE branch='agent/sk9';")" "0"
+# 上だけ承認しても、下が PR になるまでは作らない(行は触らない)
+eq "stack: the upper entry can be approved while the lower one is pending" "$(rc $TB pr-queue approve $sk2) $(pqst $sk2)" "0 approved"
+: >"$FAKE_GH_LOG"; out=$($TB pr-queue run 2>&1)
+eq "stack: run waits for the lower PR (upper untouched, nothing created)" \
+  "$(pqst $sk2) $(pqsql "SELECT attempts FROM pr_queue WHERE id=$sk2;") $(pqgh 'pr create') $(grep -c "PQ-$sk2 skipped: 下の PQ-$sk1 がまだ PR になっていない" <<<"$out")" "approved 0 0 1"
+# 下を承認すると、同じ run で下 → 上の順に作る。下は作ったときの SHA を残す
+$TB pr-queue approve $sk1 >/dev/null
+: >"$FAKE_GH_LOG"; $TB pr-queue run >/dev/null 2>&1
+eq "stack: lower then upper are created in one run, the upper against the lower branch" \
+  "$(pqst $sk1) $(pqst $sk2) $(grep 'pr create' "$FAKE_GH_LOG" | sed -E 's/.*--base ([^ ]+) --head ([^ ]+).*/\1>\2/' | paste -sd' ' -)" "created created main>agent/sk1 agent/sk1>agent/sk2"
+eq "stack: the created PR keeps the head SHA that was checked" "$(pqhead $sk1)" "$(git --git-dir="$PQ_O" rev-parse agent/sk1)"
+# 下のブランチが PR を作ったあとで動いた → 上は作らず理由を残す(積み直しは人)
+pqbody sk3; pqadd agent/sk3 sk3 >/dev/null; sk3=$(pqid); $TB pr-queue approve $sk3 >/dev/null; $TB pr-queue run >/dev/null 2>&1
+mkup agent/sk4 agent/sk3; pqbody sk4; pqadd agent/sk4 sk4 --depends-on PQ-$sk3 >/dev/null; sk4=$(pqid); $TB pr-queue approve $sk4 >/dev/null
+git -C "$R" checkout -q agent/sk3; echo more >>"$R/a.txt"; git -C "$R" commit -qam more; git -C "$R" push -q origin agent/sk3 2>/dev/null; git -C "$R" checkout -q main
+: >"$FAKE_GH_LOG"; $TB pr-queue run >/dev/null 2>&1
+eq "stack: the lower branch moved after its PR was created → upper rejected with the reason, nothing created" \
+  "$(pqst $sk4) $(pqsql "SELECT last_error FROM pr_queue WHERE id=$sk4;" | grep -c '下の PR を作ったときのコミットから変わった') $(pqgh 'pr create')" "rejected 1 0"
+# 下のブランチが消えた(マージで消えた等)→ 上は作らない
+pqbody sk5; pqadd agent/sk5 sk5 >/dev/null; sk5=$(pqid); $TB pr-queue approve $sk5 >/dev/null; $TB pr-queue run >/dev/null 2>&1
+mkup agent/sk6 agent/sk5; pqbody sk6; pqadd agent/sk6 sk6 --depends-on PQ-$sk5 >/dev/null; sk6=$(pqid); $TB pr-queue approve $sk6 >/dev/null
+git -C "$R" push -q origin --delete agent/sk5 2>/dev/null
+: >"$FAKE_GH_LOG"; $TB pr-queue run >/dev/null 2>&1
+eq "stack: the lower branch is gone on origin → upper rejected with the reason" \
+  "$(pqst $sk6) $(pqsql "SELECT last_error FROM pr_queue WHERE id=$sk6;" | grep -c '下のブランチ(agent/sk5)が origin に無い') $(pqgh 'pr create')" "rejected 1 0"
+# 下が却下されたら上も作らない
+pqbody sk7; pqadd agent/sk7 sk7 >/dev/null; sk7=$(pqid)
+mkup agent/sk8 agent/sk7; pqbody sk8; pqadd agent/sk8 sk8 --depends-on PQ-$sk7 >/dev/null; sk8=$(pqid); $TB pr-queue approve $sk8 >/dev/null
+$TB pr-queue reject $sk7 >/dev/null
+: >"$FAKE_GH_LOG"; $TB pr-queue run >/dev/null 2>&1
+eq "stack: the lower entry was rejected → upper rejected too" "$(pqst $sk8) $(pqsql "SELECT last_error FROM pr_queue WHERE id=$sk8;" | grep -c "下の PQ-$sk7 が rejected") $(pqgh 'pr create')" "rejected 1 0"
+# 途中で失敗しても、やり直しで二重に作らない(下は created のまま、上だけ作る)
+pqbody sa1; pqadd agent/sa1 sa1 >/dev/null; sa1=$(pqid)
+mkup agent/sa2 agent/sa1; pqbody sa2; pqadd agent/sa2 sa2 --depends-on PQ-$sa1 >/dev/null; sa2=$(pqid)
+$TB pr-queue approve $sa1 >/dev/null; $TB pr-queue approve $sa2 >/dev/null
+cat >"$TMP/pq-gh-once" <<G
+#!/usr/bin/env bash
+echo "\$*" >>"$FAKE_GH_LOG"
+case "\$1 \$2" in
+  "pr list") echo '[]';;
+  "pr create") [[ " \$* " == *" --head agent/sa2 "* ]] && exit 1; echo "https://github.com/org/repo/pull/78";;
+esac
+G
+chmod +x "$TMP/pq-gh-once"
+: >"$FAKE_GH_LOG"; PR_QUEUE_GH=$TMP/pq-gh-once $TB pr-queue run >/dev/null 2>&1
+eq "stack: partial failure (lower created, upper's create failed) → upper stays approved" "$(pqst $sa1) $(pqst $sa2)" "created approved"
+: >"$FAKE_GH_LOG"; $TB pr-queue run >/dev/null 2>&1
+eq "stack: the next run creates only the upper one (no duplicate of the lower)" \
+  "$(pqst $sa2) $(pqgh 'pr create') $(pqgh 'pr create .*--head agent/sa1')" "created 1 0"
+# 下の差分は上の PR の差分に入らない(差分のガードは base = 下のブランチで見る)
+pqbody sb1; mkb agent/sb1 .github/workflows/ci.yml 'on: push' c; pqadd agent/sb1 sb1 >/dev/null; sb1=$(pqid)
+mkup agent/sb2 agent/sb1; pqbody sb2; pqadd agent/sb2 sb2 --depends-on PQ-$sb1 >/dev/null; sb2=$(pqid)
+eq "stack: the guard sees only the upper's own diff (lower's CI change is the lower's; the upper is approvable)" \
+  "$(rc $TB pr-queue approve $sb1) $(rc $TB pr-queue approve $sb2)" "1 0"
 unset PR_QUEUE_CONF
 
 # 後片付け: 触った変数を元に戻す
