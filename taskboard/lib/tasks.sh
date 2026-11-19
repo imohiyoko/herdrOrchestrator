@@ -32,12 +32,14 @@ check_hierarchy() {
   if [[ -n $self && $type == subtask ]]; then
     [[ $(sql "SELECT COUNT(*) FROM tasks WHERE parent_id=$(q "$self");") == 0 ]] || usage "子のあるタスクは subtask にできません: $self"
   fi
-  if [[ -n $self && -n $parent ]]; then   # 親をたどって自分に戻るなら循環
-    [[ -z $(sql "WITH RECURSIVE up(id, d) AS (SELECT $(q "$parent"), 0 UNION ALL
-        SELECT t.parent_id, up.d+1 FROM tasks t JOIN up ON t.id=up.id WHERE t.parent_id IS NOT NULL AND up.d<100)
-        SELECT 1 FROM up WHERE id=$(q "$self") LIMIT 1;") ]] || usage "親子が循環します: $self → $parent"
+  if [[ -n $self && $type == epic ]]; then   # subtask は epic の直下に置けない
+    [[ $(sql "SELECT COUNT(*) FROM tasks WHERE parent_id=$(q "$self") AND type='subtask';") == 0 ]] || usage "subtask の子があるタスクは epic にできません: $self"
   fi
   return 0
+}
+# 親をたどって $2(自分)に着くなら真になる SQL の条件。$1=新しい親。UNION で訪問済みを除くので、循環があっても止まる
+parent_cycle_sql() {
+  printf "EXISTS (WITH RECURSIVE up(id) AS (SELECT %s UNION SELECT t.parent_id FROM tasks t JOIN up ON t.id=up.id WHERE t.parent_id IS NOT NULL) SELECT 1 FROM up WHERE id=%s)" "$(q "$1")" "$(q "$2")"
 }
 # 優先度の並び(highest が先)。SQL の ORDER BY に使う
 PRIORITY_RANK="CASE priority WHEN 'highest' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END"
@@ -85,7 +87,7 @@ cmd_add() {
 # ---------- list ----------
 # 既定の出力(タブ区切り: ID 状態 担当 題)は変えない。--long で 種別・優先度・作成・更新・ラベルも出す
 cmd_list() {
-  local project="" status="" json=0 long=0 sort="" where="1=1" order="project, id" l
+  local project="" status="" json=0 long=0 sort="" where="1=1" order="project, id" l lj
   while [[ $# -gt 0 ]]; do
     case $1 in
       -p|--project) need_arg "$@"; project=$2; shift 2;;
@@ -93,10 +95,10 @@ cmd_list() {
       --type)       need_arg "$@"; valid_type "$2"; where+=" AND type=$(q "$2")"; shift 2;;
       --priority)   need_arg "$@"; valid_priority "$2"; where+=" AND priority=$(q "$2")"; shift 2;;
       -l|--label)   need_arg "$@"   # 複数指定はすべてを持つもの(AND)。カンマ区切りも同じ
-                    l=$(labels_json "$2")
-                    for l in $(jq -r '.[]' <<<"$l"); do
-                      where+=" AND EXISTS (SELECT 1 FROM json_each(tasks.labels) WHERE value=$(q "$l"))"
-                    done; shift 2;;
+                    lj=$(labels_json "$2")
+                    while IFS= read -r l; do
+                      [[ -n $l ]] && where+=" AND EXISTS (SELECT 1 FROM json_each(tasks.labels) WHERE value=$(q "$l"))"
+                    done < <(jq -r '.[]' <<<"$lj"); shift 2;;
       --owner)      need_arg "$@"; where+=" AND owner_agent=$(q "$2")"; shift 2;;
       --parent)     need_arg "$@"; valid_id "$2"; where+=" AND parent_id=$(q "$2")"; shift 2;;
       --sort)       need_arg "$@"; sort=$2; shift 2;;
@@ -213,13 +215,21 @@ cmd_update() {
     check_hierarchy "${ntype:-$(jq -r .type <<<"$row")}" "${nparent:-$(jq -r '.parent_id // empty' <<<"$row")}" "$id"
   fi
   if [[ $relabel == 1 || ${#addlab[@]} -gt 0 || ${#rmlab[@]} -gt 0 ]]; then
-    local base add rm
-    if ((relabel)); then base=$(labels_json "${setlab[@]}"); else base=$(jq -c '.labels | fromjson' <<<"$row"); fi
+    # 付け外しは書く時点の labels に当てる(並行する --add-label を互いに消さない)
+    local base="labels" add rm
+    if ((relabel)); then base=$(q "$(labels_json "${setlab[@]}")"); fi
     add=$(labels_json ${addlab[@]+"${addlab[@]}"}); rm=$(labels_json ${rmlab[@]+"${rmlab[@]}"})
-    sets+=("labels=$(q "$(jq -nc --argjson b "$base" --argjson a "$add" --argjson r "$rm" '($b + $a | unique) - $r')")")
+    sets+=("labels=(SELECT json_group_array(value) FROM (SELECT value FROM (SELECT value FROM json_each($base) UNION SELECT value FROM json_each($(q "$add")))
+              WHERE value NOT IN (SELECT value FROM json_each($(q "$rm"))) ORDER BY value))")
   fi
+  # 親を変えるときは、循環の検査と書き込みを 1 つの書き込みトランザクションで行う(並行する付け替えで循環を作らない)
+  local guard="" n
+  [[ -z $nparent ]] || guard=" AND NOT $(parent_cycle_sql "$nparent" "$id")"
   local IFS=,
-  sql "UPDATE main.tasks SET ${sets[*]}, updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id");"
+  n=$(sql "BEGIN IMMEDIATE; UPDATE main.tasks SET ${sets[*]}, updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id")$guard;
+           SELECT changes(); COMMIT;")
+  unset IFS
+  [[ $n == 1 ]] || usage "親子が循環します: $id → $nparent"
   echo "$id updated"
 }
 
@@ -326,15 +336,17 @@ link_args() {
 }
 cmd_link() {
   LINK_CMD=link link_args "$@"
-  local from=$1 type=$2 to=$3 by
-  if [[ $type == blocks ]]; then   # to から blocks をたどって from に着くなら循環
-    [[ -z $(sql "WITH RECURSIVE r(id) AS (SELECT $(q "$to") UNION SELECT l.to_id FROM task_links l JOIN r ON l.from_id=r.id WHERE l.link_type='blocks')
-        SELECT 1 FROM r WHERE id=$(q "$from") LIMIT 1;") ]] || usage "blocks が循環します: $from → $to"
-  fi
+  local from=$1 type=$2 to=$3 by cyc=0 out
   by=$(actor_name) || return $?
-  local n; n=$(sql "INSERT OR IGNORE INTO main.task_links (from_id, link_type, to_id, created_by, created_at, herdr_session)
-      VALUES ($(q "$from"), $(q "$type"), $(q "$to"), $(q "$by"), $(q "$(now)"), $SQS); SELECT changes();")
-  [[ $n == 1 ]] && echo "$from $type $to" || echo "$from $type $to(既にあります)"
+  # blocks は、to から blocks をたどって from に着くなら循環。検査と挿入は 1 つの書き込みトランザクションで行う
+  [[ $type != blocks ]] || cyc="EXISTS (WITH RECURSIVE r(id) AS (SELECT $(q "$to") UNION SELECT l.to_id FROM task_links l JOIN r ON l.from_id=r.id WHERE l.link_type='blocks')
+        SELECT 1 FROM r WHERE id=$(q "$from"))"
+  out=$(sql "BEGIN IMMEDIATE; SELECT $cyc;
+      INSERT OR IGNORE INTO main.task_links (from_id, link_type, to_id, created_by, created_at, herdr_session)
+        SELECT $(q "$from"), $(q "$type"), $(q "$to"), $(q "$by"), $(q "$(now)"), $SQS WHERE NOT $cyc;
+      SELECT changes(); COMMIT;")
+  [[ ${out%%$'\n'*} == 0 ]] || usage "blocks が循環します: $from → $to"
+  [[ ${out##*$'\n'} == 1 ]] && echo "$from $type $to" || echo "$from $type $to(既にあります)"
 }
 cmd_unlink() {
   LINK_CMD=unlink link_args "$@"

@@ -79,3 +79,21 @@ eq "tickets: link row has session + actor" "$(sqlite3 "$TB_DB" "SELECT herdr_ses
 # --- labels
 eq "tickets: labels with open/total counts" "$($TB labels -p tk)" "$(printf 'api\t0\t1\nauth\t1\t2\nui\t1\t1')"
 eq "tickets: labels --json" "$($TB labels -p tk2 --json)" '{"label":"認証","open":1,"total":1}'
+
+# --- レビュー指摘の回帰
+# subtask の子があるタスクは epic にできない(subtask が epic の直下になる)
+ta=$($TB add -p tk3 -t a); tb_=$($TB add -p tk3 -t b --type subtask --parent "$ta")
+eq "tickets: task with subtask child can't become epic" "$(rc $TB update "$ta" --type epic)" "2"
+tc=$($TB add -p tk3 -t c); $TB add -p tk3 -t d --type story --parent "$tc" >/dev/null
+eq "tickets: task with story child can become epic" "$(rc $TB update "$tc" --type epic)" "0"
+# 長い親子(100 段超)でも循環を見つける
+prev=$($TB add -p tk4 -t p0); first=$prev
+for _i in $(seq 1 105); do prev=$($TB add -p tk4 -t "p$_i" --parent "$prev"); done
+eq "tickets: cycle found through a 105-level chain" "$(rc $TB update "$first" --parent "$prev")" "2"
+eq "tickets: root still has no parent" "$($TB show "$first" | jq -r .parent_id)" "null"
+# ラベル * はパス名展開されない
+tg=$($TB add -p tk5 -t glob -l '*')
+eq "tickets: label * is matched literally" "$($TB list -p tk5 -l '*' | cut -f1)" "$tg"
+# 付け外しは書く時点の labels に当てる
+$TB update "$tg" --add-label x >/dev/null; $TB update "$tg" --add-label y --remove-label '*' >/dev/null
+eq "tickets: add/remove applies to stored labels" "$($TB show "$tg" | jq -c .labels)" '["x","y"]'
