@@ -5,7 +5,7 @@
 # - 取り込むのは写し(.backup)。元の DB は読むだけで、書き換えも移動もしない
 # - 写しを最新のスキーマまで移行し(012 で行の herdr_session が取り込み先のセッションになる)、1 つのトランザクションで共有の DB に足す
 # - 整数の ID(C- / O- / A- / L- / N- / D- / P- / PQ- など)は、共有の DB の最大値の後ろへずらす(番号は DB 全体で一意)。
-#   ずらした番号を指す列(notify_sends.event_id / notify_events.batch_id / observations.digest_id と、messages / notify_events の ref)も直す
+#   ずらした番号を指す列(notify_sends.event_id / notify_events.batch_id / observations.digest_id / pr_queue.depends_on と、messages / notify_events の ref)も直す
 # - タスク ID(T-<project>-NNN)は DB 全体で一意。共有の DB に同じ ID があれば、取り込む側を次の空き番号に付け替え、参照(親・コメント・送信など)も直す
 # - 名前やキーが主キーの表(agents / agent_activity / observations / tb_flags / notify_seen)は、共有の DB に既にある行を優先する。
 #   agents だけは、共有の DB の行に無い値(role / model / cwd / session など)を旧 DB の値で埋める
@@ -76,7 +76,8 @@ import_sql() {  # $1=写し $2=セッション $3=取り込みの記録のキー
   done
   s+=" UPDATE main.notify_sends SET event_id = event_id + (SELECT n FROM _off WHERE t='notify_events');
        UPDATE main.notify_events SET batch_id = batch_id + (SELECT n FROM _off WHERE t='notify_events') WHERE batch_id IS NOT NULL;
-       UPDATE main.observations SET digest_id = digest_id + (SELECT n FROM _off WHERE t='digests') WHERE digest_id IS NOT NULL;"
+       UPDATE main.observations SET digest_id = digest_id + (SELECT n FROM _off WHERE t='digests') WHERE digest_id IS NOT NULL;
+       UPDATE main.pr_queue SET depends_on = depends_on + (SELECT n FROM _off WHERE t='pr_queue') WHERE depends_on IS NOT NULL;"
   # ref の "<接頭辞>-<数字>" だけを直す(owner/repo#12 などはそのまま)
   for t in $IMPORT_ID_TABLES; do
     import_id_split "$t"; p=${t#*:}; [[ -n $p ]] || continue
