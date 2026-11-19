@@ -110,8 +110,7 @@ cmd_conv-pair-add() {
   d=$(conv_pair_dir "$kind" "$id")
   ( umask 077; mkdir -p "$d" ) || die "組の置き場を作れません: $d"
   ( umask 077; cp "$df" "$d/draft.txt" && cp "$ff" "$d/final.txt" ) || die "組を書けません: $d"
-  ratio=$(conv_py ratio "$d/draft.txt" "$d/final.txt") || die "編集の割合を測れません"
-  dl=$(LC_ALL=C.UTF-8 wc -m <"$d/draft.txt" | tr -d ' '); fl=$(LC_ALL=C.UTF-8 wc -m <"$d/final.txt" | tr -d ' ')
+  read -r ratio dl fl <<<"$(conv_py ratio "$d/draft.txt" "$d/final.txt")" && [[ -n $fl ]] || die "編集の割合を測れません"
   ( umask 077; jq -n --arg id "$id" --arg kind "$kind" --arg sit "$(conv_clean_month "$sit")" --arg intent "$(conv_clean_month "$intent")" \
       --arg at "$(now)" --argjson ratio "$ratio" --argjson dl "$dl" --argjson fl "$fl" \
       --arg po "$po" --arg pa "$pa" \
@@ -151,7 +150,8 @@ cmd_conv-pair-show() {
 # 台帳の列(タブ区切り): direction state permissive situation intent ending conclusion avoid desc created updated pattern_id
 # 証拠の列: direction evidence source(pair-id か ref:<説明>) situation_key added_at added_by
 # タブ区切りの 1 行を配列 F に分ける(read は続くタブを 1 つにまとめて空の列を落とすので使わない)
-conv_split() { mapfile -t F < <(printf '%s\n' "$1" | tr '\t' '\n'); }
+# bash 3.2(macOS の既定)でも動くよう mapfile を使わない
+conv_split() { local r=$1; F=(); while [[ $r == *$'\t'* ]]; do F+=("${r%%$'\t'*}"); r=${r#*$'\t'}; done; F+=("$r"); }
 conv_ledger_file() { printf '%s/ledger/%s.tsv' "$CONV_STATE" "$1"; }
 conv_evidence_file() { printf '%s/ledger/%s.evidence.tsv' "$CONV_STATE" "$1"; }
 conv_ledger_row() {  # $1=kind $2=direction → 行(無ければ空)
@@ -323,13 +323,15 @@ cmd_conv-candidate-adopt() {
   local he hw ev pid line
   read -r _ he hw _ <<<"$(conv_counts "$kind" "$dir")"
   if ((he > 0)); then ev=human-edit; elif ((hw > 0)); then ev=human-written; else ev=other-source; fi
-  pid="P-${dir//-/}"
-  if [[ -f $pf ]] && grep -Eq "^[[:space:]]*$pid[[:space:]]*\|" "$pf"; then pid="$pid$(od -An -N2 -tx1 /dev/urandom | tr -d ' \n')"; fi
+  # id は P-<英数字と -、20 字まで>(#95 の書式)。重なれば短くして 16 進 4 桁を足す
+  pid="P-${dir:0:20}"
+  if [[ -f $pf ]] && grep -Eq "^[[:space:]]*$pid[[:space:]]*\|" "$pf"; then pid="P-${dir:0:15}-$(od -An -N2 -tx1 /dev/urandom | tr -d ' \n')"; fi
+  blank "$e0" && e0=-; blank "$a0" && a0=-   # 無い列は -(空の列は書式の誤り)
   line="$pid | adopted | $ev | $s0 | $i0 | $e0 | $c0 | $a0"
-  if declare -F cmd_conv-lint >/dev/null; then   # 下書き側の lint(#95)があれば、足したあとの本文で確かめる
+  if declare -F conv_patterns_read >/dev/null; then   # 下書き側(#95)の読み方で、足したあとの本文を確かめる
     local tmp; tmp=$(mktemp); { [[ -f $pf ]] && cat "$pf"; printf '%s\n' "$line"; } >"$tmp"
-    conv_lint_file "$tmp" >/dev/null 2>&1 || { rm -f "$tmp"; die "patterns.conf の検査(tb conv-lint)を通りません: $line"; }
-    rm -f "$tmp"
+    conv_patterns_read "$tmp"; rm -f "$tmp"
+    [[ " ${CONV_PAT[*]+${CONV_PAT[*]%%|*}} " == *" $pid "* ]] || die "patterns.conf の検査を通りません: $line ${CONV_PAT_ERRS[*]+${CONV_PAT_ERRS[*]}}"
   fi
   [[ ! -f $pf || -z $(tail -c1 "$pf") ]] || echo >>"$pf"
   printf '%s\n' "$line" >>"$pf"

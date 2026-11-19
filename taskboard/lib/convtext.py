@@ -2,7 +2,7 @@
 """会話の学習(#97)で使う文字列の小道具。tb の lib/convlearn.sh / convstage.sh から呼ぶ。標準ライブラリだけ。
 
   convtext.py ratio <下書きのファイル> <最終文のファイル>
-      編集の割合 = 文字単位の編集距離 / 長い方の文字数(0.000〜1.000)。両方空なら 0。
+      「編集の割合 下書きの文字数 送った文の文字数」を出す。編集の割合 = 文字単位の編集距離 / 長い方の文字数(0.000〜1.000)。両方空なら 0。
   convtext.py sanitize [--keep-month] [--deny 語,語,...]   (標準入力 → 標準出力)
       URL・メール・@名前・チケットやレビューの番号・日付・数字・拒否語を置き換える。改行とタブは空白 1 つに。
       --keep-month なら日付は年月(YYYY-MM)まで残す(組の記録の状況メモ用。パターンには使わない)。
@@ -55,11 +55,12 @@ def ratio(df, ff):
         g = f.read().strip()
     n = max(len(d), len(g))
     if n == 0:
-        return 0.0
+        return 0.0, 0, 0
+    dl, gl = len(d), len(g)
     # 長すぎる本文は先頭だけで測る(計算量を抑える。会話の下書きはふつう数百字)
     d, g = d[:4000], g[:4000]
     n = max(len(d), len(g))
-    return levenshtein(d, g) / n
+    return levenshtein(d, g) / n, dl, gl
 
 
 def sanitize(text, keep_month=False, deny=()):
@@ -101,7 +102,7 @@ def main(argv):
         return 2
     cmd, args = argv[1], argv[2:]
     if cmd == 'ratio' and len(args) == 2:
-        print('%.3f' % ratio(args[0], args[1]))
+        print('%.3f %d %d' % ratio(args[0], args[1]))
         return 0
     if cmd == 'sanitize':
         print(sanitize(sys.stdin.read(), '--keep-month' in args, deny_words(args)))

@@ -130,10 +130,11 @@ cmd_conv-stage() {
     # 段階の記録や組だけある種別も出す
     for k in "$CONV_STATE"/pairs/*/; do [[ -d $k ]] && kinds+=("$(basename "$k")"); done
     [[ -f $(conv_stage_log) ]] && while IFS= read -r k; do kinds+=("$k"); done < <(cut -f2 "$(conv_stage_log)")
-    mapfile -t kinds < <(printf '%s\n' "${kinds[@]}" | grep -E "$CONV_KIND_RE" | sort -u)
+    local all; all=$(printf '%s\n' ${kinds[@]+"${kinds[@]}"} | grep -E "$CONV_KIND_RE" | sort -u || true)
+    kinds=(); while IFS= read -r k; do [[ -n $k ]] && kinds+=("$k"); done <<<"$all"
   fi
   local m s next cap out=()
-  for k in "${kinds[@]}"; do
+  for k in ${kinds[@]+"${kinds[@]}"}; do
     m=$(conv_metrics "$k"); s=$(jq .stage <<<"$m"); cap=3; conv_is_high "$k" && cap=1
     next=null
     if ((s < cap)); then

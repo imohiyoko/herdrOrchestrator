@@ -56,8 +56,8 @@ eq "conv-candidate-adopt: 数字が残っていれば採用しない" "$(rc $TB 
 eq "conv-candidate-adopt: 名前の疑いがあれば採用しない" "$(rc $TB conv-candidate-adopt thanks conclusion-first --situation 'Tanaka への受け取り' --intent 受け取ったと伝える)" "1"
 eq "conv-candidate-adopt: 状況が空なら採用しない" "$(rc $TB conv-candidate-adopt thanks conclusion-first --intent 受け取ったと伝える)" "1"
 $TB conv-candidate-adopt thanks conclusion-first --situation 受け取りの連絡 --intent 受け取ったと伝える --ending 短いお礼 --avoid 長い前置き >/dev/null
-eq "conv-candidate-adopt: patterns.conf に adopted で 8 列" "$(cat "$TB_CONV_DIR/kinds/thanks/patterns.conf")" "P-conclusionfirst | adopted | human-edit | 受け取りの連絡 | 受け取ったと伝える | 短いお礼 | first | 長い前置き"
-eq "conv-ledger: 採用済み" "$($TB conv-ledger --kind thanks --json | jq -r '.[] | select(.direction=="conclusion-first") | "\(.state) \(.pattern_id)"')" "adopted P-conclusionfirst"
+eq "conv-candidate-adopt: patterns.conf に adopted で 8 列" "$(cat "$TB_CONV_DIR/kinds/thanks/patterns.conf")" "P-conclusion-first | adopted | human-edit | 受け取りの連絡 | 受け取ったと伝える | 短いお礼 | first | 長い前置き"
+eq "conv-ledger: 採用済み" "$($TB conv-ledger --kind thanks --json | jq -r '.[] | select(.direction=="conclusion-first") | "\(.state) \(.pattern_id)"')" "adopted P-conclusion-first"
 eq "conv-candidate-adopt: 二度は採用しない" "$(rc $TB conv-candidate-adopt thanks conclusion-first)" "1"
 
 # 許す方向の変更は明示の承認が要る

@@ -43,7 +43,7 @@ tb conv-candidate-add --kind thanks --direction conclusion-first --desc "結論�
   `--approve-permissive` が要る。
 - 採用の前に、状況・意図・結び・避けることを検査する(`convtext.py scan`): URL・メール・@名前・チケットやレビューの番号・数字・
   英字の大文字で始まる語(名前の疑い)・`deny =` の語・長すぎる引用。置き換えの印(`<name>` `<n>` など)が残っていても断る。
-  通ったら `patterns.conf` に `P-<英数字> | adopted | <evidence> | situation | intent | ending | conclusion | avoid` の 1 行を足す。
+  通ったら `patterns.conf` に `P-<向き(20 字まで)> | adopted | <evidence> | situation | intent | ending | conclusion | avoid` の 1 行を足す。
 - 台帳に残す文(説明など)は、足すときに sanitize する(名前・番号・URL・日付・数字を印に置き換える)。
 
 置き場:
