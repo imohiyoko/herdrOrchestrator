@@ -6,27 +6,7 @@
 COMMENT_KINDS="done progress question blocked"
 # すぐ送る kind。それ以外は保存だけして tb digest でまとめて送る
 IMMEDIATE_KINDS=${TB_IMMEDIATE_KINDS:-question blocked}
-LABEL_NAME=""; LABEL_PANE=""; LABEL_SESSION=""
 
-# 報告者ラベルは herdr から引く(自己申告にしない)。引けなければ 1 を返す(理由は stderr)
-resolve_label() {
-  local pane=${HERDR_PANE_ID:-} out row
-  [[ -n $pane ]] || { echo "tb: HERDR_PANE_ID がありません。報告者を特定できないため保存しません" >&2; return 1; }
-  out=$(herdr_call agent list 2>/dev/null) || { echo "tb: herdr agent list に失敗。報告者を特定できないため保存しません" >&2; return 1; }
-  row=$(jq -c --arg p "$pane" '[.result.agents[]? | select(.pane_id==$p)][0] // empty' <<<"$out" 2>/dev/null) || row=""
-  [[ -n $row ]] || { echo "tb: pane $pane に該当する agent がありません。保存しません" >&2; return 1; }
-  LABEL_NAME=$(jq -r '.name // ""' <<<"$row"); LABEL_SESSION=$(jq -r '.agent_session.value // ""' <<<"$row"); LABEL_PANE=$pane
-  [[ -n $LABEL_NAME ]] || { echo "tb: pane $pane の agent に名前がありません(herdr agent rename)。保存しません" >&2; return 1; }
-  [[ -n $LABEL_SESSION ]] || { echo "tb: pane $pane の agent に session がありません。保存しません" >&2; return 1; }
-  [[ $LABEL_NAME =~ ^[A-Za-z0-9._-]{1,64}$ && $LABEL_PANE =~ ^[A-Za-z0-9._:-]{1,64}$ ]] \
-    || { echo "tb: 報告者名/pane に使えない文字があります。保存しません" >&2; return 1; }
-}
-
-# 1 行化 + ラベル偽装の無効化 + 先頭 N 字
-oneline() {  # $1=本文 $2=最大字数
-  printf '%s' "$1" | tr '\r\n\t' '   ' | tr -d '\000-\010\013\014\016-\037' | tr -s ' ' \
-    | jq -Rrs --argjson n "$2" 'gsub("\\[\\s*from\\s*[:：]";"(from:";"i") | gsub("^\\s+|\\s+$";"") | .[0:$n]'
-}
 
 deliver_comment() {  # $1=comments.id → 0 送信済み / 10 / 11
   local cid=$1 row delivered tid kind text name pane project target msg

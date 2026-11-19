@@ -16,7 +16,7 @@ suites() {
 # 組 1 つ分のコマンド(1 行 1 コマンド)
 suite_cmds() {
   case $1 in
-    misc)        printf '%s\n' "bash tests/test_env.sh" "bash tests/test_instance.sh" "python3 tests/test_webui_queries.py";;
+    misc)        printf '%s\n' "python3 taskboard/tools/deps.py --check" "bash tests/test_env.sh" "bash tests/test_instance.sh" "python3 tests/test_webui_queries.py";;
     taskboard-*) echo "bash taskboard/test/run.sh --shard ${1#taskboard-}";;
     webui|scheduler|setup|repoindex) echo "bash $1/tests/run.sh";;
     *) return 1;;

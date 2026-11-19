@@ -12,7 +12,6 @@ else ROLES_DIR=$ROLES_BASE; fi
 ROLE_MAX=${TB_ROLE_MAX:-12000}
 ROLE_FILE=""; ROLE_HASH=""; ROLE_TEXT=""
 
-sha256() { if command -v sha256sum >/dev/null; then sha256sum | cut -c1-64; else shasum -a 256 | cut -c1-64; fi; }
 
 # ---------- 役割の本文(DB の config 表。キーは role:<役割名> と role-map)----------
 # 引く順: DB のこのセッションの行 > 共通の行(*) > ROLES_DIR のファイル(roles/sessions/<セッション>/ があればそこ、無ければ roles/)。
@@ -187,16 +186,7 @@ record_briefing() {  # session agent file hash source via
     VALUES ($SQS, $(q "$1"), $(q "$2"), NULLIF($(q "$3"),''), $(q "$4"), $(q "$5"), $(q "$6"), $(q "$(now)"));" >/dev/null
 }
 
-# 人か agent かの判定用: 一覧を取れなければ 1(「名前が無い」= 人の pane と区別する)
-pane_owner_name() {  # $1=pane → 名前(無ければ空)
-  local out
-  out=$(herdr_call agent list 2>/dev/null) || return 1
-  jq -r --arg p "$1" '[.result.agents[]? | select(.pane_id==$p)][0].name // empty' <<<"$out" 2>/dev/null || return 1
-}
 
-agent_name_by_pane() {  # $1=pane → 名前(無ければ空)
-  herdr_call agent list 2>/dev/null | jq -r --arg p "$1" '[.result.agents[]? | select(.pane_id==$p)][0].name // empty' 2>/dev/null
-}
 
 # SessionStart hook から呼ぶ(bin/tb-role-hook 経由)。常に終了コード 0。渡すときだけ stdout に hook 用の JSON を出す
 cmd_role-context() {
