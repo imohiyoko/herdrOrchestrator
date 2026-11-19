@@ -65,8 +65,79 @@ _route_rules() {
   ROUTE_REASON="routes.conf: $from -> $to に一致する行がない"; return 1
 }
 
-outbox_deliver() {  # $1=outbox.id → 0 送信済み / 10 / 11
+# ---------- delivery(今届ける / 保留する。config の delivery キー) ----------
+# 各行は "<送信者のパターン> -> <宛先のパターン> : <種別>=<now|hold> ..."(パターンは routes と同じ。種別は task info answer、* は残り全部)
+#   coordinator -> assistant : info=hold answer=hold task=now
+#   @worker     -> assistant : *=hold
+# 送信者と宛先が一致し、その種別(無ければ *)を書いた最初の行で決まる。どの行にも当たらなければ now(今までどおり)。
+# キーが無ければ判定もしない(今までどおり)。役割を確かめられない行に当たったら hold に倒す(人と話している相手の入力を邪魔しない)。
+# 判定の順は routes → approvals → delivery(outbox_deliver が届ける直前に決める。承認のあとや flush でも同じ)
+DELIVERY_MODE=now DELIVERY_RULE=""
+delivery_mode() {  # $1=送信者 $2=宛先 $3=種別 → DELIVERY_MODE / DELIVERY_RULE
+  DELIVERY_MODE=now; DELIVERY_RULE="delivery: 設定なし"
+  config_has delivery || return 0
+  local rc=0 pinned=0
+  if [[ ${#ROLE_PIN_N[@]} -eq 0 ]]; then role_pin "$1" "$2"; pinned=1; fi
+  _delivery_rules "$@" || rc=$?
+  ((pinned == 0)) || role_unpin
+  return $rc
+}
+# 行の中から種別の値を引く。$1=指定の並び $2=種別 → 値(now|hold)を出す。書いていなければ 1
+_delivery_pick() {
+  local tok k v star="" toks
+  read -ra toks <<<"${1//,/ }"   # glob を展開しない(*=hold がファイル名に化けない)
+  for tok in "${toks[@]}"; do
+    [[ $tok == *=* ]] || continue
+    k=${tok%%=*}; v=${tok#*=}
+    [[ $v == now || $v == hold ]] || continue
+    [[ $k == "$2" ]] && { printf '%s' "$v"; return 0; }
+    [[ $k == '*' && -z $star ]] && star=$v
+  done
+  [[ -n $star ]] || return 1
+  printf '%s' "$star"
+}
+_delivery_rules() {
+  local from=$1 to=$2 kind=$3 line pair spec l r v
+  while IFS= read -r line || [[ -n $line ]]; do
+    line=$(trim "${line%%#*}"); [[ $line == *"->"*:* ]] || continue
+    pair=${line%%:*}; spec=$(trim "${line#*:}")
+    l=$(trim "${pair%%->*}"); r=$(trim "${pair#*->}")
+    v=$(_delivery_pick "$spec" "$kind") || continue
+    local m1=0 m2=1
+    name_matches "$from" "$l" || m1=$?
+    if ((m1 == 0)); then m2=0; name_matches "$to" "$r" || m2=$?; fi
+    if ((m1 == 2 || m2 == 2)); then DELIVERY_MODE=hold; DELIVERY_RULE="delivery: $line の役割を確かめられないため保留"; return 0; fi
+    ((m1 == 0 && m2 == 0)) || continue
+    DELIVERY_MODE=$v; DELIVERY_RULE="delivery: $l -> $r : $kind=$v"; return 0
+  done < <(config_text delivery)
+  DELIVERY_RULE="delivery: $from -> $to に一致する行がない(now)"
+}
+
+# 保留する: inbox に置き、outbox は sent(届け先 inbox)にする。1 つのトランザクション。失敗したら 12(outbox は queued のまま)
+DELIVER_HELD=""
+outbox_hold() {  # $1=outbox.id $2=送信者 $3=宛先 $4=種別 $5=task(空可) $6=本文 $7=規則 $8=記録用の 1 行
+  local oid=$1 iid err
+  if ! iid=$(sql "BEGIN IMMEDIATE;
+      INSERT INTO main.inbox (herdr_session, outbox_id, recipient, from_name, kind, task_id, text, rule, created_at)
+        SELECT $SQS, $oid, $(q "$3"), $(q "$2"), $(q "$4"), NULLIF($(q "$5"),''), $(q "$6"), $(q "$7"), $(q "$(now)")
+        WHERE EXISTS (SELECT 1 FROM outbox WHERE id=$oid AND status='queued');
+      UPDATE main.outbox SET status='sent', sent_at=$(q "$(now)"), reason=reason||' / '||$(q "$7")||' → inbox I-'||(SELECT id FROM inbox WHERE outbox_id=$oid)
+        WHERE herdr_session=$SQS AND id=$oid AND status='queued' AND EXISTS (SELECT 1 FROM inbox WHERE outbox_id=$oid);
+      SELECT 'I-'||id FROM inbox WHERE outbox_id=$oid;
+      COMMIT;" 2>&1) || [[ $iid != I-* ]]; then
+    [[ -n $iid ]] || iid="O-$oid は queued ではありません"
+    err=${iid##*$'\n'}
+    log_message hold "O-$oid" "$3" "$8" failed
+    echo "tb: O-$oid を inbox に保留できませんでした(送っていません。queued のまま): $err" >&2
+    return 12
+  fi
+  DELIVER_HELD=$iid
+  log_message hold "O-$oid" "$3" "$8" sent
+}
+
+outbox_deliver() {  # $1=outbox.id → 0 送信済み・保留済み(DELIVER_HELD に I-<n>)/ 10 / 11 / 12 保留に失敗
   local oid=$1 row st from pane target kind tid text msg
+  DELIVER_HELD=""
   row=$(session_row outbox id "$oid")
   [[ -n $row ]] || die "outbox が見つかりません: O-$oid"
   st=$(jq -r .status <<<"$row")
@@ -74,12 +145,17 @@ outbox_deliver() {  # $1=outbox.id → 0 送信済み / 10 / 11
   from=$(jq -r .from_name <<<"$row"); pane=$(jq -r .from_pane <<<"$row"); target=$(jq -r .target <<<"$row")
   kind=$(jq -r .kind <<<"$row"); tid=$(jq -r '.task_id // "-"' <<<"$row"); text=$(jq -r .text <<<"$row")
   msg="[from: $from / $pane / $tid / $kind] $(oneline "$text" "$SEND_MAX")"
+  delivery_mode "$from" "$target" "$kind"
+  if [[ $DELIVERY_MODE == hold ]]; then
+    outbox_hold "$oid" "$from" "$target" "$kind" "$(jq -r '.task_id // ""' <<<"$row")" "$text" "$DELIVERY_RULE" "$msg"; return $?
+  fi
   limits_send_gate "$target" || { log_message send "O-$oid" "$target" "$msg" busy; return 10; }   # max_working_agents: 待たせる(queued のまま)
   herdr_send "$target" "$msg" "O-$oid" send || return $?
   sql "UPDATE main.outbox SET status='sent', sent_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$oid;"
 }
 
-# 終了コード: 0 送信済み / 10 宛先使用中で outbox に積んだ / 11 送信失敗で outbox に積んだ / 4 ルールで拒否(記録のみ)
+# 終了コード: 0 送信済み(または delivery の設定で inbox に保留した)/ 10 宛先使用中で outbox に積んだ / 11 送信失敗で outbox に積んだ
+#             12 保留しようとして inbox に書けなかった(outbox に積んだまま)/ 4 ルールで拒否(記録のみ)
 #             20 人の承認待ち(approvals.conf が ask。人が tb approve O-<n>) / 3 送信者を特定できず未保存
 cmd_send() {
   [[ $# -ge 1 ]] || usage "send <宛先 agent 名> --text T [--task T-..] [--kind task|info|answer] [--json]"
@@ -104,6 +180,7 @@ cmd_send() {
   names=$(herdr_call agent list 2>/dev/null | jq -r '.result.agents[]?.name // empty' 2>/dev/null) || names=""
   grep -qxF -- "$target" <<<"$names" || die "send: 宛先の agent が herdr にいません: $target(保存しません)"
   local status=queued reason="" rc=0 oid
+  DELIVER_HELD=""
   if ! route_allowed "$LABEL_NAME" "$target"; then status=denied; reason=$ROUTE_REASON
   else
     reason=$ROUTE_REASON
@@ -127,7 +204,8 @@ cmd_send() {
   else
     outbox_deliver "$oid" >/dev/null || rc=$?
   fi
-  if ((json)); then sql -json "SELECT * FROM outbox WHERE id=$oid;" | jq -c '.[0] | .id = "O-\(.id)"'
+  if ((json)); then sql -json "SELECT * FROM outbox WHERE id=$oid;" | jq -c --arg held "$DELIVER_HELD" '.[0] | .id = "O-\(.id)" | if $held != "" then .inbox = $held else . end'
+  elif ((rc == 0)) && [[ -n $DELIVER_HELD ]]; then echo "O-$oid held for $target ($DELIVER_HELD)"
   else
     case $rc in 0) echo "O-$oid sent to $target";; 4) echo "O-$oid denied";; 20) echo "O-$oid pending-approval";; *) echo "O-$oid queued";; esac
   fi
@@ -170,5 +248,43 @@ cmd_outbox() {
   if ((json)); then sql -json "SELECT * FROM outbox WHERE ($where) ORDER BY id DESC LIMIT 100;" | jq -c '(. // [])[] | .id = "O-\(.id)"'
   else sql -nullvalue - -separator $'\t' "SELECT 'O-'||id, status, from_name, target, kind, COALESCE(task_id,'-'), created_at,
          substr(replace(replace(text, char(10), ' '), char(9), ' '),1,80) FROM outbox WHERE ($where) ORDER BY id DESC LIMIT 100;"
+  fi
+}
+
+# ---------- inbox(保留された送信を、宛先の agent が自分で読む) ----------
+# 読み手は HERDR_PANE_ID + herdr agent list から決まる(自己申告にしない)。自分宛ての行だけを見る(送信者もほかの agent も読めない)。
+# 人と話している agent は、人に頼まれたとき(「確認して」など)だけ読む(roles/_common.md)
+cmd_inbox() {
+  local unread=0 json=0 where
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --unread) unread=1; shift;;
+      --json) json=1; shift;;
+      --name|--agent|--for|--pane|--session) usage "inbox: 読み手は herdr から自動で決まります。$1 は指定できません";;
+      *) usage "inbox [--unread] [--json]";;
+    esac
+  done
+  resolve_label || return 3
+  where="recipient=$(q "$LABEL_NAME")"; ((unread)) && where+=" AND read_at IS NULL"
+  if ((json)); then
+    sql -json "SELECT * FROM inbox WHERE $where ORDER BY id;" | jq -c '(. // [])[] | .id = "I-\(.id)" | .outbox_id = "O-\(.outbox_id)"'
+  else
+    sql -nullvalue - -separator $'\t' "SELECT 'I-'||id, CASE WHEN read_at IS NULL THEN 'unread' ELSE 'read' END, from_name, kind, COALESCE(task_id,'-'), created_at,
+         substr(replace(replace(text, char(10), ' '), char(9), ' '),1,200) FROM inbox WHERE $where ORDER BY id;"
+  fi
+}
+
+# 1 件を全文で出し、既読にする(自分宛てでなければ「見つからない」。ほかの agent の行があるかも漏らさない)
+cmd_inbox-read() {
+  [[ $# -ge 1 && $1 =~ ^I-[0-9]+$ ]] || usage "inbox-read I-<n> [--json]"
+  local iid=${1#I-} json=0 row; shift
+  case ${1:-} in --json) json=1;; "") ;; *) usage "inbox-read I-<n> [--json]";; esac
+  resolve_label || return 3
+  row=$(sql -json "SELECT * FROM inbox WHERE id=$iid AND recipient=$(q "$LABEL_NAME");" | jq -c '.[0] // empty')
+  [[ -n $row ]] || die "inbox に見つかりません: I-$iid"
+  sql "UPDATE main.inbox SET read_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$iid AND recipient=$(q "$LABEL_NAME") AND read_at IS NULL;"
+  if ((json)); then jq -c '.id = "I-\(.id)" | .outbox_id = "O-\(.outbox_id)"' <<<"$row"
+  else
+    jq -r '"I-\(.id)  from: \(.from_name) / \(.kind) / \(.task_id // "-") / \(.created_at)  (O-\(.outbox_id))\n\n\(.text)"' <<<"$row"
   fi
 }
