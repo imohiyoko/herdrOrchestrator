@@ -91,5 +91,8 @@ eq "schedwatch: wait observation recorded once" "$(ssql "SELECT COUNT(*) FROM ob
 lgx allbusy 1 ran 0
 TB_SCHEDWATCH_WAIT_MAX_MIN=30 $TB digest >/dev/null
 eq "schedwatch: wait record cleared after delivery" "$(ssql "SELECT COUNT(*) FROM observations WHERE kind='schedwait';")" "0"
+# 待ちのあとに止めて(skipped_disabled)、次の実行の前に有効へ戻したら、前の待ちから数え直さない
+mkjob waitoff 1 other; for m in 55 45; do lgx waitoff $m failed 10; done; lg waitoff 40 skipped_disabled
+[[ $(TB_SCHEDWATCH_WAIT_MAX_MIN=30 $TB digest --dry-run) != *"waitoff が、宛先の作業中"* ]] && ok "schedwatch: disabled period ends the wait" || ng "schedwatch: disabled period ends the wait"
 eq "schedwatch: bad wait_max_min is refused" "$(TB_SCHEDWATCH_WAIT_MAX_MIN=x rc $TB digest --dry-run)" "2"
 unset TB_SCHED_DIR TB_SCHEDWATCH_NOW TB_LIMIT_WATCHERS TB_SCHEDWATCH_CONF

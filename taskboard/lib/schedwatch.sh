@@ -59,6 +59,7 @@ sw_summarize() {
     | ([$L[] | select(.a == "skipped_disabled") | .e] | max) as $lastd
     | ([$L[] | select(.a != "skipped_disabled") | .e] | max) as $lastnd
     | ([$L[] | select((.a == "ran" or .a == "sent" or .a == "failed") and (.w | not)) | .e] | max) as $lastrun
+    | ([$lastrun, $lastd] | map(select(. != null)) | max) as $waitfrom   # 送れた実行か、止めていた記録のあとからを待ちとして数える
     | {
         n: ($L | length),
         last_action: ($L | last | .a),
@@ -70,8 +71,8 @@ sw_summarize() {
         ran_w: ([$L[] | select((.a == "ran" or .a == "sent") and .e >= ($now - $win))] | length),
         failed_w: ([$L[] | select(.a == "failed" and (.w | not) and .e >= ($now - $win))] | length),
         wait_w: ([$L[] | select(.w and .e >= ($now - $win))] | length),
-        wait_start: ([$L[] | select(.w and .e > ($lastrun // -1)) | .e] | min),
-        wait_count: ([$L[] | select(.w and .e > ($lastrun // -1))] | length)
+        wait_start: ([$L[] | select(.w and .e > ($waitfrom // -1)) | .e] | min),
+        wait_count: ([$L[] | select(.w and .e > ($waitfrom // -1))] | length)
       }' "$1" 2>/dev/null
 }
 
