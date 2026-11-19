@@ -106,7 +106,7 @@ rsql "CREATE TABLE IF NOT EXISTS inbox (id INTEGER PRIMARY KEY AUTOINCREMENT, he
 j=$(TB_TODAY=2026-03-12 $TB reminders --json)
 eq "reminders: unread held messages" "$(jq -r '[.items[] | select(.key | startswith("inbox:")) | "\(.ref) \(.who) \(.what)"] | join(",")' <<<"$j")" "I-1 assistant 未読の保留メッセージ: conductor → assistant (info)"
 eq "reminders: no held body" "$(grep -c 'body' <<<"$j")" "0"
-rsql "DROP TABLE inbox;"
+rsql "DELETE FROM inbox;"   # 016 の本物の表は残す
 
 # レビュー待ちの PR(許可リストのリポジトリだけ。draft・承認済みは載せない)と、秘密らしい値を伏せる
 printf '%s\n' '- org/repo' >"$TB_REPOS_FILE"
