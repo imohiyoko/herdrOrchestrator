@@ -3,7 +3,7 @@
 # --- reminders(人が忘れているかもしれないもののまとめ。読み取り専用)
 _rm_saved=$(env | grep -E '^(TB_DB|TB_CONFIG|TB_REPOS_FILE|TB_GH_BIN|FAKE_AGENTS)=' || true)
 export TB_DB=$TMP/rem.db TB_CONFIG=$TMP/rem.conf TB_REPOS_FILE=$TMP/rem-repos.md TB_GH_BIN=$TMP/rem-gh
-export TB_REMINDERS_DEADLINES=$TMP/rem-deadlines.conf TB_REMINDERS_TODAY=2026-03-10
+export TB_REMINDERS_DEADLINES=$TMP/rem-deadlines.conf TB_TODAY=2026-03-10
 export FAKE_AGENTS='[{"pane_id":"wW:p1","name":"worker1","agent_session":{"value":"sw"}}]'
 printf 'rm=rm-conductor\n' >"$TB_CONFIG"
 : >"$FAKE_LOG"
@@ -75,25 +75,24 @@ eq "reminders: removed from state" "$(rsql "SELECT value FROM notify_seen WHERE 
 eq "reminders: then quiet again" "$(rc $TB reminders --check)" "3"
 
 # 1 日 1 回の全件: 日付が変わると check が 0、publish は全件で、継続の日数が進む
-eq "reminders: next day → check 0" "$(TB_REMINDERS_TODAY=2026-03-11 rc $TB reminders --check)" "0"
-out=$(TB_REMINDERS_TODAY=2026-03-11 $TB reminders --publish)
+eq "reminders: next day → check 0" "$(TB_TODAY=2026-03-11 rc $TB reminders --check)" "0"
+out=$(TB_TODAY=2026-03-11 $TB reminders --publish)
 eq "reminders: daily full list" "$(head -1 <<<"$out" | sed 's/.*\/ //')" "全件]"
 eq "reminders: full list has every item" "$(sed -n '3,$p' <<<"$out" | grep -c ' | ')" "4"
-out=$(TB_REMINDERS_TODAY=2026-03-11 $TB reminders --publish)
+out=$(TB_TODAY=2026-03-11 $TB reminders --publish)
 [[ $out == *"C-1(2 日目)"* ]] && ok "reminders: day N" || { ng "reminders: day N"; echo "   $out"; }
-eq "reminders: one full list per day" "$(TB_REMINDERS_TODAY=2026-03-11 rc $TB reminders --check)" "3"
+eq "reminders: one full list per day" "$(TB_TODAY=2026-03-11 rc $TB reminders --check)" "3"
 
-# 期限の列(別の変更で tasks に due を足す)。列があれば読む。done・期限なしは載せない。境界: 昨日=期限切れ・今日・明日=急ぎ、それ以降=予定
-rsql "ALTER TABLE tasks ADD COLUMN due TEXT;"
+# 期日の列(tasks.due)。done・期限なしは載せない。境界: 昨日=期限切れ・今日・明日=急ぎ、それ以降=予定
 d1=$($TB add -p rm -t 'due yesterday'); d2=$($TB add -p rm -t 'due today'); d3=$($TB add -p rm -t 'due tomorrow'); d4=$($TB add -p rm -t 'due in 3 days'); d5=$($TB add -p rm -t 'done already')
 rsql "UPDATE tasks SET due='2026-03-10' WHERE id='$d1'; UPDATE tasks SET due='2026-03-11' WHERE id='$d2'; UPDATE tasks SET due='2026-03-12' WHERE id='$d3';
       UPDATE tasks SET due='2026-03-14' WHERE id='$d4'; UPDATE tasks SET due='2026-03-01', status='done' WHERE id='$d5';"
-j=$(TB_REMINDERS_TODAY=2026-03-11 $TB reminders --json)
+j=$(TB_TODAY=2026-03-11 $TB reminders --json)
 eq "reminders: due stages" "$(jq -r '[.items[] | select(.key | startswith("due:T-")) | "\(.ref):\(.p)"] | join(" ")' <<<"$j")" "$d1:1 $d2:1 $d3:1 $d4:4"
 eq "reminders: task without due or done never listed" "$(jq -r '[.items[] | select(.ref == "'"$r1"'" or .ref == "'"$d5"'")] | length' <<<"$j")" "0"
 eq "reminders: show does not write" "$(rsql "SELECT value FROM notify_seen WHERE key='reminders:state';" | jq -r 'has("due:'"$d1"'")')" "false"
-TB_REMINDERS_TODAY=2026-03-11 $TB reminders --publish >/dev/null
-out=$(TB_REMINDERS_TODAY=2026-03-12 $TB reminders --publish)
+TB_TODAY=2026-03-11 $TB reminders --publish >/dev/null
+out=$(TB_TODAY=2026-03-12 $TB reminders --publish)
 eq "reminders: stage change (today → overdue) shown on full list" "$(grep "$d2" <<<"$out" | cut -d'|' -f1,4 | tr -d ' ')" "急ぎ|2026-03-11"
 rsql "UPDATE tasks SET due=NULL;"
 
@@ -104,7 +103,7 @@ rsql "CREATE TABLE inbox (id INTEGER PRIMARY KEY AUTOINCREMENT, herdr_session TE
         ('default', 1, 'assistant', 'conductor', 'info', 'held body', 'r', '2026-03-12T00:00:00Z', NULL),
         ('default', 2, 'assistant', 'conductor', 'info', 'read body', 'r', '2026-03-12T00:00:00Z', '2026-03-12T01:00:00Z'),
         ('other', 3, 'assistant', 'conductor', 'info', 'other body', 'r', '2026-03-12T00:00:00Z', NULL);"
-j=$(TB_REMINDERS_TODAY=2026-03-12 $TB reminders --json)
+j=$(TB_TODAY=2026-03-12 $TB reminders --json)
 eq "reminders: unread held messages" "$(jq -r '[.items[] | select(.key | startswith("inbox:")) | "\(.ref) \(.who) \(.what)"] | join(",")' <<<"$j")" "I-1 assistant 未読の保留メッセージ: conductor → assistant (info)"
 eq "reminders: no held body" "$(grep -c 'body' <<<"$j")" "0"
 rsql "DROP TABLE inbox;"
@@ -117,16 +116,16 @@ cat >"$TMP/rem-prs.json" <<'J'
  {"number":9,"title":"approved","isDraft":false,"reviewDecision":"APPROVED","createdAt":"2026-03-09T00:00:00Z"},
  {"number":10,"title":"token ghp_abcdefghijklmnopqrstuvwxyz0123","isDraft":false,"reviewDecision":"","createdAt":"2026-03-09T00:00:00Z"}]
 J
-out=$(TB_REMINDERS_TODAY=2026-03-12 $TB reminders --publish)
+out=$(TB_TODAY=2026-03-12 $TB reminders --publish)
 eq "reminders: open PRs waiting for review" "$(grep -o 'org/repo#[0-9]*' <<<"$out" | tr '\n' ' ')" "org/repo#10 org/repo#7 "
 eq "reminders: secret redacted" "$(grep -c 'ghp_' <<<"$out") $(grep -c '伏せた秘密' <<<"$out") $(tail -1 <<<"$out" | cut -d: -f1)" "0 1 (秘密らしい値を伏せました"
 eq "reminders: secret redacted in the Web UI row" "$(rsql "SELECT value FROM notify_seen WHERE key='reminders:last';" | grep -c ghp_)" "0"
-out=$(TB_REMINDERS_TODAY=2026-03-12 $TB reminders --publish)
-eq "reminders: secret in a continuing item is redacted too" "$(grep -c 'ghp_' <<<"$out") $(TB_REMINDERS_TODAY=2026-03-12 $TB reminders --json | grep -c ghp_) $(rsql "SELECT value FROM notify_seen WHERE key='reminders:last';" | grep -c ghp_)" "0 0 0"
+out=$(TB_TODAY=2026-03-12 $TB reminders --publish)
+eq "reminders: secret in a continuing item is redacted too" "$(grep -c 'ghp_' <<<"$out") $(TB_TODAY=2026-03-12 $TB reminders --json | grep -c ghp_) $(rsql "SELECT value FROM notify_seen WHERE key='reminders:last';" | grep -c ghp_)" "0 0 0"
 eq "reminders: gh read-only listing" "$(tail -1 "$TMP/rem-gh.log")" "pr list --repo org/repo --state open --limit 30 --json number,title,isDraft,reviewDecision,createdAt"
 eq "reminders: bad flag" "$(rc $TB reminders --nope)" "2"
-eq "reminders: bad today" "$(TB_REMINDERS_TODAY=x rc $TB reminders)" "2"
+eq "reminders: bad today" "$(TB_TODAY=x rc $TB reminders)" "2"
 
-unset TB_REMINDERS_DEADLINES TB_REMINDERS_TODAY TB_REPOS_FILE TB_GH_BIN
+unset TB_REMINDERS_DEADLINES TB_TODAY TB_REPOS_FILE TB_GH_BIN
 while IFS= read -r _l; do [[ -n $_l ]] && export "$_l"; done <<<"$_rm_saved"
 unset _rm_saved _l

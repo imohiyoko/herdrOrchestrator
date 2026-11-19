@@ -85,8 +85,23 @@ tb update T-web-002 --add-label frontend --remove-label ui --priority highest
 - **外部リンク** `--ref [種類=]URL`: Slack のスレッド・PR・ドキュメントなどの URL を何個でも(`tb update --add-ref` / `--remove-ref <URL>` で付け外し)。種類を省くと URL から `slack` / `github` / `link` を決める。http(s) の URL だけ。`tb show` と Web UI の詳細(押せるリンク)に出る。
 - **担当の agent**: 既存の `--owner`(agent 名)と `--session`(その agent の会話 ID)で紐付く。`tb list --owner <agent>` で絞り込める。
 - **リンク** `tb link <from> blocks|relates|duplicates <to>`: `blocks` は claim を止める(先行タスクが done になれば claim できる)。blocks の循環は止める。`tb show` は向きつき(`blocks` / `blocked_by` など)で出す。
-- `tb list` の既定の出力(ID 状態 担当 題)は変えていない。種別・優先度・作成・更新・ラベルは `--long`(または `--json`)で出る。
+- `tb list` の既定の出力(ID 状態 担当 題)は変えていない。種別・優先度・作成・更新・ラベル・期日は `--long`(または `--json`)で出る。
 - Web UI のタスク一覧は 種別・優先度・ラベル・作成・更新 の列と、種別・優先度・ラベルの絞り込みを持つ。ラベルを押すとそのラベルで絞り込む。
+
+### 期日(期限切れ・期限間近)
+
+```sh
+tb add -p web -t "ログ掃除" --due 2026-12-01      # 期日は日付だけ(YYYY-MM-DD)。既定は期日なし
+tb update T-web-012 --due 2026-12-15            # 変える。--due '' で外す
+tb list --overdue                               # 期日が今日より前で done でないもの
+tb list --due-within 3 --sort due --long        # 今日〜3 日後が期日で done でないもの(0 は今日だけ)。--long の最後の列が期日
+```
+
+- 期日のないタスクは期限切れにも期限間近にもならない。done のタスクも出さない。
+- 「今日」は tb を動かす端末の地方時の日付。境界の確認やテストでは `TB_TODAY=YYYY-MM-DD` で固定できる。
+- 作業タスクに紐付かない締め切り(掃除の期限など)は、担当なしのタスク(`--owner` を付けない)に `--due` を付けて置く。
+- 存在しない日付(`2026-02-30`)や形式違い(`2026/12/01`)は使い方の誤り(終了コード 2)。
+- Web UI のタスク一覧は期日の列と「期限切れ」「期限間近(N 日以内)」の絞り込み、期日の近い順の並びを持つ。期限切れは赤で出す。
 
 ## 代行依頼(権限が足りないとき)
 
@@ -185,7 +200,7 @@ tb reminders --publish     # まとめを出し、記録を更新する
 - **材料**(すべて読むだけ): 未対応の質問・ブロック報告(未完了のタスク)/ 承認待ち(送信 `O-` / agent 操作 `L-` / 代行依頼 / 解析役の起動 `A-`)/
   レビュー待ちの PR(許可リスト `taskboard/config/repos.md` のリポジトリで、開いていて draft でなく、承認も変更依頼もないもの。`gh pr list` で読むだけ)/
   停滞したタスク(`in_progress` のまま `TB_REMINDERS_STALE_HOURS`(既定 24)時間更新がない。Web UI の「停滞」と同じ)/
-  宛先に届いていない送信(`queued` のまま `TB_DIGEST_QUEUED_SEC` 秒)/ 未読の保留メッセージ(`inbox` 表があれば。宛先と送り手と種別だけ)/ 期限(`tasks.due` の列があれば。タスクにしない期限は
+  宛先に届いていない送信(`queued` のまま `TB_DIGEST_QUEUED_SEC` 秒)/ 未読の保留メッセージ(`inbox` 表があれば。宛先と送り手と種別だけ)/ 期限(`tasks.due`。`tb list --overdue` / `--due-within` と同じ「今日」。タスクにしない期限は
   `taskboard/config/deadlines.conf` に `deadline = YYYY-MM-DD | 題` の行で書く。`TB_REMINDERS_DEADLINES` で場所を変えられる)
 - **優先度**: 急ぎ(期限切れ・今日・明日)→ 人の番(質問・承認待ち・レビュー)→ 停滞 → 待ち・予定(届いていない送信、`TB_REMINDERS_DUE_DAYS`(既定 7)日以内の期限)。
   同じ優先度の中は期限、古い順。列は 優先 / 何が / 誰の番 / 期限 / 参照 / 経過
@@ -193,7 +208,7 @@ tb reminders --publish     # まとめを出し、記録を更新する
   前回と同じ項目は `継続: C-3(2 日目), O-5(1 日目)` の 1 行にまとめ、新しい項目・状態や期限の段階が変わった項目だけを行で出す。
   1 日 1 回(その日の最初の publish)は全件。当てはまらなくなった項目は記録から消し、見出しに「解消 N」と数だけ出す
 - **本文は出さない**: 報告や送信の本文は載せず、題と参照 ID だけ。出す前に秘密らしい値を探し(`tb notify` と同じ規則)、見つかれば伏せる
-- 書くのは `notify_seen` の `reminders:state` / `reminders:last` / `reminders:full-day` だけ。期限の判定に使う日は手元の日付(`TB_REMINDERS_TODAY` で固定できる)
+- 書くのは `notify_seen` の `reminders:state` / `reminders:last` / `reminders:full-day` だけ。期限の判定に使う日は手元の地方時の日付(`TB_TODAY` で固定できる)
 
 ## 指揮官 → worker の送信(send)
 

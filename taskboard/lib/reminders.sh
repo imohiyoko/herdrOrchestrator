@@ -17,7 +17,7 @@ REMINDERS_DUE_DAYS=${TB_REMINDERS_DUE_DAYS:-7}          # 期限がこの日数�
 REMINDERS_DEADLINES=${TB_REMINDERS_DEADLINES:-$TB_ROOT/config/deadlines.conf}   # 「deadline = YYYY-MM-DD | 題」の行。人が書く
 REMINDERS_NO_CHANGE=3   # --check: 新しく出すものが無い
 
-reminders_today() { printf '%s' "${TB_REMINDERS_TODAY:-$(date +%F)}"; }   # 期限の判定に使う日(手元の日付。テストで固定できる)
+reminders_today() { today; }   # 期限の判定に使う日(tb list --overdue / --due-within と同じ。手元の地方時の日付、TB_TODAY で固定できる)
 
 # 表・列があるか(他の変更より前の DB でも動くように)
 reminders_has_col() { [[ -n $(sql "SELECT 1 FROM pragma_table_info($(q "$1")) WHERE name=$(q "$2");") ]]; }
@@ -51,7 +51,7 @@ reminders_collect_db() {
     FROM tasks WHERE status='in_progress' AND (julianday('now') - julianday(updated_at)) * 24 > $REMINDERS_STALE_HOURS")
   parts+=("SELECT 4, 'queue:'||id, status, '宛先に届いていない送信: ' || from_name || ' → ' || target || ' (' || kind || ')', target, '', 'O-'||id, created_at
     FROM outbox WHERE status='queued' AND (julianday('now') - julianday(created_at)) * 86400 >= $DIGEST_QUEUED_SEC")
-  if reminders_has_col tasks due; then   # 期限の列(別の変更で足す)。done のタスクと期限なしは載せない
+  if reminders_has_col tasks due; then   # 期日の列(schema 015)。done のタスクと期日なしは載せない
     local st; st=$(reminders_due_sql due)
     parts+=("SELECT CASE WHEN $st = 'soon' THEN 4 ELSE 1 END, 'due:'||id, ($st) || ':' || due,
         '期限: ' || id || ' ' || title, COALESCE(owner_agent, '人'), due, id, created_at
@@ -153,7 +153,7 @@ cmd_reminders() {
   done
   [[ $REMINDERS_STALE_HOURS =~ ^[0-9]+$ && $REMINDERS_DUE_DAYS =~ ^[0-9]+$ && $DIGEST_QUEUED_SEC =~ ^[0-9]+$ ]] \
     || usage "TB_REMINDERS_STALE_HOURS / TB_REMINDERS_DUE_DAYS / TB_DIGEST_QUEUED_SEC は数字"
-  [[ $(reminders_today) =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || usage "TB_REMINDERS_TODAY は YYYY-MM-DD"
+  reminders_today >/dev/null   # TB_TODAY が日付でなければ、ここで使い方の誤り
   local items prev full_day today full=0 diff text
   items=$(reminders_collect) || die "reminders: 材料を読めませんでした"
   prev=$(notify_seen_get reminders:state); [[ -n $prev ]] && jq -e 'type == "object"' <<<"$prev" >/dev/null 2>&1 || prev='{}'

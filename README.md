@@ -23,6 +23,7 @@ conductor  <--- reports ---  workers (herdr panes)
 | [`roles/`](roles/README.md) | Role files handed to each agent on startup / after compact (SessionStart hook), maintained by the HR agent |
 | [`lib/`](lib/herdr-env.sh) | Defaults shared by every component (repo root, DB path, herdr binary, schema dir), in bash and Python |
 | [`setup/`](setup/README.md) | Setup agent (`./herdr-up.sh setup`) that walks you through the setup and asks before writing any settings, plus a read-only doctor `setup/check.sh` |
+| [`repoindex/`](repoindex/README.md) | Optional (opt-in) module: a local index of per-repository summaries with its own SQLite database (outside the checkout, `0700`/`0600`) and a read-only MCP tool interface. The core never calls it |
 
 ## Usage
 
@@ -37,6 +38,7 @@ bash taskboard/test/run.sh     # --shard <組> で taskboard/test/shards の組�
 bash webui/tests/run.sh
 bash scheduler/tests/run.sh
 bash setup/tests/run.sh
+bash repoindex/tests/run.sh
 ```
 
 Tests use fake `herdr` binaries and do not touch a real herdr, launchd, or the network. Runtime state (`data/`, `run/`, `logs/`, `generated/`) is git-ignored.
