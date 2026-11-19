@@ -8,7 +8,7 @@
 - **決定**: チケット(`tasks`)を「人や agent が追いかける事柄」の中心にし、チケットの変化を新しい表 `task_events` に 1 件ずつ残す。外への通知は、各機能が決め打ちで呼ぶのをやめ、イベントに対する**通知の規則**(設定 `notify-rules`。人だけが書く)で決める。例: 「ラベル `notify` が付いたら Slack」「優先度 highest の bug ができたら Slack と Web UI の緊急通知」「期限切れになったら Web UI」。
 - **寄せるもの**: 報告コメント(既にチケットに付いている)と期限(`due`)はそのままイベントにする。アラート(A-)と提案(P-)は**元の表をやめてチケットに移す**(人の決定 2026-11-19)。チケットで表せない部分(解析役の起動の承認・指紋による重複のまとめ・解析結果、提案の配送)だけを、チケットに付く小さな表に残す。PR の監視は、PR の URL を外部リンクに持つチケットへイベントとして付ける。
 - **寄せないもの**: 承認(送信 O-・agent 操作 L-・PR 作成 PQ-・代行依頼・解析役の起動)と、保留した送信(inbox)。承認は人の判断が安全の境界(ADR 0001 の L0)で、agent が書けるチケットの状態で代用すると境界が崩れる。inbox は仕事ではなくメッセージ。
-- **規則がないときの動きは今と同じ**: 既定の規則は今の決め打ち(質問・ブロック・完了・アラート)をそのまま書き直したもの。`notify-rules` を書かなければ挙動は変わらない。
+- **規則がないときの動きは今と同じ**: 今の決め打ちの通知(質問・ブロック・完了・アラート)は残し、規則は足すだけ。`notify-rules` を書かなければ挙動は変わらない。
 
 ## 状況(Context)
 
@@ -77,7 +77,7 @@ label_added label=urgent actor=human    -> slack webui      # 人(pane の外)�
 - **届け先**: 今の notify の `file` / `stdout` / `slack` に、`webui`(Web UI の緊急通知と Chrome 通知に出す)と `conductor`(そのプロジェクトの指揮役への次のまとめ = digest に載せる)を足す。
 - **誰が付けたラベルでも当たる**(人の決定 2026-11-19)。agent が付けたラベルでも通知は出る。絞りたい規則だけ `actor=human` を書く。
 - **本文はイベントから決定論で作る**: `[ラベル notify] T-web-012 ログイン画面 (high / bug / 担当 worker-2)` のように、ID・題・種別・優先度・担当・イベントだけ。説明(`description`)やコメントの本文は、今の notify と同じ規則(先頭 2 行・長さの上限)でしか載せない。秘密らしい値の検出、伏せ字、頻度の上限、重複の抑え(`dedupe_sec`)は今の notify をそのまま通す。
-- **既定の規則**: `notify-rules` が無いときは、今の決め打ちと同じ規則を使う(質問・ブロック・完了・アラートの登録と結果)。`tb notify rules` で、今効いている規則と出どころ(設定 / 既定)を出す。`tb notify rules test E-<n>` で、そのイベントにどの規則が当たるかを送らずに確かめる。
+- **今の決め打ちの通知はそのまま**(段 2 の実装で決めた): 質問・ブロック・完了・アラートの通知は今の hook のまま残し、規則は足すだけにする(規則に置き換えると、本文にコメントの本文を載せる今の形を規則の本文で再現する必要があり、移行の利点が小さい)。`notify-rules` が無ければ規則による通知は出ない。`tb notify rules` で、今効いている規則と出どころ(設定 / 既定)を出す。`tb notify rules test E-<n>` で、そのイベントにどの規則が当たるかを送らずに確かめる。
 - `notify` の `enabled = off` のあいだは今と同じく何も外へ出さない(`webui` と `conductor` は内部なので、off でも出すかは段階 2 で決める。初めは off なら何も出さない)。
 
 ### 3. アラートと提案はチケットに移す(元の表をやめる)
@@ -115,7 +115,7 @@ label_added label=urgent actor=human    -> slack webui      # 人(pane の外)�
 
 - チケットは project `proposal`、種別 `task`、ラベル `proposal`。`P-<n>` は別名として残す(`proposal_details.proposal_no`)。
 
-**実装(段 4a / 4b、スキーマ 019)**
+**実装(段 4a / 4b、スキーマ 020)**
 
 - `alerts` / `proposals` は**表をやめ、同じ列の互換ビュー**にした(中身はチケットと `alert_details` / `proposal_details`。`id` は `A-<n>` / `P-<n>` の番号、`task_id` でチケットを指す)。
   digest・limits・notify・review・Web UI・関係グラフなどの読み手は SQL を変えずに読める。ビューも、このセッションの行だけの一時ビューで絞る(`taskboard/sql/session_views`)。
@@ -163,7 +163,7 @@ label_added label=urgent actor=human    -> slack webui      # 人(pane の外)�
 | 段 | 内容 | スキーマ | 依存 |
 |---|---|---|---|
 | 1 | `task_events` と書き込み(作成・状態・ラベル・優先度・担当・期日・リンク・外部リンク・コメント)、`tb history`、Web UI のタスク詳細の履歴 | 新しい表 1 つ | なし |
-| 2 | 通知の規則(`notify-rules`、既定の規則 = 今の挙動)、届け先 `webui` / `conductor`、`tb notify rules [test]`。今の決め打ちの hook を規則の評価に置き換える | なし(`config` 表を使う) | 1 |
+| 2 | 通知の規則(`notify-rules`。規則は足すだけで、今の決め打ちの通知は残す)、届け先 `webui` / `conductor`、`tb notify rules [test]` | なし(`config` 表を使う) | 1 |
 | 3 | 期限のイベント(`overdue` / `due_soon`)を定期のジョブで残す | なし | 1、2 |
 | 4a | アラートをチケットへ移す(`alert_details`、移行、`A-<n>` の別名、人だけが閉じる。読み手は互換ビュー `alerts` でそのまま) | `alert_details`、`alerts` の行を移して表を互換ビューにする | 1 |
 | 4b | 提案をチケットへ移す(`proposal_details`、`P-<n>` の別名。互換ビュー `proposals`) | `proposal_details`、`proposals` の行を移して表を互換ビューにする | 1 |

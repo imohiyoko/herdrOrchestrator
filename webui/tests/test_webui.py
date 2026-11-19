@@ -634,12 +634,30 @@ time.sleep(3.2)
 _ids = [it["id"] for it in json.loads(cl.get("/api/notifications")[2])["items"] if it["id"][:2] in ("r:", "w:")]
 check("アラート: critical/high の解析結果と起動待ちだけ通知", _ids == ["r:1:t1", "w:3"], str(_ids))
 check("アラート: 題名はエスケープ", "API &lt;i&gt;5xx&lt;/i&gt;" in cl.get("/notifications")[2])
+# 通知の規則(notifyrules.sh)で届け先に webui を書いたチケットの通知: 直近 24 時間・webui を含むもの・このセッションだけ
+_c = sqlite3.connect(env["WEBUI_TB_DB"])
+_ne = "INSERT INTO notify_events (herdr_session,type,ref,text,hash,sinks,created_at) VALUES (?,?,?,?,'h',?,?)"
+_now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+_c.executemany(_ne, [("default", "ticket", "E-1", "[チケット] T-web-012 ログイン <b>x</b> — ラベル +notify / high / bug / 担当 -", "file webui", _now),
+                     ("default", "ticket", "E-2", "[チケット] T-web-013 slack だけ", "file slack", _now),
+                     ("default", "ticket", "E-3", "[チケット] T-web-014 古い", "webui", "2000-01-01T00:00:00Z"),
+                     ("other", "ticket", "E-4", "[チケット] T-web-015 別セッション", "webui", _now),
+                     ("default", "question", "C-1", "[質問] webui の文字があっても種別違い", "webui", _now)])
+_c.commit(); _c.close()
+time.sleep(3.2)
+_it = [it for it in json.loads(cl.get("/api/notifications")[2])["items"] if it["id"].startswith("n:")]
+check("規則の通知: webui を含む直近のチケットの通知だけ", [it["href"] for it in _it] == ["/tasks/T-web-012"] and _it[0]["kind"] == "ticket_rule", str(_it))
+check("規則の通知: /notifications でエスケープ", "ログイン &lt;b&gt;x&lt;/b&gt;" in cl.get("/notifications")[2])
+_c = sqlite3.connect(env["WEBUI_TB_DB"])
+_c.execute("DELETE FROM notify_events WHERE type IN ('ticket','question')")
+_c.commit(); _c.close()
+time.sleep(3.2)
 r = cl.get("/notify.js")
 check("/notify.js が 200 の JavaScript", r[0] == 200 and r[1].get("Content-Type", "").startswith("text/javascript")
       and "Notification" in r[2] and "/api/notifications" in r[2], str(r[:2]))
 check("/notify.js は innerHTML を使わない", "innerHTML" not in r[2] and "eval(" not in r[2])
 check("未ログインの /notify.js は /login へ", Client(port).get("/notify.js")[0] == 302)
-# アラートはチケット(019): project alert のチケットとして一覧に出る。解析中は担当が解析役、解析済みは review、優先度は緊急度から
+# アラートはチケット(020): project alert のチケットとして一覧に出る。解析中は担当が解析役、解析済みは review、優先度は緊急度から
 _at = cl.get("/tasks?project=alert")[2]
 check("アラート: チケットとして一覧に出る(T-alert-NNN)", sorted(set(re.findall(r'href="/tasks/(T-alert-\d+)"', _at))) == ["T-alert-001", "T-alert-002", "T-alert-003", "T-alert-004"], str(re.findall(r'href="/tasks/(T-alert-\d+)"', _at)))
 _ac = sqlite3.connect(env["WEBUI_TB_DB"])
@@ -761,6 +779,31 @@ _cx.commit()
 _TD3 = cl.get("/tasks/T-3")[2]
 check("タスク詳細: 外部リンク(http(s) だけをリンクに)", 'href="https://acme.slack.com/archives/C1/p1"' in _TD3 and 'rel="noopener noreferrer"' in _TD3
       and 'href="javascript' not in _TD3 and "javascript:alert(1)" in _TD3)
+# スプリントとボード(019)
+_cx.execute("INSERT INTO sprints (id, project, name, goal, start_date, end_date, state, created_at, herdr_session) VALUES "
+            "(7, 'pj2', '第1スプリント " + XSS + "', 'ゴール', '2026-11-17', '2026-11-30', 'active', 't', 'default')")
+_cx.execute("INSERT INTO sprints (id, project, name, state, created_at, herdr_session) VALUES (8, 'pj2', '次', 'planned', 't', 'default')")
+_cx.execute("UPDATE tasks SET sprint_id=7, points=3 WHERE id='T-3'")
+_cx.execute("UPDATE tasks SET sprint_id=7, points=5 WHERE id='T-4'")
+_cx.execute("UPDATE tasks SET sprint_id=8 WHERE id='T-5'")
+_cx.commit()
+B = cl.get("/board")
+check("ボード: 200・ナビに出る・自動更新しない", B[0] == 200 and 'href="/board"' in B[2] and 'http-equiv="refresh"' not in B[2])
+check("ボード: 既定は active なスプリント(S-7)で、状態の列にカード", "<h2>S-7 " in B[2] and "in_progress (1)" in B[2] and "done (1)" in B[2]
+      and 'href="/tasks/T-3"' in B[2] and 'href="/tasks/T-5"' not in B[2].split("<h2>スプリント一覧</h2>")[0])
+check("ボード: 完了とポイントの集計", "完了 1 / 2 件・ポイント 5 / 8" in B[2])
+check("ボード: スプリント名はエスケープ", XSS not in B[2] and "&lt;script&gt;" in B[2])
+B8 = cl.get("/board?sprint=S-8")[2]
+check("ボード: スプリントを選ぶ", "<h2>S-8 " in B8 and 'href="/tasks/T-5"' in B8.split("<h2>スプリント一覧</h2>")[0])
+check("ボード: ラベルで絞る", 'href="/tasks/T-3"' in cl.get("/board?sprint=S-7&label=ui")[2] and
+      'href="/tasks/T-4"' not in cl.get("/board?sprint=S-7&label=ui")[2].split("<h2>スプリント一覧</h2>")[0])
+for bad in ["sprint=zz", "sprint=S-999", "label=a%20b", "project=%27%3B--"]:
+    r = cl.get("/board?" + bad)
+    check(f"ボード: 不正な指定 {bad} でも 200", r[0] == 200 and "'--" not in r[2], str(r[0]))
+check("タスク詳細: スプリントとポイント", 'href="/board?sprint=S-7"' in cl.get("/tasks/T-3")[2] and "バックログ" in cl.get("/tasks/T-1")[2])
+check("ボード: POST は 405", cl.raw("POST", "/board", {"a": "b"})[0] == 405)
+_cx.execute("UPDATE tasks SET sprint_id=NULL, points=NULL")
+_cx.execute("DELETE FROM sprints")
 # 履歴(018 の task_events): 新しい順、エスケープ、別セッションの行は出ない、行が無ければ欄も出ない
 check("タスク詳細: 履歴が無ければ欄は出ない", "<h2>履歴</h2>" not in _TD3)
 _cx.executemany("INSERT INTO task_events (herdr_session, task_id, kind, old, new, actor, ref, created_at) VALUES (?,?,?,?,?,?,?,?)",

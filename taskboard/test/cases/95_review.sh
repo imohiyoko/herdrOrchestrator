@@ -27,7 +27,7 @@ eq "proposal-resolve: only hr or human" "$(HERDR_PANE_ID=wU:p1 rc $TB proposal-r
 eq "proposal-resolve: hr applies" "$(HERDR_PANE_ID=wH:p1 $TB proposal-resolve P-1 --status applied --note '追記した')" "P-1 applied"
 eq "proposals: list" "$($TB proposals --status open | cut -f1)" "P-2"
 eq "proposals: full" "$($TB proposals P-1 | grep -c '追記した\|--key に対象名')" "2"
-# 提案はチケット(019。ADR 0003): project proposal、ラベル proposal と role:<ファイル>、担当は設定役。適用・見送りは done
+# 提案はチケット(020。ADR 0003): project proposal、ラベル proposal と role:<ファイル>、担当は設定役。適用・見送りは done
 eq "proposal ticket: open → todo, owner hr" "$($TB show T-proposal-002 | jq -r '[.status, .owner_agent, (.labels|join(","))] | join(" ")')" "todo hr proposal,role:-"
 eq "proposal ticket: applied → done with summary" "$($TB show T-proposal-001 | jq -r '[.status, .summary, (.reported_at != null)] | join(" ")')" "done 適用: 追記した true"
 eq "proposal ticket: tb done refused" "$(HERDR_PANE_ID= $TB done T-proposal-002 -d x -m y 2>&1 | grep -c 'tb proposal-resolve P-2')" "1"

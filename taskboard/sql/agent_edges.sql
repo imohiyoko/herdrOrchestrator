@@ -11,7 +11,7 @@ UNION ALL
 SELECT 'lead', NULL, owner_agent, project, 'ok', COUNT(*), MAX(updated_at)
   FROM tasks
   WHERE owner_agent IS NOT NULL AND owner_agent != '' AND status IN ('in_progress', 'review', 'blocked')
-    -- アラート・提案のチケット(019)は指揮官が任せた仕事ではない(解析役は analyze、提案は設定役の担当)
+    -- アラート・提案のチケット(020)は指揮官が任せた仕事ではない(解析役は analyze、提案は設定役の担当)
     AND id NOT IN (SELECT task_id FROM alert_details UNION ALL SELECT task_id FROM proposal_details)
   GROUP BY owner_agent, project
 UNION ALL

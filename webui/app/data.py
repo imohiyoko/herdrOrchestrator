@@ -36,7 +36,7 @@ def session_tables():
 
 
 def session_compat_views():
-    """互換ビューの一覧(taskboard/sql/session_views。019 の alerts / proposals。中身はチケットと小さな表)。"""
+    """互換ビューの一覧(taskboard/sql/session_views。020 の alerts / proposals。中身はチケットと小さな表)。"""
     return _name_list(SESSION_VIEWS)
 
 
@@ -51,7 +51,7 @@ def session_views(c, session):
                           "(SELECT 1 FROM pragma_table_info(m.name) p WHERE p.name='herdr_session')").fetchall():
         if t in want:
             c.execute(f"CREATE TEMP VIEW {t} AS SELECT * FROM main.{t} WHERE herdr_session={lit}")
-    # 互換ビュー(main のビュー)も同じ名前の一時ビューで絞る。019 の前の DB では表なので上で扱われる
+    # 互換ビュー(main のビュー)も同じ名前の一時ビューで絞る。020 の前の DB では表なので上で扱われる
     want_v = set(session_compat_views())
     for (t,) in c.execute("SELECT m.name FROM main.sqlite_master m WHERE m.type='view' AND EXISTS "
                           "(SELECT 1 FROM pragma_table_info(m.name) p WHERE p.name='herdr_session')").fetchall():
@@ -322,6 +322,9 @@ def failed_jobs():
     return out
 
 
+WEBUI_RULE_HOURS = 24
+
+
 def urgent_items():
     """10 分のまとめ送信を待たずに知らせるもの。各要素は通知 1 件(id は同じ事象なら同じ値)。
 
@@ -387,6 +390,15 @@ def urgent_items():
                               "body": _short(f"working のまま。最終入力 {act.get('last_prompt_at')}"),
                               "how": "agent の画面で直近の出力を見て、止まっていれば pane で続きを指示する(要らなければ停止)",
                               "href": f"/agents/{quote(k, safe='')}", "ts": clean(act.get("last_prompt_at") or "")})
+        # 通知の規則(taskboard/lib/notifyrules.sh)で届け先に webui を書いたチケットの通知。直近 WEBUI_RULE_HOURS 時間
+        for ev in q("SELECT id, ref, text, created_at FROM notify_events WHERE type='ticket' AND (' ' || sinks || ' ') LIKE '% webui %'"
+                    " AND julianday(created_at) >= julianday('now') - ? / 24.0 ORDER BY id DESC LIMIT 50", (WEBUI_RULE_HOURS,)):
+            text = clean(ev.get("text") or "")
+            m = re.search(r"\bT-[A-Za-z0-9_]+-[0-9]+\b", text)
+            items.append({"id": f"n:{ev['id']}", "kind": "ticket_rule", "label": "チケット(通知の規則)",
+                          "title": _short(text.replace("[チケット] ", "", 1), 80), "body": _short(text),
+                          "how": "規則は手元で tb notify rules。チケットを開いて確かめる",
+                          "href": ("/tasks/" + quote(m.group(0), safe="")) if m else "/tasks", "ts": clean(ev.get("created_at") or "")})
         rem = reminders_last()
         for it in (rem["items"] if rem else []):
             if it["p"] != 1:

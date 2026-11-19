@@ -1,4 +1,4 @@
--- 019: アラートと提案をチケットに移す(ADR 0003 の段 4)。alerts / proposals の表をやめ、チケット(tasks)と小さな表(alert_details / proposal_details)にする。
+-- 020: アラートと提案をチケットに移す(ADR 0003 の段 4)。alerts / proposals の表をやめ、チケット(tasks)と小さな表(alert_details / proposal_details)にする。
 -- 題・本文・状態・優先度・担当・ラベルはチケットに置き、チケットで表せない部分だけを小さな表に残す(主キーはチケットの ID)。
 -- 読み手(digest・limits・notify・review・Web UI など)と A-<n> / P-<n> の番号のために、元と同じ列の alerts / proposals をビューとして残す。
 -- ビューへの INSERT / UPDATE は INSTEAD OF トリガーがチケットと小さな表へ振り分け、状態・緊急度をチケットの状態・優先度に写す。

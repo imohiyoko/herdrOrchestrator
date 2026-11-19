@@ -37,6 +37,8 @@ valid_due()      {
 today() {
   if [[ -n ${TB_TODAY:-} ]]; then valid_due "$TB_TODAY"; printf '%s' "$TB_TODAY"; else date +%Y-%m-%d; fi
 }
+valid_sprint()  { [[ $1 =~ ^S-[0-9]+$ ]] || usage "スプリント ID は S-<番号> 形式: $1"; }
+valid_points()  { [[ $1 =~ ^[0-9]{1,4}$ ]] || usage "ポイントは 0〜9999 の整数: $1"; }
 need_arg()      { [[ $# -ge 2 ]] || usage "$1 に値が必要です"; }
 blank()         { [[ -z "${1//[[:space:]]/}" ]]; }
 

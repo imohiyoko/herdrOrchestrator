@@ -104,7 +104,7 @@ cmd_proposal() {
   if [[ -n $tfile ]]; then [[ -f $tfile && -r $tfile ]] || die "--text-file を読めません: $tfile"; text=$(head -c 20000 "$tfile"); fi
   blank "$text" && usage "proposal: --text か --text-file が必要です"
   resolve_label || return 3
-  # proposals はチケット(project proposal)と proposal_details の互換ビュー(019)。INSTEAD OF トリガーが両方に書く。
+  # proposals はチケット(project proposal)と proposal_details の互換ビュー(020)。INSTEAD OF トリガーが両方に書く。
   # ビュー経由では last_insert_rowid() が使えないので、同じトランザクションで振った番号を読む。チケットの担当は設定役
   local id; id=$(sql "BEGIN IMMEDIATE; INSERT INTO main.proposals (herdr_session, role_file, title, text, status, by_name, created_at) VALUES
     ($SQS, $(q "$role"), $(q "$title"), $(q "$text"), 'open', $(q "$LABEL_NAME"), $(q "$(now)"));

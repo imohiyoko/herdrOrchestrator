@@ -206,7 +206,7 @@ func (s *DB) setupSession() error {
 			}
 		}
 	}
-	// 互換ビュー(019 の alerts / proposals): 読みの一時ビューだけ。書き込みの見張りは振り分け先の表に付いている
+	// 互換ビュー(020 の alerts / proposals): 読みの一時ビューだけ。書き込みの見張りは振り分け先の表に付いている
 	for _, v := range SessionViews() {
 		var ok int
 		err := s.QueryRow(`SELECT COUNT(*) FROM sqlite_master m WHERE m.type='view' AND m.name=?

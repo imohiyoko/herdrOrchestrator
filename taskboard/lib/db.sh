@@ -22,7 +22,7 @@ SQS=$(q "$SESS")
 # - main.<表> への書き込みの見張り(一時トリガー)。別のセッションの行を足す・変える・消すと ABORT で止まる(絞り忘れが黙って他人の行を変えない)
 # 書き込みは main.<表> と書く(ビューには書けない: SQLite が「cannot modify … because it is a view」で止める)。
 # ビュー経由で書かない(INSTEAD OF トリガーにしない)のは、changes() / last_insert_rowid() / RETURNING がビュー経由では効かないため
-# 例外は taskboard/sql/session_views の互換ビュー(019 の alerts / proposals。中身はチケットと小さな表)。main にビューとしてあり、
+# 例外は taskboard/sql/session_views の互換ビュー(020 の alerts / proposals。中身はチケットと小さな表)。main にビューとしてあり、
 # 同じ名前の一時ビュー(このセッションの行だけ)を作る。書き込みは main.<ビュー> に書き、スキーマの INSTEAD OF トリガーが表へ振り分ける
 SESSION_TABLES_FILE=$TB_ROOT/sql/session_tables
 SESSION_VIEWS_FILE=$TB_ROOT/sql/session_views
@@ -36,7 +36,7 @@ session_tables_present() {
   sql_all "SELECT m.name FROM sqlite_master m WHERE m.type='table' AND m.name IN ($want)
     AND EXISTS (SELECT 1 FROM pragma_table_info(m.name) p WHERE p.name='herdr_session') ORDER BY m.name;" 2>/dev/null || true
 }
-# 互換ビューのうち、この DB に main のビューとして今あるもの(019 の前の DB では表のままなので、表として扱われる)
+# 互換ビューのうち、この DB に main のビューとして今あるもの(020 の前の DB では表のままなので、表として扱われる)
 session_views_present() {
   local want; want=$(session_views | sed "s/.*/'&'/" | paste -sd, -)
   [[ -n $want ]] || return 0
@@ -102,7 +102,9 @@ event_setup() {  # $1=変えた者
   printf "%s SELECT NEW.herdr_session, NEW.id, 'ref_added', NULL, json_extract(value,'\$.url'), %s, NULL, %s FROM json_each(NEW.refs);" "$ins" "$a" "$ts"
   printf 'END;'
   printf 'CREATE TEMP TRIGGER _tb_ev_tasks_u AFTER UPDATE ON main.tasks BEGIN '
-  col status status; col title title; col type type; col priority priority; col owner owner_agent; col due due; col parent parent_id
+  col status status; col title title; col type type; col priority priority; col owner owner_agent; col due due; col parent parent_id; col points points
+  # スプリント(019)は S-<n> で残す(NULL = バックログ)
+  printf "%s SELECT NEW.herdr_session, NEW.id, 'sprint', 'S-'||OLD.sprint_id, 'S-'||NEW.sprint_id, %s, NULL, %s WHERE OLD.sprint_id IS NOT NEW.sprint_id;" "$ins" "$a" "$ts"
   # 説明は本文を履歴に写さない(変わったことだけ)
   printf "%s SELECT NEW.herdr_session, NEW.id, 'description', NULL, NULL, %s, NULL, %s WHERE OLD.description IS NOT NEW.description;" "$ins" "$a" "$ts"
   printf "%s SELECT NEW.herdr_session, NEW.id, 'label_added', NULL, value, %s, NULL, %s FROM json_each(NEW.labels) WHERE value NOT IN (SELECT value FROM json_each(OLD.labels));" "$ins" "$a" "$ts"

@@ -39,7 +39,7 @@ printf 'alert:analyze = allow\n' >"$TB_APPROVALS"
 eq "alert: start failure → queued with note" "$(TB_ANALYST_MAX=5 FAKE_START_RC=1 HERDR_PANE_ID=wX:p1 $TB alert --title 'new one' | cut -d' ' -f3) $(alsql "SELECT note FROM alerts WHERE id=4;")" "queued agent を起動できない(exit 1)"
 eq "alert-close: human" "$(HERDR_PANE_ID= $TB alert-close A-4)" "A-4 closed"
 eq "alert: cli (no pane) allowed" "$(HERDR_PANE_ID= $TB alert --title 'from monitor script' | cut -d' ' -f2) $(alsql "SELECT source FROM alerts ORDER BY id DESC LIMIT 1;")" "new cli"
-# アラートはチケット(019。ADR 0003): project alert・種別 bug・ラベル alert。段階と緊急度がチケットの状態・優先度に写る
+# アラートはチケット(020。ADR 0003): project alert・種別 bug・ラベル alert。段階と緊急度がチケットの状態・優先度に写る
 eq "ticket: each alert is a ticket" "$(alsql "SELECT group_concat(id||':'||task_id, ' ') FROM (SELECT id, task_id FROM alerts ORDER BY id);")" "1:T-alert-001 2:T-alert-002 3:T-alert-003 4:T-alert-004 5:T-alert-005"
 eq "ticket: analyzed → review, critical → highest, owner cleared" "$($TB show T-alert-001 | jq -r '[.status, .priority, .type, (.labels|join(",")), (.owner_agent // "-")] | join(" ")')" "review highest bug alert -"
 eq "ticket: analyzing → in_progress, owner is the analyst" "$($TB show T-alert-002 | jq -r '[.status, .owner_agent] | join(" ")')" "in_progress analyst-A2"

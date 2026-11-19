@@ -83,6 +83,7 @@ tb update T-web-002 --add-label frontend --remove-label ui --priority highest
 - **ラベル** `-l` / `--label`: 何個でも(繰り返しかカンマ区切り)。1〜40 文字で空白・カンマ・引用符は使えない(日本語は可)。agent は `tb list -l <ラベル>` で自分の分野のチケットだけを見られる。
 - **説明** `--desc`: 本文・受け入れ条件。`tb show` と Web UI の詳細に出る。
 - **外部リンク** `--ref [種類=]URL`: Slack のスレッド・PR・ドキュメントなどの URL を何個でも(`tb update --add-ref` / `--remove-ref <URL>` で付け外し)。種類を省くと URL から `slack` / `github` / `link` を決める。http(s) の URL だけ。`tb show` と Web UI の詳細(押せるリンク)に出る。
+- **スプリント**: `tb sprint-add -p web -n "Sprint 1" --start 2026-11-17 --end 2026-11-30 --goal "..."` で作り、`tb add/update --sprint S-n --points 3` で入れる(`--sprint ''` でバックログへ)。`tb sprint-start S-n` で始め(1 つの project で active は 1 つ)、`tb sprint-close S-n --carry S-m` で閉じると終わっていないタスクを次へ移す。`tb board -p web` で状態ごとの列、`tb sprints` で件数とポイント。Web UI の「ボード」(`/board`)にも同じ列が出る(読み取りのみ)。
 - **担当の agent**: 既存の `--owner`(agent 名)と `--session`(その agent の会話 ID)で紐付く。`tb list --owner <agent>` で絞り込める。
 - **リンク** `tb link <from> blocks|relates|duplicates <to>`: `blocks` は claim を止める(先行タスクが done になれば claim できる)。blocks の循環は止める。`tb show` は向きつき(`blocks` / `blocked_by` など)で出す。
 - `tb list` の既定の出力(ID 状態 担当 題)は変えていない。種別・優先度・作成・更新・ラベル・期日は `--long`(または `--json`)で出る。
@@ -113,7 +114,7 @@ tb events -p web --kind label_added --limit 20 --json   # このセッション�
 tb events --since E-120         # E-120 より後のもの(通知の規則などで続きから読む用)
 ```
 
-- **種類**: `created` / `status` / `title` / `type` / `priority` / `owner` / `due` / `parent` / `description` / `label_added` / `label_removed` / `ref_added` / `ref_removed` / `link` / `unlink` / `comment`。作成時のラベル・外部リンクも `label_added` / `ref_added` として残る。
+- **種類**: `created` / `status` / `title` / `type` / `priority` / `owner` / `due` / `parent` / `sprint` / `points` / `description` / `label_added` / `label_removed` / `ref_added` / `ref_removed` / `link` / `unlink` / `comment`。作成時のラベル・外部リンクも `label_added` / `ref_added` として残る。
 - **変えた者**: agent の pane からなら herdr から引いた agent 名(引けなければ `pane:<id>`。書き込みは止めない)、人の端末なら `human`。コメントは報告者、リンクは `task_links.created_by`。
 - **本文は写さない**: 説明は「変わった」ことだけ(前後は空)、コメントは種類と `C-<n>` だけ。
 - **残らないもの**: 報告(`reported_at`)・成果物・要約・担当の会話 ID・アカウント・`updated_at` だけの変化。tb 以外の書き込み(移行・`db-import`・手で開いた sqlite3)。この機能より前の変化。
@@ -642,6 +643,33 @@ tb pr-watch                        # 許可リストの PR を gh の読み取�
 ```
 
 `tb pr-watch` は許可リスト `taskboard/config/repos.md`(`TB_REPOS_FILE` で変更可。git 管理外)の `- <org>/<repo>` の行のリポジトリだけを、`gh pr list` で読む。許可リストが無い・空、または notify が off なら何もせず終了コード 0。初めて見るリポジトリは基準線の記録だけで、既存の PR をイベントにしない。PR の題(短く)と状態だけを使い、本文・レビューのコメント・差分は読まない。ジョブの例は `scheduler/jobs/pr-watch.conf.example` と `notify-flush.conf.example`。
+
+### 通知の規則(notify-rules。チケットのイベントで通知する)
+
+チケットの履歴(`tb history`)のイベントに規則を当てて通知する(設計は [ADR 0003](../docs/adr/0003-ticket-events-and-notify-rules.md) の段 2)。規則は人だけが書く設定 `notify-rules`。例は [config/notify-rules.conf.example](config/notify-rules.conf.example)。
+
+```sh
+tb config set notify-rules < my-rules.conf   # 書く(誤りがあれば何も書かない)
+tb notify rules                              # 今効いている規則と出どころ
+tb notify rules test E-123                   # そのイベントにどの規則が当たるか(何も積まない)
+```
+
+```text
+# <イベントの種類|*> [条件 ...] -> <届け先 ...>
+label_added label=notify            -> slack webui     # ラベル notify が付いたら(誰が付けても)
+created type=bug priority>=high    -> slack
+status new=done project=web         -> conductor
+label_added label=urgent actor=human -> slack           # 人が付けたときだけ
+comment new=question                -> webui
+```
+
+- **イベントの種類**: `tb history` の種類(created / status / label_added / priority / comment など)か `*`。
+- **条件**: `type=` `priority=` `priority>=` `label=` `project=` `owner=` `new=` `old=` `actor=`。すべて満たした行が当たる。`label=` は、label_added / label_removed では付け外したラベルそのもの、ほかのイベントでは「今そのラベルを持っている」。`actor=` は名前か `human` / `system` / `agent`。
+- **届け先**: `file` `stdout` `slack`(ほかの通知と同じ経路)、`webui`(Web UI の緊急通知と Chrome 通知に 24 時間出す)、`conductor`(そのプロジェクトの指揮役への次のまとめ = `tb digest`)。当たった行の届け先を合わせ、イベント 1 件につき通知 1 件(種別 `ticket`)。
+- **本文**: `[チケット] T-web-012 ログイン画面 — ラベル +notify / high / bug / 担当 worker-2`。ID・題・イベント・優先度・種別・担当だけで、説明やコメントの本文は載せない。秘密の検出・伏せ字・頻度の上限は他の通知と同じく必ず通る。
+- **誰が付けたラベルでも当たる**(人の決定)。agent が付けたラベルでも出る。絞りたい規則だけ `actor=human`(pane の外かどうかで決まるので強い保証ではない)。
+- notify が `off` のあいだは何も積まない。`on` にしたとき、作られてから 60 分(`TB_NOTIFY_RULES_WINDOW_MIN`)を過ぎたイベントには当てない。規則を足す前のイベントにも当てない。
+- 規則は足すだけで、今の決め打ちの通知(質問・ブロック・完了・アラート)はそのまま。チケットを書いた tb の最後と `tb notify flush` で当てる。
 
 ## draft PR の作成キュー(pr-queue)
 

@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # アラートと解析役(alert / alerts / alert-*)
 # bin/tb から source される。単体では実行しない。
-# アラートはチケット(project alert、種別 bug、ラベル alert)と alert_details に置く(019。ADR 0003)。
+# アラートはチケット(project alert、種別 bug、ラベル alert)と alert_details に置く(020。ADR 0003)。
 # ここでは今までどおり alerts(互換ビュー。id は A-<n> の n、status は段階)を読み書きし、スキーマのトリガーがチケットの状態・優先度・担当に写す。
 # 閉じる(done)のは人だけ(tb alert-close)。tb done / tb update --status などではアラートのチケットの状態を変えない(tasks.sh の special_ticket_guard)
 
@@ -41,7 +41,7 @@ cmd_alert() {
     sql "UPDATE main.alerts SET count=count+1, last_seen=$(q "$ts") WHERE herdr_session=$SQS AND id=$dup;"
     id=$dup; state=duplicate
   else
-    # alerts はチケット(project alert)と alert_details の互換ビュー(019)。INSTEAD OF トリガーが両方に書く。
+    # alerts はチケット(project alert)と alert_details の互換ビュー(020)。INSTEAD OF トリガーが両方に書く。
     # ビュー経由では last_insert_rowid() が使えないので、同じトランザクションで振った番号を読む
     id=$(sql "BEGIN IMMEDIATE; INSERT INTO main.alerts (herdr_session, fingerprint, title, body, source, source_pane, status, count, first_seen, last_seen)
       VALUES ($SQS, $(q "$fp"), $(q "$title"), $(q "$body"), $(q "$src"), NULLIF($(q "$spane"),''), 'new', 1, $(q "$ts"), $(q "$ts"));

@@ -12,7 +12,7 @@
 # - 同じファイルを 2 回取り込まない(取り込んだ記録を tb_flags の db-import:<実体のパス> に残す)
 
 # 整数の ID を持つ表と、画面やコマンドでの接頭辞(無いものは空)。列が id でなければ <表>.<列>
-# アラート・提案は 019 でチケットへ移した: 番号は alert_details.alert_no / proposal_details.proposal_no(チケットは tasks と一緒に取り込む)
+# アラート・提案は 020 でチケットへ移した: 番号は alert_details.alert_no / proposal_details.proposal_no(チケットは tasks と一緒に取り込む)
 IMPORT_ID_TABLES="comments:C outbox:O alert_details.alert_no:A agent_ops:L notify_events:N digests:D proposal_details.proposal_no:P pr_queue:PQ
   proxy_requests: messages: reviews: read_log: role_changes: role_briefings: approval_changes: notify_sends:"
 # タスク ID を持つ列(表.列)

@@ -176,7 +176,7 @@ func TestSessionTablesListIsNotEmpty(t *testing.T) {
 	}
 }
 
-// 019 の互換ビュー(alerts / proposals)も、このセッションの行だけに絞る。書き込みはスキーマの INSTEAD OF トリガーがチケットへ振り分ける
+// 020 の互換ビュー(alerts / proposals)も、このセッションの行だけに絞る。書き込みはスキーマの INSTEAD OF トリガーがチケットへ振り分ける
 func TestCompatViewsAreSessionScoped(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "tasks.db")
 	a := open(t, p, "a", nil)
