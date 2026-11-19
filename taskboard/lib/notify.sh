@@ -11,7 +11,7 @@
 
 NOTIFY_CONF=${TB_NOTIFY_CONF:-$TB_ROOT/config/notify.conf}
 NOTIFY_DIR=${TB_NOTIFY_DIR:-$TB_ROOT/data/notify}
-NOTIFY_TYPES="alert_raised alert_result pr_opened pr_approved pr_changes pr_merged question blocked done incident_opened incident_closed approvals_pending summary test warning digest"
+NOTIFY_TYPES="alert_raised alert_result pr_opened pr_approved pr_changes pr_merged question blocked done incident_opened incident_closed approvals_pending summary test warning digest ticket"
 NOTIFY_BOOL_KEYS="enabled hash_check mask_ip mask_repo mask_account mask_host mask_email strip_raw_logs"
 NOTIFY_INT_KEYS="rate_per_min rate_per_hour max_len dedupe_sec ack_timeout_min ack_retries summary_interval_min"
 NOTIFY_STR_KEYS="slack_via slack_target notifier_agent webhook_file"
@@ -244,6 +244,7 @@ notify_compose() {  # $1=種別 $2=ref $3=重大度 $4.. 項目
     test)          echo "[テスト] tb notify test: 疎通確認の固定文です。返信や操作は要りません";;
     warning)       echo "[通知の警告] ${a}";;
     digest)        echo "[まとめ] ${a}";;
+    ticket)        echo "[チケット] ${a} — ${b}";;
   esac
 }
 
@@ -277,7 +278,7 @@ notify_enqueue() {
     blocked=1; reason=$NOTIFY_HIT_KINDS; text=$(notify_redact "$text")
   fi
   hash=$(notify_hash "$text")
-  sinks=$(notify_sinks_of "$type")
+  sinks=${NOTIFY_SINKS:-$(notify_sinks_of "$type")}   # 通知の規則(lib/notifyrules.sh)は届け先を規則から渡す
   if ((blocked)); then
     sinks=$(printf '%s' "$sinks" | tr ' ' '\n' | grep -vx slack | paste -sd' ' - || true)
     [[ -n $sinks ]] || sinks=file
@@ -615,12 +616,14 @@ cmd_notify() {
       require_human "tb notify flush"
       notify_on || { echo "notify: off(何もしません)"; return 0; }
       notify_periodic || true
+      notify_rules_run || true   # 通知の規則(lib/notifyrules.sh)の取りこぼし
       notify_flush_slack || true
       echo "notify: flushed"; return 0;;
     events) notify_events "$@";;
     hash) [[ $# -eq 1 ]] || usage "notify hash <本文>"; notify_hash "$1"; echo;;
     event) notify_event_cmd "$@";;
-    *) usage "notify: 不明なサブコマンド $sub(status|on|off|test|dry-run|tail|ack|flush|events)";;
+    rules) notify_rules_cmd "$@";;
+    *) usage "notify: 不明なサブコマンド $sub(status|on|off|test|dry-run|tail|ack|flush|events|rules)";;
   esac
 }
 

@@ -306,6 +306,9 @@ def failed_jobs():
     return out
 
 
+WEBUI_RULE_HOURS = 24
+
+
 def urgent_items():
     """10 分のまとめ送信を待たずに知らせるもの。各要素は通知 1 件(id は同じ事象なら同じ値)。
 
@@ -371,6 +374,15 @@ def urgent_items():
                               "body": _short(f"working のまま。最終入力 {act.get('last_prompt_at')}"),
                               "how": "agent の画面で直近の出力を見て、止まっていれば pane で続きを指示する(要らなければ停止)",
                               "href": f"/agents/{quote(k, safe='')}", "ts": clean(act.get("last_prompt_at") or "")})
+        # 通知の規則(taskboard/lib/notifyrules.sh)で届け先に webui を書いたチケットの通知。直近 WEBUI_RULE_HOURS 時間
+        for ev in q("SELECT id, ref, text, created_at FROM notify_events WHERE type='ticket' AND (' ' || sinks || ' ') LIKE '% webui %'"
+                    " AND julianday(created_at) >= julianday('now') - ? / 24.0 ORDER BY id DESC LIMIT 50", (WEBUI_RULE_HOURS,)):
+            text = clean(ev.get("text") or "")
+            m = re.search(r"\bT-[A-Za-z0-9_]+-[0-9]+\b", text)
+            items.append({"id": f"n:{ev['id']}", "kind": "ticket_rule", "label": "チケット(通知の規則)",
+                          "title": _short(text.replace("[チケット] ", "", 1), 80), "body": _short(text),
+                          "how": "規則は手元で tb notify rules。チケットを開いて確かめる",
+                          "href": ("/tasks/" + quote(m.group(0), safe="")) if m else "/tasks", "ts": clean(ev.get("created_at") or "")})
         for n, r in failed_jobs():
             items.append({"id": f"j:{n}:{clean(r.get('ts'))}", "kind": "job_failed", "label": "定期実行の失敗",
                           "title": n, "body": _short(r.get("reason") or "failed"),
