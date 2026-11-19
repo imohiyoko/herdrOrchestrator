@@ -7,7 +7,7 @@ agent ごとに 1 プロセスを stdio で起動する形。DB は読み取り�
 import json
 import sys
 
-from . import read, store
+from . import read, rollout, store
 
 PROTOCOL = "2024-11-05"
 TOOLS = [
@@ -27,6 +27,12 @@ TOOLS = [
      "description": "鮮度が落ちた要約の一覧(本文なし)。",
      "inputSchema": {"type": "object", "properties": {
          "repo": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": read.MAX_RESULTS}}}},
+    {"name": "repoindex_context",
+     "description": "変更のまわり(変わったファイルとディレクトリの要約、呼び出し元・呼び先、関わる境界、影響の範囲)。"
+                    "paths(変わったファイル)か range(base..head)を渡す。どの主張にも元ソースの場所と commit が付く。",
+     "inputSchema": {"type": "object", "properties": {
+         "repo": {"type": "string"}, "paths": {"type": "array", "items": {"type": "string"}},
+         "range": {"type": "string"}}, "required": ["repo"]}},
     {"name": "repoindex_freshness",
      "description": "リポジトリごとの索引の鮮度(索引を進めたコミットと件数)。",
      "inputSchema": {"type": "object", "properties": {"repo": {"type": "string"}}}},
@@ -36,12 +42,18 @@ TOOLS = [
 def _call(name, args):
     con = store.connect_ro()
     try:
+        rollout.require(con, 2, "読み取りの口")
         if name == "repoindex_search":
             return read.search(con, args.get("query"), args.get("repo"), args.get("limit"))
         if name == "repoindex_get":
             return read.get(con, args.get("repo"), args.get("path"), args.get("symbol"), args.get("kind"))
         if name == "repoindex_stale":
             return read.stale(con, args.get("repo"), args.get("limit"))
+        if name == "repoindex_context":
+            paths = args.get("paths")
+            if paths is not None and not (isinstance(paths, list) and all(isinstance(x, str) for x in paths)):
+                raise store.StoreError("paths は文字列の配列")
+            return read.context(con, args.get("repo"), paths, args.get("range"))
         if name == "repoindex_freshness":
             return read.freshness(con, args.get("repo"))
         raise store.StoreError(f"不明なツール: {name}")
@@ -80,7 +92,7 @@ def handle(msg):
         except Exception as e:  # 書き込みの試み(読み取り専用の接続)などもここ
             _log(f"{name}: error {type(e).__name__}")
             return ok({"content": [{"type": "text", "text": f"失敗しました({type(e).__name__})"}], "isError": True})
-        _log(f"{name}: {len(res.get('results', res.get('repos', [])))} 件")
+        _log(f"{name}: {len(res.get('results', res.get('repos', res.get('files', []))))} 件")
         return ok({"content": [{"type": "text", "text": json.dumps(res, ensure_ascii=False)}]})
     return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": f"method not found: {method}"}}
 

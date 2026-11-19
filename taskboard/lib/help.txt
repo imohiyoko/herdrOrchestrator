@@ -49,6 +49,9 @@ tb resolve C-<n> [-m メモ]   question/blocked の報告を対応済みにす�
 tb digest [--dry-run]   未配送の報告・未報告の done・観測した事象(turn 終了後も in_progress / 長時間 working / blocked)を
                         指揮官ごとに 1 通にまとめて送る。宛先が使用中なら送らず次回へ持ち越す。終了コード 0 / 10 / 11
 tb digests [D-<n>] [--json]   送ったまとめの一覧 / 全文
+tb reminders [--json]   人が忘れているかもしれないもの(期限・質問・承認待ち・レビュー待ちの PR・停滞・届いていない送信・未読の保留メッセージ)を優先度順に出す。何も書かない
+tb reminders --check     出すものがあれば 0、無ければ 3(何も出さず、何も書かない。定期実行で --check || exit 0)
+tb reminders --publish [--json]   まとめを出し、前回の記録(notify_seen の reminders:*)を更新する。同じ項目は「継続(N 日目)」の 1 行。1 日 1 回は全件
 
 指揮官 → worker の送信(herdr agent prompt を直接打たない。送信者は herdr から決まり、config/routes.conf のルールで許可されたものだけ届く):
 tb send <宛先 agent 名> --text T [--task T-..] [--kind task|info|answer] [--json]

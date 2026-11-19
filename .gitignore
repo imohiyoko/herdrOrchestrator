@@ -30,3 +30,4 @@ taskboard/config/gate-paths.conf
 taskboard/config/gate-ingest.conf
 taskboard/config/conv-learn.conf
 taskboard/config/conv-stages.conf
+taskboard/config/deadlines.conf
