@@ -350,7 +350,13 @@ TASK_STATUSES = ["todo", "in_progress", "review", "done", "blocked"]
 TASK_SORTS = {"": ("優先順(未対応の報告 → blocked → in_progress → review → todo → done)", None),
               "project": ("PJ ごと・更新が新しい順", "project, updated_at DESC"),
               "oldest": ("更新が古い順", "updated_at ASC"),
-              "created": ("作成が新しい順", "created_at DESC"), "id": ("タスク ID 順", "id ASC")}
+              "created": ("作成が新しい順", "created_at DESC"), "id": ("タスク ID 順", "id ASC"),
+              "priority": ("優先度が高い順(同じなら更新が新しい順)",
+                           "CASE priority WHEN 'highest' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END, updated_at DESC")}
+# チケットの構造(スキーマ 014)。tb の TYPES / PRIORITIES と同じ
+TASK_TYPES = ["epic", "story", "task", "bug", "subtask"]
+TASK_PRIORITIES = ["highest", "high", "medium", "low", "lowest"]
+LABEL_RE = re.compile(r"[^\s,\"']{1,40}")
 # 既定の並び: 人が見るべきものを先に(300 件で切れても blocked などが残る)。未対応の報告があるものは state に関わらず先頭
 STATUS_RANK = ("CASE status WHEN 'blocked' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'review' THEN 3 WHEN 'todo' THEN 4 ELSE 5 END")
 OWNER_RE = re.compile(r"[A-Za-z0-9._-]{1,64}")
@@ -408,7 +414,19 @@ def page_tasks(qs, ctx=None):
     proj, st, owner = _one(qs, "project")[:100], _one(qs, "status"), _one(qs, "owner")
     unrep, stale = _one(qs, "unreported") == "1", _one(qs, "stale") == "1"
     sort = _one(qs, "sort")
+    ttype, prio, label = _one(qs, "type"), _one(qs, "priority"), _one(qs, "label")
+    tf = has_ticket_fields()
     errs = []
+    if ttype and ttype not in TASK_TYPES:
+        errs.append("種別は " + " / ".join(TASK_TYPES) + " のどれかです"); ttype = ""
+    if prio and prio not in TASK_PRIORITIES:
+        errs.append("優先度は " + " / ".join(TASK_PRIORITIES) + " のどれかです"); prio = ""
+    if label and not LABEL_RE.fullmatch(label):
+        errs.append("ラベルは 40 文字までで、空白・カンマ・引用符を含みません"); label = ""
+    if not tf:
+        ttype = prio = label = ""
+        if sort == "priority":
+            sort = ""
     if st and st not in TASK_STATUSES:
         errs.append("状態は todo / in_progress / review / done / blocked のどれかです"); st = ""
     if owner and not OWNER_RE.fullmatch(owner):
@@ -422,6 +440,12 @@ def page_tasks(qs, ctx=None):
         base_w.append("owner_agent=?"); base_p.append(owner)
     if unrep:
         base_w.append("reported_at IS NULL")
+    if ttype:
+        base_w.append("type=?"); base_p.append(ttype)
+    if prio:
+        base_w.append("priority=?"); base_p.append(prio)
+    if label:
+        base_w.append("EXISTS (SELECT 1 FROM json_each(tasks.labels) WHERE value=?)"); base_p.append(label)
     where, params = list(base_w), list(base_p)
     if st:
         where.append("status=?"); params.append(st)
@@ -443,10 +467,12 @@ def page_tasks(qs, ctx=None):
     projects = [r["project"] for r in q("SELECT DISTINCT project FROM tasks ORDER BY project")]
     owners = [r["owner_agent"] for r in q("SELECT DISTINCT owner_agent FROM tasks WHERE owner_agent IS NOT NULL ORDER BY owner_agent")]
     kids = {r["parent_id"]: r["n"] for r in q("SELECT parent_id, COUNT(*) AS n FROM tasks WHERE parent_id IS NOT NULL GROUP BY parent_id")}
+    labels = [r["value"] for r in q("SELECT DISTINCT j.value FROM tasks, json_each(tasks.labels) j ORDER BY j.value")] if tf else []
     rc = report_counts()
 
     def href(**kw):
-        d = {"project": proj, "status": st, "owner": owner, "unreported": "1" if unrep else "", "stale": "1" if stale else "", "sort": sort}
+        d = {"project": proj, "status": st, "owner": owner, "unreported": "1" if unrep else "", "stale": "1" if stale else "", "sort": sort,
+             "type": ttype, "priority": prio, "label": label}
         d.update(kw)
         d = {k: v for k, v in d.items() if v}
         return "/tasks" + ("?" + urlencode(d) if d else "")
@@ -459,10 +485,15 @@ def page_tasks(qs, ctx=None):
     popts = '<option value="">(すべて)</option>' + "".join(f'<option value="{e(p_)}"{" selected" if p_ == proj else ""}>{e(p_)}</option>' for p_ in projects)
     oopts = '<option value="">(すべて)</option>' + "".join(f'<option value="{e(o)}"{" selected" if o == owner else ""}>{e(o)}</option>' for o in owners)
     sopts = '<option value="">(すべて)</option>' + "".join(f'<option value="{s_}"{" selected" if s_ == st else ""}>{s_}</option>' for s_ in TASK_STATUSES)
-    ropts = "".join(f'<option value="{k}"{" selected" if k == sort else ""}>{e(v[0])}</option>' for k, v in TASK_SORTS.items())
+    ropts = "".join(f'<option value="{k}"{" selected" if k == sort else ""}>{e(v[0])}</option>' for k, v in TASK_SORTS.items() if tf or k != "priority")
+    topts = '<option value="">(すべて)</option>' + "".join(f'<option value="{x}"{" selected" if x == ttype else ""}>{x}</option>' for x in TASK_TYPES)
+    pyopts = '<option value="">(すべて)</option>' + "".join(f'<option value="{x}"{" selected" if x == prio else ""}>{x}</option>' for x in TASK_PRIORITIES)
+    lopts = '<option value="">(すべて)</option>' + "".join(f'<option value="{e(x)}"{" selected" if x == label else ""}>{e(x)}</option>' for x in labels)
+    tsel = (f'<label>種別 <select name=type>{topts}</select></label> <label>優先度 <select name=priority>{pyopts}</select></label> '
+            f'<label>ラベル <select name=label>{lopts}</select></label> ') if tf else ""
     body += ('<form method=get action="/tasks"><p>'
              f'<label>PJ <select name=project>{popts}</select></label> <label>担当 <select name=owner>{oopts}</select></label> '
-             f'<label>状態 <select name=status>{sopts}</select></label> '
+             f'<label>状態 <select name=status>{sopts}</select></label> ' + tsel +
              f'<label><input type=checkbox name=unreported value=1{" checked" if unrep else ""}> 未報告だけ</label> '
              f'<label><input type=checkbox name=stale value=1{" checked" if stale else ""}> 停滞だけ({TASK_STALE_HOURS} 時間超の in_progress)</label> '
              f'<label>並び <select name=sort>{ropts}</select></label> '
@@ -474,16 +505,56 @@ def page_tasks(qs, ctx=None):
         mark = f'<span class=warn>停滞 {sh} 時間</span>' if sh is not None else ""
         par = tlink(t["parent_id"]) if t.get("parent_id") else ""
         kid = f'子 {kids[t["id"]]}' if kids.get(t["id"]) else ""
-        out.append([tlink(t["id"]), e(t["project"]), e(_head(t["title"], TITLE_MAX)), e(t["status"]), e(t["owner_agent"]),
+        out.append([tlink(t["id"]), e(t["project"]), e(t.get("type") or "-"), priority_html(t.get("priority")),
+                    e(_head(t["title"], TITLE_MAX)), labels_html(t.get("labels"), href), e(t["status"]), e(t["owner_agent"]),
                     " ".join(x for x in (par, e(kid)) if x) or "-", e(t["session_id"]), counts_label(rc.get(t["id"])),
-                    str(len(safe_json_list(t["deliverables"]))), "○" if t["reported_at"] else "-", e(t["updated_at"]), mark])
+                    str(len(safe_json_list(t["deliverables"]))), "○" if t["reported_at"] else "-",
+                    e(t["created_at"]), e(t["updated_at"]), mark])
     if total > len(rows):
         body += (f'<p class=err>{total} 件のうち {len(rows)} 件だけ表示しています(上限 {TASK_LIST_MAX} 件)。'
                  '既定の並びは未対応の報告・blocked・in_progress を先に出します。PJ・担当・状態などで絞り込むと残りを見られます。</p>')
-    body += table(["タスク", "PJ", "題(先頭 80 文字)", "状態", "担当", "親 / 子", "session_id", "報告(種別ごとの件数)", "成果物", "報告済み", "更新", "目印"], out)
+    body += table(["タスク", "PJ", "種別", "優先度", "題(先頭 80 文字)", "ラベル", "状態", "担当", "親 / 子", "session_id",
+                   "報告(種別ごとの件数)", "成果物", "報告済み", "作成", "更新", "目印"], out)
     body += (f'<p class=note>最大 {TASK_LIST_MAX} 件。「報告済み」は tb report で指揮官に届いたもの。未対応は人がまだ「対応済み」にしていない question / blocked。'
-             "期限・優先度は tb に無いので出していません。題は先頭だけ、本文は出しません(詳細画面で報告の先頭を見られます)。</p>")
+             "ラベルを押すとそのラベルで絞り込みます。期限は tb に無いので出していません。題は先頭だけ、本文は出しません(詳細画面で報告の先頭を見られます)。</p>")
     return "タスク", body
+
+
+def has_ticket_fields():
+    """tasks に種別・優先度・ラベルの列があるか(スキーマ 014 より前の DB では無い。tb を一度動かせば足される)。"""
+    return any(r.get("name") == "labels" for r in q("PRAGMA table_info(tasks)"))
+
+
+def priority_html(p):
+    if not p:
+        return "-"
+    return f'<span class=warn>{e(p)}</span>' if p in ("highest", "high") else e(p)
+
+
+def labels_html(raw, href=None):
+    labs = [x for x in safe_json_list(raw) if isinstance(x, str)]
+    if not labs:
+        return "-"
+    if href is None:
+        return " ".join(f"<code>{e(x)}</code>" for x in labs)
+    return " ".join(f'<a href="{e(href(label=x))}"><code>{e(x)}</code></a>' for x in labs)
+
+
+REF_URL_RE = re.compile(r"https?://[^\s\"'<>]{1,500}")
+
+
+def refs_html(raw):
+    """外部リンク(Slack・PR など)。http(s) の URL だけをリンクにし、それ以外は文字として出す。"""
+    out = []
+    for r in safe_json_list(raw):
+        if not isinstance(r, dict):
+            continue
+        kind, url = str(r.get("kind") or "link"), str(r.get("url") or "")
+        if REF_URL_RE.fullmatch(url):
+            out.append(f'<code>{e(kind)}</code> <a href="{e(url)}" rel="noopener noreferrer" target="_blank">{e(_head(url, TITLE_MAX))}</a>')
+        else:
+            out.append(f"<code>{e(kind)}</code> {e(_head(url, TITLE_MAX))}")
+    return "<br>".join(out) or "-"
 
 
 def db_conn_ok():
@@ -544,6 +615,12 @@ def page_task(tid, qs=None, ctx=None):
                                         "parent_id", "reported_at", "created_at", "updated_at"]]
     if t.get("parent_id"):
         info[7] = ("parent_id", tlink(t["parent_id"]))
+    if "labels" in t:
+        info[3:3] = [("種別", e(t.get("type"))), ("優先度", priority_html(t.get("priority"))),
+                     ("ラベル", labels_html(t.get("labels"), lambda label: "/tasks?" + urlencode({"label": label})))]
+        info.append(("説明", f'<pre>{e(_head(t.get("description"), REPORT_MAX))}</pre>' if t.get("description") else "-"))
+    if "refs" in t:
+        info.append(("外部リンク", refs_html(t.get("refs"))))
     info.append(("summary", e(_head(t.get("summary"), REPORT_MAX))))
     info.append(("note", e(_head(t.get("note"), REPORT_MAX))))
     sh = task_stale(t)
@@ -555,6 +632,14 @@ def page_task(tid, qs=None, ctx=None):
     if kids:
         body += "<h2>子タスク</h2>" + table(["タスク", "題", "状態", "担当", "更新"],
             [[tlink(k["id"]), e(_head(k["title"], TITLE_MAX)), e(k["status"]), e(k["owner_agent"]), e(k["updated_at"])] for k in kids])
+    if "labels" in t:
+        lk = q("SELECT CASE WHEN l.from_id=? THEN l.link_type WHEN l.link_type='blocks' THEN 'blocked by'"
+               " WHEN l.link_type='duplicates' THEN 'duplicated by' ELSE 'relates' END AS rel,"
+               " x.id, x.title, x.status FROM task_links l JOIN tasks x ON x.id = CASE WHEN l.from_id=? THEN l.to_id ELSE l.from_id END"
+               " WHERE l.from_id=? OR l.to_id=? ORDER BY l.id", (tid, tid, tid, tid))
+        if lk:
+            body += "<h2>リンク</h2>" + table(["関係", "タスク", "題", "状態"],
+                [[e(x["rel"]), tlink(x["id"]), e(_head(x["title"], TITLE_MAX)), e(x["status"])] for x in lk])
     cm = q("SELECT * FROM comments WHERE task_id=? ORDER BY id DESC", (tid,))
     back = "/tasks/" + quote(str(tid), safe="")
     body += "<h2>報告</h2>" + counts_label(report_counts(tid).get(tid)) + table(
