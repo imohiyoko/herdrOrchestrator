@@ -29,6 +29,7 @@ eq "conv-pair-add: DB には何も書かない" "$(sqlite3 "$TB_DB" "SELECT coun
 eq "conv-pairs: 一覧に本文は出さない" "$($TB conv-pairs | grep -c 'ありがとう')" "0"
 bad_root=$(cd "$HERE/../.." && pwd)/convstate-test
 eq "conv-pair-add: checkout の中には置かない" "$(TB_CONV_STATE_DIR=$bad_root rc $TB conv-pair-add --kind thanks --draft-file "$CW/d1" --final-file "$CW/f1" --situation s --intent i --posted)" "1"
+eq "conv-pair-add: checkout の中に置き場を作りもしない" "$([[ -e $bad_root ]] && echo created)" ""
 rm -rf "$bad_root"
 
 # --- 候補: 1 回の手直しは候補止まり、agent の証拠は数えない

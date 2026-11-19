@@ -41,9 +41,13 @@ valid_conv_kind() {
 conv_state_init() {
   local d=$CONV_STATE root real
   [[ ! -L $d ]] || die "会話の記録の置き場がシンボリックリンクです: $d"
+  [[ $d == /* ]] || d=$PWD/$d
+  root=$(cd "$HERDR_ROOT" && pwd -P)
+  # 作る前に(見かけのパスで)、作ったあとに(実体のパスで)確かめる
+  [[ $d != "$HERDR_ROOT" && $d != "$HERDR_ROOT"/* && $d != "$root" && $d != "$root"/* ]] || die "会話の記録は checkout の外に置きます(今の置き場: $d)"
   ( umask 077; mkdir -p "$d/pairs" "$d/ledger" ) || die "会話の記録の置き場を作れません: $d"
   chmod 700 "$d" "$d/pairs" "$d/ledger"
-  real=$(cd "$d" && pwd -P); root=$(cd "$HERDR_ROOT" && pwd -P)
+  real=$(cd "$d" && pwd -P)
   [[ $real != "$root" && $real != "$root"/* ]] || die "会話の記録は checkout の外に置きます(今の置き場: $d)"
 }
 
