@@ -1,9 +1,11 @@
 tb add -p <project> -t <title> [--parent ID] [--owner N] [--session S] [--account A]   → ID を表示
-       [--type epic|story|task|bug|subtask] [--priority highest|high|medium|low|lowest] [-l ラベル[,ラベル]] ... [--desc 説明] [--ref [種類=]URL ...]
+       [--type epic|story|task|bug|subtask] [--priority highest|high|medium|low|lowest] [-l ラベル[,ラベル]] ... [--desc 説明] [--ref [種類=]URL ...] [--due YYYY-MM-DD]
        既定は task / medium。epic は親なし、subtask は親が必須(親は story/task/bug)、subtask は親になれない
 tb list [-p project] [-s status] [--type T] [--priority P] [-l ラベル ...(すべてを持つもの)] [--owner N] [--parent ID]
-        [--sort priority|updated|created|id] [--long] [--json]
-        --long は ID 状態 種別 優先度 担当 作成 更新 ラベル 題(既定の 4 列は変えない)
+        [--overdue] [--due-within N] [--has-due] [--sort priority|updated|created|id|due] [--long] [--json]
+        --long は ID 状態 種別 優先度 担当 作成 更新 ラベル 題 期日(既定の 4 列は変えない。期日なしは -)
+        --overdue は期日が今日より前、--due-within N は今日〜N 日後(0 は今日だけ)。どちらも done と期日なしは出さない
+        「今日」は端末の地方時の日付(TB_TODAY=YYYY-MM-DD で固定できる)
 tb show <id>        labels・refs(外部リンク)と links(blocks / blocked_by / relates / duplicates / duplicated_by)も出す
 tb tree <id> | tree -p <project>   親子を字下げで(ID 種別 優先度 状態 担当 題)
 tb labels [-p project] [--json]    使われているラベルと件数(ラベル 未完了 全部)
@@ -11,7 +13,7 @@ tb link <from> blocks|relates|duplicates <to>   blocks なら to は from が do
 tb unlink <from> <種類> <to>
 tb claim <id> --owner <name> [--session S] [--account A]    todo → in_progress(todo 以外は失敗)
 tb update <id> [--status todo|in_progress|review|blocked] [--title T] [--owner N] [--session S] [--account A] [--parent ID]
-           [--type T] [--priority P] [--desc D] [--label L ...(置き換え。'' で全部外す)] [--add-label L] [--remove-label L] [--add-ref [種類=]URL] [--remove-ref URL]
+           [--type T] [--priority P] [--desc D] [--due YYYY-MM-DD(''で外す)] [--label L ...(置き換え。'' で全部外す)] [--add-label L] [--remove-label L] [--add-ref [種類=]URL] [--remove-ref URL]
 tb done <id> -d <成果物> [-d ...] -m <要約>                  成果物と要約が必須。reported_at は空のまま
 tb block <id> [-m <理由>]
 tb report <id>      指示役へ [T-xxx done] ... を送る。成功時のみ reported_at を埋める
