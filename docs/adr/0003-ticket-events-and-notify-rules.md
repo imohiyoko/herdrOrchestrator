@@ -6,7 +6,7 @@
 ## 要旨
 
 - **決定**: チケット(`tasks`)を「人や agent が追いかける事柄」の中心にし、チケットの変化を新しい表 `task_events` に 1 件ずつ残す。外への通知は、各機能が決め打ちで呼ぶのをやめ、イベントに対する**通知の規則**(設定 `notify-rules`。人だけが書く)で決める。例: 「ラベル `notify` が付いたら Slack」「優先度 highest の bug ができたら Slack と Web UI の緊急通知」「期限切れになったら Web UI」。
-- **寄せるもの**: 報告コメント(既にチケットに付いている)、期限(`due`)、アラート(A-)と提案(P-)は元の表を正としたまま、対応するチケットを自動で作って相互に辿れるようにする。PR の監視は、PR の URL を外部リンクに持つチケットへイベントとして付ける。
+- **寄せるもの**: 報告コメント(既にチケットに付いている)と期限(`due`)はそのままイベントにする。アラート(A-)と提案(P-)は**元の表をやめてチケットに移す**(人の決定 2026-11-19)。チケットで表せない部分(解析役の起動の承認・指紋による重複のまとめ・解析結果、提案の配送)だけを、チケットに付く小さな表に残す。PR の監視は、PR の URL を外部リンクに持つチケットへイベントとして付ける。
 - **寄せないもの**: 承認(送信 O-・agent 操作 L-・PR 作成 PQ-・代行依頼・解析役の起動)と、保留した送信(inbox)。承認は人の判断が安全の境界(ADR 0001 の L0)で、agent が書けるチケットの状態で代用すると境界が崩れる。inbox は仕事ではなくメッセージ。
 - **規則がないときの動きは今と同じ**: 既定の規則は今の決め打ち(質問・ブロック・完了・アラート)をそのまま書き直したもの。`notify-rules` を書かなければ挙動は変わらない。
 
@@ -49,7 +49,7 @@
 | `task_id` | T-… |
 | `kind` | `created` / `status` / `label_added` / `label_removed` / `priority` / `owner` / `due` / `sprint` / `link` / `ref_added` / `comment` / `overdue` / `due_soon` / `pr_opened` / `pr_merged` など |
 | `old` / `new` | 変わる前と後の値(文字列。ラベルならそのラベル、状態なら状態名) |
-| `actor` | 変えた者。agent の pane からなら herdr から引いた agent 名(`tb comment` と同じ方法)、そうでなければ `cli`、定期のジョブなら `system` |
+| `actor` | 変えた者。agent の pane からなら herdr から引いた agent 名(`tb comment` と同じ方法。引けなければ `pane:<id>`)、そうでなければ `human`(既存の `task_links.created_by` と同じ)、定期のジョブなら `system` |
 | `created_at` | 時刻 |
 
 - イベントは追記だけ。消さない、書き換えない。
@@ -70,20 +70,50 @@ label_added label=notify                -> slack
 created type=bug priority>=high         -> slack webui
 overdue                                 -> webui conductor
 pr_merged project=web                   -> slack
-label_added label=urgent actor=cli      -> slack webui      # 人(pane の外)が付けたときだけ
+label_added label=urgent actor=human    -> slack webui      # 人(pane の外)が付けたときだけ
 ```
 
-- **条件**: `type` / `priority`(`>=` で順序)/ `label`(持っている)/ `project` / `owner` / `kind` / `new` / `old` / `actor`(名前、`cli`、`system`、`agent`)。すべて満たした行が当たる。当たった行の届け先を合わせる(重複は 1 回)。
+- **条件**: `type` / `priority`(`>=` で順序)/ `label`(持っている)/ `project` / `owner` / `kind` / `new` / `old` / `actor`(名前、`human`、`system`、`agent`)。すべて満たした行が当たる。当たった行の届け先を合わせる(重複は 1 回)。
 - **届け先**: 今の notify の `file` / `stdout` / `slack` に、`webui`(Web UI の緊急通知と Chrome 通知に出す)と `conductor`(そのプロジェクトの指揮役への次のまとめ = digest に載せる)を足す。
+- **誰が付けたラベルでも当たる**(人の決定 2026-11-19)。agent が付けたラベルでも通知は出る。絞りたい規則だけ `actor=human` を書く。
 - **本文はイベントから決定論で作る**: `[ラベル notify] T-web-012 ログイン画面 (high / bug / 担当 worker-2)` のように、ID・題・種別・優先度・担当・イベントだけ。説明(`description`)やコメントの本文は、今の notify と同じ規則(先頭 2 行・長さの上限)でしか載せない。秘密らしい値の検出、伏せ字、頻度の上限、重複の抑え(`dedupe_sec`)は今の notify をそのまま通す。
 - **既定の規則**: `notify-rules` が無いときは、今の決め打ちと同じ規則を使う(質問・ブロック・完了・アラートの登録と結果)。`tb notify rules` で、今効いている規則と出どころ(設定 / 既定)を出す。`tb notify rules test E-<n>` で、そのイベントにどの規則が当たるかを送らずに確かめる。
 - `notify` の `enabled = off` のあいだは今と同じく何も外へ出さない(`webui` と `conductor` は内部なので、off でも出すかは段階 2 で決める。初めは off なら何も出さない)。
 
-### 3. アラートと提案はチケットを自動で作る(元の表が正)
+### 3. アラートと提案はチケットに移す(元の表をやめる)
 
-- **アラート**: 新しいアラート(重複でないもの)を登録したら、チケット(種別 `bug`、ラベル `alert`、外部リンクの代わりに `refs` に `A-<n>`、優先度は解析前 `high`)を作り、`alerts` にチケットの ID を持たせる。解析結果の緊急度で優先度を合わせる(critical → highest、high → high、medium → medium、low → low)。`tb alert-close` でチケットも done にする。指紋による重複のまとめ、解析役の起動と承認は今の `alerts` のまま。
-- **提案**: `tb proposal` はチケット(種別 `task`、ラベル `proposal`、担当は設定役、`refs` に `P-<n>`)も作る。`tb proposal-resolve` でチケットも done にする。設定役への直接の送信は今のまま(届かなければ digest)。
-- どちらも、チケットの状態を agent が変えても元の表(`alerts` / `proposals`)の状態は変わらない。元の表 → チケットの一方向だけ同期する。
+人の決定(2026-11-19)により、`alerts` と `proposals` の表をやめ、チケットに移す。チケットが持てる項目(題・本文・状態・優先度・担当・ラベル・期日・スプリント・履歴)はチケットに置き、チケットで表せない部分だけを、チケットの ID を主キーにした小さな表に残す。
+
+**アラート**
+
+| 今の `alerts` | 移した先 |
+|---|---|
+| 題・本文 | チケットの題・説明(`description`) |
+| 状態 `new` / `awaiting-approval` / `approved` / `queued` | チケットは `todo`。細かい段階は `alert_details.stage` |
+| 状態 `analyzing` | チケットは `in_progress`、担当(`owner_agent`)は解析役 |
+| 状態 `analyzed` | チケットは `review`(人が見て閉じる番) |
+| 状態 `closed` | チケットは `done` |
+| 緊急度(解析役が決める) | 優先度に写す(critical → highest、high → high、medium → medium、low → low。解析前は high)。元の値は `alert_details.severity` |
+| 指紋・件数・初回 / 最終 | `alert_details`(`fingerprint`、`count`、`first_seen`、`last_seen`)。同じ指紋の未解決のチケットがあれば件数を増やすだけ(今と同じ) |
+| 解析結果(要約・報告・パス・誰が・届けたか) | `alert_details`。要約はチケットのコメント(`--kind done`)にも残す |
+| 報告元 | チケットの作成の履歴(`task_events` の `actor`)と `alert_details.source` |
+
+- チケットは project `alert`(設定で変えられる)、種別 `bug`、ラベル `alert`。ID は `T-alert-<n>`。
+- `A-<n>` は**別名として残す**(`alert_details.alert_no`)。`tb alerts A-3`、`tb alert-approve A-3`、通知の `ref`、役割の文面はそのまま使える。
+- **人だけが通せる操作はチケットの状態で代用しない**。解析役の起動の承認は `alert_details.stage` を `tb alert-approve`(人だけ)が変える。閉じる(`done`)のは今の `tb alert-close` と同じく人だけで、agent が `tb done` / `tb update --status` で alert のチケットを閉じようとしたら止める。
+- 既存の行は移行で移す(同じ番号を `alert_no` に入れる)。Web UI・digest・notify・limits の読み先をチケットに変える。
+
+**提案**
+
+| 今の `proposals` | 移した先 |
+|---|---|
+| 題・本文 | チケットの題・説明 |
+| 対象の役割ファイル | ラベル `role:<ファイル名>`(全体なら `role:-`) |
+| 状態 `open` / `applied` / `rejected` | `todo`(担当は設定役)/ `done`(要約に「適用」)/ `done`(要約に「見送り」とラベル `rejected`) |
+| 提案者 | 作成の履歴の `actor` と `proposal_details.by_name` |
+| 届けた時刻 | `proposal_details.delivered_at`(届かなければ digest が再送。今と同じ) |
+
+- チケットは project `proposal`、種別 `task`、ラベル `proposal`。`P-<n>` は別名として残す(`proposal_details.proposal_no`)。
 
 ### 4. 寄せないもの
 
@@ -99,7 +129,8 @@ label_added label=urgent actor=cli      -> slack webui      # 人(pane の外)�
 | 案 | 利点 | 欠点 |
 |---|---|---|
 | A. 今のまま(機能ごとに決め打ち) | 追加のコストがない | 通知の条件が増えるたびにコード変更。チケットの履歴がない |
-| B. すべてをチケットに移す(アラート・提案・承認・inbox も `tasks` の行にする) | 置き場が 1 つで分かりやすい | 承認の境界が崩れる。`tasks` の状態の制約(5 状態)に、解析役の起動待ちや送信済みなどを押し込むことになる。既存の表・画面・テストの書き換えが大きく、並行する PR(#112 / #116 / #122)とぶつかる |
+| B. 承認・inbox もチケットに移す | 置き場が 1 つで分かりやすい | 承認の境界が崩れる。`tasks` の状態の制約(5 状態)に、送信済みなどを押し込むことになる。並行する PR(#112 / #116 / #122)とぶつかる |
+| B'. アラート・提案は元の表を正にし、チケットを自動で作って結ぶ(当初の推奨) | 変更が小さい | 同じ事柄が 2 か所にあり、同期の向きを覚える必要がある。人の決定で採らない |
 | C. 通知の規則だけを足す(イベントの表は作らない) | 小さい | 期限切れ・PR のマージのように「チケットの操作でない変化」を規則に乗せられない。履歴が残らない |
 | D. 外の仕組み(Jira など)へ移す | 機能が揃っている | 決定論の実行者・秘密の検出・セッションの分離など、この仕組みの前提を外に持ち出せない |
 
@@ -125,17 +156,19 @@ label_added label=urgent actor=cli      -> slack webui      # 人(pane の外)�
 | 1 | `task_events` と書き込み(作成・状態・ラベル・優先度・担当・期日・リンク・外部リンク・コメント)、`tb history`、Web UI のタスク詳細の履歴 | 新しい表 1 つ | なし |
 | 2 | 通知の規則(`notify-rules`、既定の規則 = 今の挙動)、届け先 `webui` / `conductor`、`tb notify rules [test]`。今の決め打ちの hook を規則の評価に置き換える | なし(`config` 表を使う) | 1 |
 | 3 | 期限のイベント(`overdue` / `due_soon`)を定期のジョブで残す | なし | 1、2 |
-| 4 | アラート・提案からチケットを自動で作る。PR の監視を `refs` で結ぶ | `alerts` と `proposals` に `task_id` 列 | 1 |
+| 4a | アラートをチケットへ移す(`alert_details`、移行、`A-<n>` の別名、人だけが閉じる、Web UI・digest・notify・limits の読み先) | `alert_details`、`alerts` の行を移して表を消す | 1 |
+| 4b | 提案をチケットへ移す(`proposal_details`、`P-<n>` の別名) | `proposal_details`、`proposals` の行を移して表を消す | 1 |
+| 4c | PR の監視を `refs` の URL でチケットに結ぶ | なし | 1 |
 | 5 | `tb reminders`(#116)のチケットの材料を `task_events` から読む。`deadlines.conf` を担当なしのチケット + 期日に寄せる | なし | #116 のマージ、3 |
 
 - スキーマの番号は、マージの時点の main の次の空き番号にする(#112 / #121 / #124 がそれぞれ 015 を使っているため)。
 - 各段は「規則も設定もなければ今と同じ」を守る。
 - ADR 0002(Go のバイナリへの移行)とは、表と設定の形で受け渡すので、どちらの実装にも載る。
 
-## 人が決めること
+## 人の決定(2026-11-19)
 
-1. **ラベルで決まる通知を、誰が付けたラベルでも出すか**。agent も `tb update --add-label` を使える。`actor=cli`(pane の外 = 人と見なす)で絞れるが、pane の外かどうかは環境変数で決まるので強い保証ではない。本文は決定論で作り、秘密の検出・頻度の上限は必ず通るので、出るのは「チケットの ID と題」だけ。案: 誰が付けても出す(規則で `actor=` を書けば絞れる)。
-2. **アラートと提案の寄せ方**。案: 元の表を正としてチケットを自動で作る(上の 3)。ほかに、寄せない、元の表をやめてチケットに移す、がある。
+1. **ラベルで決まる通知は、誰が付けたラベルでも出す**。agent が付けたラベルでも当たる。本文は決定論で作り、秘密の検出・頻度の上限は必ず通る。絞りたい規則だけ `actor=human` を書く(pane の外かどうかは環境変数で決まるので、強い保証ではない)。
+2. **アラートと提案はチケットに完全に移す**(上の 3)。人だけが通せる操作(解析役の起動の承認、アラートを閉じる)はチケットの状態で代用せず、別の表と人だけのコマンドに残す。
 
 ## 未確認・推測
 
