@@ -10,3 +10,5 @@ watch_stale_min = 20   # 見張り系ジョブ(tb limits の watchers が TARGET
 fail_window_min = 60   # 失敗率を見る期間(分)
 fail_min_runs = 5      # この回数以上実行(ran + failed)があったときだけ失敗率を見る
 fail_rate_pct = 50     # failed の割合(%)がこれ以上なら出す
+                       # exit 10(宛先が作業中で tb が送らずに保留した)の failed は待ちとして、失敗率に入れない
+wait_max_min = 180     # 直近の記録が exit 10 の待ちだけになって、この分数以上たったら出す(0 で出さない)
