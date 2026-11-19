@@ -130,12 +130,17 @@ def summarize(kind, rel, text, attempt):
     if r.returncode != 0 or not r.stdout.strip():
         return None
     lines = r.stdout.strip().splitlines()
-    bounds = ""
-    if lines and lines[0].lower().startswith("boundaries:"):
-        bounds = ",".join(b.strip() for b in lines[0].split(":", 1)[1].split(",") if b.strip() in cli.BOUNDARIES)
+    bounds, calls = "", []
+    while lines and lines[0].lower().split(":", 1)[0] in ("boundaries", "calls") and ":" in lines[0]:
+        key, val = lines[0].split(":", 1)
+        items = [x.strip() for x in val.split(",") if x.strip()]
+        if key.lower() == "boundaries":
+            bounds = ",".join(b for b in items if b in cli.BOUNDARIES)
+        else:
+            calls = items
         lines = lines[1:]
     body = "\n".join(lines).strip()
-    return (body, bounds) if body else None
+    return (body, bounds, calls) if body else None
 
 
 def _mark(con, rid, kind_filter, paths, state):
@@ -150,6 +155,14 @@ def _mark(con, rid, kind_filter, paths, state):
                              " WHERE repo_id = ? AND kind = 'dir' AND path = ? AND state != ?",
                              (state, rid, p, state)).rowcount
     return n
+
+
+def _set_relations(con, rid, src, dsts, commit):
+    """src から出る関係を置き換える(索引が見た分だけ)。"""
+    con.execute("DELETE FROM relations WHERE repo_id = ? AND src = ?", (rid, src))
+    for d in sorted(set(dsts))[:50]:
+        con.execute("INSERT OR IGNORE INTO relations(repo_id, src, dst, kind, commit_id) VALUES (?,?,?,'calls',?)",
+                    (rid, src, d, commit))
 
 
 def _final_rejected(con, rid, kind, rel, commit):
@@ -210,6 +223,10 @@ def run(name, dry_run=False, check_only=False, out=sys.stdout, err=sys.stderr):
             return 0 if (targets or gone or gone_dirs or old != new) else 1
 
         with con:
+            for f in gone | {f for f in changed if f not in files_ok}:
+                _set_relations(con, rid, f, [], new)
+            for f in gone:
+                con.execute("DELETE FROM relations WHERE repo_id = ? AND dst = ?", (rid, f))
             n_missing = _mark(con, rid, "file", gone, "missing") + _mark(con, rid, "dir", gone_dirs, "missing")
             n_missing += _mark(con, rid, "file", {f for f in changed if f not in files_ok}, "missing")
             n_stale = _mark(con, rid, "file", {p for k, p in targets if k == "file"}, "stale")
@@ -233,12 +250,14 @@ def run(name, dry_run=False, check_only=False, out=sys.stdout, err=sys.stderr):
                 if got is None:
                     reasons = ["summarizer_failed"]
                     continue
-                body, bounds = got
+                body, bounds, calls = got
                 try:
                     with con:
                         cli.put_summary(con, name, kind, rel, body, new,
                                         file_hash=blob_hash(path, new, rel) if kind == "file" else None,
                                         model=model, boundaries=bounds)
+                        if kind == "file":
+                            _set_relations(con, rid, rel, [c for c in calls if c in files_ok and c != rel], new)
                     ok = True
                     if attempt > 1:
                         regenerated += 1

@@ -1,0 +1,19 @@
+# 会話の振り分け表(設定 conv-routes。tb conv-routes-set < このファイル で入れる。人だけが変える)
+# この .example は既定値にはならない。表が無いときは、すべての依頼が「未登録」になり人の判断に回る。書式は conversation/README.md
+#
+#   version = <整数>                     必須。変えるたびに増やす(履歴は tb config history conv-routes)
+#   counterparts = <区分> ...            登録済みの相手の区分。ここに無い区分は推測せず「未登録」
+#   <event> <counterpart> <depth> <severity> <deadline> -> kind=<種別> channel=<経路の区分> timing=<時機> [severity=<重大度>|keep]
+#
+# 左辺の各欄は * か、名前か、カンマ区切りの名前(完全一致だけ)。上から見て最初に一致した行で決まる。
+# 受け取った文面の中身は使わない(tb conv-route は 5 つの区分の名前しか受け付けない)。
+version = 1
+counterparts = teammate manager other-team customer
+
+# 外の相手への断り・高い重大度は、ここでは振り分けない(未登録 = 人の判断)
+review-request  teammate,manager,other-team  *  low,normal  *            -> kind=review-reply   channel=same-thread  timing=within-day
+inquiry         teammate,manager,other-team  *  low,normal  *            -> kind=inquiry-answer channel=same-thread  timing=within-day
+inquiry         customer                     *  low,normal  *            -> kind=inquiry-answer channel=same-thread  timing=next-business-day
+overdue         teammate,other-team          *  low,normal  today,soon   -> kind=reminder       channel=direct       timing=now
+received        *                            *  low,normal  *            -> kind=thanks         channel=same-thread  timing=within-day
+decline         teammate,manager,other-team  known,close  low,normal  *  -> kind=refusal        channel=direct       timing=within-day

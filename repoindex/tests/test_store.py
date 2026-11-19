@@ -154,7 +154,8 @@ class ServerTest(Case):
                           {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
         self.assertEqual(len(out), 2)
         names = {t["name"] for t in out[1]["result"]["tools"]}
-        self.assertEqual(names, {"repoindex_search", "repoindex_get", "repoindex_stale", "repoindex_freshness"})
+        self.assertEqual(names, {"repoindex_search", "repoindex_get", "repoindex_stale", "repoindex_freshness",
+                                 "repoindex_context"})
 
     def test_call_and_log_has_no_body(self):
         self.write("x.py", "1\n")

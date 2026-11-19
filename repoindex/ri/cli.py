@@ -224,6 +224,8 @@ def cmd_query(a):
             if not a.args:
                 return _err("query get <path> [symbol]", 2)
             res = read.get(con, a.repo, a.args[0], a.args[1] if len(a.args) > 1 else None)
+        elif a.op == "context":
+            res = read.context(con, a.repo, a.args or None, a.range)
         elif a.op == "stale":
             res = read.stale(con, a.repo, a.limit)
         else:
@@ -264,7 +266,8 @@ def build_parser():
     s = sp.add_parser("purge", help="データのディレクトリごと消す(元に戻す)")
     s.add_argument("--yes", action="store_true"); s.set_defaults(fn=cmd_purge)
     s = sp.add_parser("query", help="読み取り(人が確かめる用。serve と同じ中身)")
-    s.add_argument("op", choices=["search", "get", "stale", "freshness"]); s.add_argument("args", nargs="*")
+    s.add_argument("op", choices=["search", "get", "stale", "freshness", "context"])
+    s.add_argument("args", nargs="*"); s.add_argument("--range")
     s.add_argument("--repo"); s.add_argument("--limit", type=int); s.set_defaults(fn=cmd_query)
     sp.add_parser("serve", help="読み取り専用のツール口(MCP stdio)").set_defaults(fn=lambda a: server.main())
     return p
