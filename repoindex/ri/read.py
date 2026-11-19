@@ -4,6 +4,7 @@
 確かめるべき元のソースの場所(repo / path / commit)を付ける。件数と長さには上限がある。
 """
 import os
+import re
 import subprocess
 
 from . import store
@@ -207,3 +208,124 @@ def freshness(con, repo=None):
                     "index_behind": head is None or r[1] != head,
                     "fresh": r[4] or 0, "stale": r[5] or 0, "missing": r[6] or 0})
     return {"repos": out}
+
+
+# --- 変更のまわりを引く(#109) ---
+MAX_CONTEXT_FILES = 10   # 1 回に見る変更ファイルの上限
+MAX_NEIGHBORS = 5        # 1 ファイルあたりの呼び出し元・呼び先の上限
+NEIGHBOR_BODY = 400      # まわりの要約 1 件の本文の上限(文字)
+_RANGE_RE = re.compile(r"[0-9A-Za-z_./~^@{}-]+(?:\.\.\.?[0-9A-Za-z_./~^@{}-]+)?")
+_GENERIC = {"index", "main", "__init__", "init", "utils", "util", "helpers", "common", "types", "test", "config", "mod", "lib"}
+
+
+def _one(con, src, repo, path, kinds, budget):
+    row = con.execute(_SELECT + f" WHERE r.name = ? AND s.path = ? AND s.kind IN ({','.join('?' * len(kinds))})"
+                      " ORDER BY s.kind LIMIT 1", (repo, path, *kinds)).fetchone()
+    if not row:
+        return None, 0
+    return _item(row, budget, src)
+
+
+def _grep_callers(repo_path, path, limit):
+    """普通のコード検索で呼び出し元を探す(ファイル名の語で git grep)。場所(path と行)だけを返し、行の中身は返さない。"""
+    name = os.path.splitext(os.path.basename(path))[0]
+    if len(name) < 3 or name.lower() in _GENERIC:
+        return []
+    r = _git(repo_path, "grep", "-z", "-n", "-I", "-w", "-F", "-e", name, "HEAD", "--")
+    if r is None or r.returncode not in (0, 1):
+        return []
+    from . import scan
+    out, seen = [], set()
+    for line in r.stdout.split("\n"):
+        parts = line.split("\0")
+        if len(parts) < 3:
+            continue
+        f = parts[0].split(":", 1)[1] if parts[0].startswith("HEAD:") else parts[0]
+        if f == path or f in seen or scan.excluded(f, extra=[]):
+            continue
+        seen.add(f)
+        out.append({"path": f, "line": int(parts[1]) if parts[1].isdigit() else None})
+        if len(out) >= limit:
+            break
+    return out
+
+
+def context(con, repo, paths=None, rev_range=None):
+    """変更のまわり: 変わったファイルとそのディレクトリの要約、呼び出し元・呼び先、関わる境界、影響の範囲。
+    どの主張にも元ソースの場所(path / 行 / commit)を付ける。要約が無ければ missing を明示する。"""
+    row = con.execute("SELECT id, path FROM repos WHERE name = ?", (repo or "",)).fetchone()
+    if not row:
+        raise store.StoreError(f"リポジトリが登録されていません: {repo}")
+    rid, repo_path = row
+    src = _Source()
+    head = src.head(repo_path)
+    if head is None:
+        raise store.StoreError("元のリポジトリを読めません")
+    if rev_range:
+        if not _RANGE_RE.fullmatch(rev_range) or rev_range.startswith("-"):
+            raise store.StoreError("range は <base>..<head> の形")
+        r = _git(repo_path, "diff", "--name-only", "-z", rev_range, "--")
+        if r is None or r.returncode != 0:
+            raise store.StoreError("range の差分を取れません")
+        paths = [p for p in r.stdout.split("\0") if p]
+    paths = [_norm_path(p) for p in (paths or [])]
+    if not paths:
+        raise store.StoreError("paths か range を指定してください")
+    more = len(paths) > MAX_CONTEXT_FILES
+    paths = paths[:MAX_CONTEXT_FILES]
+
+    budget = MAX_TOTAL
+    files, missing, boundaries, radius = [], [], set(), {}
+
+    def take(path, kinds, cap):
+        nonlocal budget
+        it, used = _one(con, src, repo, path, kinds, min(cap, budget))
+        budget -= used
+        return it
+
+    def note_missing(path, kind):
+        missing.append({"repo": repo, "path": path, "kind": kind, "hint": "要約がない。元のソースを読む"})
+
+    for p in paths:
+        ent = {"path": p, "source": {"repo": repo, "path": p, "commit": head}}
+        f = take(p, ("file",), MAX_BODY)
+        d = take(os.path.dirname(p) or ".", ("dir",), MAX_BODY)
+        ent["file"], ent["dir"] = f, d
+        if f is None:
+            note_missing(p, "file")
+        if d is None:
+            note_missing(os.path.dirname(p) or ".", "dir")
+        for it in (f, d):
+            if it:
+                boundaries.update(it["boundaries"])
+        radius.setdefault(p, {"path": p, "why": ["changed"], "source": ent["source"]})
+
+        callers, seen = [], set()
+        for (s_,) in con.execute("SELECT src FROM relations WHERE repo_id = ? AND dst = ? ORDER BY src LIMIT ?",
+                                 (rid, p, MAX_NEIGHBORS)):
+            seen.add(s_)
+            callers.append({"path": s_, "found_by": "index", "line": None})
+        for c in _grep_callers(repo_path, p, MAX_NEIGHBORS):
+            if c["path"] not in seen and len(callers) < MAX_NEIGHBORS:
+                seen.add(c["path"])
+                callers.append({**c, "found_by": "code_search"})
+        callees = [{"path": d_, "found_by": "index", "line": None} for (d_,) in con.execute(
+            "SELECT dst FROM relations WHERE repo_id = ? AND src = ? ORDER BY dst LIMIT ?", (rid, p, MAX_NEIGHBORS))]
+        for group, why in ((callers, "caller"), (callees, "callee")):
+            for n in group:
+                n["source"] = {"repo": repo, "path": n.pop("path"), "line": n.pop("line"), "commit": head}
+                n["summary"] = take(n["source"]["path"], ("file",), NEIGHBOR_BODY) or \
+                    take(os.path.dirname(n["source"]["path"]) or ".", ("dir",), NEIGHBOR_BODY)
+                if n["summary"] is None:
+                    n["missing"] = True
+                elif why == "callee":
+                    boundaries.update(n["summary"]["boundaries"])
+                r_ = radius.setdefault(n["source"]["path"], {"path": n["source"]["path"], "why": [], "source": n["source"]})
+                if f"{why} of {p}" not in r_["why"]:
+                    r_["why"].append(f"{why} of {p}")
+        ent["callers"], ent["callees"] = callers, callees
+        files.append(ent)
+
+    return {"repo": repo, "head": head, "files": files, "missing": missing,
+            "boundaries": sorted(boundaries), "blast_radius": list(radius.values()),
+            "more": more, "notice": NOTICE}

@@ -62,6 +62,7 @@ class StoreTest(Case):
         con.close()
 
     def test_reader_without_db_creates_nothing(self):
+        self.ri("purge", "--yes")
         with self.assertRaises(store.StoreError):
             store.connect_ro()
         self.assertFalse(os.path.exists(self.data))
@@ -154,7 +155,8 @@ class ServerTest(Case):
                           {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
         self.assertEqual(len(out), 2)
         names = {t["name"] for t in out[1]["result"]["tools"]}
-        self.assertEqual(names, {"repoindex_search", "repoindex_get", "repoindex_stale", "repoindex_freshness"})
+        self.assertEqual(names, {"repoindex_search", "repoindex_get", "repoindex_stale", "repoindex_freshness",
+                                 "repoindex_context"})
 
     def test_call_and_log_has_no_body(self):
         self.write("x.py", "1\n")
@@ -171,6 +173,7 @@ class ServerTest(Case):
         self.assertNotIn("SECRETLESS-BODY-TEXT", err)
 
     def test_missing_db_is_an_error_not_a_crash(self):
+        self.ri("purge", "--yes")
         out, _ = self.rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                            "params": {"name": "repoindex_freshness", "arguments": {}}})
         self.assertTrue(out[0]["result"]["isError"])
