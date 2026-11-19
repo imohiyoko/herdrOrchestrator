@@ -12,7 +12,7 @@
 
 ## 状況(Context)
 
-- 今の実装は bash(taskboard の `tb` と lib/*.sh、scheduler、setup、herdr-up.sh)と Python(webui、repoindex)。依存は bash・sqlite3・jq・python3・launchd。
+- 今の実装は bash(taskboard の `tb` と lib/*.sh、scheduler、setup、herdr-up.sh)と Python(webui、要約の索引)。依存は bash・sqlite3・jq・python3・launchd。
 - 人の希望(2026-11-19): マイクロサービス化を進めたい。将来は、shell でも使えるまま、Windows と macOS それぞれ向けのバイナリを配布して、バイナリで使うようにしたい。そのための release CD が要る。
 - 事実(確認済み、2026-11-19、herdr.dev の Windows のページ): herdr は Windows でネイティブに動く(PowerShell でインストール、ConPTY のペイン、セッションの永続化)。ただし `herdr terminal attach` など一部は Windows で動かず、バイナリの署名もない。`herdr pane send` など CLI からの操作が Windows で同じに動くかは**未確認**。
 - 事実: scheduler は launchd(macOS)専用。Windows では タスク スケジューラ、Linux では systemd timer か cron が要る。
@@ -32,7 +32,7 @@
 | policy(承認・ゲート) | approvals, risk, gate, review, prqueue, proxy | 承認判定、ゲート、PR キュー | `tb approve` / `gate` / `pr-queue` |
 | scheduler(定期実行) | scheduler/, schedjobs, schedwatch | ジョブの定義と起動、失敗率の監視 | `jobs/*.conf`、OS ごとの起動器(launchd / タスク スケジューラ / systemd) |
 | webui | webui/ | 画面とログイン | HTTP(127.0.0.1) |
-| repoindex(任意) | repoindex/ | 要約の索引(別 DB) | CLI と MCP |
+| 要約の索引(任意) | 索引のモジュール(README の表を参照) | 要約の索引(別 DB) | CLI と MCP |
 
 - herdr とのやり取り(`herdr pane send` など)は「herdr アダプタ」1 か所に集め、テストではここを疑似 herdr に差し替える(今の fake-herdr と同じ考え)。
 - 境界の規則: サービスは他のサービスの表を直接読まない。読むときは store の関数を通す。これで、後でプロセスを分けても中身を書き換えずに済む。
@@ -51,7 +51,7 @@
 |---|---|---|
 | **Go(推奨)** | 1 回の `GOOS`/`GOARCH` 指定で全 OS 向けを作れる。cgo の要らない SQLite(`modernc.org/sqlite`)がある。標準ライブラリで HTTP サーバー・JSON が足りる。jq も sqlite3 の CLI も要らなくなる | bash より行数は増える。webui のテンプレートを書き直す手間 |
 | Rust | 速く、型が強い。herdr も Rust | 全 OS 向けのビルドが Go より手間(リンカ、SQLite の C ライブラリ)。書き直しに時間がかかる |
-| Python + PyInstaller | webui と repoindex はそのまま使える | 起動が遅い、配布物が大きい、OS ごとにその OS の上でビルドが要る。bash の部分はどのみち書き直す |
+| Python + PyInstaller | webui と要約の索引はそのまま使える | 起動が遅い、配布物が大きい、OS ごとにその OS の上でビルドが要る。bash の部分はどのみち書き直す |
 
 ### 4. 移行の手順(strangler fig)
 
