@@ -186,8 +186,12 @@ do_agent_new() {  # name cwd model role prompt killable by [spawned_by spawn_tas
   # 先に台帳へ載せる(SessionStart hook が --role の役割を引けるように)
   local why=""; [[ $kill == unknown ]] || why="作成時に指定"
   agent_register "$name" "$cwd" "$model" "$role" "$by" "$kill" "$why" "$kind"
-  local -a args=(); kind_launch_into args "$kind" "" "$model"
+  local -a args=(); kind_launch_into args "$kind" "" "$(model_with_role_default "$model" "$kind" "$name" "$role")"
   if ! herdr_spawn "$kind" "$name" "$cwd" ${args[@]+"${args[@]}"}; then
+    if ((SPAWN_KEPT)); then   # 人の操作待ち: pane は残っているので台帳にも残す(最初の指示は送らない)
+      sql "UPDATE main.agents SET pane_id=$(q "$SPAWN_PANE"), spawned_by=NULLIF($(q "$sby"),''), spawn_task=NULLIF($(q "$stask"),'') WHERE herdr_session=$SQS AND name=$(q "$name");"
+      OP_OUT="$name: $SPAWN_ERR${prompt:+。最初の指示は未送信(答えたあと tb send などで送る)}"; return 11
+    fi
     sql "DELETE FROM main.agents WHERE herdr_session=$SQS AND name=$(q "$name");"
     OP_OUT="$name を起動できません: $SPAWN_ERR"; return 11
   fi
@@ -232,8 +236,10 @@ do_agent_revive() {  # name fresh model prompt by
   row=$(agent_reg_row "$name")
   [[ -n $row ]] || { other_session "$name" && return 1; OP_OUT="$name は台帳にありません(新しく作るなら tb agent-new)"; return 1; }
   cwd=$(jq -r '.cwd // ""' <<<"$row"); [[ -n $model ]] || model=$(jq -r '.model // ""' <<<"$row")
+  local lmodel=$model   # 台帳に書くのは明示か台帳の値だけ(役割の既定は書かない)
   sess=""; [[ $fresh == 1 ]] || sess=$(jq -r '.session_id // ""' <<<"$row")
   kind=$(jq -r --arg d "$KIND_DEFAULT" '.kind // $d' <<<"$row")
+  model=$(model_with_role_default "$model" "$kind" "$name")
   kind_check_launch "$kind" "$model" "$sess" || return 12
   if [[ -z $cwd || ! -d $cwd ]]; then
     # claude --resume は会話を作業ディレクトリごとに探すので、別の場所では同じ会話に戻れない
@@ -241,8 +247,12 @@ do_agent_revive() {  # name fresh model prompt by
     cwd=$(cd "$AGENT_CWD" && pwd)
   fi
   local -a args=(); kind_launch_into args "$kind" "$sess" "$model"
-  agent_register "$name" "$cwd" "$model" "" "$by" unknown "" "$kind"
+  agent_register "$name" "$cwd" "$lmodel" "" "$by" unknown "" "$kind"
   if ! herdr_spawn "$kind" "$name" "$cwd" ${args[@]+"${args[@]}"}; then
+    if ((SPAWN_KEPT)); then
+      sql "UPDATE main.agents SET pane_id=$(q "$SPAWN_PANE") WHERE herdr_session=$SQS AND name=$(q "$name");"
+      OP_OUT="$name: $SPAWN_ERR${prompt:+。最初の指示は未送信(答えたあと tb send などで送る)}"; return 11
+    fi
     sql "UPDATE main.agents SET state='stopped', stopped_at=$(q "$(now)") WHERE herdr_session=$SQS AND name=$(q "$name");"
     OP_OUT="$name を起動できません: $SPAWN_ERR"; return 11
   fi
@@ -310,7 +320,8 @@ run_op() {  # $1=op $2=対象 $3=args $4=依頼者
                          "$(jq -r '.prompt // ""' <<<"$a")" "$(jq -r '.killable // "unknown"' <<<"$a")" "$4" \
                          "$(jq -r '.spawn.parent // ""' <<<"$a")" "$(jq -r '.spawn.task // ""' <<<"$a")" "$(jq -r --arg d "$KIND_DEFAULT" '.kind // $d' <<<"$a")";;
     stop)   do_agent_stop "$2" "$(jq -r '.force // 0' <<<"$a")" "$4";;
-    revive) do_agent_revive "$2" "$(jq -r '.fresh // 0' <<<"$a")" "$(jq -r '.model // ""' <<<"$a")" "$(jq -r '.prompt // ""' <<<"$a")" "$4";;
+    revive) if [[ $(jq -r '.model_set // 0' <<<"$a") == 1 ]]; then model_set_run "$2" "$a" "$4"; return; fi   # tb model-set(承認後)
+            do_agent_revive "$2" "$(jq -r '.fresh // 0' <<<"$a")" "$(jq -r '.model // ""' <<<"$a")" "$(jq -r '.prompt // ""' <<<"$a")" "$4";;
     *) OP_OUT="不明な操作: $1"; return 1;;
   esac
 }
@@ -630,13 +641,14 @@ cmd_agent-approve() {
   [[ $(jq -r .status <<<"$row") == pending ]] || die "L-$id は承認待ちではありません($(jq -r .status <<<"$row"))"
   if [[ $(jq -r .op <<<"$row") == slash ]]; then slash_approve "$id" "$row" "$always"; return; fi   # tb slash(lib/slash.sh)
   op=$(jq -r .op <<<"$row"); target=$(jq -r .target <<<"$row"); args=$(jq -r .args <<<"$row"); by=$(jq -r .requested_by <<<"$row")
+  local aop=$op; [[ $(jq -r '.model_set // 0' <<<"$args") == 1 ]] && aop=model   # tb model-set の承認待ち(記録は op=revive)
   if [[ $op == new && -n $(jq -r '.spawn.parent // ""' <<<"$args") ]]; then spawn_recheck "$id" "$args" || return 1
-  elif [[ $op == new || $op == revive ]]; then limits_refuse_running 1 || return 4   # 承認待ちの間に上限へ達していたら、承認待ちのまま残す
+  elif [[ $op == new || $aop == revive ]]; then limits_refuse_running 1 || return 4   # 承認待ちの間に上限へ達していたら、承認待ちのまま残す
   fi
   if [[ $op == new ]] && role_conflict "$target" "$(jq -r '.role // ""' <<<"$args")"; then   # --always の規則を書く前に止める
     die "L-$id: $ROLE_CONFLICT_WHY(tb agent-reject L-$id で却下)"
   fi
-  ((always)) && set_approval allow "agent:$op:$target" >/dev/null && echo "agent:$op:$target = allow(今後は承認なし)"
+  ((always)) && set_approval allow "agent:$aop:$target" >/dev/null && echo "agent:$aop:$target = allow(今後は承認なし)"
   run_op "$op" "$target" "$args" "$by" || r=$?
   record_op "$op" "$target" "$args" "$by" "$r" "$OP_OUT / 人が承認" "$id"
   if ((r)); then echo "tb: L-$id: $OP_OUT" >&2; else echo "L-$id: $OP_OUT"; fi

@@ -1,0 +1,9 @@
+#!/usr/bin/env python3
+"""repoindex: リポジトリの要約の索引(任意のモジュール。core はこれを呼ばない)。使い方は repoindex/README.md"""
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from ri import cli  # noqa: E402
+
+sys.exit(cli.main())
