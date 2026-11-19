@@ -12,11 +12,7 @@
 # 書くのは人だけ。環境変数でファイルを明示しているときはそのファイルを、そうでなければ DB のこのセッションの行(--shared なら共通の行)を書く。
 
 CONFIG_DIR=${TB_CONFIG_DIR:-$TB_ROOT/config}   # checkout の設定ファイルの置き場(テストで差し替え)
-<<<<<<< HEAD
-CONFIG_KEYS="projects approvals grants routes limits notify notify-rules compact sched-watch spawn-policy role-models conv-routes"
-=======
-CONFIG_KEYS="projects approvals grants routes delivery limits notify compact sched-watch spawn-policy role-models conv-routes"
->>>>>>> feat/task-events
+CONFIG_KEYS="projects approvals grants routes delivery limits notify notify-rules compact sched-watch spawn-policy role-models conv-routes"
 
 # キーの情報: CFG_ENV(上書きの環境変数)、CFG_FILE(checkout のファイル名)、CFG_EXAMPLE(1 なら .example も既定値として読む)
 config_key_info() {

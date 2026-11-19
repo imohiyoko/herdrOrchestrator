@@ -1,0 +1,15 @@
+# 通知の規則(設定 notify-rules)の例。チケットの履歴(tb history)のイベントに当てて通知する。書くのは人だけ。
+# 使い始めるには: 必要な行を残して tb config set notify-rules < このファイル(誤りがあれば何も書かない)
+# 確かめる: tb notify rules / tb notify rules test E-<n>(何も積まない)。notify が off のあいだは何も出ない(tb notify status)
+#
+# 1 行 1 つ: <イベントの種類|*> [条件 ...] -> <届け先 ...>
+#   種類: created status title type priority owner due parent description label_added label_removed ref_added ref_removed link unlink comment
+#   条件: type= priority= priority>= label= project= owner= new= old= actor=(名前 / human / system / agent)。すべて満たした行が当たる
+#         label= は label_added / label_removed では付け外したラベルそのもの、ほかでは「今そのラベルを持っている」
+#   届け先: file stdout slack webui(Web UI の緊急通知) conductor(指揮役への次のまとめ)
+
+label_added label=notify             -> slack webui
+created type=bug priority>=high      -> slack webui
+status new=blocked                   -> webui conductor
+# status new=done project=web        -> conductor
+# label_added label=urgent actor=human -> slack

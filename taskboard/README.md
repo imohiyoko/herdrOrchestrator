@@ -605,6 +605,33 @@ tb pr-watch                        # 許可リストの PR を gh の読み取�
 
 `tb pr-watch` は許可リスト `taskboard/config/repos.md`(`TB_REPOS_FILE` で変更可。git 管理外)の `- <org>/<repo>` の行のリポジトリだけを、`gh pr list` で読む。許可リストが無い・空、または notify が off なら何もせず終了コード 0。初めて見るリポジトリは基準線の記録だけで、既存の PR をイベントにしない。PR の題(短く)と状態だけを使い、本文・レビューのコメント・差分は読まない。ジョブの例は `scheduler/jobs/pr-watch.conf.example` と `notify-flush.conf.example`。
 
+### 通知の規則(notify-rules。チケットのイベントで通知する)
+
+チケットの履歴(`tb history`)のイベントに規則を当てて通知する(設計は [ADR 0003](../docs/adr/0003-ticket-events-and-notify-rules.md) の段 2)。規則は人だけが書く設定 `notify-rules`。例は [config/notify-rules.conf.example](config/notify-rules.conf.example)。
+
+```sh
+tb config set notify-rules < my-rules.conf   # 書く(誤りがあれば何も書かない)
+tb notify rules                              # 今効いている規則と出どころ
+tb notify rules test E-123                   # そのイベントにどの規則が当たるか(何も積まない)
+```
+
+```text
+# <イベントの種類|*> [条件 ...] -> <届け先 ...>
+label_added label=notify            -> slack webui     # ラベル notify が付いたら(誰が付けても)
+created type=bug priority>=high    -> slack
+status new=done project=web         -> conductor
+label_added label=urgent actor=human -> slack           # 人が付けたときだけ
+comment new=question                -> webui
+```
+
+- **イベントの種類**: `tb history` の種類(created / status / label_added / priority / comment など)か `*`。
+- **条件**: `type=` `priority=` `priority>=` `label=` `project=` `owner=` `new=` `old=` `actor=`。すべて満たした行が当たる。`label=` は、label_added / label_removed では付け外したラベルそのもの、ほかのイベントでは「今そのラベルを持っている」。`actor=` は名前か `human` / `system` / `agent`。
+- **届け先**: `file` `stdout` `slack`(ほかの通知と同じ経路)、`webui`(Web UI の緊急通知と Chrome 通知に 24 時間出す)、`conductor`(そのプロジェクトの指揮役への次のまとめ = `tb digest`)。当たった行の届け先を合わせ、イベント 1 件につき通知 1 件(種別 `ticket`)。
+- **本文**: `[チケット] T-web-012 ログイン画面 — ラベル +notify / high / bug / 担当 worker-2`。ID・題・イベント・優先度・種別・担当だけで、説明やコメントの本文は載せない。秘密の検出・伏せ字・頻度の上限は他の通知と同じく必ず通る。
+- **誰が付けたラベルでも当たる**(人の決定)。agent が付けたラベルでも出る。絞りたい規則だけ `actor=human`(pane の外かどうかで決まるので強い保証ではない)。
+- notify が `off` のあいだは何も積まない。`on` にしたとき、作られてから 60 分(`TB_NOTIFY_RULES_WINDOW_MIN`)を過ぎたイベントには当てない。規則を足す前のイベントにも当てない。
+- 規則は足すだけで、今の決め打ちの通知(質問・ブロック・完了・アラート)はそのまま。チケットを書いた tb の最後と `tb notify flush` で当てる。
+
 ## draft PR の作成キュー(pr-queue)
 
 agent のセッションに `gh` の書き込み権限を持たせないための仕組み。agent は PR を作らず、キューに置くだけ。PR を作るのは、人の端末で動く scheduler の COMMAND ジョブ(`tb pr-queue scan` → `tb pr-queue run`)。
