@@ -159,7 +159,7 @@ label_added label=urgent actor=human    -> slack webui      # 人(pane の外)�
 | 4a | アラートをチケットへ移す(`alert_details`、移行、`A-<n>` の別名、人だけが閉じる、Web UI・digest・notify・limits の読み先) | `alert_details`、`alerts` の行を移して表を消す | 1 |
 | 4b | 提案をチケットへ移す(`proposal_details`、`P-<n>` の別名) | `proposal_details`、`proposals` の行を移して表を消す | 1 |
 | 4c | PR の監視を `refs` の URL でチケットに結ぶ | なし | 1 |
-| 5 | `tb reminders`(#116)のチケットの材料を `task_events` から読む。`deadlines.conf` を担当なしのチケット + 期日に寄せる | なし | #116 のマージ、3 |
+| 5 | `tb reminders`(#116)のチケットの材料を `task_events` から読む(停滞は履歴も動きに数える、変更依頼が付いたままの PR)。`deadlines.conf` を担当なしのチケット + 期日に寄せる(`tb deadlines-import`) | なし | #116 のマージ、3 |
 
 - スキーマの番号は、マージの時点の main の次の空き番号にする(#112 / #121 / #124 がそれぞれ 015 を使っているため)。
 - 各段は「規則も設定もなければ今と同じ」を守る。
