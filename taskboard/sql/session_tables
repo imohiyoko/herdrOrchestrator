@@ -3,7 +3,7 @@
 agent_activity
 agent_ops
 agents
-alerts
+alert_details
 approval_changes
 comments
 config
@@ -17,7 +17,7 @@ notify_sends
 observations
 outbox
 pr_queue
-proposals
+proposal_details
 proxy_requests
 read_log
 reviews

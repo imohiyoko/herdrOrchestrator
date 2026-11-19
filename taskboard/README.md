@@ -217,9 +217,13 @@ tb reminders --publish     # まとめを出し、記録を更新する
 
 - **材料**(すべて読むだけ): 未対応の質問・ブロック報告(未完了のタスク)/ 承認待ち(送信 `O-` / agent 操作 `L-` / 代行依頼 / 解析役の起動 `A-`)/
   レビュー待ちの PR(許可リスト `taskboard/config/repos.md` のリポジトリで、開いていて draft でなく、承認も変更依頼もないもの。`gh pr list` で読むだけ)/
-  停滞したタスク(`in_progress` のまま `TB_REMINDERS_STALE_HOURS`(既定 24)時間更新がない。Web UI の「停滞」と同じ)/
+  停滞したタスク(`in_progress` のまま `TB_REMINDERS_STALE_HOURS`(既定 24)時間動きがない。動きは更新と履歴 `task_events`(報告のコメントも入る))/
+  変更依頼が付いたままの PR(`tb pr-watch` がチケットの履歴に残した、その PR の最後の出来事が `pr_changes`。担当の番)/
   宛先に届いていない送信(`queued` のまま `TB_DIGEST_QUEUED_SEC` 秒)/ 未読の保留メッセージ(`inbox` 表があれば。宛先と送り手と種別だけ)/ 期限(`tasks.due`。`tb list --overdue` / `--due-within` と同じ「今日」。タスクにしない期限は
   `taskboard/config/deadlines.conf` に `deadline = YYYY-MM-DD | 題` の行で書く。`TB_REMINDERS_DEADLINES` で場所を変えられる)
+- **期限ファイルをチケットにする**: `tb deadlines-import [-p project(既定 deadline)] [--dry-run]`(人だけ)で、期限ファイルの行を担当なし・期日つき・ラベル `deadline` のチケットにする。
+  同じ題・同じ期日のチケットがあれば作らない(何度流してもよい)。ファイルは書き換えない。取り込んだ行はファイルからは出さず、チケットの期限として載る
+  (`tb due-scan` の期限のイベントと通知の規則も、ほかのチケットと同じに効く)
 - **優先度**: 急ぎ(期限切れ・今日・明日)→ 人の番(質問・承認待ち・レビュー)→ 停滞 → 待ち・予定(届いていない送信、`TB_REMINDERS_DUE_DAYS`(既定 7)日以内の期限)。
   同じ優先度の中は期限、古い順。列は 優先 / 何が / 誰の番 / 期限 / 参照 / 経過
 - **重複の抑え**: 項目ごとに決まったキー(`q:<id>` / `o:<id>` / `pr:<repo>#<n>` / `due:<タスク>` など)と状態を `reminders:state` に残す。
@@ -322,6 +326,12 @@ tb alert-close A-<n>                # 人が閉じる
 - 結果はすぐ指揮官に送る。使用中なら `tb digest` が回収する。新しいアラートも digest に入る。critical / high の解析結果と起動待ちは Web UI の緊急通知に出る
 - 状態: `new` → (`awaiting-approval` → `approved`)→ (`queued`)→ `analyzing` → `analyzed` → `closed`
 - 解析役の pane / workspace は自動では閉じない。結果を返すと tb が killable=yes を付けるので、人(Web UI の agent 一覧)か承認された指揮官が `tb agent-stop analyst-A<n>` で止める
+- **アラートはチケット**(ADR 0003)。1 件ごとに project `alert`・種別 `bug`・ラベル `alert` のチケット(`T-alert-NNN`)ができ、`tb list` / `tb show` / `tb history` / Web UI のタスク一覧で見える。
+  `A-<n>` の番号とコマンドはそのまま使える(`tb alerts A-<n>` にチケットの ID が出る)。状態はチケットに写る:
+  `new` / `awaiting-approval` / `approved` / `queued` → `todo`、`analyzing` → `in_progress`(担当は解析役)、`analyzed` → `review`(人の番)、`closed` → `done`。
+  緊急度は優先度に写る(critical → highest、high → high、medium → medium、low → low。解析前は high)。解析結果の要約はチケットの要約にも入る
+- チケットの状態は上のコマンドだけが変える。`tb claim` / `tb update --status` / `tb done` / `tb block` はアラートのチケットには使えない(閉じるのは人の `tb alert-close` だけ)。
+  題・ラベル・優先度・期日・コメントはふつうのチケットと同じに変えられる
 
 `tb system-send <宛先> --text T --job J` は scheduler(`tick.sh`)用。agent の pane からは使えない。送ったものは `messages` に `kind=scheduler` で残る。
 
@@ -579,6 +589,9 @@ tb proposal --role <roles のファイル|-> --title T (--text X | --text-file F
 tb proposals [P-<n>] [--status open|applied|rejected]
 tb proposal-resolve P-<n> --status applied|rejected [--note N]   # 設定役か人だけ
 ```
+
+**提案はチケット**(ADR 0003)。1 件ごとに project `proposal`・ラベル `proposal` と `role:<ファイル名>`(全体なら `role:-`)のチケット(`T-proposal-NNN`)ができ、担当は設定役。
+`open` は `todo`、`applied` / `rejected` は `done`(要約に「適用」/「見送り」、見送りはラベル `rejected` も付く)。状態は `tb proposal-resolve` だけが変える。
 
 `review-pack` の中身: 送信の種類別件数と平均文字数、送れなかった宛先、長い送信、tb send の拒否・承認待ち、何度も人が承認した操作、
 報告の種類と質問の例、digest の大きさ、アラートの状態・重複・low 判定・解析時間、観測、役割の配布(compact 回数)、定期実行の action 別件数、提案の状況。

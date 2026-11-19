@@ -175,3 +175,31 @@ func TestSessionTablesListIsNotEmpty(t *testing.T) {
 		}
 	}
 }
+
+// 020 の互換ビュー(alerts / proposals)も、このセッションの行だけに絞る。書き込みはスキーマの INSTEAD OF トリガーがチケットへ振り分ける
+func TestCompatViewsAreSessionScoped(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "tasks.db")
+	a := open(t, p, "a", nil)
+	b := open(t, p, "b", nil)
+	add := func(db *DB, sess, title string) {
+		t.Helper()
+		if _, err := db.Exec(`INSERT INTO main.alerts (herdr_session, fingerprint, title, source, status, first_seen, last_seen) VALUES (?, 'f', ?, 'cli', 'new', 't', 't')`, sess, title); err != nil {
+			t.Fatalf("insert alert: %v", err)
+		}
+	}
+	add(a, "a", "x")
+	add(b, "b", "y")
+	var got string
+	if err := a.QueryRow(`SELECT group_concat(id || ':' || title || ':' || task_id) FROM alerts`).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != "1:x:T-alert-001" {
+		t.Errorf("a sees %q, want 1:x:T-alert-001", got)
+	}
+	if err := a.QueryRow(`SELECT status FROM tasks WHERE id='T-alert-001'`).Scan(&got); err != nil || got != "todo" {
+		t.Errorf("ticket status = %q, %v", got, err)
+	}
+	if _, err := a.Exec(`UPDATE main.alerts SET status='closed' WHERE id=2`); err == nil {
+		t.Error("update of other session's alert was not stopped")
+	}
+}

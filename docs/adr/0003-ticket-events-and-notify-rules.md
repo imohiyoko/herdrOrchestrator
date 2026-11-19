@@ -115,6 +115,15 @@ label_added label=urgent actor=human    -> slack webui      # 人(pane の外)�
 
 - チケットは project `proposal`、種別 `task`、ラベル `proposal`。`P-<n>` は別名として残す(`proposal_details.proposal_no`)。
 
+**実装(段 4a / 4b、スキーマ 020)**
+
+- `alerts` / `proposals` は**表をやめ、同じ列の互換ビュー**にした(中身はチケットと `alert_details` / `proposal_details`。`id` は `A-<n>` / `P-<n>` の番号、`task_id` でチケットを指す)。
+  digest・limits・notify・review・Web UI・関係グラフなどの読み手は SQL を変えずに読める。ビューも、このセッションの行だけの一時ビューで絞る(`taskboard/sql/session_views`)。
+- 書き込みは今までどおり `main.alerts` / `main.proposals` に書き、スキーマの INSTEAD OF トリガーがチケットと小さな表へ振り分け、段階・緊急度をチケットの状態・優先度・担当に写す。
+  写すのは変わった項目だけ(人がチケットで変えた題や優先度を、関係ない更新で戻さない)。振り分けをスキーマに置くので、bash の tb・Go・手で開いた sqlite3 のどれから書いても同じに写る。
+- 案からの変更: project 名は `alert` / `proposal` に固定(トリガーが設定を読めないため)。解析結果の要約はコメントではなくチケットの要約(`summary`)に入れる。閉じた・適用した提案は完了報告(digest の完了の知らせ)に出さない(報告済みにする)。
+  チケットの状態を変える一般のコマンド(`tb claim` / `update --status` / `done` / `block`)は、人の端末からでもアラート・提案のチケットには使えない(専用のコマンドを案内する)。
+
 ### 4. 寄せないもの
 
 | もの | 寄せない理由 | 代わりにすること |
@@ -156,10 +165,10 @@ label_added label=urgent actor=human    -> slack webui      # 人(pane の外)�
 | 1 | `task_events` と書き込み(作成・状態・ラベル・優先度・担当・期日・リンク・外部リンク・コメント)、`tb history`、Web UI のタスク詳細の履歴 | 新しい表 1 つ | なし |
 | 2 | 通知の規則(`notify-rules`。規則は足すだけで、今の決め打ちの通知は残す)、届け先 `webui` / `conductor`、`tb notify rules [test]` | なし(`config` 表を使う) | 1 |
 | 3 | 期限のイベント(`overdue` / `due_soon`)を定期のジョブで残す | なし | 1、2 |
-| 4a | アラートをチケットへ移す(`alert_details`、移行、`A-<n>` の別名、人だけが閉じる、Web UI・digest・notify・limits の読み先) | `alert_details`、`alerts` の行を移して表を消す | 1 |
-| 4b | 提案をチケットへ移す(`proposal_details`、`P-<n>` の別名) | `proposal_details`、`proposals` の行を移して表を消す | 1 |
+| 4a | アラートをチケットへ移す(`alert_details`、移行、`A-<n>` の別名、人だけが閉じる。読み手は互換ビュー `alerts` でそのまま) | `alert_details`、`alerts` の行を移して表を互換ビューにする | 1 |
+| 4b | 提案をチケットへ移す(`proposal_details`、`P-<n>` の別名。互換ビュー `proposals`) | `proposal_details`、`proposals` の行を移して表を互換ビューにする | 1 |
 | 4c | PR の監視を `refs` の URL(と PR の題に書かれたチケット ID)でチケットに結ぶ。規則の種類にも足す | なし | 1 |
-| 5 | `tb reminders`(#116)のチケットの材料を `task_events` から読む。`deadlines.conf` を担当なしのチケット + 期日に寄せる | なし | #116 のマージ、3 |
+| 5 | `tb reminders`(#116)のチケットの材料を `task_events` から読む(停滞は履歴も動きに数える、変更依頼が付いたままの PR)。`deadlines.conf` を担当なしのチケット + 期日に寄せる(`tb deadlines-import`) | なし | #116 のマージ、3 |
 
 - スキーマの番号は、マージの時点の main の次の空き番号にする(#112 / #121 / #124 がそれぞれ 015 を使っているため)。
 - 各段は「規則も設定もなければ今と同じ」を守る。

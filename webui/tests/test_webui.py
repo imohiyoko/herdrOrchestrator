@@ -657,6 +657,17 @@ check("/notify.js が 200 の JavaScript", r[0] == 200 and r[1].get("Content-Typ
       and "Notification" in r[2] and "/api/notifications" in r[2], str(r[:2]))
 check("/notify.js は innerHTML を使わない", "innerHTML" not in r[2] and "eval(" not in r[2])
 check("未ログインの /notify.js は /login へ", Client(port).get("/notify.js")[0] == 302)
+# アラートはチケット(020): project alert のチケットとして一覧に出る。解析中は担当が解析役、解析済みは review、優先度は緊急度から
+_at = cl.get("/tasks?project=alert")[2]
+check("アラート: チケットとして一覧に出る(T-alert-NNN)", sorted(set(re.findall(r'href="/tasks/(T-alert-\d+)"', _at))) == ["T-alert-001", "T-alert-002", "T-alert-003", "T-alert-004"], str(re.findall(r'href="/tasks/(T-alert-\d+)"', _at)))
+_ac = sqlite3.connect(env["WEBUI_TB_DB"])
+check("アラート: 段階と緊急度がチケットの状態・優先度に写る",
+      _ac.execute("SELECT group_concat(status||'/'||priority, ' ') FROM (SELECT t.status, t.priority FROM alert_details d JOIN tasks t ON t.id=d.task_id ORDER BY d.alert_no)").fetchone()[0]
+      == "review/highest review/low todo/high in_progress/high")
+# 後のタスク一覧の件数を変えないよう、ここで片付ける(ビューの DELETE はチケットも消す)
+_ac.execute("DELETE FROM alerts"); _ac.commit()
+check("アラート: ビューを消すとチケットも消える", _ac.execute("SELECT COUNT(*) FROM tasks WHERE project='alert'").fetchone()[0] == 0)
+_ac.close()
 rf = cl.get("/refresh.js")
 check("/refresh.js が 200 の JavaScript。見ていないタブでは読み直さず、読み直しは GET",
       rf[0] == 200 and rf[1].get("Content-Type", "").startswith("text/javascript") and "document.hidden" in rf[2]

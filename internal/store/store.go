@@ -159,9 +159,14 @@ func (s *DB) applyMigration(m Migration) error {
 }
 
 // SessionTables は session_tables の一覧。
-func SessionTables() []string {
+func SessionTables() []string { return nameList(tbsql.SessionTables) }
+
+// SessionViews は session_views の一覧(main にビューとしてある互換ビュー)。
+func SessionViews() []string { return nameList(tbsql.SessionViews) }
+
+func nameList(body string) []string {
 	var ts []string
-	for _, l := range strings.Split(tbsql.SessionTables, "\n") {
+	for _, l := range strings.Split(body, "\n") {
 		l = strings.TrimSpace(l)
 		if l == "" || strings.HasPrefix(l, "#") {
 			continue
@@ -199,6 +204,21 @@ func (s *DB) setupSession() error {
 			if _, err := s.Exec(st); err != nil {
 				return fmt.Errorf("store: セッションの準備(%s): %w", t, err)
 			}
+		}
+	}
+	// 互換ビュー(020 の alerts / proposals): 読みの一時ビューだけ。書き込みの見張りは振り分け先の表に付いている
+	for _, v := range SessionViews() {
+		var ok int
+		err := s.QueryRow(`SELECT COUNT(*) FROM sqlite_master m WHERE m.type='view' AND m.name=?
+			AND EXISTS (SELECT 1 FROM pragma_table_info(m.name) p WHERE p.name='herdr_session')`, v).Scan(&ok)
+		if err != nil {
+			return err
+		}
+		if ok == 0 {
+			continue
+		}
+		if _, err := s.Exec(fmt.Sprintf("CREATE TEMP VIEW %s AS SELECT * FROM main.%s WHERE herdr_session=%s", v, v, q)); err != nil {
+			return fmt.Errorf("store: セッションの準備(%s): %w", v, err)
 		}
 	}
 	return nil
