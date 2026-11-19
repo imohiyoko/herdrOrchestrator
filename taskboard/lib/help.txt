@@ -96,6 +96,8 @@ tb agent-stop <名前> [--force]   pane を閉じて止める。killable=yes(判
 tb agent-revive <名前> [--fresh] [--model M] [--prompt P]   台帳の session を kind の方法(claude は --resume)で再開(--fresh なら新しい会話)。再開できない kind は終了コード 12
 tb agent-kinds   kind(claude / codex / gemini)ごとの対応項目の表(起動・モデル指定・再開・起動中のモデル変更)。設計は docs/agent-kinds.md
 tb agent-restart <名前> [--prompt P]   MCP が切れた agent の復旧: 停止 + 同じ会話での復活。idle/done で in_progress のタスクが無いときだけ
+tb model-set <名前|@役割|--all> <モデル> [--dry-run]   idle/done の agent を止めて同じ会話を --model 付きで復活(--all は人の承認待ち。approvals の agent:model:<名前>)
+tb model-set <名前|@役割|--all> --reset [--dry-run]    台帳のモデルを消す(次の起動から config の role-models の既定)
 tb compact-check [--dry-run] [--apply]   idle/done で文脈が大きい agent に /compact を送る(既定 dry-run。config/compact.conf と approvals の agent:compact:<名前>)
          (持つなら --prompt の再開メモが要る)。人はいつでも。agent からは agent:stop と agent:revive が両方 allow の名前だけ(自分・指揮官は不可)。--force は無い
          終了コード: 0 再起動済み 1 拒否・前提違い 4 上限・許可なし 10 再開したが最初の指示を確認できない 11 herdr の失敗
