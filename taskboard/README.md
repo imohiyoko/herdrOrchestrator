@@ -185,6 +185,31 @@ tb digests [D-<n>] [--json]  # 送ったまとめの一覧 / 全文
 - 本文中の `[` `]` `|` は `(` `)` `/` に置き換える(項目ラベルの偽装防止)
 - 宛先が `idle` / `done` 以外なら送らず、すべて次回に持ち越す。終了コード 0 / 10 / 11 は `report` と同じ
 
+## 忘れているかもしれないもの(reminders)
+
+人の番になっているものは、質問・承認待ち・キュー・期限などあちこちに散らばる。`tb reminders` はそれを読むだけで 1 つのまとめにする。
+agent にも外にも送らない。出力は stdout と、Web UI の「報告・承認待ち」の「忘れているかも」の欄(`notify_seen` の `reminders:last` を読む)。
+定期実行の例は `scheduler/jobs/reminders.conf.example`。
+
+```bash
+tb reminders               # 今の一覧(記録は変えない)。--json で項目を JSON に
+tb reminders --check       # 前回の publish から出すものが増えた・変わった・消えた、または今日の全件がまだなら 0。それ以外は 3(何も出さない)
+tb reminders --publish     # まとめを出し、記録を更新する
+```
+
+- **材料**(すべて読むだけ): 未対応の質問・ブロック報告(未完了のタスク)/ 承認待ち(送信 `O-` / agent 操作 `L-` / 代行依頼 / 解析役の起動 `A-`)/
+  レビュー待ちの PR(許可リスト `taskboard/config/repos.md` のリポジトリで、開いていて draft でなく、承認も変更依頼もないもの。`gh pr list` で読むだけ)/
+  停滞したタスク(`in_progress` のまま `TB_REMINDERS_STALE_HOURS`(既定 24)時間更新がない。Web UI の「停滞」と同じ)/
+  宛先に届いていない送信(`queued` のまま `TB_DIGEST_QUEUED_SEC` 秒)/ 未読の保留メッセージ(`inbox` 表があれば。宛先と送り手と種別だけ)/ 期限(`tasks.due`。`tb list --overdue` / `--due-within` と同じ「今日」。タスクにしない期限は
+  `taskboard/config/deadlines.conf` に `deadline = YYYY-MM-DD | 題` の行で書く。`TB_REMINDERS_DEADLINES` で場所を変えられる)
+- **優先度**: 急ぎ(期限切れ・今日・明日)→ 人の番(質問・承認待ち・レビュー)→ 停滞 → 待ち・予定(届いていない送信、`TB_REMINDERS_DUE_DAYS`(既定 7)日以内の期限)。
+  同じ優先度の中は期限、古い順。列は 優先 / 何が / 誰の番 / 期限 / 参照 / 経過
+- **重複の抑え**: 項目ごとに決まったキー(`q:<id>` / `o:<id>` / `pr:<repo>#<n>` / `due:<タスク>` など)と状態を `reminders:state` に残す。
+  前回と同じ項目は `継続: C-3(2 日目), O-5(1 日目)` の 1 行にまとめ、新しい項目・状態や期限の段階が変わった項目だけを行で出す。
+  1 日 1 回(その日の最初の publish)は全件。当てはまらなくなった項目は記録から消し、見出しに「解消 N」と数だけ出す
+- **本文は出さない**: 報告や送信の本文は載せず、題と参照 ID だけ。出す前に秘密らしい値を探し(`tb notify` と同じ規則)、見つかれば伏せる
+- 書くのは `notify_seen` の `reminders:state` / `reminders:last` / `reminders:full-day` だけ。期限の判定に使う日は手元の地方時の日付(`TB_TODAY` で固定できる)
+
 ## 指揮官 → worker の送信(send)
 
 agent 同士は `herdr agent prompt` を直接打たず、`tb send` を通す。tb が送信者を特定し、ルールを当て、記録してから送る。

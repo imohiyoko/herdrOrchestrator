@@ -1,0 +1,12 @@
+# repoindex の定期更新(#107 / #110)。承認済みのテンプレート: 書き換えると allowlist.conf の hash と合わなくなり、登録できない。
+# repoindex job register が __COMMAND__ / __GATE__ をこのモジュールの場所で埋めて scheduler/jobs/repoindex-update.conf に書く。
+# 変更が無ければ GATE で止まる(要約のコマンドを呼ばない)。要約のコマンドは <データの場所>/settings.conf で人が決める。
+COMMAND=__COMMAND__
+GATE=__GATE__
+GATE_TIMEOUT=60
+COMMAND_TIMEOUT=1800
+WINDOW=00:00-23:59
+INTERVAL_MIN=60
+DAYS=daily
+TZ=Asia/Tokyo
+WATCHER=0

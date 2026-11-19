@@ -28,7 +28,7 @@ repoindex/bin/repoindex status                     # 置き場所・権限・リ
 repoindex/bin/repoindex repo-add <名前> <clone のパス>   # 索引に入れるリポジトリ(人が選ぶ。自分の権限で clone 済みのもの)
 repoindex/bin/repoindex repo-remove <名前>          # そのリポジトリの行をすべて消す
 repoindex/bin/repoindex put --repo R --kind dir|file|symbol --path P --commit C [--symbol S] [--boundaries auth,authz,external,data] < 本文
-repoindex/bin/repoindex query search|get|stale|freshness ...   # 人が確かめる用(serve と同じ中身)
+repoindex/bin/repoindex query search|get|stale|freshness|context ...   # 人が確かめる用(serve と同じ中身)
 repoindex/bin/repoindex serve                      # 読み取り専用のツール口(MCP stdio)
 repoindex/bin/repoindex purge --yes                # 元に戻す: データのディレクトリごと消す
 ```
@@ -44,6 +44,7 @@ MCP の stdio サーバー。agent ごとに 1 プロセスを起動する形で
 | `repoindex_get` | ディレクトリ・ファイル・シンボルの要約。無ければ `missing` を返す(空の答えにしない) |
 | `repoindex_stale` | 鮮度が落ちた要約の一覧(本文なし) |
 | `repoindex_freshness` | リポジトリごとに、索引を進めたコミットと件数 |
+| `repoindex_context` | 変更のまわり(下の「変更のまわりを引く」) |
 
 - 上限: 1 回 20 件、1 件 1200 字、1 回の合計 8000 字(`ri/read.py`)。
 - サーバーのログ(stderr)に本文は出さない。ツール名と件数だけ。
@@ -71,7 +72,7 @@ repoindex/bin/repoindex update <名前> --dry-run   # stale / missing の印だ�
 
 | 環境変数 | 中身 |
 |---|---|
-| `REPOINDEX_SUMMARIZER` | 要約のコマンド。標準入力に中身(ファイルの本文、またはディレクトリの直下のファイル名と各先頭 40 行)。環境変数 `REPOINDEX_KIND`(dir / file)`REPOINDEX_PATH` `REPOINDEX_ATTEMPT` が付く。標準出力の 1 行目が `boundaries: auth,external` なら境界として読む |
+| `REPOINDEX_SUMMARIZER` | 要約のコマンド。標準入力に中身(ファイルの本文、またはディレクトリの直下のファイル名と各先頭 40 行)。環境変数 `REPOINDEX_KIND`(dir / file)`REPOINDEX_PATH` `REPOINDEX_ATTEMPT` が付く。標準出力の先頭の `boundaries: auth,external` と `calls: a/b.py, c/d.py` の行を境界・呼び先として読む(呼び先はリポジトリにあって除外されないファイルだけ) |
 | `REPOINDEX_SUMMARIZER_DIR` | ディレクトリの要約だけ別のコマンド(例: ファイルは軽いモデル、境界とファイルどうしの関係を見るディレクトリは強いモデル) |
 | `REPOINDEX_MODEL` | 記録用のモデル名(要約の行に残る) |
 | `REPOINDEX_MAX_ATTEMPTS` | 検査で落ちたときの試行の上限(既定 3、最大 10) |
@@ -95,6 +96,30 @@ repoindex/bin/repoindex update <名前> --dry-run   # stale / missing の印だ�
 
 `repoindex_freshness` は、リポジトリごとに索引のコミットと今の `HEAD`(`index_behind`)を返す。変わっていないファイルの要約は、古いコミットで作ったものでも stale にしない。
 
+## 変更のまわりを引く(#109)
+
+`repoindex_context`(`repo` と、`paths` = 変わったファイル、または `range` = `base..head`)。`query context --repo R [--range A..B] [パス ...]` も同じ。
+
+1. 変わったファイルごとに、そのファイルとディレクトリの要約。無ければ `missing` に明示する(空の答えにしない)。
+2. 呼び出し元: 索引が持っている関係(`relations`。要約のコマンドが `calls:` で返したもの)と、普通のコード検索(ファイル名の語で `git grep`)。
+   コード検索は場所(path と行)だけを返し、行の中身は返さない。除外パスは出さない。
+3. 呼び先: 索引が持っている関係。
+4. 関わる境界(`auth` / `authz` / `external` / `data`)は、変わったファイル・ディレクトリと呼び先の要約から集める。
+5. 影響の範囲(`blast_radius`): 変わったもの・呼び出し元・呼び先と、その理由。**どの項目にも元ソースの場所(path・行・commit)**。
+
+上限: 変わったファイル 10 件、ファイルごとの呼び出し元・呼び先 5 件、まわりの要約 1 件 400 字、合計 8000 字。
+
+### 専用の読み取り役
+
+ツールを持つのは **専用の読み取り役の agent 1 つだけ**。ほかの agent はその agent に質問して答えをもらう(ツールを直接持たない)。
+その agent は段階 2(#110)で、安全の検査のテストが通ってから作る。
+
+- 役割: [`roles/reader.md`](roles/reader.md)。`tb role-write repoindex-reader < repoindex/roles/reader.md` で DB に入れ、
+  `tb agent-new <名前> --role repoindex-reader` で作る。
+- ツールの口: [`mcp.json.example`](mcp.json.example) をその agent の作業ディレクトリの `.mcp.json` にだけ置く(パスを直す)。
+  ほかの agent の設定には入れない。
+- 答えは手がかり。受け取った agent も、判断の前に元のソースを読む。要約の中身は公開の場所に写さない。
+
 ## 取り込みの安全(#108)
 
 要約は `put`(と後の更新)で保存する前に、必ず `ri/scan.py` を通る。落ちたら**本文は保存しない**。
@@ -115,9 +140,44 @@ repoindex/bin/repoindex rejections [--repo R]      # 落ちた要約の一覧(�
 
 元に戻す(安全な側): 保存を止める(`put` / 更新を動かさない)か、`purge --yes` でデータを消す。
 
+## 段階的な導入(#110)
+
+段階は人が決め、変えるたびに **判断した人と測った値** が `stages` に残る(測った値の無い変更は受け付けない)。どの段階にも戻せる。
+
+| 段階 | できること | 次へ進む条件(人が判断) |
+|---|---|---|
+| 0 | 何もしない。測る値を決め、既存の道具(コード検索・言語サーバー・リポジトリのホストの CLI)だけで基準を測る | 測る値の合意 |
+| 1 | `repo-add`(1 つ、`--granularity dir` だけ)・`update`・`query` | 検査のテストがすべて通る・落ちる割合が許せる |
+| 2 | 読み取りの口 `serve`(専用の読み取り役の agent はここで作る)。`--granularity file` | 基準より速く、見落としが少ない。stale を頼った回数が少ない |
+| 3 | 2 つ目のリポジトリ。定期更新の登録(`job register`) | 更新が速い・stale の見落としが無い |
+| 4 | 採用・拡大を決める(制限なし) | 上の測る値 |
+
+```
+repoindex/bin/repoindex stage show
+repoindex/bin/repoindex stage set <0-4> --by <人> --measures '{"time_to_answer_min": 12, "missed_items": 3}' [--note ...]
+repoindex/bin/repoindex measures [--repo R]    # 索引が数えられる値
+```
+
+測る値: 答えるまでの時間・見落とし・要約の誤り率(抜き取って元ソースと比べる)・stale を頼った回数(ここまでは人が測る)と、
+更新の回数と時間・検査で落ちた回数・作り直しで通った数・試行の上限に達した数(`measures` が `runs` / `rejections` から数える)。
+原則: まず「何も悪くならない」ことを確かめる。
+
+### 定期更新(承認済みテンプレートだけ)
+
+`repoindex job register`(段階 3 から)は、[`jobs/update.conf.template`](jobs/update.conf.template) を
+[`jobs/allowlist.conf`](jobs/allowlist.conf) の sha256 と突き合わせ、合うときだけ `scheduler/jobs/repoindex-update.conf` を書き、
+scheduler の `gen-plist.sh` → `install.sh install` で登録する(人がインストーラを動かさなくてよい)。
+
+- 決まったコマンド(`update --all`、変更が無ければ `GATE` の `update --all --check` で止まる)・決まった間隔(60 分)・決まった場所だけ。
+- テンプレートが書き換えられて hash が合わない・既存の登録がテンプレートと違うときは、登録も上書きもせず `refused` を残して止まる(人が確かめる)。
+- 誰が・いつ・どの hash で登録 / 解除したかは `job_log`。`repoindex job status` で見る。
+- 外すのは `repoindex job remove`(1 コマンド)。段階を 3 より下に戻す・`purge` するときは自動で外す。
+- `allowlist.conf` とテンプレートの変更は、人のレビュー(PR)を通す。それが一度きりの承認になる。
+- scheduler から動くときの要約のコマンドは `<データの場所>/settings.conf`(`REPOINDEX_SUMMARIZER=...` などの決まったキーだけを読む)。
+
 ## 元に戻す
 
-`repoindex purge --yes`(データのディレクトリごと消す)。ほかの部品は何も依存していない。モジュールごと外すなら、このディレクトリも消す。
+`repoindex purge --yes`(定期更新の登録を外し、データのディレクトリごと消す)。1 つのリポジトリだけなら `repo-remove`。ほかの部品は何も依存していない。モジュールごと外すなら、このディレクトリも消す。
 
 ## テスト
 
