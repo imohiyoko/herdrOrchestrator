@@ -11,7 +11,7 @@ R5=(--event inquiry --counterpart teammate --depth new --severity low --deadline
 
 eq "conv-lint: 同梱のファイルは正しい(表なし)" "$(rc "$TB" conv-lint)" "0"
 eq "conv-kinds: 初期の 5 種別にチームがある" "$("$TB" conv-kinds | cut -f1,2 | tr '\t\n' ': ')" \
-  "inquiry-answer:team=yes: refusal:team=yes: reminder:team=yes: review-reply:team=yes: thanks:team=yes: "
+  "inquiry-answer:team=yes refusal:team=yes reminder:team=yes review-reply:team=yes thanks:team=yes "
 
 # ---------- 振り分け表 ----------
 eq "conv-route: 表が無ければ未登録(人の判断)" "$("$TB" conv-route "${R5[@]}" --json | jq -c '[.status,.needs_human,.reason]')" '["unregistered",true,"no-table"]'
