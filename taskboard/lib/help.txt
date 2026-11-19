@@ -1,9 +1,11 @@
 tb add -p <project> -t <title> [--parent ID] [--owner N] [--session S] [--account A]   → ID を表示
-       [--type epic|story|task|bug|subtask] [--priority highest|high|medium|low|lowest] [-l ラベル[,ラベル]] ... [--desc 説明] [--ref [種類=]URL ...] [--sprint S-n] [--points N]
+       [--type epic|story|task|bug|subtask] [--priority highest|high|medium|low|lowest] [-l ラベル[,ラベル]] ... [--desc 説明] [--ref [種類=]URL ...] [--due YYYY-MM-DD] [--sprint S-n] [--points N]
        既定は task / medium。epic は親なし、subtask は親が必須(親は story/task/bug)、subtask は親になれない
 tb list [-p project] [-s status] [--type T] [--priority P] [-l ラベル ...(すべてを持つもの)] [--owner N] [--parent ID]
-        [--sprint S-n|backlog] [--sort priority|updated|created|id] [--long] [--json]
-        --long は ID 状態 種別 優先度 担当 作成 更新 ラベル スプリント ポイント 題(既定の 4 列は変えない)
+        [--overdue] [--due-within N] [--has-due] [--sprint S-n|backlog] [--sort priority|updated|created|id|due] [--long] [--json]
+        --long は ID 状態 種別 優先度 担当 作成 更新 ラベル 題 期日 スプリント ポイント(既定の 4 列は変えない。無いものは -)
+        --overdue は期日が今日より前、--due-within N は今日〜N 日後(0 は今日だけ)。どちらも done と期日なしは出さない
+        「今日」は端末の地方時の日付(TB_TODAY=YYYY-MM-DD で固定できる)
 tb show <id>        labels・refs(外部リンク)と links(blocks / blocked_by / relates / duplicates / duplicated_by)も出す
 tb tree <id> | tree -p <project>   親子を字下げで(ID 種別 優先度 状態 担当 題)
 tb labels [-p project] [--json]    使われているラベルと件数(ラベル 未完了 全部)
@@ -16,7 +18,7 @@ tb sprints [-p project] [--state planned|active|closed] [--json]   件数・完�
 tb board [S-n | -p project] [-l ラベル] [--json]   状態ごとの列(-p だけならその project の active なスプリント)
 tb claim <id> --owner <name> [--session S] [--account A]    todo → in_progress(todo 以外は失敗)
 tb update <id> [--status todo|in_progress|review|blocked] [--title T] [--owner N] [--session S] [--account A] [--parent ID]
-           [--type T] [--priority P] [--desc D] [--label L ...(置き換え。'' で全部外す)] [--add-label L] [--remove-label L] [--add-ref [種類=]URL] [--remove-ref URL] [--sprint S-n|''] [--points N|'']
+           [--type T] [--priority P] [--desc D] [--due YYYY-MM-DD(''で外す)] [--label L ...(置き換え。'' で全部外す)] [--add-label L] [--remove-label L] [--add-ref [種類=]URL] [--remove-ref URL] [--sprint S-n|''] [--points N|'']
 tb done <id> -d <成果物> [-d ...] -m <要約>                  成果物と要約が必須。reported_at は空のまま
 tb block <id> [-m <理由>]
 tb report <id>      指示役へ [T-xxx done] ... を送る。成功時のみ reported_at を埋める
@@ -92,6 +94,10 @@ tb alert-result A-<n> --severity critical|high|medium|low --summary S [--report 
 tb alert-dispatch                          承認・上限待ちを進める(tb digest も呼ぶ)
 tb alert-close A-<n>                       人が閉じる
 tb system-send <宛先> --text T --job J      scheduler 用。agent の pane からは使えない
+tb sched-job [list | show <job> [--settings]]   scheduler のジョブ定義・上書き設定の出どころと本文(DB の sched-job:<job> > jobs/<job>.conf)
+tb sched-job set|edit|unset <job> [--settings] [--shared]   DB に書く / 消す(人だけ。scheduler が読めるか確かめてから書く。履歴は history)
+tb sched-job import [--dry-run] [--shared] [<job> ...]     jobs/*.conf と settings/*.settings を DB に取り込み、ファイルを退かす(人だけ)
+tb sched-job history <job> [--settings]                    変更の履歴
 
 会計役(定期レビュー)→ 設定役(人事。TB_HR_NAME、既定 hr):
 tb review-pack [--since ISO] [--mark]      生ログではなく集計と上位だけのレビュー材料。省略時は前回 --mark 以降
@@ -110,6 +116,8 @@ tb agent-stop <名前> [--force]   pane を閉じて止める。killable=yes(判
 tb agent-revive <名前> [--fresh] [--model M] [--prompt P]   台帳の session を kind の方法(claude は --resume)で再開(--fresh なら新しい会話)。再開できない kind は終了コード 12
 tb agent-kinds   kind(claude / codex / gemini)ごとの対応項目の表(起動・モデル指定・再開・起動中のモデル変更)。設計は docs/agent-kinds.md
 tb agent-restart <名前> [--prompt P]   MCP が切れた agent の復旧: 停止 + 同じ会話での復活。idle/done で in_progress のタスクが無いときだけ
+tb model-set <名前|@役割|--all> <モデル> [--dry-run]   idle/done の agent を止めて同じ会話を --model 付きで復活(--all は人の承認待ち。approvals の agent:model:<名前>)
+tb model-set <名前|@役割|--all> --reset [--dry-run]    台帳のモデルを消す(次の起動から config の role-models の既定)
 tb compact-check [--dry-run] [--apply]   idle/done で文脈が大きい agent に /compact を送る(既定 dry-run。config/compact.conf と approvals の agent:compact:<名前>)
          (持つなら --prompt の再開メモが要る)。人はいつでも。agent からは agent:stop と agent:revive が両方 allow の名前だけ(自分・指揮官は不可)。--force は無い
          終了コード: 0 再起動済み 1 拒否・前提違い 4 上限・許可なし 10 再開したが最初の指示を確認できない 11 herdr の失敗

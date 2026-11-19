@@ -70,6 +70,23 @@ eq "agent-stop --force: human" "$(FAKE_AGENTS="[$A_C,$A_S,$A_W]" $TB agent-stop 
 export FAKE_AGENTS="[$A_C,$A_S,$A_W]"
 eq "agent-stop: pane close fails → 11" "$(FAKE_CLOSE_RC=1 rc $TB agent-stop worker1 --force)" "11"
 eq "agent-new: start fails → 11 and nothing left in the registry" "$(FAKE_START_RC=1 rc $TB agent-new helper3) $(agsql "SELECT COUNT(*) FROM agents WHERE name='helper3';") $(grep -c '^workspace-close wN' "$FAKE_LOG")" "11 0 1"
+# 起動失敗の理由(#83): 最後の agent start のエラーコードと短いメッセージを出す。失敗の回ごとに 1 行をログに残す(本文・引数は書かない)
+export TB_SPAWN_LOG=$TMP/spawn-errors.log; rm -f "$TB_SPAWN_LOG"; : >"$FAKE_LOG"
+err=$(FAKE_START_RC=1 FAKE_START_OUT='{"error":{"code":"pane_busy","message":"pane already has an agent"}}' $TB agent-new helper3 --prompt 'secret-prompt-text' 2>&1)
+eq "agent-new: failure shows the herdr error code and message" "$(grep -c 'agent を起動できない(pane_busy: pane already has an agent)' <<<"$err")" "1"
+eq "agent-new: each failed attempt logged with name and code" "$(cut -f2,3 "$TB_SPAWN_LOG" | sort | uniq -c | tr -s ' ')" " 3 helper3	pane_busy"
+eq "agent-new: log has no prompt or arguments" "$(grep -c 'secret-prompt-text\|--model\|--pane' "$TB_SPAWN_LOG")" "0"
+long=$(printf 'x%.0s' {1..500})
+err=$(FAKE_START_RC=1 FAKE_START_OUT="plain failure $long" $TB agent-new helper3 2>&1)
+eq "agent-new: non-JSON output is cut to a fixed length" "$(grep -o 'agent を起動できない(exit 1: plain failure x*' <<<"$err" | wc -c | tr -d ' ')" "$(( $(printf '%s' 'agent を起動できない(exit 1: ' | wc -c) + 200 + 1 ))"
+eq "agent-new: exit 0 with an error JSON is a failure" "$(FAKE_START_OUT='{"error":{"code":"x_failed","message":"m"}}' rc $TB agent-new helper3) $(agsql "SELECT COUNT(*) FROM agents WHERE name='helper3';")" "11 0"
+# 人の操作待ち(not_ready / blocked): やり直さず、workspace を閉じず、台帳に pane を残して attach を促す
+rm -f "$TB_SPAWN_LOG"; : >"$FAKE_LOG"
+err=$(FAKE_START_RC=1 FAKE_START_OUT='{"error":{"code":"agent_not_ready","message":"agent is blocked"}}' $TB agent-new helper3 --prompt 'hello' 2>&1); r=$?
+eq "agent-new: blocked agent → 11, one attempt, workspace kept" "$r $(grep -c '^start helper3' "$FAKE_LOG") $(grep -c '^workspace-close\|^pane-close' "$FAKE_LOG")" "11 1 0"
+eq "agent-new: blocked agent → tells the human to attach" "$(grep -c '人の操作を待っています(agent_not_ready: agent is blocked)。herdr で pane wA:p1 を開き' <<<"$err") $(grep -c '最初の指示は未送信' <<<"$err")" "1 1"
+eq "agent-new: blocked agent stays in the registry with its pane" "$(agsql "SELECT state||' '||pane_id FROM agents WHERE name='helper3';") $(grep -c '^prompt helper3' "$FAKE_LOG")" "running wA:p1 0"
+agsql "DELETE FROM agents WHERE name='helper3';"; unset TB_SPAWN_LOG
 eq "agents --json: material for the sweeper" "$($TB agents --json | jq -r 'select(.name=="worker1") | [.state, .killable, .open_tasks, .open_questions, .idle_min != null, .role_file] | map(tostring) | join(" ")')" "running unknown 0 0 true worker.md"
 export TB_APPROVALS=$TMP/appr.conf
 unset FAKE_AGENTS; export HERDR_PANE_ID=$_saved_pane

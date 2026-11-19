@@ -95,7 +95,7 @@ actor_name() {
 
 # ---------- add ----------
 cmd_add() {
-  local project="" title="" parent="" owner="" session="" account="" type=task priority=medium desc="" labs=() refs=() sprint="" points=""
+  local project="" title="" parent="" owner="" session="" account="" type=task priority=medium desc="" due="" labs=() refs=() sprint="" points=""
   while [[ $# -gt 0 ]]; do
     case $1 in
       -p|--project) need_arg "$@"; project=$2; shift 2;;
@@ -105,6 +105,7 @@ cmd_add() {
       -l|--label)   need_arg "$@"; labs+=("$2"); shift 2;;
       --desc|--description) need_arg "$@"; desc=$2; shift 2;;
       --ref)        need_arg "$@"; refs+=("$2"); shift 2;;
+      --due)        need_arg "$@"; [[ -z $2 ]] || valid_due "$2"; due=$2; shift 2;;
       --sprint)     need_arg "$@"; sprint=$2; shift 2;;
       --points)     need_arg "$@"; valid_points "$2"; points=$2; shift 2;;
       --parent)     need_arg "$@"; parent=$2; shift 2;;
@@ -124,10 +125,10 @@ cmd_add() {
   local n=$(now) p out; p=$(q "$project")
   # 採番と挿入を 1 文で行い、同時 add でも重複しないようにする。親の種別の規則も同じ文で確かめる(HAVING)
   # ID は DB 全体で一意(採番は全セッションの行を見る。ここだけ herdr_session で絞らない)
-  out=$(sql "BEGIN IMMEDIATE; INSERT INTO main.tasks (id, project, title, owner_agent, session_id, account, parent_id, type, priority, labels, description, refs, sprint_id, points, created_at, updated_at, herdr_session)
+  out=$(sql "BEGIN IMMEDIATE; INSERT INTO main.tasks (id, project, title, owner_agent, session_id, account, parent_id, type, priority, labels, description, refs, due, sprint_id, points, created_at, updated_at, herdr_session)
        SELECT 'T-'||$p||'-'||printf('%03d', COALESCE(MAX(CAST(substr(id, length($p)+4) AS INTEGER)),0)+1),
               $p, $(q "$title"), NULLIF($(q "$owner"),''), NULLIF($(q "$session"),''), NULLIF($(q "$account"),''),
-              NULLIF($(q "$parent"),''), $(q "$type"), $(q "$priority"), $(q "$lj"), NULLIF($(q "$desc"),''), $(q "$rj"),
+              NULLIF($(q "$parent"),''), $(q "$type"), $(q "$priority"), $(q "$lj"), NULLIF($(q "$desc"),''), $(q "$rj"), NULLIF($(q "$due"),''),
               CAST(NULLIF($(q "$sid"),'') AS INTEGER), CAST(NULLIF($(q "$points"),'') AS INTEGER),
               $(q "$n"), $(q "$n"), $SQS
        FROM main.tasks WHERE project=$p HAVING $(hierarchy_ok_sql "$type" "$parent")${sid:+ AND EXISTS (SELECT 1 FROM sprints WHERE id=$sid AND state!='closed')};
@@ -138,9 +139,10 @@ cmd_add() {
 }
 
 # ---------- list ----------
-# 既定の出力(タブ区切り: ID 状態 担当 題)は変えない。--long で 種別・優先度・作成・更新・ラベルも出す
+# 既定の出力(タブ区切り: ID 状態 担当 題)は変えない。--long で 種別・優先度・作成・更新・ラベル・期日も出す
+# --overdue: 期日が今日より前で done でないもの。--due-within N: 期日が今日〜N 日後で done でないもの(0 は今日だけ)
 cmd_list() {
-  local project="" status="" json=0 long=0 sort="" where="1=1" order="project, id" l lj
+  local project="" status="" json=0 long=0 sort="" where="1=1" order="project, id" l lj td
   while [[ $# -gt 0 ]]; do
     case $1 in
       -p|--project) need_arg "$@"; project=$2; shift 2;;
@@ -157,6 +159,11 @@ cmd_list() {
       --sprint)     need_arg "$@"   # S-<n> か backlog(スプリントに入っていないもの)
                     if [[ $2 == backlog ]]; then where+=" AND sprint_id IS NULL"; else valid_sprint "$2"; where+=" AND sprint_id=${2#S-}"; fi
                     shift 2;;
+      --overdue)    td=$(today) || exit $?; where+=" AND due IS NOT NULL AND due < $(q "$td") AND status!='done'"; shift;;
+      --due-within) need_arg "$@"; [[ $2 =~ ^[0-9]{1,4}$ ]] || usage "list: --due-within は 0〜9999 の日数: $2"
+                    td=$(today) || exit $?
+                    where+=" AND due IS NOT NULL AND due >= $(q "$td") AND due <= date($(q "$td"), '+$((10#$2)) days') AND status!='done'"; shift 2;;
+      --has-due)    where+=" AND due IS NOT NULL"; shift;;
       --sort)       need_arg "$@"; sort=$2; shift 2;;
       --long)       long=1; shift;;
       --json)       json=1; shift;;
@@ -171,14 +178,15 @@ cmd_list() {
     updated)  order="updated_at DESC, id";;
     created)  order="created_at DESC, id";;
     id)       order="id";;
-    *) usage "list: --sort は priority / updated / created / id のどれか: $sort";;
+    due)      order="due IS NULL, due, $PRIORITY_RANK, id";;   # 期日の近い順(期日なしは最後)
+    *) usage "list: --sort は priority / updated / created / id / due のどれか: $sort";;
   esac
   if ((json)); then
     sql -json "SELECT * FROM tasks WHERE ($where) ORDER BY $order;" | jq -c '(. // [])[] | .deliverables |= fromjson | .labels |= fromjson | .refs |= fromjson'
   elif ((long)); then
     sql -separator $'\t' "SELECT id, status, type, priority, COALESCE(owner_agent,'-'), created_at, updated_at,
-        COALESCE((SELECT group_concat(value, ',') FROM json_each(tasks.labels)), '-'),
-        COALESCE('S-'||sprint_id, '-'), COALESCE(points, '-'), replace(title, char(10), ' ')
+        COALESCE((SELECT group_concat(value, ',') FROM json_each(tasks.labels)), '-'), replace(title, char(10), ' '), COALESCE(due, '-'),
+        COALESCE('S-'||sprint_id, '-'), COALESCE(points, '-')
       FROM tasks WHERE ($where) ORDER BY $order;"
   else
     sql -separator $'\t' "SELECT id, status, COALESCE(owner_agent,'-'), replace(title, char(10), ' ') FROM tasks WHERE ($where) ORDER BY $order;"
@@ -240,7 +248,7 @@ cmd_claim() {
 
 # ---------- update ----------
 cmd_update() {
-  [[ $# -ge 1 ]] || usage "update <id> [--status S] [--title T] [--owner N] [--session S] [--account A] [--parent ID] [--type T] [--priority P] [--desc D] [--label L ...] [--add-label L] [--remove-label L]"
+  [[ $# -ge 1 ]] || usage "update <id> [--status S] [--title T] [--owner N] [--session S] [--account A] [--parent ID] [--type T] [--priority P] [--desc D] [--due YYYY-MM-DD|''] [--label L ...] [--add-label L] [--remove-label L]"
   local id=$1; shift
   valid_id "$id"
   local sets=() row cur ntype="" nparent="" setlab=() addlab=() rmlab=() relabel=0 addref=() rmref=() nsprint="-"
@@ -259,6 +267,7 @@ cmd_update() {
       --type)     need_arg "$@"; valid_type "$2"; ntype=$2; sets+=("type=$(q "$2")"); shift 2;;
       --priority) need_arg "$@"; valid_priority "$2"; sets+=("priority=$(q "$2")"); shift 2;;
       --desc|--description) need_arg "$@"; sets+=("description=NULLIF($(q "$2"),'')"); shift 2;;
+      --due)      need_arg "$@"; [[ -z $2 ]] || valid_due "$2"; sets+=("due=NULLIF($(q "$2"),'')"); shift 2;;   # '' で外す
       -l|--label)       need_arg "$@"; relabel=1; setlab+=("$2"); shift 2;;   # 置き換え(--label '' で全部外す)
       --add-label)      need_arg "$@"; addlab+=("$2"); shift 2;;
       --remove-label)   need_arg "$@"; rmlab+=("$2"); shift 2;;
@@ -488,8 +497,8 @@ cmd_sprint-add() {
     case $1 in
       -p|--project) need_arg "$@"; project=$2; shift 2;;
       -n|--name)    need_arg "$@"; name=$2; shift 2;;
-      --start)      need_arg "$@"; valid_date "$2"; start=$2; shift 2;;
-      --end)        need_arg "$@"; valid_date "$2"; end=$2; shift 2;;
+      --start)      need_arg "$@"; valid_due "$2"; start=$2; shift 2;;
+      --end)        need_arg "$@"; valid_due "$2"; end=$2; shift 2;;
       --goal)       need_arg "$@"; goal=$2; shift 2;;
       *) usage "sprint-add: 不明な引数 $1";;
     esac

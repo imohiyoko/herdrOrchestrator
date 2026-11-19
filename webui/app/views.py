@@ -352,12 +352,17 @@ TASK_SORTS = {"": ("優先順(未対応の報告 → blocked → in_progress →
               "project": ("PJ ごと・更新が新しい順", "project, updated_at DESC"),
               "oldest": ("更新が古い順", "updated_at ASC"),
               "created": ("作成が新しい順", "created_at DESC"), "id": ("タスク ID 順", "id ASC"),
+              "due": ("期日が近い順(期日なしは最後)", "due IS NULL, due, updated_at DESC"),
               "priority": ("優先度が高い順(同じなら更新が新しい順)",
                            "CASE priority WHEN 'highest' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END, updated_at DESC")}
 # チケットの構造(スキーマ 014)。tb の TYPES / PRIORITIES と同じ
 TASK_TYPES = ["epic", "story", "task", "bug", "subtask"]
 TASK_PRIORITIES = ["highest", "high", "medium", "low", "lowest"]
 LABEL_RE = re.compile(r"[^\s,\"']{1,40}")
+# 期日(スキーマ 015)。「今日」は Web UI を動かす端末の地方時の日付(tb と同じ)
+DUE_SOON_DAYS = 3        # 「期限間近」の既定の日数(今日〜N 日後)
+DUE_DAYS_MAX = 365
+DUE_VIEWS = {"overdue": "期限切れ", "soon": "期限間近"}
 # 既定の並び: 人が見るべきものを先に(300 件で切れても blocked などが残る)。未対応の報告があるものは state に関わらず先頭
 STATUS_RANK = ("CASE status WHEN 'blocked' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'review' THEN 3 WHEN 'todo' THEN 4 ELSE 5 END")
 OWNER_RE = re.compile(r"[A-Za-z0-9._-]{1,64}")
@@ -382,6 +387,34 @@ def task_stale(t, now=None):
     now = now or datetime.now(timezone.utc)
     h = (now - u).total_seconds() / 3600
     return int(h) if h > TASK_STALE_HOURS else None
+
+
+def today_str():
+    return datetime.now().strftime("%Y-%m-%d")
+
+
+def due_state(t, today=None, days=DUE_SOON_DAYS):
+    """期日の状態: "overdue"(今日より前)/ "soon"(今日〜days 日後)/ None。期日なし・done は None。"""
+    d = t.get("due")
+    if not d or t.get("status") == "done" or not isinstance(d, str):
+        return None
+    today = today or today_str()
+    if d < today:
+        return "overdue"
+    end = (datetime.strptime(today, "%Y-%m-%d") + timedelta(days=days)).strftime("%Y-%m-%d")
+    return "soon" if d <= end else None
+
+
+def due_html(t, today=None):
+    d = t.get("due")
+    if not d:
+        return "-"
+    st = due_state(t, today)
+    if st == "overdue":
+        return f'<span class=err>{e(d)} 期限切れ</span>'
+    if st == "soon":
+        return f'<span class=warn>{e(d)} 間近</span>'
+    return e(d)
 
 
 def report_counts(task_id=None):
@@ -416,8 +449,21 @@ def page_tasks(qs, ctx=None):
     unrep, stale = _one(qs, "unreported") == "1", _one(qs, "stale") == "1"
     sort = _one(qs, "sort")
     ttype, prio, label = _one(qs, "type"), _one(qs, "priority"), _one(qs, "label")
-    tf = has_ticket_fields()
+    dview, days_s = _one(qs, "due"), _one(qs, "days")
+    tf, hd = has_ticket_fields(), has_due()
     errs = []
+    days = DUE_SOON_DAYS
+    if dview and dview not in DUE_VIEWS:
+        errs.append("期日の絞り込みは overdue(期限切れ)/ soon(期限間近)のどちらかです"); dview = ""
+    if days_s:
+        if days_s.isdigit() and len(days_s) <= 3 and int(days_s) <= DUE_DAYS_MAX:
+            days = int(days_s)
+        else:
+            errs.append(f"日数は 0〜{DUE_DAYS_MAX} の整数です"); days_s = ""
+    if not hd:
+        dview = days_s = ""
+        if sort == "due":
+            sort = ""
     if ttype and ttype not in TASK_TYPES:
         errs.append("種別は " + " / ".join(TASK_TYPES) + " のどれかです"); ttype = ""
     if prio and prio not in TASK_PRIORITIES:
@@ -447,6 +493,12 @@ def page_tasks(qs, ctx=None):
         base_w.append("priority=?"); base_p.append(prio)
     if label:
         base_w.append("EXISTS (SELECT 1 FROM json_each(tasks.labels) WHERE value=?)"); base_p.append(label)
+    today = today_str()
+    if dview == "overdue":   # 期日なし・done は出さない(tb list --overdue と同じ)
+        base_w += ["due IS NOT NULL", "due<?", "status!='done'"]; base_p.append(today)
+    elif dview == "soon":
+        end = (datetime.strptime(today, "%Y-%m-%d") + timedelta(days=days)).strftime("%Y-%m-%d")
+        base_w += ["due IS NOT NULL", "due>=?", "due<=?", "status!='done'"]; base_p += [today, end]
     where, params = list(base_w), list(base_p)
     if st:
         where.append("status=?"); params.append(st)
@@ -473,12 +525,20 @@ def page_tasks(qs, ctx=None):
 
     def href(**kw):
         d = {"project": proj, "status": st, "owner": owner, "unreported": "1" if unrep else "", "stale": "1" if stale else "", "sort": sort,
-             "type": ttype, "priority": prio, "label": label}
+             "type": ttype, "priority": prio, "label": label, "due": dview, "days": days_s}
         d.update(kw)
         d = {k: v for k, v in d.items() if v}
         return "/tasks" + ("?" + urlencode(d) if d else "")
     cells = [f'<a href="{e(href(status=s))}">{e(s)} {summ.get(s, 0)}</a>' for s in TASK_STATUSES]
     body = err_html("。".join(errs)) * bool(errs)
+    if hd:
+        n_over = q("SELECT COUNT(*) AS n FROM tasks WHERE due IS NOT NULL AND due<? AND status!='done'", (today,))[0]["n"]
+        soon_end = (datetime.strptime(today, "%Y-%m-%d") + timedelta(days=DUE_SOON_DAYS)).strftime("%Y-%m-%d")
+        n_soon = q("SELECT COUNT(*) AS n FROM tasks WHERE due IS NOT NULL AND due>=? AND due<=? AND status!='done'", (today, soon_end))[0]["n"]
+        if n_over or n_soon:
+            body += (f'<p><a href="/tasks?due=overdue&amp;sort=due"><span class={"err" if n_over else "note"}>期限切れ {n_over}</span></a> / '
+                     f'<a href="/tasks?due=soon&amp;sort=due">期限間近({DUE_SOON_DAYS} 日以内){n_soon}</a>'
+                     f' <span class=note>(今日 = {e(today)}、done は数えない)</span></p>')
     if not db_conn_ok():
         body += '<p class=err>タスク DB がありません(または開けません)</p>'
     body += ("<h2>状態の件数</h2><p>" + " / ".join(cells) + f' / <a href="{e(href(status=""))}">全部 {sum(summ.values())}</a></p>'
@@ -486,12 +546,17 @@ def page_tasks(qs, ctx=None):
     popts = '<option value="">(すべて)</option>' + "".join(f'<option value="{e(p_)}"{" selected" if p_ == proj else ""}>{e(p_)}</option>' for p_ in projects)
     oopts = '<option value="">(すべて)</option>' + "".join(f'<option value="{e(o)}"{" selected" if o == owner else ""}>{e(o)}</option>' for o in owners)
     sopts = '<option value="">(すべて)</option>' + "".join(f'<option value="{s_}"{" selected" if s_ == st else ""}>{s_}</option>' for s_ in TASK_STATUSES)
-    ropts = "".join(f'<option value="{k}"{" selected" if k == sort else ""}>{e(v[0])}</option>' for k, v in TASK_SORTS.items() if tf or k != "priority")
+    ropts = "".join(f'<option value="{k}"{" selected" if k == sort else ""}>{e(v[0])}</option>' for k, v in TASK_SORTS.items()
+                    if (tf or k != "priority") and (hd or k != "due"))
     topts = '<option value="">(すべて)</option>' + "".join(f'<option value="{x}"{" selected" if x == ttype else ""}>{x}</option>' for x in TASK_TYPES)
     pyopts = '<option value="">(すべて)</option>' + "".join(f'<option value="{x}"{" selected" if x == prio else ""}>{x}</option>' for x in TASK_PRIORITIES)
     lopts = '<option value="">(すべて)</option>' + "".join(f'<option value="{e(x)}"{" selected" if x == label else ""}>{e(x)}</option>' for x in labels)
     tsel = (f'<label>種別 <select name=type>{topts}</select></label> <label>優先度 <select name=priority>{pyopts}</select></label> '
             f'<label>ラベル <select name=label>{lopts}</select></label> ') if tf else ""
+    if hd:
+        dopts = '<option value="">(すべて)</option>' + "".join(f'<option value="{k}"{" selected" if k == dview else ""}>{e(v)}</option>' for k, v in DUE_VIEWS.items())
+        tsel += (f'<label>期日 <select name=due>{dopts}</select></label> '
+                 f'<label>間近の日数 <input name=days size=3 value="{e(days_s)}" placeholder="{DUE_SOON_DAYS}"></label> ')
     body += ('<form method=get action="/tasks"><p>'
              f'<label>PJ <select name=project>{popts}</select></label> <label>担当 <select name=owner>{oopts}</select></label> '
              f'<label>状態 <select name=status>{sopts}</select></label> ' + tsel +
@@ -507,18 +572,23 @@ def page_tasks(qs, ctx=None):
         par = tlink(t["parent_id"]) if t.get("parent_id") else ""
         kid = f'子 {kids[t["id"]]}' if kids.get(t["id"]) else ""
         out.append([tlink(t["id"]), e(t["project"]), e(t.get("type") or "-"), priority_html(t.get("priority")),
-                    e(_head(t["title"], TITLE_MAX)), labels_html(t.get("labels"), href), e(t["status"]), e(t["owner_agent"]),
+                    due_html(t, today), e(_head(t["title"], TITLE_MAX)), labels_html(t.get("labels"), href), e(t["status"]), e(t["owner_agent"]),
                     " ".join(x for x in (par, e(kid)) if x) or "-", e(t["session_id"]), counts_label(rc.get(t["id"])),
                     str(len(safe_json_list(t["deliverables"]))), "○" if t["reported_at"] else "-",
                     e(t["created_at"]), e(t["updated_at"]), mark])
     if total > len(rows):
         body += (f'<p class=err>{total} 件のうち {len(rows)} 件だけ表示しています(上限 {TASK_LIST_MAX} 件)。'
                  '既定の並びは未対応の報告・blocked・in_progress を先に出します。PJ・担当・状態などで絞り込むと残りを見られます。</p>')
-    body += table(["タスク", "PJ", "種別", "優先度", "題(先頭 80 文字)", "ラベル", "状態", "担当", "親 / 子", "session_id",
+    body += table(["タスク", "PJ", "種別", "優先度", "期日", "題(先頭 80 文字)", "ラベル", "状態", "担当", "親 / 子", "session_id",
                    "報告(種別ごとの件数)", "成果物", "報告済み", "作成", "更新", "目印"], out)
     body += (f'<p class=note>最大 {TASK_LIST_MAX} 件。「報告済み」は tb report で指揮官に届いたもの。未対応は人がまだ「対応済み」にしていない question / blocked。'
-             "ラベルを押すとそのラベルで絞り込みます。期限は tb に無いので出していません。題は先頭だけ、本文は出しません(詳細画面で報告の先頭を見られます)。</p>")
+             "ラベルを押すとそのラベルで絞り込みます。期日は tb add / update --due で付けます(期日なしは期限切れになりません)。題は先頭だけ、本文は出しません(詳細画面で報告の先頭を見られます)。</p>")
     return "タスク", body
+
+
+def has_due():
+    """tasks に期日の列があるか(スキーマ 016 より前の DB では無い)。"""
+    return any(r.get("name") == "due" for r in q("PRAGMA table_info(tasks)"))
 
 
 def has_ticket_fields():
@@ -559,7 +629,7 @@ def refs_html(raw):
 
 
 def has_sprints():
-    """sprints 表と tasks.sprint_id があるか(スキーマ 015 より前の DB では無い。tb を一度動かせば足される)。"""
+    """sprints 表と tasks.sprint_id があるか(スキーマ 016 より前の DB では無い。tb を一度動かせば足される)。"""
     return (bool(q("SELECT name FROM sqlite_master WHERE name='sprints'"))
             and any(r.get("name") == "sprint_id" for r in q("PRAGMA table_info(tasks)")))
 
@@ -695,6 +765,8 @@ def page_task(tid, qs=None, ctx=None):
         info.append(("説明", f'<pre>{e(_head(t.get("description"), REPORT_MAX))}</pre>' if t.get("description") else "-"))
     if "refs" in t:
         info.append(("外部リンク", refs_html(t.get("refs"))))
+    if "due" in t:
+        info.append(("期日", due_html(t)))
     if "sprint_id" in t:
         info.append(("スプリント", f'<a href="/board?sprint=S-{int(t["sprint_id"])}">S-{int(t["sprint_id"])}</a>' if t.get("sprint_id") is not None else "バックログ"))
         info.append(("ポイント", e(t.get("points")) if t.get("points") is not None else "-"))

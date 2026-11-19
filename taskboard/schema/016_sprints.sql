@@ -1,4 +1,4 @@
--- 015: スプリント(期間で区切ったタスクの束)と見積りポイント。ボード(状態ごとの列)はスプリント単位で見る
+-- 016: スプリント(期間で区切ったタスクの束)と見積りポイント。ボード(状態ごとの列)はスプリント単位で見る
 CREATE TABLE IF NOT EXISTS sprints (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,   -- S-<id> として出す(DB 全体で一意)
   project       TEXT NOT NULL,

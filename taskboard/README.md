@@ -86,8 +86,23 @@ tb update T-web-002 --add-label frontend --remove-label ui --priority highest
 - **スプリント**: `tb sprint-add -p web -n "Sprint 1" --start 2026-11-17 --end 2026-11-30 --goal "..."` で作り、`tb add/update --sprint S-n --points 3` で入れる(`--sprint ''` でバックログへ)。`tb sprint-start S-n` で始め(1 つの project で active は 1 つ)、`tb sprint-close S-n --carry S-m` で閉じると終わっていないタスクを次へ移す。`tb board -p web` で状態ごとの列、`tb sprints` で件数とポイント。Web UI の「ボード」(`/board`)にも同じ列が出る(読み取りのみ)。
 - **担当の agent**: 既存の `--owner`(agent 名)と `--session`(その agent の会話 ID)で紐付く。`tb list --owner <agent>` で絞り込める。
 - **リンク** `tb link <from> blocks|relates|duplicates <to>`: `blocks` は claim を止める(先行タスクが done になれば claim できる)。blocks の循環は止める。`tb show` は向きつき(`blocks` / `blocked_by` など)で出す。
-- `tb list` の既定の出力(ID 状態 担当 題)は変えていない。種別・優先度・作成・更新・ラベルは `--long`(または `--json`)で出る。
+- `tb list` の既定の出力(ID 状態 担当 題)は変えていない。種別・優先度・作成・更新・ラベル・期日は `--long`(または `--json`)で出る。
 - Web UI のタスク一覧は 種別・優先度・ラベル・作成・更新 の列と、種別・優先度・ラベルの絞り込みを持つ。ラベルを押すとそのラベルで絞り込む。
+
+### 期日(期限切れ・期限間近)
+
+```sh
+tb add -p web -t "ログ掃除" --due 2026-12-01      # 期日は日付だけ(YYYY-MM-DD)。既定は期日なし
+tb update T-web-012 --due 2026-12-15            # 変える。--due '' で外す
+tb list --overdue                               # 期日が今日より前で done でないもの
+tb list --due-within 3 --sort due --long        # 今日〜3 日後が期日で done でないもの(0 は今日だけ)。--long の最後の列が期日
+```
+
+- 期日のないタスクは期限切れにも期限間近にもならない。done のタスクも出さない。
+- 「今日」は tb を動かす端末の地方時の日付。境界の確認やテストでは `TB_TODAY=YYYY-MM-DD` で固定できる。
+- 作業タスクに紐付かない締め切り(掃除の期限など)は、担当なしのタスク(`--owner` を付けない)に `--due` を付けて置く。
+- 存在しない日付(`2026-02-30`)や形式違い(`2026/12/01`)は使い方の誤り(終了コード 2)。
+- Web UI のタスク一覧は期日の列と「期限切れ」「期限間近(N 日以内)」の絞り込み、期日の近い順の並びを持つ。期限切れは赤で出す。
 
 ## 代行依頼(権限が足りないとき)
 
@@ -255,7 +270,11 @@ tb agent-approve L-<n> [--always] / tb agent-reject L-<n>      # 人だけ
 
 - **新規作成**: 専用の workspace(label = 名前)を作り、その pane で `herdr agent start <名前> --kind <kind> [-- ...]`(`--kind` 省略時は claude。claude は従来どおり `-- --model M`)。kind ごとの違いは `lib/kinds.sh` のアダプタだけが持ち、対応していない指定は終了コード 12 で止まる。表と設計は [docs/agent-kinds.md](docs/agent-kinds.md)(`tb agent-kinds` でも見える)。
   `--cwd` の既定は `TB_AGENT_CWD`(既定このリポジトリ)。`--role R` は `roles/R.md` を台帳に残し、SessionStart hook がそれを渡す(復活後も同じ)。
-  `--prompt` は起動後に最初の指示として送る
+  `--prompt` は起動後に最初の指示として送る。
+  起動に失敗したときは、最後の `herdr agent start` のエラーコードと短いメッセージ(`TB_SPAWN_ERR_MAX`、既定 200 文字まで)を出す。
+  失敗した回ごとに「時刻・名前・エラーコード」の 1 行を `spawn-errors.log`(DB と同じディレクトリ。`TB_SPAWN_LOG` で変更)に足す。指示の本文や引数は書かない。
+  エラーコードに `not_ready` / `blocked` を含む(初回の確認画面などで、agent が人の操作を待っている)ときは、やり直さず workspace も閉じない。
+  台帳に pane を残し、herdr でその pane を開いて答えるよう案内する(終了コード 11。最初の指示は送らない)
 - **停止**: その agent の pane を `herdr pane close` で閉じる(herdr に agent 単体の停止は無い)。止める前に session と cwd(hook の記録を優先)を台帳に残す。
   止められるのは **killable=yes で、未完了(in_progress / review / blocked)のタスクを持っていない**ときだけ。人は `--force` で例外にできる。自分自身は止められない
 - **復活**: 台帳の cwd で新しい workspace を作り、`claude --resume <session>` で同じ会話から再開する(claude の場合。再開できない kind は終了コード 12 で止まり、`--fresh` なら新しい会話)。
@@ -274,6 +293,27 @@ tb agent-approve L-<n> [--always] / tb agent-reject L-<n>      # 人だけ
   `ask` なら `L-<n>` として人の承認待ちに積む(終了コード 20。Web UI の緊急通知と agent 一覧に出る)。`allow` ならそのまま実行する(停止の前提はそれでも確かめる)。`--force` は人だけ
 - herdr のセッション(`HERDR_SESSION`、プリセットの `# session:`)ごとに台帳を分けて扱う。別セッションの agent は同期で「止まった」扱いにせず、操作するときは `HERDR_SESSION=<名前>` を付けるよう案内する
 - 実行したもの・断ったもの・承認待ちは `agent_ops` にすべて残る。終了コード: 0 実行済み / 1 拒否・前提違い / 11 herdr の失敗 / 20 承認待ち
+
+### モデルの切り替え(`tb model-set`)と役割の既定(`role-models`)
+
+```
+tb model-set <名前 | @役割 | --all> <モデル> [--dry-run]
+tb model-set <名前 | @役割 | --all> --reset [--dry-run]
+```
+
+- **仕組み**: idle / done の agent だけを、止めて同じ会話を `--model <モデル>` 付きで復活させる。ユーザー単位の設定(`~/.claude/settings.json` など)は変えない。
+  Claude Code の会話中の `/model` は、選んだモデルをユーザー単位の既定として保存し、以後に起動するすべての agent に効いてしまうので使わない。
+  切り替えると、その会話のプロンプトキャッシュは使えなくなる(切り替えた直後の 1 回は費用が大きい)。そのことを 1 行で出す
+- **1 体ごとに 1 行**: `changed (…)` / `skipped (理由)` / `not supported (…)` / `pending L-<n>`。working・blocked は飛ばす。実行した本人と指揮官は対象から外す。
+  止まっている agent は台帳のモデルだけを変える(次の `tb agent-revive` から効く)
+- **kind ごとの方法**: `lib/kinds.sh` の `kind_model_switch`(kind → 方法の表)。いまは claude だけ(revive)。方法の無い kind は何も変えず `not supported`(終了コード 12)
+- **承認**: 操作名は `agent:model:<名前>`(既定 ask。`agent:model:@worker = allow` のように役割でも書ける)。agent の pane からは allow のときだけ実行し、ask なら `L-<n>` で人の承認待ち。
+  `--all` は人が実行しても常に承認待ちに積む(自動では実行しない)。記録は `agent_ops` の op=revive、`args` に `model_set:1` とモデル(スキーマは変えていない)
+- **モデルの決まり方**(起動・復活のとき。上が勝つ): 明示の `--model` > 台帳の値(明示の指定で書いた値) > 役割の既定(`tb config` の `role-models`) > agent の CLI の既定。
+  役割の既定は台帳に書かない。`role-models` を変えても台帳に値がある agent は変わらない。`--reset` で台帳の値を消すと、次の起動・復活から役割の既定になる
+- `role-models` の書式は `<役割の glob> = <モデル>`(上から見て最初に一致した行。例は `config/role-models.conf.example`)。`tb config set / edit` で書くときに検査する
+- 注意: tb を通さずに同じ名前で agent を起動し直し、herdr が別の kind を教えたときは、台帳の行が別の個体とみなされ、モデルの値が消える(`agent_sync`)
+- 終了コード: 0 / 1(1 体だけ指定して飛ばした)/ 11 herdr の失敗 / 12 対応していない kind / 20 承認待ち。検証の手順は [docs/model-switch.md](docs/model-switch.md)
 
 ### agent の関係グラフ(`tb agents --graph`)とロール
 
@@ -539,11 +579,11 @@ tb が `herdr agent prompt` で送ろうとしたものは、結果にかかわ�
 ## 設定(`tb config`)
 
 運用の設定は DB の `config` 表に置き、キーで引く(schema/013)。シングルポート・マルチセッションでも、セッションごとに違う設定を持てる。
-本文は今までの conf ファイルの中身そのまま(書式は各節のとおり)。キーは `projects` / `approvals` / `grants` / `routes` / `limits` / `notify` / `compact` / `sched-watch` / `spawn-policy`。
+本文は今までの conf ファイルの中身そのまま(書式は各節のとおり)。キーは `projects` / `approvals` / `grants` / `routes` / `limits` / `notify` / `compact` / `sched-watch` / `spawn-policy` / `role-models`。
 
 引く順(最初に見つかったもの):
 
-1. 環境変数で明示したファイル(`TB_CONFIG` / `TB_APPROVALS` / `TB_GRANTS` / `TB_ROUTES` / `TB_LIMITS` / `TB_NOTIFY_CONF` / `TB_COMPACT_CONF` / `TB_SCHEDWATCH_CONF` / `TB_SPAWN_POLICY`。テストや一時の差し替え)
+1. 環境変数で明示したファイル(`TB_CONFIG` / `TB_APPROVALS` / `TB_GRANTS` / `TB_ROUTES` / `TB_LIMITS` / `TB_NOTIFY_CONF` / `TB_COMPACT_CONF` / `TB_SCHEDWATCH_CONF` / `TB_SPAWN_POLICY` / `TB_ROLE_MODELS`。テストや一時の差し替え)
 2. DB の**このセッション**の行
 3. DB の**全セッション共通**の行(`herdr_session='*'`)
 4. checkout の `taskboard/config/<名前>.conf`(DB に取り込むまでの移行用。git 管理外)

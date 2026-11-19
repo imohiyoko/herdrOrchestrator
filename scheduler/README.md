@@ -20,6 +20,8 @@ launchd が `bin/tick.sh <job>` を毎分起動し、時間帯・曜日・間隔
 | `SKIP_IF` | 既定 `"working blocked"`。該当する状態ならスキップ。idle/done 以外も送らない |
 | `TZ` | 既定 `Asia/Tokyo`。判定は tick.sh がこの TZ で行う |
 | `ENABLED` | 既定 `1`。`0` で一時停止 |
+| `GATE` | 任意。発火条件のコマンド(シェル 1 行)。終了コード 0 のときだけ発火する。0 以外・時間切れ・起動失敗のときは発火せず、`skipped_gate` と理由をログに残す。下の「発火条件(GATE)」 |
+| `GATE_TIMEOUT` | 既定 `10`(秒)。`GATE` がこれを超えたら子プロセスごと止め、発火しない |
 | `WATCHER` | 任意。`1` で見張り系のジョブ(tb digest が ran / sent の途絶を見る)、`0` で対象外。未設定なら、TARGET が `tb limits` の watchers に入っているか、`COMMAND=` の行がその名前を含むかで推定する。PROMPT のパスやコメントの語は見ない |
 
 ### コマンド実行型ジョブ
@@ -32,6 +34,36 @@ launchd が `bin/tick.sh <job>` を毎分起動し、時間帯・曜日・間隔
 - 同じジョブの多重実行はロック(`logs/<job>.lock.d`)で防ぎ、実行中なら `skipped_locked`。
 - ログには `action`(`ran` | `failed` | `skipped_*`)、`exit`、`stdout`、`stderr`(各先頭 500 字)を記録。
 - **`COMMAND` は `bash -c` でそのまま実行される。`jobs/*.conf` は人が管理するもので、外部入力(Slack・ファイル内容・引数など)を埋め込まないこと。**
+
+### 発火条件(GATE)
+
+データの有無などで発火を止めたいときは、`ENABLED` を手で書き換える代わりに `GATE='...'` を書く(例: `GATE='test -s /path/to/queue'`)。
+
+- 判定の順序: 窓・間隔・曜日 → `ENABLED` → `GATE` → `SKIP_IF`(プロンプト型)→ 多重実行のロック(コマンド型)→ 発火。`GATE` の後の判定は、`GATE` が 0 のときだけ行う。
+- 0 以外は `skipped_gate`(理由 `gate exit <n>`)、`GATE_TIMEOUT` 超えは `gate timeout after <n>s`、起動できない(終了コード 126 / 127)は `gate could not start (exit <n>)`。
+- `GATE` の stdout / stderr は捨てる。ログにも送る本文にも入れない。
+- `DRY_RUN=1` でも `GATE` は実行する(判定結果を正しく出すため)。副作用のないコマンドにする。
+- `GATE` が無いジョブの動きは変わらない。`GATE` は conf にだけ書ける(settings・Web UI からは変えられない)。`COMMAND` と同じく `bash -c` で実行するので、外部入力を埋め込まないこと。
+- `bin/show.sh` の出力の `gate` は、`GATE` があるかどうか(true / false)だけを出す。
+
+## ジョブ定義を DB に置く(`tb sched-job`)
+
+ジョブ定義(conf の本文)と上書き設定(settings の本文)は、taskboard の DB の `config` 表にも置ける。
+キーは `sched-job:<job>` と `sched-settings:<job>`、本文の書式はファイルと同じ。変更の履歴は `config_changes` に残る(`tb config` と同じ仕組み)。
+
+- 読む順: DB の**このセッション**の行 > DB の共通の行(`*`)> ファイル(`jobs/<job>.conf`・`settings/<job>.settings`)。
+  DB に行が無いジョブは、今までどおりファイルを読む。sqlite3・DB・表が無い環境でもファイルを読む。DB は読み取り専用で開く
+- セッションごとに別の定義を持てる(`HERDR_SESSION`、checkout の `herdr-session` ファイル。tb と同じ決まり方)
+- 書くのは人だけ: `tb sched-job set <job> < 本文` / `edit` / `unset`(`--settings` で上書き設定、`--shared` で共通の行)。
+  書く前に、scheduler 自身(`bin/show.sh`)がその本文を読めるかを一時のディレクトリで確かめる(読めなければ書かない)
+- 取り込み: `tb sched-job import --dry-run` で確かめてから `tb sched-job import [<job> ...]`。`jobs/*.conf` と `settings/*.settings` を
+  このセッションの行(`--shared` なら共通の行)に取り込み、取り込んだファイルは `$HERDR_STATE_DIR/sched-imported/<日時>/` へ退かす。
+  既に行があるジョブは飛ばす。取り込みの前後で、判定の結果(`tick.sh` の dry-run)と実際に効く設定(`show.sh`)は変わらない(`tests/run.sh` が確かめる)
+- 一覧: `bin/jobs.sh`(DB とファイルの和)、`tb sched-job list`(出どころつき)。`bin/show.sh` は `source` / `settings_source`(`db` / `file` / `none`)も出す
+- Web UI: DB に定義があるジョブの上書き設定は、`tb sched-job set <job> --settings` を通して DB に書く(ファイルは書かない)。
+  「conf の値に戻す」はこのセッションの行を消す(共通の行は人が `tb sched-job unset <job> --settings --shared` で消す)
+- plist(`gen-plist.sh`)はジョブ名だけを持つので、取り込んだあとも作り直さなくてよい
+- DB の本文も `COMMAND` と同じく bash として評価される。`tb sched-job` は人の端末からだけ書ける(agent の pane からは断る)
 
 ## Web UI からの変更(settings)
 

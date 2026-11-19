@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# スプリントとボード(015)。project は sp / sp2 だけを使う
+# スプリントとボード(016)。project は sp / sp2 だけを使う
 s1=$($TB sprint-add -p sp -n "Sprint 1" --start 2026-11-17 --end 2026-11-30 --goal "ログイン刷新")
 s2=$($TB sprint-add -p sp -n "Sprint 2")
 eq "sprints: ids" "$s1 $s2" "$(sqlite3 "$TB_DB" "SELECT 'S-'||MIN(id)||' S-'||MAX(id) FROM sprints WHERE project='sp';")"
@@ -16,7 +16,7 @@ eq "sprints: bad points" "$(rc $TB add -p sp -t x --points -1)" "2"
 $TB update "$c" --sprint "$s1" --points 2 >/dev/null
 eq "sprints: update moves into sprint" "$($TB list --sprint "$s1" | cut -f1 | tr '\n' ' ')" "$a $b $c "
 eq "sprints: backlog" "$($TB list -p sp --sprint backlog | cut -f1)" "$d"
-eq "sprints: --long has sprint and points" "$($TB list -p sp --long | head -1 | cut -f9,10)" "$(printf '%s\t3' "$s1")"
+eq "sprints: --long has sprint and points" "$($TB list -p sp --long | head -1 | cut -f11,12)" "$(printf '%s\t3' "$s1")"
 
 # --- 開始は project に 1 つだけ
 eq "sprints: start" "$($TB sprint-start "$s1")" "$s1 active"

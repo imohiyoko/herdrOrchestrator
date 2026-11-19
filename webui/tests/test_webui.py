@@ -656,7 +656,31 @@ check("タスク: 報告の種別ごとの件数と未対応", "progress 2" in T
 check("タスク: 題は先頭 80 文字だけ", "TITLETAIL" not in TL[2] and ("x" * 80) in TL[2] and ("x" * 100) not in TL[2])
 check("タスク: 題の HTML はエスケープ", XSS not in TL[2] and "&lt;script&gt;" in TL[2])
 _th = TL[2].split("</form>", 1)[1].split("</tr>")[0]
-check("タスク: 種別・優先度・ラベル・作成の列があり、期限の列は無い", all(x in _th for x in ("種別", "優先度", "ラベル", "作成", "更新")) and "期限" not in _th)
+check("タスク: 種別・優先度・期日・ラベル・作成の列", all(x in _th for x in ("種別", "優先度", "期日", "ラベル", "作成", "更新")))
+# 期日(015): 期限切れ / 期限間近の絞り込みと境界(昨日・今日・明日)。期日なし・done は出ない
+_today = datetime.now()
+_d = lambda n: (_today + timedelta(days=n)).strftime("%Y-%m-%d")
+_cx.execute("UPDATE tasks SET due=? WHERE id='T-1'", (_d(-1),))
+_cx.execute("UPDATE tasks SET due=? WHERE id='T-2'", (_d(0),))
+_cx.execute("UPDATE tasks SET due=? WHERE id='T-3'", (_d(1),))
+_cx.execute("UPDATE tasks SET due=? WHERE id='T-4'", (_d(-5),))   # done なので期限切れにならない
+_cx.commit()
+check("タスク: 期限切れ(昨日だけ。done と期日なしは出ない)", _ids("/tasks?due=overdue") == ["T-1"], str(_ids("/tasks?due=overdue")))
+check("タスク: 期限間近 0 日は今日だけ", _ids("/tasks?due=soon&days=0") == ["T-2"], str(_ids("/tasks?due=soon&days=0")))
+check("タスク: 期限間近 1 日は今日と明日", sorted(_ids("/tasks?due=soon&days=1")) == ["T-2", "T-3"])
+check("タスク: 期限間近の既定(3 日)", sorted(_ids("/tasks?due=soon")) == ["T-2", "T-3"])
+check("タスク: 期日の近い順(期日なしは最後)", _ids("/tasks?sort=due") == ["T-4", "T-1", "T-2", "T-3", "T-5"], str(_ids("/tasks?sort=due")))
+_TLd = cl.get("/tasks")[2]
+_t1row = re.search(r'<tr><td><a href="/tasks/T-1">.*?</tr>', _TLd, re.S).group(0)
+_t4row = re.search(r'<tr><td><a href="/tasks/T-4">.*?</tr>', _TLd, re.S).group(0)
+check("タスク: 期限切れの目印と件数", "期限切れ</span>" in _t1row and "期限切れ" not in _t4row and "期限切れ 1</span>" in _TLd and "期限間近(3 日以内)2" in _TLd)
+check("タスク詳細: 期日", "<th>期日</th><td><span class=warn>" + _d(1) + " 間近" in cl.get("/tasks/T-3")[2])
+for bad in ["due=zz", "due=soon&days=-1", "due=soon&days=9999", "days=%27%3B--"]:
+    r = cl.get("/tasks?" + bad)
+    check(f"タスク: 不正な期日の絞り込み {bad} でも 200 でエラー表示", r[0] == 200 and "class=err" in r[2] and "'--" not in r[2], str(r[0]))
+_cx.execute("UPDATE tasks SET due=NULL")
+_cx.commit()
+check("タスク: 期日が無ければ期限の件数は出ない", "期限切れ 0" not in cl.get("/tasks")[2] and _ids("/tasks?due=overdue") == [])
 # チケットの構造(014): 種別・優先度・ラベルで絞る、ラベルは押すと絞り込み、優先度順
 _cx.execute("UPDATE tasks SET type='epic', priority='high', labels='[\"ui\",\"auth\"]' WHERE id='T-2'")
 _cx.execute("UPDATE tasks SET type='story', priority='highest', labels='[\"ui\"]' WHERE id='T-3'")
@@ -681,7 +705,7 @@ _cx.commit()
 _TD3 = cl.get("/tasks/T-3")[2]
 check("タスク詳細: 外部リンク(http(s) だけをリンクに)", 'href="https://acme.slack.com/archives/C1/p1"' in _TD3 and 'rel="noopener noreferrer"' in _TD3
       and 'href="javascript' not in _TD3 and "javascript:alert(1)" in _TD3)
-# スプリントとボード(015)
+# スプリントとボード(016)
 _cx.execute("INSERT INTO sprints (id, project, name, goal, start_date, end_date, state, created_at, herdr_session) VALUES "
             "(7, 'pj2', '第1スプリント " + XSS + "', 'ゴール', '2026-11-17', '2026-11-30', 'active', 't', 'default')")
 _cx.execute("INSERT INTO sprints (id, project, name, state, created_at, herdr_session) VALUES (8, 'pj2', '次', 'planned', 't', 'default')")
@@ -1023,6 +1047,30 @@ r = cl.raw("POST", "/jobs/job1", {**good, "start": "18:00:30", "end": "18:00", "
 check("終了 HH:MM はその分の 59 秒までなので 18:00:30-18:00 は可", r[0] == 302, str(r[0]))
 r = cl.raw("POST", "/jobs/job1", {"action": "reset", "csrf": cl.csrf("/jobs/job1")})
 check("conf の値に戻すと settings を消す", r[0] == 302 and not os.path.exists(SET) and "10 分おき" in cl.get("/jobs")[2])
+# DB にある定義(tb sched-job。config 表の sched-job:<job>)。一覧・詳細に出て、上書き設定は DB に書く(履歴つき)
+_c = sqlite3.connect(env["WEBUI_TB_DB"])
+_sess = "default"   # このプロセスのセッション(HERDR_SESSION も herdr-session ファイルも無い)
+_c.execute("INSERT INTO config (herdr_session, key, body, updated_by, updated_at) VALUES (?, 'sched-job:dbjob', ?, 'human', 'x')",
+           (_sess, "# DB-ABOUT 説明\nCOMMAND='echo db'\nWINDOW=09:00-21:00\nINTERVAL_MIN=20\nTZ=Asia/Tokyo\n"))
+_c.commit(); _c.close()
+check("DB の定義: 一覧に出る(実際の間隔)", "dbjob" in cl.get("/jobs")[2] and "20 分おき / 09:00-21:00 / daily" in cl.get("/jobs")[2])
+_dj = cl.get("/jobs/dbjob")
+check("DB の定義: 詳細に説明とコマンドが出る", _dj[0] == 200 and "DB-ABOUT 説明" in _dj[2] and "echo db" in _dj[2])
+r = cl.raw("POST", "/jobs/dbjob", {**good, "csrf": cl.csrf("/jobs/dbjob")})
+_c = sqlite3.connect(env["WEBUI_TB_DB"])
+_sb = _c.execute("SELECT body FROM config WHERE key='sched-settings:dbjob'").fetchall()
+_hist = _c.execute("SELECT how FROM config_changes WHERE key='sched-settings:dbjob'").fetchall()
+_c.close()
+check("DB の定義: 上書き設定は DB に(ファイルは作らない)、履歴が残る", r[0] == 302 and _sb and "INTERVAL_MIN=15" in _sb[0][0]
+      and not os.path.exists(os.path.join(env["WEBUI_SCHED_SETTINGS"], "dbjob.settings")) and _hist == [("set",)], str((r[:2], _sb, _hist)))
+check("DB の定義: 一覧に反映", "15 分おき / 10:00-18:00 / weekdays" in cl.get("/jobs")[2])
+r = cl.raw("POST", "/jobs/dbjob", {**good, "start": "25:00", "csrf": cl.csrf("/jobs/dbjob")})
+check("DB の定義: 不正な入力は 400 で書かない", r[0] == 400)
+r = cl.raw("POST", "/jobs/dbjob", {"action": "reset", "csrf": cl.csrf("/jobs/dbjob")})
+_c = sqlite3.connect(env["WEBUI_TB_DB"])
+_left = _c.execute("SELECT COUNT(*) FROM config WHERE key='sched-settings:dbjob'").fetchone()[0]
+_c.close()
+check("DB の定義: 戻すと DB の上書き設定を消す", r[0] == 302 and _left == 0 and "20 分おき" in cl.get("/jobs")[2])
 check("tasks のフィルタ", "T-1" in cl.get("/tasks?project=pj&status=in_progress")[2] and "T-1" not in cl.get("/tasks?status=done")[2])
 check("フィルタ値の XSS", "<script>" not in cl.get("/tasks?project=%3Cscript%3E")[2])
 
