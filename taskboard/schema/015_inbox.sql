@@ -22,3 +22,5 @@ CREATE INDEX IF NOT EXISTS inbox_recipient ON inbox(herdr_session, recipient, re
 ALTER TABLE outbox ADD COLUMN reply_to INTEGER;
 ALTER TABLE outbox ADD COLUMN reply_check TEXT;
 CREATE INDEX IF NOT EXISTS outbox_reply_to ON outbox(herdr_session, reply_to);
+-- 1 つの送信に認められる返信は 1 つだけ(同時に 2 つ確かめても、2 つ目は ok にならない)
+CREATE UNIQUE INDEX IF NOT EXISTS outbox_reply_once ON outbox(herdr_session, reply_to) WHERE reply_check='ok';
