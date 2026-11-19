@@ -103,6 +103,22 @@ tb list --due-within 3 --sort due --long        # 今日〜3 日後が期日で 
 - 存在しない日付(`2026-02-30`)や形式違い(`2026/12/01`)は使い方の誤り(終了コード 2)。
 - Web UI のタスク一覧は期日の列と「期限切れ」「期限間近(N 日以内)」の絞り込み、期日の近い順の並びを持つ。期限切れは赤で出す。
 
+### 履歴(`tb history` / `tb events`)
+
+チケットの変化は 1 件ずつ `task_events` に残る(設計は [ADR 0003](../docs/adr/0003-ticket-events-and-notify-rules.md))。変化を書いた tb の書き込みと同じトランザクションで残すので、変化があって履歴が無いことはない。
+
+```sh
+tb history T-web-012            # そのタスクの履歴を古い順に(E-番号 時刻 タスク 種類 前 後 変えた者 元)
+tb events -p web --kind label_added --limit 20 --json   # このセッションの履歴(既定は最新 50 件を古い順に)
+tb events --since E-120         # E-120 より後のもの(通知の規則などで続きから読む用)
+```
+
+- **種類**: `created` / `status` / `title` / `type` / `priority` / `owner` / `due` / `parent` / `description` / `label_added` / `label_removed` / `ref_added` / `ref_removed` / `link` / `unlink` / `comment`。作成時のラベル・外部リンクも `label_added` / `ref_added` として残る。
+- **変えた者**: agent の pane からなら herdr から引いた agent 名(引けなければ `pane:<id>`。書き込みは止めない)、人の端末なら `human`。コメントは報告者、リンクは `task_links.created_by`。
+- **本文は写さない**: 説明は「変わった」ことだけ(前後は空)、コメントは種類と `C-<n>` だけ。
+- **残らないもの**: 報告(`reported_at`)・成果物・要約・担当の会話 ID・アカウント・`updated_at` だけの変化。tb 以外の書き込み(移行・`db-import`・手で開いた sqlite3)。この機能より前の変化。
+- 追記だけで、消さない・書き換えない。Web UI のタスク詳細の「履歴」にも新しい順に出る。
+
 ## 代行依頼(権限が足りないとき)
 
 仕様は利用側のプロンプトで定める。
