@@ -4,7 +4,7 @@
 #
 # 呼び出し側(agents.sh / compact.sh)は kind の名前で分岐せず、下の kind_* に聞く。
 #   kind_valid K                  既知の kind か
-#   kind_supports K 項目          項目に対応していれば 0(項目: launch model resume live-model compact)
+#   kind_supports K 項目          項目に対応していれば 0(項目: launch model resume live-model compact slash)
 #   kind_require K 項目 [補足]    対応していなければ KIND_ERR に理由を入れて 12(終了コード 12 = kind が対応していない項目がある)
 #   kind_model_valid K M          モデル名の検査(0 / 1)
 #   kind_launch_args K SID M      herdr agent start の -- 以降に渡す引数を 1 行 1 個で出す(SID / M は空でよい)

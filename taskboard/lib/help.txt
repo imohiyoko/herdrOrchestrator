@@ -28,7 +28,7 @@ tb proxy-check <id>   1 行目が allow(自動代行可)か human(人に回す)�
 
 agent の活動記録(hook から。bin/tb-hook 経由が基本):
 tb db-import <旧 DB> [--session <名前>] [--dry-run]   旧形式(checkout ごと)の DB を、共有の DB の 1 セッション(既定は今のセッション)の行として取り込む。人の端末だけ。元の DB は読むだけ
-tb config [list]   設定(projects / approvals / grants / routes / limits / notify / compact / sched-watch / spawn-policy / role-models / conv-routes)の出どころを出す。引く順: 環境変数で明示したファイル > DB のこのセッションの行 > DB の共通の行(*) > checkout の taskboard/config/<名前> > .example
+tb config [list]   設定(projects / approvals / grants / routes / delivery / limits / notify / compact / slash / sched-watch / spawn-policy / role-models / conv-routes)の出どころを出す。引く順: 環境変数で明示したファイル > DB のこのセッションの行 > DB の共通の行(*) > checkout の taskboard/config/<名前> > .example
 tb config show <キー> | history <キー>   今効いている本文 / 変更の履歴
 tb config set <キー> [--shared] < 本文 | edit <キー> [--shared] | unset <キー> [--shared]   DB のこのセッションの行(--shared なら全セッション共通の行)を書く・消す。人の端末だけ
 tb config import [--dry-run]   checkout の taskboard/config/*.conf を、全セッション共通の行として DB に取り込む(共通の行が既にあるキーは飛ばす)。人の端末だけ
@@ -118,11 +118,15 @@ tb agent-stop <名前> [--force]   pane を閉じて止める。killable=yes(判
 tb agent-revive <名前> [--fresh] [--model M] [--prompt P]   台帳の session を kind の方法(claude は --resume)で再開(--fresh なら新しい会話)。再開できない kind は終了コード 12
 tb agent-kinds   kind(claude / codex / gemini)ごとの対応項目の表(起動・モデル指定・再開・起動中のモデル変更)。設計は docs/agent-kinds.md
 tb agent-restart <名前> [--prompt P]   MCP が切れた agent の復旧: 停止 + 同じ会話での復活。idle/done で in_progress のタスクが無いときだけ
+         (持つなら --prompt の再開メモが要る)。人はいつでも。agent からは agent:stop と agent:revive が両方 allow の名前だけ(自分・指揮官は不可)。--force は無い
+         終了コード: 0 再起動済み 1 拒否・前提違い 4 上限・許可なし 10 再開したが最初の指示を確認できない 11 herdr の失敗
 tb model-set <名前|@役割|--all> <モデル> [--dry-run]   idle/done の agent を止めて同じ会話を --model 付きで復活(--all は人の承認待ち。approvals の agent:model:<名前>)
 tb model-set <名前|@役割|--all> --reset [--dry-run]    台帳のモデルを消す(次の起動から config の role-models の既定)
 tb compact-check [--dry-run] [--apply]   idle/done で文脈が大きい agent に /compact を送る(既定 dry-run。config/compact.conf と approvals の agent:compact:<名前>)
-         (持つなら --prompt の再開メモが要る)。人はいつでも。agent からは agent:stop と agent:revive が両方 allow の名前だけ(自分・指揮官は不可)。--force は無い
-         終了コード: 0 再起動済み 1 拒否・前提違い 4 上限・許可なし 10 再開したが最初の指示を確認できない 11 herdr の失敗
+tb slash <コマンド> <agent 名|@役割>... [--apply]   許可リスト(config/slash.conf)のスラッシュコマンドを idle/done の agent に送る(既定 dry-run)。
+         自分と指揮官は除く。agent からは approvals の agent:slash:<コマンド>:<宛先>(ask なら L-<n>)。記録は agent_ops(op=slash)
+tb slash <コマンド> --all [--apply]   全 agent へ。--apply しても L-<n> を積むだけで、人が tb agent-approve するまで送らない
+tb slash --list   許可リストを出す(deny の行は送らない)
 tb agent-flag <名前> --killable yes|no|unknown [--reason R]   止めてよいかの判定。判定役(TB_SWEEPER_PATTERN、既定 sweeper*)か人だけ
          終了コード(new/stop/revive): 0 実行済み 1 拒否・前提違い 11 herdr の失敗 20 人の承認待ち(L-<n>)
 tb agent-ops [--status pending|done|failed|rejected] [--json]   操作の記録と承認待ち
