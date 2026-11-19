@@ -28,7 +28,7 @@ repoindex/bin/repoindex status                     # 置き場所・権限・リ
 repoindex/bin/repoindex repo-add <名前> <clone のパス>   # 索引に入れるリポジトリ(人が選ぶ。自分の権限で clone 済みのもの)
 repoindex/bin/repoindex repo-remove <名前>          # そのリポジトリの行をすべて消す
 repoindex/bin/repoindex put --repo R --kind dir|file|symbol --path P --commit C [--symbol S] [--boundaries auth,authz,external,data] < 本文
-repoindex/bin/repoindex query search|get|stale|freshness ...   # 人が確かめる用(serve と同じ中身)
+repoindex/bin/repoindex query search|get|stale|freshness|context ...   # 人が確かめる用(serve と同じ中身)
 repoindex/bin/repoindex serve                      # 読み取り専用のツール口(MCP stdio)
 repoindex/bin/repoindex purge --yes                # 元に戻す: データのディレクトリごと消す
 ```
@@ -44,6 +44,7 @@ MCP の stdio サーバー。agent ごとに 1 プロセスを起動する形で
 | `repoindex_get` | ディレクトリ・ファイル・シンボルの要約。無ければ `missing` を返す(空の答えにしない) |
 | `repoindex_stale` | 鮮度が落ちた要約の一覧(本文なし) |
 | `repoindex_freshness` | リポジトリごとに、索引を進めたコミットと件数 |
+| `repoindex_context` | 変更のまわり(下の「変更のまわりを引く」) |
 
 - 上限: 1 回 20 件、1 件 1200 字、1 回の合計 8000 字(`ri/read.py`)。
 - サーバーのログ(stderr)に本文は出さない。ツール名と件数だけ。
@@ -71,7 +72,7 @@ repoindex/bin/repoindex update <名前> --dry-run   # stale / missing の印だ�
 
 | 環境変数 | 中身 |
 |---|---|
-| `REPOINDEX_SUMMARIZER` | 要約のコマンド。標準入力に中身(ファイルの本文、またはディレクトリの直下のファイル名と各先頭 40 行)。環境変数 `REPOINDEX_KIND`(dir / file)`REPOINDEX_PATH` `REPOINDEX_ATTEMPT` が付く。標準出力の 1 行目が `boundaries: auth,external` なら境界として読む |
+| `REPOINDEX_SUMMARIZER` | 要約のコマンド。標準入力に中身(ファイルの本文、またはディレクトリの直下のファイル名と各先頭 40 行)。環境変数 `REPOINDEX_KIND`(dir / file)`REPOINDEX_PATH` `REPOINDEX_ATTEMPT` が付く。標準出力の先頭の `boundaries: auth,external` と `calls: a/b.py, c/d.py` の行を境界・呼び先として読む(呼び先はリポジトリにあって除外されないファイルだけ) |
 | `REPOINDEX_SUMMARIZER_DIR` | ディレクトリの要約だけ別のコマンド(例: ファイルは軽いモデル、境界とファイルどうしの関係を見るディレクトリは強いモデル) |
 | `REPOINDEX_MODEL` | 記録用のモデル名(要約の行に残る) |
 | `REPOINDEX_MAX_ATTEMPTS` | 検査で落ちたときの試行の上限(既定 3、最大 10) |
@@ -94,6 +95,30 @@ repoindex/bin/repoindex update <名前> --dry-run   # stale / missing の印だ�
 | `source_unavailable` | 元のリポジトリを読めない |
 
 `repoindex_freshness` は、リポジトリごとに索引のコミットと今の `HEAD`(`index_behind`)を返す。変わっていないファイルの要約は、古いコミットで作ったものでも stale にしない。
+
+## 変更のまわりを引く(#109)
+
+`repoindex_context`(`repo` と、`paths` = 変わったファイル、または `range` = `base..head`)。`query context --repo R [--range A..B] [パス ...]` も同じ。
+
+1. 変わったファイルごとに、そのファイルとディレクトリの要約。無ければ `missing` に明示する(空の答えにしない)。
+2. 呼び出し元: 索引が持っている関係(`relations`。要約のコマンドが `calls:` で返したもの)と、普通のコード検索(ファイル名の語で `git grep`)。
+   コード検索は場所(path と行)だけを返し、行の中身は返さない。除外パスは出さない。
+3. 呼び先: 索引が持っている関係。
+4. 関わる境界(`auth` / `authz` / `external` / `data`)は、変わったファイル・ディレクトリと呼び先の要約から集める。
+5. 影響の範囲(`blast_radius`): 変わったもの・呼び出し元・呼び先と、その理由。**どの項目にも元ソースの場所(path・行・commit)**。
+
+上限: 変わったファイル 10 件、ファイルごとの呼び出し元・呼び先 5 件、まわりの要約 1 件 400 字、合計 8000 字。
+
+### 専用の読み取り役
+
+ツールを持つのは **専用の読み取り役の agent 1 つだけ**。ほかの agent はその agent に質問して答えをもらう(ツールを直接持たない)。
+その agent は段階 2(#110)で、安全の検査のテストが通ってから作る。
+
+- 役割: [`roles/reader.md`](roles/reader.md)。`tb role-write repoindex-reader < repoindex/roles/reader.md` で DB に入れ、
+  `tb agent-new <名前> --role repoindex-reader` で作る。
+- ツールの口: [`mcp.json.example`](mcp.json.example) をその agent の作業ディレクトリの `.mcp.json` にだけ置く(パスを直す)。
+  ほかの agent の設定には入れない。
+- 答えは手がかり。受け取った agent も、判断の前に元のソースを読む。要約の中身は公開の場所に写さない。
 
 ## 取り込みの安全(#108)
 
