@@ -28,3 +28,4 @@ taskboard/config/risk-rules.conf
 taskboard/config/gate.conf
 taskboard/config/gate-paths.conf
 taskboard/config/gate-ingest.conf
+dist/
