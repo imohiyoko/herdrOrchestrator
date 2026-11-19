@@ -5,7 +5,7 @@ export TB_DB=$TMP/schema.db
 latest=$(ls "$HERE/../schema"/[0-9][0-9][0-9]_*.sql | tail -n 1 | xargs basename | cut -c1-3); latest=$((10#$latest))
 $TB list >/dev/null
 eq "schema: fresh DB is at the latest version" "$(sqlite3 "$TB_DB" "PRAGMA user_version;")" "$latest"
-eq "schema: every table exists" "$(sqlite3 "$TB_DB" "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('tasks','proxy_requests','comments','agent_activity','messages','outbox','approval_changes','role_briefings','alerts','proposals','reviews','digests','observations');")" "13"
+eq "schema: every table exists" "$(sqlite3 "$TB_DB" "SELECT COUNT(*) FROM sqlite_master WHERE type IN ('table','view') AND name IN ('tasks','proxy_requests','comments','agent_activity','messages','outbox','approval_changes','role_briefings','alerts','proposals','reviews','digests','observations','alert_details','proposal_details');")" "15"
 # リファクタ前の tb が作った DB(全テーブルあり・user_version=0)は中身を保ったまま最新になる
 rm -f "$TB_DB"; sqlite3 "$TB_DB" <"$HERE/../schema/001_initial.sql"
 sqlite3 "$TB_DB" "INSERT INTO tasks (id, project, title, created_at, updated_at) VALUES ('T-old-001','old','keep','t','t');

@@ -11,11 +11,13 @@
 #   agents だけは、共有の DB の行に無い値(role / model / cwd / session など)を旧 DB の値で埋める
 # - 同じファイルを 2 回取り込まない(取り込んだ記録を tb_flags の db-import:<実体のパス> に残す)
 
-# 整数の ID を持つ表と、画面やコマンドでの接頭辞(無いものは空)
-IMPORT_ID_TABLES="comments:C outbox:O alerts:A agent_ops:L notify_events:N digests:D proposals:P pr_queue:PQ
+# 整数の ID を持つ表と、画面やコマンドでの接頭辞(無いものは空)。列が id でなければ <表>.<列>
+# アラート・提案は 019 でチケットへ移した: 番号は alert_details.alert_no / proposal_details.proposal_no(チケットは tasks と一緒に取り込む)
+IMPORT_ID_TABLES="comments:C outbox:O alert_details.alert_no:A agent_ops:L notify_events:N digests:D proposal_details.proposal_no:P pr_queue:PQ
   proxy_requests: messages: reviews: read_log: role_changes: role_briefings: approval_changes: notify_sends:"
 # タスク ID を持つ列(表.列)
-IMPORT_TASK_REFS="tasks.parent_id comments.task_id proxy_requests.task_id outbox.task_id pr_queue.task_id agents.spawn_task observations.task_id"
+IMPORT_TASK_REFS="tasks.parent_id comments.task_id proxy_requests.task_id outbox.task_id pr_queue.task_id agents.spawn_task observations.task_id
+  alert_details.task_id proposal_details.task_id"
 
 cmd_db-import() {
   local src="" session=$SESS dry=0
@@ -63,21 +65,21 @@ cmd_db-import() {
 # 取り込みの SQL(写しを main、共有の DB を dst として開く)。最後の COMMIT / ROLLBACK は呼び出し側が足す
 import_sql() {  # $1=写し $2=セッション $3=取り込みの記録のキー
   local copy=$1 sqs; sqs=$(q "$2")
-  local s t p col tbl
+  local s t p col tbl idc
   s="ATTACH $(q "$DB") AS dst; BEGIN IMMEDIATE;"
   # 1. 整数の ID をずらす(負の値を経由して、途中で主キーがぶつからないようにする)
   s+=" CREATE TEMP TABLE _off (t TEXT PRIMARY KEY, n INTEGER NOT NULL);"
   for t in $IMPORT_ID_TABLES; do
-    tbl=${t%%:*}
-    s+=" INSERT INTO _off VALUES ('$tbl', COALESCE((SELECT MAX(id) FROM dst.$tbl), 0));
-         UPDATE main.$tbl SET id = -(id + (SELECT n FROM _off WHERE t='$tbl')); UPDATE main.$tbl SET id = -id;"
+    import_id_split "$t"
+    s+=" INSERT INTO _off VALUES ('$tbl', COALESCE((SELECT MAX($idc) FROM dst.$tbl), 0));
+         UPDATE main.$tbl SET $idc = -($idc + (SELECT n FROM _off WHERE t='$tbl')); UPDATE main.$tbl SET $idc = -$idc;"
   done
   s+=" UPDATE main.notify_sends SET event_id = event_id + (SELECT n FROM _off WHERE t='notify_events');
        UPDATE main.notify_events SET batch_id = batch_id + (SELECT n FROM _off WHERE t='notify_events') WHERE batch_id IS NOT NULL;
        UPDATE main.observations SET digest_id = digest_id + (SELECT n FROM _off WHERE t='digests') WHERE digest_id IS NOT NULL;"
   # ref の "<接頭辞>-<数字>" だけを直す(owner/repo#12 などはそのまま)
   for t in $IMPORT_ID_TABLES; do
-    tbl=${t%%:*}; p=${t#*:}; [[ -n $p ]] || continue
+    import_id_split "$t"; p=${t#*:}; [[ -n $p ]] || continue
     for col in messages.ref notify_events.ref; do
       s+=" UPDATE main.${col%%.*} SET ${col#*.} = '$p-' || (CAST(substr(${col#*.}, $((${#p} + 2))) AS INTEGER) + (SELECT n FROM _off WHERE t='$tbl'))
            WHERE ${col#*.} LIKE '$p-%' AND substr(${col#*.}, $((${#p} + 2))) != '' AND substr(${col#*.}, $((${#p} + 2))) NOT GLOB '*[^0-9]*';"
@@ -100,7 +102,7 @@ import_sql() {  # $1=写し $2=セッション $3=取り込みの記録のキー
   # 3. 足す。行のセッションは写しの移行で取り込み先のものになっている
   local cols
   for t in tasks $IMPORT_ID_TABLES; do
-    tbl=${t%%:*}; cols=$(import_cols "$tbl")
+    import_id_split "$t"; cols=$(import_cols "$tbl")
     s+=" INSERT INTO dst.$tbl ($cols) SELECT $cols FROM main.$tbl;"
   done
   for tbl in agent_activity observations tb_flags notify_seen; do
@@ -117,13 +119,16 @@ import_sql() {  # $1=写し $2=セッション $3=取り込みの記録のキー
   s+=" SELECT 'tasks: ' || (SELECT COUNT(*) FROM main.tasks) || ' 件(付け替え ' || (SELECT COUNT(*) FROM _ren) || ' 件)';
        SELECT '  ' || old || ' -> ' || new FROM _ren ORDER BY old;"
   for t in $IMPORT_ID_TABLES; do
-    tbl=${t%%:*}
+    import_id_split "$t"
     s+=" SELECT '$tbl: ' || COUNT(*) || ' 件' || CASE WHEN COUNT(*) > 0 AND (SELECT n FROM _off WHERE t='$tbl') > 0
            THEN '(番号は +' || (SELECT n FROM _off WHERE t='$tbl') || ')' ELSE '' END FROM main.$tbl HAVING COUNT(*) > 0;"
   done
   s+=" SELECT 'agents: ' || (SELECT COUNT(*) FROM main.agents) || ' 件';"
   printf '%s' "$s"
 }
+
+# IMPORT_ID_TABLES の 1 つ(<表>[.<列>]:<接頭辞>)を tbl と idc(番号の列。既定 id)に分ける
+import_id_split() { tbl=${1%%:*}; idc=id; if [[ $tbl == *.* ]]; then idc=${tbl#*.}; tbl=${tbl%%.*}; fi; }
 
 # 表の列(共有の DB と写しは同じ版なので同じ列)。カンマ区切り
 import_cols() { sql "SELECT group_concat(name, ', ') FROM pragma_table_info($(q "$1"));"; }

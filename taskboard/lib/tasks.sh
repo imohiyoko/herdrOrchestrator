@@ -83,6 +83,16 @@ actor_name() {
   if [[ -n ${HERDR_PANE_ID:-} ]]; then resolve_label || return 3; printf '%s' "$LABEL_NAME"; else printf human; fi
 }
 
+# アラート・提案のチケット(019。ADR 0003)の状態は、それぞれのコマンドだけが変える。
+# 閉じる・承認するのは人だけ(tb alert-close / tb alert-approve)なので、tb claim / update --status / done / block では変えない
+special_ticket_guard() {  # $1=タスク ID $2=操作の名前
+  local w; w=$(sql "SELECT 'A-'||alert_no FROM alert_details WHERE task_id=$(q "$1") UNION ALL SELECT 'P-'||proposal_no FROM proposal_details WHERE task_id=$(q "$1") LIMIT 1;" 2>/dev/null) || true
+  case $w in
+    A-*) die "$1 はアラート $w のチケットです。状態は tb alert-approve / alert-result / alert-close $w で変えます(閉じるのは人だけ。$2 では変えません)";;
+    P-*) die "$1 は提案 $w のチケットです。状態は tb proposal-resolve $w で変えます($2 では変えません)";;
+  esac
+}
+
 # ---------- add ----------
 cmd_add() {
   local project="" title="" parent="" owner="" session="" account="" type=task priority=medium desc="" due="" labs=() refs=()
@@ -216,6 +226,7 @@ cmd_claim() {
   done
   blank "$owner" && usage "claim: --owner が必要です"
   require_task "$id" >/dev/null
+  special_ticket_guard "$id" "tb claim"
   local blockers
   blockers=$(sql "SELECT group_concat(t.id||'('||t.status||')', ', ') FROM task_links l JOIN tasks t ON t.id=l.from_id
                   WHERE l.to_id=$(q "$id") AND l.link_type='blocks' AND t.status!='done';")
@@ -262,6 +273,7 @@ cmd_update() {
   [[ ${#sets[@]} -gt 0 || $relabel == 1 || ${#addlab[@]} -gt 0 || ${#rmlab[@]} -gt 0 || ${#addref[@]} -gt 0 || ${#rmref[@]} -gt 0 ]] || usage "update: 変更する項目がありません"
   row=$(require_task "$id"); cur=$(jq -r .status <<<"$row")
   [[ $cur != done ]] || die "done のタスクは update できません: $id"
+  [[ " ${sets[*]} " != *" status="* ]] || special_ticket_guard "$id" "tb update --status"
   if [[ -n $ntype || -n $nparent ]]; then
     check_hierarchy "${ntype:-$(jq -r .type <<<"$row")}" "${nparent:-$(jq -r '.parent_id // empty' <<<"$row")}" "$id"
   fi
@@ -318,6 +330,7 @@ cmd_done() {
   local row cur dj
   row=$(require_task "$id"); cur=$(jq -r .status <<<"$row")
   [[ $cur != done ]] || die "すでに done です: $id"
+  special_ticket_guard "$id" "tb done"
   dj=$(jq -nc '$ARGS.positional' --args "${dels[@]}")
   event_actor_resolve
   sql "UPDATE main.tasks SET status='done', deliverables=$(q "$dj"), summary=$(q "$summary"),
@@ -339,6 +352,7 @@ cmd_block() {
   done
   local row cur; row=$(require_task "$id"); cur=$(jq -r .status <<<"$row")
   [[ $cur != done ]] || die "done のタスクは block できません: $id"
+  special_ticket_guard "$id" "tb block"
   event_actor_resolve
   sql "UPDATE main.tasks SET status='blocked', note=NULLIF($(q "$reason"),''), updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id");"
   echo "$id blocked"

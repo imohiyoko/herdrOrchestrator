@@ -1,6 +1,9 @@
 # shellcheck shell=bash
 # アラートと解析役(alert / alerts / alert-*)
 # bin/tb から source される。単体では実行しない。
+# アラートはチケット(project alert、種別 bug、ラベル alert)と alert_details に置く(019。ADR 0003)。
+# ここでは今までどおり alerts(互換ビュー。id は A-<n> の n、status は段階)を読み書きし、スキーマのトリガーがチケットの状態・優先度・担当に写す。
+# 閉じる(done)のは人だけ(tb alert-close)。tb done / tb update --status などではアラートのチケットの状態を変えない(tasks.sh の special_ticket_guard)
 
 # ---------- alerts(見張り役が見つけた異常 → 解析役の agent を起動 → 結果を公開) ----------
 ALERT_SEVERITIES="critical high medium low"
@@ -38,9 +41,11 @@ cmd_alert() {
     sql "UPDATE main.alerts SET count=count+1, last_seen=$(q "$ts") WHERE herdr_session=$SQS AND id=$dup;"
     id=$dup; state=duplicate
   else
-    id=$(sql "INSERT INTO main.alerts (herdr_session, fingerprint, title, body, source, source_pane, status, count, first_seen, last_seen)
+    # alerts はチケット(project alert)と alert_details の互換ビュー(019)。INSTEAD OF トリガーが両方に書く。
+    # ビュー経由では last_insert_rowid() が使えないので、同じトランザクションで振った番号を読む
+    id=$(sql "BEGIN IMMEDIATE; INSERT INTO main.alerts (herdr_session, fingerprint, title, body, source, source_pane, status, count, first_seen, last_seen)
       VALUES ($SQS, $(q "$fp"), $(q "$title"), $(q "$body"), $(q "$src"), NULLIF($(q "$spane"),''), 'new', 1, $(q "$ts"), $(q "$ts"));
-      SELECT last_insert_rowid();")
+      SELECT MAX(alert_no) FROM main.alert_details; COMMIT;")
     state=new
   fi
   [[ $state == new ]] && notify_hook notify_hook_alert_raised "$id"
@@ -160,7 +165,7 @@ cmd_alerts() {
   if [[ ${1:-} == A-* ]]; then
     valid_aid "$1"; local row; row=$(alert_row "$1"); [[ -n $row ]] || die "アラートが見つかりません: $1"
     [[ ${2:-} == --json ]] && { jq -c '.id = "A-\(.id)"' <<<"$row"; return 0; }
-    jq -r '"A-\(.id) [\(.severity // "未解析")] \(.status) ×\(.count)  \(.title)\n報告: \(.source) / 初回 \(.first_seen) / 最終 \(.last_seen)\n解析役: \(.analyst // "-")\n\n\(.body // "")\n" +
+    jq -r '"A-\(.id) [\(.severity // "未解析")] \(.status) ×\(.count)  \(.title)\n報告: \(.source) / 初回 \(.first_seen) / 最終 \(.last_seen)\n解析役: \(.analyst // "-")  チケット: \(.task_id // "-")\n\n\(.body // "")\n" +
       (if .result_summary then "---- 解析結果(\(.result_by), \(.analyzed_at))\n\(.result_summary)\n\n\(.result_report // "")" else "" end)' <<<"$row"
     return 0
   fi

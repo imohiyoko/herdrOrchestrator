@@ -320,6 +320,12 @@ tb alert-close A-<n>                # 人が閉じる
 - 結果はすぐ指揮官に送る。使用中なら `tb digest` が回収する。新しいアラートも digest に入る。critical / high の解析結果と起動待ちは Web UI の緊急通知に出る
 - 状態: `new` → (`awaiting-approval` → `approved`)→ (`queued`)→ `analyzing` → `analyzed` → `closed`
 - 解析役の pane / workspace は自動では閉じない。結果を返すと tb が killable=yes を付けるので、人(Web UI の agent 一覧)か承認された指揮官が `tb agent-stop analyst-A<n>` で止める
+- **アラートはチケット**(ADR 0003)。1 件ごとに project `alert`・種別 `bug`・ラベル `alert` のチケット(`T-alert-NNN`)ができ、`tb list` / `tb show` / `tb history` / Web UI のタスク一覧で見える。
+  `A-<n>` の番号とコマンドはそのまま使える(`tb alerts A-<n>` にチケットの ID が出る)。状態はチケットに写る:
+  `new` / `awaiting-approval` / `approved` / `queued` → `todo`、`analyzing` → `in_progress`(担当は解析役)、`analyzed` → `review`(人の番)、`closed` → `done`。
+  緊急度は優先度に写る(critical → highest、high → high、medium → medium、low → low。解析前は high)。解析結果の要約はチケットの要約にも入る
+- チケットの状態は上のコマンドだけが変える。`tb claim` / `tb update --status` / `tb done` / `tb block` はアラートのチケットには使えない(閉じるのは人の `tb alert-close` だけ)。
+  題・ラベル・優先度・期日・コメントはふつうのチケットと同じに変えられる
 
 `tb system-send <宛先> --text T --job J` は scheduler(`tick.sh`)用。agent の pane からは使えない。送ったものは `messages` に `kind=scheduler` で残る。
 
@@ -577,6 +583,9 @@ tb proposal --role <roles のファイル|-> --title T (--text X | --text-file F
 tb proposals [P-<n>] [--status open|applied|rejected]
 tb proposal-resolve P-<n> --status applied|rejected [--note N]   # 設定役か人だけ
 ```
+
+**提案はチケット**(ADR 0003)。1 件ごとに project `proposal`・ラベル `proposal` と `role:<ファイル名>`(全体なら `role:-`)のチケット(`T-proposal-NNN`)ができ、担当は設定役。
+`open` は `todo`、`applied` / `rejected` は `done`(要約に「適用」/「見送り」、見送りはラベル `rejected` も付く)。状態は `tb proposal-resolve` だけが変える。
 
 `review-pack` の中身: 送信の種類別件数と平均文字数、送れなかった宛先、長い送信、tb send の拒否・承認待ち、何度も人が承認した操作、
 報告の種類と質問の例、digest の大きさ、アラートの状態・重複・low 判定・解析時間、観測、役割の配布(compact 回数)、定期実行の action 別件数、提案の状況。

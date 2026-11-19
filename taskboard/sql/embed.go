@@ -7,3 +7,8 @@ import _ "embed"
 //
 //go:embed session_tables
 var SessionTables string
+
+// SessionViews は互換ビューの一覧(session_views。019 の alerts / proposals。中身はチケットと小さな表)。
+//
+//go:embed session_views
+var SessionViews string
