@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# スプリントとボード(017)。project は sp / sp2 だけを使う
+# スプリントとボード(018)。project は sp / sp2 だけを使う
 s1=$($TB sprint-add -p sp -n "Sprint 1" --start 2026-11-17 --end 2026-11-30 --goal "ログイン刷新")
 s2=$($TB sprint-add -p sp -n "Sprint 2")
 eq "sprints: ids" "$s1 $s2" "$(sqlite3 "$TB_DB" "SELECT 'S-'||MIN(id)||' S-'||MAX(id) FROM sprints WHERE project='sp';")"

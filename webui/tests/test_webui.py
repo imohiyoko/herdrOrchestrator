@@ -750,7 +750,7 @@ _cx.commit()
 _TD3 = cl.get("/tasks/T-3")[2]
 check("タスク詳細: 外部リンク(http(s) だけをリンクに)", 'href="https://acme.slack.com/archives/C1/p1"' in _TD3 and 'rel="noopener noreferrer"' in _TD3
       and 'href="javascript' not in _TD3 and "javascript:alert(1)" in _TD3)
-# スプリントとボード(017)
+# スプリントとボード(018)
 _cx.execute("INSERT INTO sprints (id, project, name, goal, start_date, end_date, state, created_at, herdr_session) VALUES "
             "(7, 'pj2', '第1スプリント " + XSS + "', 'ゴール', '2026-11-17', '2026-11-30', 'active', 't', 'default')")
 _cx.execute("INSERT INTO sprints (id, project, name, state, created_at, herdr_session) VALUES (8, 'pj2', '次', 'planned', 't', 'default')")
