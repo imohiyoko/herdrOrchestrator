@@ -87,6 +87,10 @@ tb alert-result A-<n> --severity critical|high|medium|low --summary S [--report 
 tb alert-dispatch                          承認・上限待ちを進める(tb digest も呼ぶ)
 tb alert-close A-<n>                       人が閉じる
 tb system-send <宛先> --text T --job J      scheduler 用。agent の pane からは使えない
+tb sched-job [list | show <job> [--settings]]   scheduler のジョブ定義・上書き設定の出どころと本文(DB の sched-job:<job> > jobs/<job>.conf)
+tb sched-job set|edit|unset <job> [--settings] [--shared]   DB に書く / 消す(人だけ。scheduler が読めるか確かめてから書く。履歴は history)
+tb sched-job import [--dry-run] [--shared] [<job> ...]     jobs/*.conf と settings/*.settings を DB に取り込み、ファイルを退かす(人だけ)
+tb sched-job history <job> [--settings]                    変更の履歴
 
 会計役(定期レビュー)→ 設定役(人事。TB_HR_NAME、既定 hr):
 tb review-pack [--since ISO] [--mark]      生ログではなく集計と上位だけのレビュー材料。省略時は前回 --mark 以降
