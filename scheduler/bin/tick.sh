@@ -122,6 +122,27 @@ run_command() {
   return $rc
 }
 
+# 発火条件(GATE): 終了コード 0 のときだけ 0 を返す。0 以外・時間切れ・起動失敗は skipped_gate を記録して 1。
+# GATE の stdout / stderr は捨てる(ログにも送信にも使わない)。判定の順序: 窓・間隔・曜日 → ENABLED → GATE → SKIP_IF → ロック → 発火
+run_gate() {
+  [ -n "$GATE" ] || return 0
+  local gpid wpid gexit mark
+  mark=$(mktemp 2>/dev/null) || { emit skipped_gate "gate could not start (mktemp)"; return 1; }
+  rm -f "$mark"
+  /bin/bash -c "$GATE" >/dev/null 2>&1 </dev/null &
+  gpid=$!
+  ( sleep "$GATE_TIMEOUT"; : >"$mark"; kill_tree "$gpid" ) </dev/null >/dev/null 2>&1 &
+  wpid=$!
+  wait "$gpid" 2>/dev/null; gexit=$?
+  kill_tree "$wpid" 2>/dev/null; wait "$wpid" 2>/dev/null
+  if [ -e "$mark" ]; then rm -f "$mark"; emit skipped_gate "gate timeout after ${GATE_TIMEOUT}s"; return 1; fi
+  case $gexit in
+    0) return 0 ;;
+    126 | 127) emit skipped_gate "gate could not start (exit $gexit)"; return 1 ;;
+    *) emit skipped_gate "gate exit $gexit"; return 1 ;;
+  esac
+}
+
 # プロンプト型: agent が idle / done のときだけ本文を送る
 run_prompt() {
   local TEXT out sel s rc
@@ -181,6 +202,7 @@ for p in "${DUE[@]}"; do
   fi
   n=$((n + 1))
   AT=$(fmt_epoch "$p" '%Y-%m-%d %H:%M:%S'); PANE=""; STATE=""; EXITC=""; OUT_S=""; ERR_S=""
+  run_gate || continue
   if [ -n "${COMMAND:-}" ]; then run_command || RC=1; else run_prompt || RC=1; fi
 done
 exit $RC

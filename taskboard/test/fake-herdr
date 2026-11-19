@@ -72,6 +72,8 @@ case "$1 $2" in
       [[ -n ${FAKE_START_SESSION:-} ]] && _sess=$FAKE_START_SESSION
       jq -nc --arg p "$_pane" --arg n "$3" --arg s "$_sess" '{pane_id:$p,name:$n,agent_status:"idle",agent_session:{value:$s},cwd:"/tmp"}' >>"$FAKE_LOG.started"
     fi
+    # FAKE_START_OUT: 起動の出力(失敗時のエラー JSON などを試す)
+    [[ -n ${FAKE_START_OUT:-} ]] && printf '%s\n' "$FAKE_START_OUT"
     exit "${FAKE_START_RC:-0}";;
   *) echo "fake-herdr: unsupported: $*" >&2; exit 99;;
 esac

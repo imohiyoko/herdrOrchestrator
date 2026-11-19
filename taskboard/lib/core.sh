@@ -28,6 +28,15 @@ valid_label()    { [[ ${#1} -ge 1 && ${#1} -le 40 && ! $1 =~ [[:space:],\"\'] ]]
 # 外部リンク: <種類>=<URL> か URL だけ(種類は slack / github / link を URL から決める)。種類は英小文字・数字・_ - で 20 文字まで
 valid_ref_kind() { [[ $1 =~ ^[a-z][a-z0-9_-]{0,19}$ ]] || usage "外部リンクの種類は英小文字で始まる 20 文字までの英数字・_ -: $1"; }
 valid_ref_url()  { [[ $1 =~ ^https?://[^[:space:]\"\'\<\>]+$ && ${#1} -le 500 ]] || usage "外部リンクは http(s):// で始まる 500 文字までの URL(空白・引用符・<> なし): $1"; }
+# 期日(015): YYYY-MM-DD の実在する日付だけ(2026-02-30 などは不可)
+valid_due()      {
+  [[ $1 =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && [[ $(sqlite3 :memory: "SELECT date('$1') IS '$1';") == 1 ]] ||
+    usage "期日は YYYY-MM-DD の日付: $1"
+}
+# 「今日」(期限切れ・期限間近の基準)。tb を動かす端末の地方時の日付。TB_TODAY で固定できる(テスト・境界の確認用)
+today() {
+  if [[ -n ${TB_TODAY:-} ]]; then valid_due "$TB_TODAY"; printf '%s' "$TB_TODAY"; else date +%Y-%m-%d; fi
+}
 need_arg()      { [[ $# -ge 2 ]] || usage "$1 に値が必要です"; }
 blank()         { [[ -z "${1//[[:space:]]/}" ]]; }
 

@@ -11,7 +11,7 @@ REPO=$HERE/../..
 _ct() { local s=$1; s="${s#"${s%%[![:space:]]*}"}"; printf '%s' "${s%"${s##*[![:space:]]}"}"; }
 
 # 期待する操作名(動的に組み立てられる部分の一覧。コードの定義から読めるものは読む)
-EXP_AGENT_OPS="new stop revive spawn compact"          # run_op の case と spawn / compact
+EXP_AGENT_OPS="new stop revive spawn compact model"    # run_op の case と spawn / compact / model-set
 EXP_SETUP_STEPS="hooks scheduler webui launchctl"       # setup/CLAUDE.md の手順
 EXP_GATE_ACTIONS="merge approve execute"                # gate.sh の --action と execute
 SEND_KINDS_CODE=$(sed -n 's/^SEND_KINDS="\(.*\)"$/\1/p' "$TBROOT/lib/send.sh")
@@ -112,7 +112,7 @@ problems=$(_cat_problems "$CAT")
 eq "catalog: 形式・期待する操作名・コードとの対応(双方向)に問題が無い" "$problems" ""
 [[ -z $problems ]] || printf '   %s\n' "$problems"
 eq "catalog: コードから承認判定の操作名を集められている(grep が壊れていない)" "$(($(printf '%s\n' "$CODE_OPS" | grep -c .) >= 8))" "1"
-for must in 'alert:analyze' 'agent:compact:*' 'agent:spawn:*' 'role:change' 'setup:*'; do
+for must in 'alert:analyze' 'agent:compact:*' 'agent:model:*' 'agent:spawn:*' 'role:change' 'setup:*'; do
   eq "catalog: 抽出に $must が含まれる" "$(printf '%s\n' "$CODE_OPS" | grep -cxF -- "$must")" "1"
 done
 

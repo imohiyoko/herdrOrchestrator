@@ -18,7 +18,6 @@
 CONV_STATE=${TB_CONV_STATE_DIR:-$HERDR_STATE_DIR/conv}
 CONV_KIND_RE='^[a-z][a-z0-9-]{0,39}$'
 CONV_DIRECTION_RE='^[a-z][a-z0-9-]{1,40}$'
-CONV_EVIDENCE="human-edit human-written other-source agent-generated"
 CONV_PAIR_RE='^pair-[0-9]{14}-[0-9a-f]{4}$'
 
 conv_py() {
@@ -26,8 +25,8 @@ conv_py() {
   python3 -I "$TB_ROOT/lib/convtext.py" "$@"
 }
 
-# conversation/ の置き場(lib/conv.sh と同じ既定。TB_CONV_DIR で差し替え)
-conv_kinds_dir() { printf '%s/kinds' "${TB_CONV_DIR:-$HERDR_ROOT/conversation}"; }
+# conversation/ の置き場は lib/conv.sh(#95)の CONV_DIR。証拠の種類 CONV_EVIDENCE も lib/conv.sh のもの
+conv_kinds_dir() { printf '%s/kinds' "$CONV_DIR"; }
 conv_patterns_file() { printf '%s/%s/patterns.conf' "$(conv_kinds_dir)" "$1"; }
 
 # 種別の検査。conversation/kinds/ があれば、そこにある種別だけ(無ければ名前の規則だけ)

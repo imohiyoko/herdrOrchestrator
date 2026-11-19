@@ -6,9 +6,11 @@ import re
 import subprocess
 import time
 
-from .config import JOB_RE, SCHED_JOBS, SCHED_LOGS, SCHED_ROOT, SCHED_SETTINGS
+from . import reqctx
+from .actions import run_tb_input
+from .config import JOB_RE, SCHED_JOBS, SCHED_LOGS, SCHED_ROOT, SCHED_SETTINGS, TB_DB
 from .sanitize import clean
-from .data import parse_jsonl, tail_lines
+from .data import parse_jsonl, q, tail_lines
 
 
 # HH:MM か HH:MM:SS(秒を省いた終了時刻は、scheduler がその分の 59 秒までを含める)
@@ -18,16 +20,40 @@ DAY_TOKENS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 DAY_PRESETS = (("daily", "毎日"), ("weekdays", "平日"), ("weekends", "土日"))
 
 
+CONF_MAX_DB = 262144
+# ジョブ定義・上書き設定は DB の config 表(sched-job:<job> / sched-settings:<job>。tb sched-job)にも置ける。
+# 引く順は scheduler と同じ: このセッションの行 > 共通の行(*) > ファイル(jobs/<job>.conf・settings/<job>.settings)
+_DB_JOBS_SQL = ("SELECT DISTINCT substr(key, 11) AS name FROM main.config WHERE key LIKE 'sched-job:%' "
+                "AND herdr_session IN (?, '*')")
+_DB_BODY_SQL = ("SELECT body FROM main.config WHERE key = ? AND herdr_session IN (?, '*') "
+                "ORDER BY herdr_session = '*' LIMIT 1")
+
+
+def _db_jobs():
+    return {r["name"] for r in q(_DB_JOBS_SQL, (reqctx.session(),)) if JOB_RE.fullmatch(r["name"] or "")}
+
+
+def db_body(key):
+    """DB の本文(このセッション > 共通)。無ければ None。"""
+    rows = q(_DB_BODY_SQL, (key, reqctx.session()))
+    return rows[0]["body"][:CONF_MAX_DB + 1] if rows and rows[0]["body"] is not None else None
+
+
 def job_names():
     try:
-        return sorted(n[:-5] for n in os.listdir(SCHED_JOBS()) if n.endswith(".conf") and JOB_RE.fullmatch(n[:-5]))
+        files = {n[:-5] for n in os.listdir(SCHED_JOBS()) if n.endswith(".conf") and JOB_RE.fullmatch(n[:-5])}
     except OSError:
-        return []
+        files = set()
+    return sorted(files | _db_jobs())
+
+
+def job_in_db(name):
+    return db_body("sched-job:" + name) is not None
 
 
 def job_info(name):
     """scheduler/bin/show.sh で、実際に効く設定(conf + settings)を得る。(dict, None) か (None, エラー文)。"""
-    env = dict(os.environ, JOBS_DIR=SCHED_JOBS(), SCHED_SETTINGS_DIR=SCHED_SETTINGS())
+    env = dict(reqctx.child_env(), JOBS_DIR=SCHED_JOBS(), SCHED_SETTINGS_DIR=SCHED_SETTINGS(), TB_DB=TB_DB())
     for k in ("SCHED_WINDOW", "SCHED_START", "SCHED_END", "SCHED_INTERVAL_MIN", "SCHED_INTERVAL_SEC"):
         env.pop(k, None)
     try:
@@ -68,8 +94,12 @@ def job_last(name):
 
 
 def save_job_settings(name, form):
-    """フォームを検証して settings を書く。エラー文か None。"""
+    """フォームを検証して settings を書く。エラー文か None。
+    定義が DB にあるジョブは、settings も DB(sched-settings:<job>)に tb sched-job で書く(変更の履歴が残る)。"""
+    in_db = job_in_db(name)
     path = os.path.join(SCHED_SETTINGS(), name + ".settings")
+    if in_db:
+        return _save_db_settings(name, form)
     if os.path.islink(path):
         return "settings がシンボリックリンクです。手で確認してください"
     old = None
@@ -80,31 +110,9 @@ def save_job_settings(name, form):
         if old is not None:
             os.unlink(path)
         return None
-    # 間隔は interval + interval_unit(min / sec)。古いフォームの interval_min も受け付ける
-    iv = form.get("interval", form.get("interval_min", "")).strip()
-    unit = form.get("interval_unit", "min")
-    units = {u: (label, hi) for u, label, hi in INTERVAL_UNITS}
-    if unit not in units:
-        return "間隔の単位が不正です"
-    label, hi = units[unit]
-    if not iv.isdigit() or not 1 <= int(iv) <= hi:
-        return f"間隔は 1〜{hi} {label}の整数で入力してください"
-    start, end = form.get("start", "").strip(), form.get("end", "").strip()
-    if not HM_RE.fullmatch(start) or not HM_RE.fullmatch(end):
-        return "開始・終了は HH:MM か HH:MM:SS で入力してください"
-    if _sec_of(start) > _sec_of(end, end=True):
-        return "開始は終了より前にしてください(日またぎは未対応)"
-    days = form.get("days", "")
-    if days == "custom":
-        picked = [t for t in DAY_TOKENS if form.get("day_" + t) == "1"]
-        if not picked:
-            return "曜日を 1 つ以上選んでください"
-        days = " ".join(t.capitalize() for t in picked)
-    elif days not in dict(DAY_PRESETS):
-        return "曜日の指定が不正です"
-    enabled = "1" if form.get("enabled") == "1" else "0"
-    body = f"# Web UI が書く上書き設定({time.strftime('%Y-%m-%dT%H:%M:%S%z')})\n" \
-           f"{'INTERVAL_SEC' if unit == 'sec' else 'INTERVAL_MIN'}={int(iv)}\nSTART={start}\nEND={end}\nDAYS={days}\nENABLED={enabled}\n"
+    body, err = settings_body(form)
+    if err:
+        return err
     os.makedirs(SCHED_SETTINGS(), exist_ok=True)
     tmp = path + ".tmp"
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -120,3 +128,53 @@ def save_job_settings(name, form):
                 f.write(old)
         return "scheduler が設定を受け付けませんでした: " + err
     return None
+
+
+def _save_db_settings(name, form):
+    """DB の sched-settings:<job> を tb sched-job で書く / 消す(検査は tb が scheduler で行う)。エラー文か None。"""
+    if form.get("action") == "reset":
+        if db_body("sched-settings:" + name) is None:
+            return None
+        rc, out = run_tb_input(["sched-job", "unset", name, "--settings"], "")
+        if rc != 0:
+            # 共通の行(*)だけがあるときは、このセッションからは消さない(ほかのセッションにも効くため)
+            return "上書き設定を戻せませんでした(共通の行は tb sched-job unset " + name + " --settings --shared で人が消します)"
+        return None
+    body, err = settings_body(form)
+    if err:
+        return err
+    rc, out = run_tb_input(["sched-job", "set", name, "--settings"], body)
+    if rc != 0:
+        first = next((ln for ln in out.splitlines() if ln.startswith("tb: ")), "")
+        return "scheduler が設定を受け付けませんでした" + (": " + clean(first[4:])[:300] if first else "")
+    return None
+
+
+def settings_body(form):
+    """フォームを検証して settings の本文にする。(本文, None) か (None, エラー文)。"""
+    # 間隔は interval + interval_unit(min / sec)。古いフォームの interval_min も受け付ける
+    iv = form.get("interval", form.get("interval_min", "")).strip()
+    unit = form.get("interval_unit", "min")
+    units = {u: (label, hi) for u, label, hi in INTERVAL_UNITS}
+    if unit not in units:
+        return None, "間隔の単位が不正です"
+    label, hi = units[unit]
+    if not iv.isdigit() or not 1 <= int(iv) <= hi:
+        return None, f"間隔は 1〜{hi} {label}の整数で入力してください"
+    start, end = form.get("start", "").strip(), form.get("end", "").strip()
+    if not HM_RE.fullmatch(start) or not HM_RE.fullmatch(end):
+        return None, "開始・終了は HH:MM か HH:MM:SS で入力してください"
+    if _sec_of(start) > _sec_of(end, end=True):
+        return None, "開始は終了より前にしてください(日またぎは未対応)"
+    days = form.get("days", "")
+    if days == "custom":
+        picked = [t for t in DAY_TOKENS if form.get("day_" + t) == "1"]
+        if not picked:
+            return None, "曜日を 1 つ以上選んでください"
+        days = " ".join(t.capitalize() for t in picked)
+    elif days not in dict(DAY_PRESETS):
+        return None, "曜日の指定が不正です"
+    enabled = "1" if form.get("enabled") == "1" else "0"
+    body = f"# Web UI が書く上書き設定({time.strftime('%Y-%m-%dT%H:%M:%S%z')})\n" \
+           f"{'INTERVAL_SEC' if unit == 'sec' else 'INTERVAL_MIN'}={int(iv)}\nSTART={start}\nEND={end}\nDAYS={days}\nENABLED={enabled}\n"
+    return body, None
