@@ -16,7 +16,7 @@ eq "flush: pending is not delivered" "$($TB flush; prompts)" "0"
 eq "send: info goes straight" "$(HERDR_PANE_ID=wC:p1 rc $TB send worker1 --kind info --text fyi) $(prompts)" "0 1"
 eq "approve: refused from an agent pane" "$(HERDR_PANE_ID=wW:p1 rc $TB approve O-1) $(asql "SELECT status FROM outbox WHERE id=1;")" "1 pending"
 eq "approve: human sends it" "$(HERDR_PANE_ID= $TB approve O-1)" "O-1 approved and sent to worker1"
-eq "approve: delivered with label" "$(grep '^prompt' "$FAKE_LOG" | tail -1 | grep -c 'task\] do it')" "1"
+eq "approve: delivered with label" "$(grep '^prompt' "$FAKE_LOG" | tail -1 | grep -c 'task / O-[0-9]*\] do it')" "1"
 eq "approve: twice → error" "$(HERDR_PANE_ID= rc $TB approve O-1)" "1"
 HERDR_PANE_ID=wC:p1 $TB send worker1 --text 'second' >/dev/null 2>&1
 eq "reject: human rejects" "$(HERDR_PANE_ID= $TB reject O-3) $(asql "SELECT status FROM outbox WHERE id=3;")" "O-3 rejected denied"

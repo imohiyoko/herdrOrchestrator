@@ -231,7 +231,7 @@ tb reminders --publish     # まとめを出し、記録を更新する
 agent 同士は `herdr agent prompt` を直接打たず、`tb send` を通す。tb が送信者を特定し、ルールを当て、記録してから送る。
 
 ```bash
-tb send <宛先 agent 名> --text '本文' [--task T-<project>-NNN] [--kind task|info|answer] [--json]
+tb send <宛先 agent 名> --text '本文' [--task T-<project>-NNN] [--kind task|info|answer] [--reply-to O-<n>] [--json]
 tb flush                                   # 宛先が使用中で積まれたものを届ける(tb digest も最初に呼ぶ)
 tb outbox [--status queued|sent|denied] [--json]
 ```
@@ -239,7 +239,7 @@ tb outbox [--status queued|sent|denied] [--json]
 - 送信者は `HERDR_PANE_ID` + `herdr agent list` から決まる(`--from` などはエラー)。宛先は herdr にいる agent 名だけ
 - 宛先ルールは `config/routes.conf`(例: `config/routes.conf.example`)。`<送信者> -> <宛先>` の glob を上から見て、最初に一致した行で決まる。
   行頭 `!` は拒否。どれにも一致しなければ拒否。**ファイルが無いときは「指揮官(`conductor` と `projects.conf` の値)→ 誰にでも」だけ許可**
-- 届く文面は `[from: <名前> / <pane> / <task-id か -> / <kind>] <本文>`(1 行化、`[from:` の偽装は無効化、`TB_SEND_MAX` 字まで)
+- 届く文面は `[from: <名前> / <pane> / <task-id か -> / <kind> / O-<n>] <本文>`(確かめた返信は `/ O-<n> re O-<元>`)(1 行化、`[from:` の偽装は無効化、`TB_SEND_MAX` 字まで)
 - 宛先が `idle` / `done` 以外なら `outbox` に積み、`tb flush` で古い順に届ける(同じ宛先の後続は追い越さない)
 - 拒否したものも `outbox` に `denied` と根拠(`reason`)つきで残る
 - 終了コード: 0 送信済み(または保留した)/ 10 宛先使用中で積んだ / 11 送信失敗で積んだ / 12 保留に失敗して積んだ / 4 ルールで拒否 / 20 人の承認待ち(approvals)/ 3 送信者を特定できず未保存
@@ -267,6 +267,16 @@ tb inbox-read I-<n> [--json]      # 全文を読み、既読にする
 
 - 読めるのは自分宛てだけ(送信者も、ほかの agent も読めない。ほかの宛ての ID は「見つからない」)
 - 受け手は、人に頼まれたとき(「確認して」など)だけ読む(`roles/_common.md`)
+
+### 返信(`--reply-to`)
+
+保留している相手でも、相手が自分で聞いたことへの答えはすぐ届けたい。ただし種別 `answer` を信じると状況報告まで届いてしまうので、返信かどうかは tb が DB で確かめる。
+
+- `tb send <宛先> --reply-to O-<n> ...`: 届いた送信 `O-<n>`(文面のラベルの番号、inbox の `outbox_id`)への返信だと主張する
+- 認める条件(すべて): `O-<n>` がある / `O-<n>` は「この送信の宛先 → この送信の送信者」(組が逆向き)/ `O-<n>` が届いている(`sent`。inbox に保留されたものも含む)/ まだ認めた返信が無い。ルールで拒否された送信は認めない
+- 認めた返信は delivery の `reply=<now|hold>` で決まる(`*` には含まれない。`reply=` を書いた行が無ければ種別で決まる)。認めなかったら送信者に理由を出し(stderr)、返信ではない送信として通常の規則で扱う(拒否はしない)
+- 結果は outbox の `reply_to` / `reply_check`(`ok` か、認めなかった理由)に残る。返信の承認を人が却下したら返信済みに数えない
+- 返されていない依頼 = `reply_check='ok'` の行に `reply_to` で指されていない送信(`SELECT * FROM outbox o WHERE status='sent' AND NOT EXISTS (SELECT 1 FROM outbox r WHERE r.reply_to=o.id AND r.reply_check='ok')`)
 
 ## 人の承認(approvals)
 
@@ -495,6 +505,25 @@ tb spawn-freeze / tb spawn-unfreeze                                        # 人
 - 親子は `agents.spawned_by` / `spawn_task` に残る。子の `tb comment` は指揮官への本文の先頭に `spawned_by: <親>` が付く
 - `tb digest` が知らせる: 子の数が上限の 1 つ手前以上(全体、または 1 体の親)/ 親のタスクが done・blocked なのに子が動いている。子がいなければ何も出さない
 
+### スラッシュコマンドの一括送信(`tb slash`)
+
+MCP の再接続・再認証や `/compact` のように、agent のセッションの中でしか実行できないスラッシュコマンドを、選んだ agent にまとめて送る(#94)。
+
+```
+tb slash --list                         # 許可リスト
+tb slash mcp worker1 @reviewer          # dry-run(既定)。宛先ごとに would-send / skip(理由) を出す
+tb slash mcp worker1 @reviewer --apply  # 送る。1 体 1 行: sent / skip(理由) / not-supported(kind=..) / failed(理由) / pending L-<n>
+tb slash mcp --all --apply              # 全 agent。L-<n> を積むだけで、人が tb agent-approve L-<n> するまで何も送らない
+```
+
+- 送れるのは許可リスト(`config/slash.conf`。無ければ `slash.conf.example`、`tb config` で DB に置ける)に `allow` で載っているコマンドだけ。載っていない名前と `deny` の行(`/model` など、ユーザーの既定も変わる副作用の大きいもの)は送らない。呼び出す側は引数を足せない(固定の引数だけ)
+- 宛先は agent 名・`@<役割>`・`--all`。いまの herdr セッションの agent だけ。実行者自身と指揮官は常に除く。idle/done でない agent は理由つきで飛ばす。kind が対応していなければ `not-supported`
+- 承認: 人の端末からはそのまま送る。agent の pane からは `approvals.conf` の `agent:slash:<コマンド>:<宛先>`(`@<役割>` も可、既定 ask)を見て、ask なら宛先ごとに `L-<n>`(終了コード 20)
+- 送り方は `tb compact-check` と同じ(状態を見直してから送り、受け付けを確かめる)。確認はコマンドごと: `busy` は動き出したか(動かなければ Enter を 1 回だけ補う)、`screen` は Enter を補わずに画面を読み、エラーの行(`Unknown command` / `Error:` / `failed`)や成功の印を見る
+- 記録は `agent_ops`(op=slash。宛先・依頼者・時刻・結果)。画面の出力は 200 字以内の状態の 1 行だけで、本文は残さない(`tb agent-ops` で見る)
+- 終了コード: 0 送った(飛ばした宛先があっても)/ 1 許可リストに無い・deny / 11 送ったが失敗した宛先がある / 20 承認待ちを積んだ
+- 外すとき: 有効な許可リスト(`tb config` の出どころ。ファイルを消すと `slash.conf.example` の既定に戻るので、消すのではなく)の行を `deny` にするか、注釈だけの本文にする(ほかの機能には影響しない)
+
 ## 制限(動作 agent 数など)
 
 動作中の agent の数や、障害・解析役・子 agent の同時数を、人が 1 か所で絞れるようにする。値は `config/limits.conf`(人だけが編集。再起動は要らない。tb が毎回読む)。
@@ -679,7 +708,7 @@ tb が `herdr agent prompt` で送ろうとしたものは、結果にかかわ�
 ## 設定(`tb config`)
 
 運用の設定は DB の `config` 表に置き、キーで引く(schema/013)。シングルポート・マルチセッションでも、セッションごとに違う設定を持てる。
-本文は今までの conf ファイルの中身そのまま(書式は各節のとおり)。キーは `projects` / `approvals` / `grants` / `routes` / `delivery` / `limits` / `notify` / `compact` / `sched-watch` / `spawn-policy` / `role-models` / `conv-routes`(会話の振り分け表。書くのは `tb conv-routes-set` だけ)。
+本文は今までの conf ファイルの中身そのまま(書式は各節のとおり)。キーは `projects` / `approvals` / `grants` / `routes` / `delivery` / `limits` / `notify` / `compact` / `slash` / `sched-watch` / `spawn-policy` / `role-models` / `conv-routes`(会話の振り分け表。書くのは `tb conv-routes-set` だけ)。
 
 引く順(最初に見つかったもの):
 
@@ -687,7 +716,7 @@ tb が `herdr agent prompt` で送ろうとしたものは、結果にかかわ�
 2. DB の**このセッション**の行
 3. DB の**全セッション共通**の行(`herdr_session='*'`)
 4. checkout の `taskboard/config/<名前>.conf`(DB に取り込むまでの移行用。git 管理外)
-5. `<名前>.conf.example`(projects / approvals / limits / compact / sched-watch / spawn-policy。コードと一緒に版を合わせる既定値)
+5. `<名前>.conf.example`(projects / approvals / limits / compact / slash / sched-watch / spawn-policy。コードと一緒に版を合わせる既定値)
 
 ```bash
 tb config                          # キーごとの出どころ(db:<セッション> / db:* / file:<パス> / example:<パス> / none)

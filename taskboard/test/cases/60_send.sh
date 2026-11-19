@@ -10,7 +10,7 @@ ssql() { sqlite3 "$TB_DB" "$@"; }
 st=$($TB add -p sp -t "send target")
 out=$(HERDR_PANE_ID=wC:p1 $TB send worker1 --task $st --text $'調べて\n二行目'); r=$?
 eq "send: conductor → worker (no routes.conf) sent" "$r|$out" "0|O-1 sent to worker1"
-eq "send: fixed label, one line" "$(grep '^prompt' "$FAKE_LOG" | tail -1)" "$(printf 'prompt worker1\t[from: conductor / wC:p1 / %s / task] 調べて 二行目' "$st")"
+eq "send: fixed label, one line" "$(grep '^prompt' "$FAKE_LOG" | tail -1)" "$(printf 'prompt worker1\t[from: conductor / wC:p1 / %s / task / O-1] 調べて 二行目' "$st")"
 eq "send: project conductor allowed by default" "$(HERDR_PANE_ID=wP:p1 rc $TB send worker2 --kind info --text hi)" "0"
 n=$(prompts)
 eq "send: worker → worker denied by default (exit 4)" "$(HERDR_PANE_ID=wW:p1 rc $TB send worker2 --text 'do X')" "4"
@@ -27,7 +27,7 @@ FAKE_STATUS=working HERDR_PANE_ID=wC:p1 $TB send worker1 --text second >/dev/nul
 eq "send: nothing sent while busy" "$(prompts)" "$n"
 eq "flush: still busy → exit 10, kept" "$(FAKE_STATUS=working rc $TB flush) $($TB outbox --status queued --json | wc -l | tr -d ' ')" "10 2"
 $TB flush >/dev/null
-eq "flush: delivered in order" "$(grep '^prompt worker1' "$FAKE_LOG" | tail -2 | sed 's/.*task\] //' | tr '\n' ' ')" "first second "
+eq "flush: delivered in order" "$(grep '^prompt worker1' "$FAKE_LOG" | tail -2 | sed 's/.*task \/ O-[0-9]*\] //' | tr '\n' ' ')" "first second "
 eq "flush: none queued" "$($TB outbox --status queued --json | wc -l | tr -d ' ')" "0"
 eq "send: messages log kind=send" "$(ssql "SELECT COUNT(*) FROM messages WHERE kind='send' AND result='sent';")" "4"
 # 宛先ルール

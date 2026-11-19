@@ -21,6 +21,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      # ubuntu だけ、bash の tb と同じスキーマになるかも突き合わせる(internal/store の TestSameSchemaAsBashTB)
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y sqlite3 jq && echo TB_PARITY=1 >> "$GITHUB_ENV"
       - run: go vet ./...
       - run: go test ./...
       - run: go run ./cmd/herdrctl version
