@@ -11,7 +11,7 @@ import shutil
 import subprocess
 import sys
 
-from . import read, server, store
+from . import read, scan, server, store
 
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 BOUNDARIES = {"auth", "authz", "external", "data"}
@@ -113,24 +113,68 @@ def put_summary(con, repo, kind, path, body, commit, symbol="", file_hash=None, 
     if not body.strip():
         raise store.StoreError("本文が空です")
     rid = _repo_id(con, repo)
+    path = read._norm_path(path)
+    scan.check(path, body)  # 落ちたら scan.Rejected。本文は保存しない(呼び出し側が理由の符号だけを記録する)
     con.execute(
         """INSERT INTO summaries(repo_id, kind, path, symbol, body, commit_id, file_hash, fmt_version, model, state, boundaries)
            VALUES (?,?,?,?,?,?,?,?,?, 'fresh', ?)
            ON CONFLICT(repo_id, kind, path, symbol) DO UPDATE SET body=excluded.body, commit_id=excluded.commit_id,
              file_hash=excluded.file_hash, fmt_version=excluded.fmt_version, model=excluded.model, state='fresh',
              boundaries=excluded.boundaries, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')""",
-        (rid, kind, read._norm_path(path), symbol or "", body, commit, file_hash, read.FMT_VERSION, model,
+        (rid, kind, path, symbol or "", body, commit, file_hash, read.FMT_VERSION, model,
          ",".join(sorted(set(bs)))))
+
+
+def record_rejection(con, repo, kind, path, symbol, reasons, commit=None, attempts=1, final=False):
+    """落ちた要約の記録。本文は受け取らない(理由の符号と回数だけ)。"""
+    con.execute("INSERT INTO rejections(repo_id, kind, path, symbol, reasons, attempts, final, commit_id)"
+                " VALUES (?,?,?,?,?,?,?,?)",
+                (_repo_id(con, repo), kind, read._norm_path(path), symbol or "", ",".join(reasons), attempts,
+                 1 if final else 0, commit))
 
 
 def cmd_put(a):
     body = sys.stdin.read()
     con = store.connect_rw()
-    with con:
-        put_summary(con, a.repo, a.kind, a.path, body, a.commit, a.symbol or "", a.file_hash, a.model or "",
-                    a.boundaries or "")
+    try:
+        with con:
+            put_summary(con, a.repo, a.kind, a.path, body, a.commit, a.symbol or "", a.file_hash, a.model or "",
+                        a.boundaries or "")
+    except scan.Rejected as e:
+        with con:
+            record_rejection(con, a.repo, a.kind, a.path, a.symbol, e.reasons, a.commit, final=True)
+        con.close()
+        return _err(f"保存しなかった({','.join(e.reasons)})", 3)
     con.close()
     print(f"ok: {a.repo} {a.kind} {read._norm_path(a.path)}{' ' + a.symbol if a.symbol else ''}")
+    return 0
+
+
+def cmd_rejections(a):
+    """落ちた要約の一覧(本文は持っていないので出ない)。"""
+    con = store.connect_rw()
+    sql = ("SELECT x.created_at, r.name, x.kind, x.path, x.symbol, x.reasons, x.attempts, x.final"
+           " FROM rejections x JOIN repos r ON r.id = x.repo_id")
+    args = []
+    if a.repo:
+        sql += " WHERE r.name = ?"
+        args.append(a.repo)
+    sql += " ORDER BY x.id DESC LIMIT ?"
+    args.append(a.limit)
+    for row in con.execute(sql, args):
+        print("\t".join(str(c) for c in row[:5]) + f"\t{row[5]}\tattempts={row[6]}{' final' if row[7] else ''}")
+    con.close()
+    return 0
+
+
+def cmd_scan(a):
+    """標準入力の本文を検査だけする(保存しない)。--path を付けるとパスの除外も見る。結果は理由の符号だけ。"""
+    try:
+        scan.check(a.path or "summary.txt", sys.stdin.read())
+    except scan.Rejected as e:
+        print("rejected: " + ",".join(e.reasons))
+        return 3
+    print("ok")
     return 0
 
 
@@ -183,6 +227,10 @@ def build_parser():
     s.add_argument("--path", required=True); s.add_argument("--commit", required=True)
     s.add_argument("--symbol"); s.add_argument("--file-hash"); s.add_argument("--model"); s.add_argument("--boundaries")
     s.set_defaults(fn=cmd_put)
+    s = sp.add_parser("rejections", help="安全の検査で落ちた要約(理由の符号だけ)")
+    s.add_argument("--repo"); s.add_argument("--limit", type=int, default=50); s.set_defaults(fn=cmd_rejections)
+    s = sp.add_parser("scan", help="標準入力の本文を検査だけする(保存しない)")
+    s.add_argument("--path"); s.set_defaults(fn=cmd_scan)
     s = sp.add_parser("purge", help="データのディレクトリごと消す(元に戻す)")
     s.add_argument("--yes", action="store_true"); s.set_defaults(fn=cmd_purge)
     s = sp.add_parser("query", help="読み取り(人が確かめる用。serve と同じ中身)")
