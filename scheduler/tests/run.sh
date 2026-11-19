@@ -4,6 +4,7 @@
 cd "$(dirname "$0")/.." || exit 1
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 export JOBS_DIR="$TMP/jobs" LOG_DIR="$TMP/logs"; mkdir -p "$JOBS_DIR"
+export TB_DB="$TMP/none.db"   # ジョブ定義の DB(config 表)は、下の「DB のジョブ定義」の節でだけ使う。本物の DB は読まない
 
 cat >"$JOBS_DIR/t.conf" <<'C'
 TARGET=dummy
@@ -230,6 +231,37 @@ ok "gen-plist --dispatch: 1 本の plist に dispatch.sh とジョブ名" "$(gre
 OUT_DIR="$TMP/gen" bash bin/gen-plist.sh --dispatch fast nosuchjob >/dev/null 2>&1; ok "gen-plist --dispatch: 無いジョブは止める" "$?" 2
 mkcmd dispatch "COMMAND='true'"; OUT_DIR="$TMP/gen" bash bin/gen-plist.sh dispatch >/dev/null 2>&1; ok "ジョブ名 dispatch は予約済み" "$?" 2; rm -f "$JOBS_DIR/dispatch.conf"
 
+# ---- DB のジョブ定義(tb sched-job。config 表の sched-job:<job> / sched-settings:<job>)
+SJ="$TMP/sj"; mkdir -p "$SJ/jobs" "$SJ/settings" "$SJ/logs"
+export TB_SCHED_DIR="$SJ" HERDR_STATE_DIR_SAVE="${XDG_STATE_HOME:-}" XDG_STATE_HOME="$TMP/state"
+printf "TARGET=dummy\nPROMPT='do the thing'\nWINDOW=09:00-21:00\nINTERVAL_MIN=5\nDAYS=weekdays\n" >"$SJ/jobs/p1.conf"
+printf "COMMAND='echo hi'\nWINDOW=00:00-23:59\nINTERVAL_MIN=2\nGATE='true'\n" >"$SJ/jobs/c1.conf"
+printf "INTERVAL_MIN=10\nSTART=10:00\nEND=12:00\nDAYS=daily\nENABLED=1\n" >"$SJ/settings/p1.settings"
+SJTB="bash $PWD/../taskboard/bin/tb"
+sjrun() {  # <job> <NOW> → 判定の JSON(dry-run)。ts は時刻で変わるので落とす
+  JOBS_DIR="$SJ/jobs" SCHED_SETTINGS_DIR="$SJ/settings" LOG_DIR="$SJ/logs" TB_DB="$TMP/sj.db" DRY_RUN=1 NOW="$2" FAKE_STATE=idle \
+    bash bin/tick.sh "$1" 2>&1 | jq -c 'del(.ts)'
+}
+sjshow() { JOBS_DIR="$SJ/jobs" SCHED_SETTINGS_DIR="$SJ/settings" TB_DB="$TMP/sj.db" bash bin/show.sh "$1"; }
+before=""; for j in p1 c1; do for t in "$THU 09:55" "$THU 10:00" "$THU 10:05" "$THU 10:10" "$SAT 11:00" "$THU 13:00"; do before+="$(sjrun $j "$t")|"; done; done
+showb="$(sjshow p1 | jq -c 'del(.source, .settings_source)') $(sjshow c1 | jq -c 'del(.source, .settings_source)')"
+ok "DB: 取り込み前はファイルを読む" "$(sjshow p1 | jq -r '.source + " " + .settings_source')" "file file"
+TB_DB="$TMP/sj.db" $SJTB sched-job import --dry-run >/dev/null
+ok "DB: import --dry-run は何も変えない" "$(ls "$SJ/jobs" | tr '\n' ' ')$(TB_DB="$TMP/sj.db" sqlite3 "$TMP/sj.db" "SELECT COUNT(*) FROM config WHERE key LIKE 'sched-%';")" "c1.conf p1.conf 0"
+TB_DB="$TMP/sj.db" $SJTB sched-job import >/dev/null
+ok "DB: import でファイルを退かし、DB の行になる" "$(ls "$SJ/jobs" "$SJ/settings" | grep -c conf) $(sjshow p1 | jq -r '.source + " " + .settings_source') $(sjshow c1 | jq -r '.source + " " + .settings_source')" "0 db db db none"
+after=""; for j in p1 c1; do for t in "$THU 09:55" "$THU 10:00" "$THU 10:05" "$THU 10:10" "$SAT 11:00" "$THU 13:00"; do after+="$(sjrun $j "$t")|"; done; done
+ok "DB: 取り込みの前と後で、判定の結果が同じ" "$after" "$before"
+ok "DB: 取り込みの前と後で、実際に効く設定が同じ" "$(sjshow p1 | jq -c 'del(.source, .settings_source)') $(sjshow c1 | jq -c 'del(.source, .settings_source)')" "$showb"
+ok "DB: 一覧は DB とファイルの和" "$(printf "COMMAND='true'\nWINDOW=00:00-23:59\nINTERVAL_MIN=5\n" >"$SJ/jobs/f1.conf"; JOBS_DIR="$SJ/jobs" TB_DB="$TMP/sj.db" bash bin/jobs.sh | tr '\n' ' ')" "c1 f1 p1 "
+ok "DB: 実行も DB の定義で(ログを書く)" "$(JOBS_DIR="$SJ/jobs" SCHED_SETTINGS_DIR="$SJ/settings" LOG_DIR="$SJ/logs" TB_DB="$TMP/sj.db" NOW="$THU 12:00" bash bin/tick.sh c1; tail -1 "$SJ/logs/c1.log" | jq -r '.action + " " + .stdout')" "ran hi"
+# DB の行がファイルより先。DB の無い・読めない環境ではファイル
+printf "COMMAND='echo from-file'\nWINDOW=00:00-23:59\nINTERVAL_MIN=2\n" >"$SJ/jobs/c1.conf"
+ok "DB: 同じ名前のファイルより DB の行が勝つ" "$(sjshow c1 | jq -r .source)" "db"
+ok "DB: DB が無ければファイル" "$(JOBS_DIR="$SJ/jobs" TB_DB="$TMP/nothing.db" bash bin/show.sh c1 | jq -r .source)" "file"
+rm -f "$SJ/jobs/c1.conf" "$SJ/jobs/f1.conf"
+unset TB_SCHED_DIR; export XDG_STATE_HOME="$HERDR_STATE_DIR_SAVE"; [ -n "$XDG_STATE_HOME" ] || unset XDG_STATE_HOME
+
 # ---- プロンプト送信は tb を通る(疑似 herdr と一時 DB。本物は呼ばない)
 export FAKE_LOG="$TMP/herdr.log" TB_DB="$TMP/tb.db"; : >"$FAKE_LOG"
 export FAKE_AGENTS='[{"pane_id":"wD:p1","name":"dummy","agent_status":"idle","agent_session":{"value":"sd"}}]'
@@ -237,7 +269,7 @@ NOW="2026-11-05 09:00" HERDR_BIN="$PWD/../taskboard/test/fake-herdr" bash bin/ti
 ok "送信: tb 経由で sent" "$(last t | jq -r .action)" sent
 ok "送信: 宛先にプロンプト" "$(grep -c $'^prompt dummy\tdo the thing' "$FAKE_LOG")" 1
 ok "送信: messages に kind=scheduler" "$(sqlite3 "$TB_DB" "SELECT kind||':'||ref||':'||result FROM messages;")" "scheduler:job:t:sent"
-unset FAKE_LOG TB_DB FAKE_AGENTS
+unset FAKE_LOG FAKE_AGENTS; export TB_DB="$TMP/none.db"
 
 echo "---- pass=$pass fail=$failn"
 [ "$failn" = 0 ]

@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 
 from . import perms
 from .config import SCHED_JOBS, SCHED_ROOT
+from .jobs import db_body
 from .docs import denied
 from .sanitize import clean
 
@@ -83,15 +84,25 @@ def _value(text, i):
     return raw, bool(re.search(r"[$`;&|()<>\\ \t'\"*?~{]", raw)), end
 
 
-def job_defs(name):
-    """jobs/<名>.conf の PROMPT 等の記述(展開しない)。{キー: 文字列}。読めなければ None。"""
+def job_text(name, limit):
+    """ジョブ定義の本文(DB の sched-job:<job> > jobs/<名>.conf)。limit 文字まで。読めなければ None。"""
+    body = db_body("sched-job:" + name)
+    if body is not None:
+        return body[:limit]
     path = os.path.join(SCHED_JOBS(), name + ".conf")
     try:
         if os.path.islink(path) or not os.path.isfile(path):
             return None
         with open(path, encoding="utf-8", errors="replace") as f:
-            text = f.read(CONF_MAX + 1)
+            return f.read(limit)
     except OSError:
+        return None
+
+
+def job_defs(name):
+    """jobs/<名>.conf の PROMPT 等の記述(展開しない)。{キー: 文字列}。読めなければ None。"""
+    text = job_text(name, CONF_MAX + 1)
+    if text is None:
         return None
     out, complex_ = {}, set()
     rx, pos = re.compile(r"(?m)^[ \t]*(?:export[ \t]+)?(" + "|".join(KEYS) + r")="), 0
@@ -113,13 +124,8 @@ _BOILER = re.compile(r"^(注意: COMMAND は bash -c|HERDR_SESSION は|先頭を
 
 def job_about(name):
     """conf の先頭のコメント(最初の代入より前の # 行)を説明として返す。[行]。無ければ []。"""
-    path = os.path.join(SCHED_JOBS(), name + ".conf")
-    try:
-        if os.path.islink(path) or not os.path.isfile(path):
-            return []
-        with open(path, encoding="utf-8", errors="replace") as f:
-            text = f.read(CONF_MAX)
-    except OSError:
+    text = job_text(name, CONF_MAX)
+    if text is None:
         return []
     block = []
     for line in text.splitlines():

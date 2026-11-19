@@ -33,6 +33,25 @@ launchd が `bin/tick.sh <job>` を毎分起動し、時間帯・曜日・間隔
 - ログには `action`(`ran` | `failed` | `skipped_*`)、`exit`、`stdout`、`stderr`(各先頭 500 字)を記録。
 - **`COMMAND` は `bash -c` でそのまま実行される。`jobs/*.conf` は人が管理するもので、外部入力(Slack・ファイル内容・引数など)を埋め込まないこと。**
 
+## ジョブ定義を DB に置く(`tb sched-job`)
+
+ジョブ定義(conf の本文)と上書き設定(settings の本文)は、taskboard の DB の `config` 表にも置ける。
+キーは `sched-job:<job>` と `sched-settings:<job>`、本文の書式はファイルと同じ。変更の履歴は `config_changes` に残る(`tb config` と同じ仕組み)。
+
+- 読む順: DB の**このセッション**の行 > DB の共通の行(`*`)> ファイル(`jobs/<job>.conf`・`settings/<job>.settings`)。
+  DB に行が無いジョブは、今までどおりファイルを読む。sqlite3・DB・表が無い環境でもファイルを読む。DB は読み取り専用で開く
+- セッションごとに別の定義を持てる(`HERDR_SESSION`、checkout の `herdr-session` ファイル。tb と同じ決まり方)
+- 書くのは人だけ: `tb sched-job set <job> < 本文` / `edit` / `unset`(`--settings` で上書き設定、`--shared` で共通の行)。
+  書く前に、scheduler 自身(`bin/show.sh`)がその本文を読めるかを一時のディレクトリで確かめる(読めなければ書かない)
+- 取り込み: `tb sched-job import --dry-run` で確かめてから `tb sched-job import [<job> ...]`。`jobs/*.conf` と `settings/*.settings` を
+  このセッションの行(`--shared` なら共通の行)に取り込み、取り込んだファイルは `$HERDR_STATE_DIR/sched-imported/<日時>/` へ退かす。
+  既に行があるジョブは飛ばす。取り込みの前後で、判定の結果(`tick.sh` の dry-run)と実際に効く設定(`show.sh`)は変わらない(`tests/run.sh` が確かめる)
+- 一覧: `bin/jobs.sh`(DB とファイルの和)、`tb sched-job list`(出どころつき)。`bin/show.sh` は `source` / `settings_source`(`db` / `file` / `none`)も出す
+- Web UI: DB に定義があるジョブの上書き設定は、`tb sched-job set <job> --settings` を通して DB に書く(ファイルは書かない)。
+  「conf の値に戻す」はこのセッションの行を消す(共通の行は人が `tb sched-job unset <job> --settings --shared` で消す)
+- plist(`gen-plist.sh`)はジョブ名だけを持つので、取り込んだあとも作り直さなくてよい
+- DB の本文も `COMMAND` と同じく bash として評価される。`tb sched-job` は人の端末からだけ書ける(agent の pane からは断る)
+
 ## Web UI からの変更(settings)
 
 間隔・時間帯・曜日・一時停止は、Web UI の `/jobs/<job>` から変えられる。保存先は `settings/<job>.settings`(git 管理外、0600)。

@@ -15,6 +15,35 @@ export HERDR_BIN_PATH="${HERDR_BIN_PATH:-$HERDR}"
 
 die() { echo "error: $*" >&2; exit 2; }
 
+# ジョブ定義・上書き設定の DB(taskboard と同じ DB の config 表)。キー: sched-job:<job>(conf の本文)/ sched-settings:<job>(settings の本文)。
+# このセッションの行 > 全セッション共通の行(*)> ファイル(jobs/<job>.conf・settings/<job>.settings。DB に取り込むまでの移行用)。
+# 書くのは人だけ(tb sched-job)。ここは読むだけで、DB を書き込みで開かない。sqlite3・DB・表が無ければファイルを読む
+SCHED_DB="${TB_DB:-$HERDR_DEFAULT_TB_DB}"
+sched_db_body() {  # $1=キー。見つかれば本文を出して 0、無ければ 1
+  command -v sqlite3 >/dev/null 2>&1 || return 1
+  [ -f "$SCHED_DB" ] || return 1
+  local k=${1//\'/\'\'} s out
+  s=$(herdr_session_name); s=${s//\'/\'\'}
+  out=$(sqlite3 -readonly -batch -cmd ".timeout 5000" "$SCHED_DB" \
+    "SELECT 'x' || body FROM config WHERE key='$k' AND herdr_session IN ('$s', '*') ORDER BY herdr_session='*' LIMIT 1;" 2>/dev/null) || return 1
+  [ -n "$out" ] || return 1
+  printf '%s\n' "${out#x}"
+}
+# DB にあるジョブ名(1 行 1 つ)。sqlite3・DB・表が無ければ何も出さない
+sched_db_jobs() {
+  command -v sqlite3 >/dev/null 2>&1 || return 0
+  [ -f "$SCHED_DB" ] || return 0
+  local s; s=$(herdr_session_name); s=${s//\'/\'\'}
+  sqlite3 -readonly -batch -cmd ".timeout 5000" "$SCHED_DB" \
+    "SELECT DISTINCT substr(key, 11) FROM config WHERE key LIKE 'sched-job:%' AND herdr_session IN ('$s', '*');" 2>/dev/null \
+    | grep -E '^[A-Za-z0-9][A-Za-z0-9_-]*$' || true
+}
+# ジョブ名の一覧(DB とファイルの和。名前順)
+sched_job_names() {
+  { sched_db_jobs; local f; for f in "$JOBS_DIR"/*.conf; do [ -f "$f" ] && basename "$f" .conf; done; } \
+    | grep -E '^[A-Za-z0-9][A-Za-z0-9_-]*$' | sort -u
+}
+
 # 時刻 -> その日の 0 時からの秒数。"09:00" -> 32400、"09:00:30" -> 32430。
 # 第 2 引数が end のとき、秒を省いた "HH:MM" はその分の 59 秒までを含む("21:00" -> 21:00:59)。
 # 秒に対応する前は分単位で判定していたので、"21:00" を終端に書いた窓は 21:00 台を丸ごと含んでいた。その意味を変えないため
@@ -43,11 +72,17 @@ interval_of() {
 
 # 上書き設定 $SETTINGS_DIR/<job>.settings を読む。bash として実行せず、決まったキーと値の形だけを受け付ける。
 # キー: INTERVAL_MIN か INTERVAL_SEC / START / END / DAYS / ENABLED(0 で一時停止)。結果は S_<キー> に入る
+# DB に sched-settings:<job> の行があれば、ファイルより先にそれを読む(書式は同じ)。どちらを読んだかは SETTINGS_SRC(db / file / none)
 load_settings() {
-  local f="$SETTINGS_DIR/$JOB.settings" line k v
-  S_INTERVAL_MIN=""; S_INTERVAL_SEC=""; S_START=""; S_END=""; S_DAYS=""; S_ENABLED=""
-  [ -e "$f" ] || return 0
-  [ -f "$f" ] && [ ! -L "$f" ] || die "$JOB: settings が通常ファイルではない: $f"
+  local f="$SETTINGS_DIR/$JOB.settings" line k v body
+  S_INTERVAL_MIN=""; S_INTERVAL_SEC=""; S_START=""; S_END=""; S_DAYS=""; S_ENABLED=""; SETTINGS_SRC=none
+  if body=$(sched_db_body "sched-settings:$JOB"); then
+    SETTINGS_SRC=db; f="DB の sched-settings:$JOB"
+  else
+    [ -e "$f" ] || return 0
+    [ -f "$f" ] && [ ! -L "$f" ] || die "$JOB: settings が通常ファイルではない: $f"
+    body=$(cat "$f"); SETTINGS_SRC=file
+  fi
   while IFS= read -r line || [ -n "$line" ]; do
     [[ -z "$line" || "$line" == \#* ]] && continue
     [[ "$line" =~ ^([A-Z_]+)=(.*)$ ]] || die "$JOB: settings の行が不正: $f"
@@ -61,7 +96,9 @@ load_settings() {
       ENABLED) [[ "$v" =~ ^[01]$ ]] || die "$JOB: settings の ENABLED は 0 か 1"; S_ENABLED=$v ;;
       *) die "$JOB: settings に使えないキー: $k" ;;
     esac
-  done <"$f"
+  done <<EOF_SETTINGS
+$body
+EOF_SETTINGS
   if [ -n "$S_START$S_END" ] && { [ -z "$S_START" ] || [ -z "$S_END" ]; }; then
     die "$JOB: settings の START と END は両方書く"
   fi
@@ -73,10 +110,21 @@ load_job() {
   JOB="${1:-}"
   [[ "$JOB" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || die "ジョブ名が不正: '$JOB'"
   JOB_CONF="$JOBS_DIR/$JOB.conf"
-  [ -f "$JOB_CONF" ] || die "ジョブ定義がない: $JOB_CONF"
+  # 定義: DB の sched-job:<job> > jobs/<job>.conf。どちらを読んだかは JOB_SRC(db / file)
+  local job_body=""
+  if job_body=$(sched_db_body "sched-job:$JOB"); then
+    JOB_SRC=db; JOB_CONF="db:sched-job:$JOB"
+  else
+    JOB_SRC=file
+    [ -f "$JOB_CONF" ] || die "ジョブ定義がない: $JOB_CONF"
+  fi
   unset TARGET PROMPT PROMPT_FILE COMMAND COMMAND_TIMEOUT WINDOW START END INTERVAL_MIN INTERVAL_SEC DAYS SKIP_IF TZ ENABLED WATCHER
-  # shellcheck disable=SC1090
-  source "$JOB_CONF"
+  if [ "$JOB_SRC" = db ]; then
+    eval "$job_body"   # 本文は conf と同じ(bash の変数代入)。人が tb sched-job で書いたもの
+  else
+    # shellcheck disable=SC1090
+    source "$JOB_CONF"
+  fi
   # WINDOW(HH:MM[:SS]-HH:MM[:SS]) を START/END に分解。conf が START/END を直接持つならそちらを優先
   if [ -n "${WINDOW:-}" ] && [ -z "${START:-}${END:-}" ]; then
     [[ "$WINDOW" =~ ^([0-9:]+)-([0-9:]+)$ ]] || die "$JOB: WINDOW は HH:MM-HH:MM"

@@ -25,6 +25,19 @@ def _run_tb(args, timeout=15):
     return p.returncode, (p.stdout + p.stderr).strip()
 
 
+def run_tb_input(args, text, timeout=15):
+    """標準入力に本文を渡して tb を実行する(tb sched-job set など)。(終了コード, 出力)。"""
+    env = reqctx.child_env()
+    env.pop("HERDR_PANE_ID", None)
+    env["TB_DB"] = TB_DB()
+    try:
+        p = subprocess.run(["bash", TB, *args], env=env, capture_output=True, text=True, timeout=timeout,
+                           input=text, errors="replace")
+    except (OSError, subprocess.SubprocessError):
+        return -1, ""
+    return p.returncode, (p.stdout + p.stderr).strip()
+
+
 def resolve_comment(cid, note):
     """question / blocked の報告を対応済みにする。返り値: done | already | error。"""
     note = (note or "").strip()[:NOTE_MAX]
