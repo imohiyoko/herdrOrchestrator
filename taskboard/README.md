@@ -682,14 +682,14 @@ comment new=question                -> webui
 agent のセッションに `gh` の書き込み権限を持たせないための仕組み。agent は PR を作らず、キューに置くだけ。PR を作るのは、人の端末で動く scheduler の COMMAND ジョブ(`tb pr-queue scan` → `tb pr-queue run`)。
 
 ```
-tb pr-queue add --branch agent/<名> --body-file <本文> --title <題> [--repo <org/repo>] [--task T-…]   # agent。pending
+tb pr-queue add --branch agent/<名> --body-file <本文> --title <題> [--repo <org/repo>] [--task T-…] [--base <ブランチ>]   # agent。pending
 tb pr-queue approve PQ-<n> / reject PQ-<n> [-m 理由]                                                  # 人だけ
 tb pr-queue retry PQ-<n>                                                                              # 人だけ。failed を approved に戻す(attempts を 0 に)
 tb pr-queue run [--dry-run]                                                                           # approved だけを gh pr create --draft
 tb pr-queue scan [--dry-run] [--repo <org/repo>]                                                      # origin の <branch_prefix>* から積む
 ```
 
-- ガードは run のたびにかけ直す: ブランチが `branch_prefixes`(無ければ `branch_prefix`)のどれかで始まる・base は main 固定・draft だけ・本文は `body_root` の中の実ファイル(シンボリックリンク不可)で、置いた(承認した)ときから変わっていない・1 行目が `body_first_line` に合う(設定したときだけ)・本文と題に秘密らしい値が無い・同じ head の PR が無い・リポジトリが許可リスト(`config/repos.md`)にある。
+- ガードは run のたびにかけ直す: ブランチが `branch_prefixes`(無ければ `branch_prefix`)のどれかで始まる・base は登録時に決めた値(下を参照)・draft だけ・本文は `body_root` の中の実ファイル(シンボリックリンク不可)で、置いた(承認した)ときから変わっていない・1 行目が `body_first_line` に合う(設定したときだけ)・本文と題に秘密らしい値が無い・同じ head の PR が無い・リポジトリが許可リスト(`config/repos.md`)にある。
 - `PR_QUEUE_REPO_DIR`(ローカルの clone)で差分も見る(**必須**。空・存在しない・git でないときは approve も run も scan も通さない)。CI 設定(`.github/workflows`・`.github/actions`)の変更、`AdministratorAccess` の追加、秘密らしい値は作らずに人に回す。
 - マージ・approve・ready・close は実装していない。draft を ready にするのは人。
 - 書き込み用の認証は、gh のラッパー(人が用意する)に持たせる。`PR_QUEUE_GH`(環境変数)か `config/pr-queue.conf` の `gh`(絶対パス)で指定する。**未指定・不正なら run / scan は警告して止まる**(PATH 上の gh には落ちない。fail-closed)。ラッパーの形と置き場は [`docs/pr-queue-gh-wrapper.md`](docs/pr-queue-gh-wrapper.md)。
@@ -697,7 +697,8 @@ tb pr-queue scan [--dry-run] [--repo <org/repo>]                                
 - 公開前検査(conf の `deny_patterns`。**必須**。未設定・不正なら run は止まる。環境変数では決められない): run が PR を作る前に、origin と同期した上で(追跡参照の SHA が origin と一致しなければ止める)、題・本文・コミットメッセージ(author / committer を含む)・ブランチ名・差分(変更ファイルのパスと足した行)に規則ファイルを掛ける。バイナリの変更は人に回す。ヒットした PR は作らず却下し(attempts は使わない)、規則名と位置だけを通知する(値は出さない)。書式と例外ファイルは [`docs/pr-queue-deny-patterns.md`](docs/pr-queue-deny-patterns.md)。
 - 既知の限界(詳細は [`docs/pr-queue-deny-patterns.md`](docs/pr-queue-deny-patterns.md)): `PR_QUEUE_CONF` で conf を差し替えられる(deny の規則ファイルは固定の conf のキーで決まり、env では差し替えられない)、`auto_approve` を上げると scan が人の approve なしで approved を積める(既定 0)、固定の conf も同一 OS ユーザーなら書ける(OS の権限分離=ADR 0001 の課題)、検査から PR 作成までの短い時間差は完全には閉じられない。
 - `add` は、ブランチが origin に実在すること(`PR_QUEUE_REPO_DIR` の clone で `git ls-remote`)を確かめ、確認できなければ登録しない。登録できる接頭辞は conf の `branch_prefixes`(既定は `agent/` だけ。広げるのは人。例: `agent/ feat/ fix/`)。`scan` が走査するのは先頭の接頭辞だけ。
-- 設定は `config/pr-queue.conf`(人だけ。`pr-queue.conf.example` を写して使う): `gh`、`deny_patterns`、`deny_exceptions`、`branch_prefixes`、`branch_prefix`(既定 `agent/`)、`body_root`(既定 `taskboard/data/pr-bodies`)、`body_first_line`、`auto_approve`(既定 0。1 なら scan で積んだものを承認済みにする)、`max_create_per_run`(既定 3)。
+- base(PR の向き先): 既定は今までどおり `main` 固定(`base_mode = fixed`)。`base_mode = default_branch` にすると、origin の既定ブランチ(`git ls-remote --symref origin HEAD`。gh の権限は広げない)を使う。`add --base <ブランチ>` で明示もできる。明示できるのは既定の base と、conf の `base_allow`(グロブ。例: `release/* develop`)に合うブランチだけで、origin に実在すること。決めた base と決め方は `add` のときに行へ固定し、`show` / `list` に出る(人はそれを見て承認する)。`approve` と `run` はかけ直し、既定ブランチが登録時から変わった・`base_allow` から外れた・origin に無いときは PR を作らず理由を残して却下する(origin に聞けないときだけは行に触らず次の回)。`base_mode` を戻せば今までどおり(移行より前の行は `main`)。
+- 設定は `config/pr-queue.conf`(人だけ。`pr-queue.conf.example` を写して使う): `gh`、`deny_patterns`、`deny_exceptions`、`branch_prefixes`、`branch_prefix`(既定 `agent/`)、`body_root`(既定 `taskboard/data/pr-bodies`)、`body_first_line`、`auto_approve`(既定 0。1 なら scan で積んだものを承認済みにする)、`max_create_per_run`(既定 3)、`base_mode`(既定 `fixed`)、`base_allow`(既定は空 = 既定の base だけ)。
 
 ## 会話チーム(下書きの層と振り分け表)
 

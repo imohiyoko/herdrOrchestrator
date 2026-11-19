@@ -289,7 +289,7 @@ eq "retry: only failed rows (created / pending are refused)" "$(rc $TB pr-queue 
 eq "retry: human puts a failed row back to approved, attempts reset" "$($TB pr-queue retry PQ-$fid | cut -d'(' -f1) $(pqsql "SELECT status||attempts FROM pr_queue WHERE id=$fid;")" "PQ-$fid approved approved0"
 : >"$FAKE_GH_LOG"; $TB pr-queue run >/dev/null 2>&1
 eq "retry: the guards still run, and the next run picks it up" "$(pqgh 'pr create') $(pqsql "SELECT status FROM pr_queue WHERE id=$fid;")" "1 created"
-eq "retry: no schema change (pr_queue columns unchanged)" "$(pqsql "SELECT group_concat(name) FROM pragma_table_info('pr_queue');")" "id,repo,branch,title,body_file,body_sha256,task_id,requested_by,status,last_error,attempts,pr_url,created_at,decided_at,executed_at,herdr_session"
+eq "retry: no schema change (pr_queue columns unchanged)" "$(pqsql "SELECT group_concat(name) FROM pragma_table_info('pr_queue');")" "id,repo,branch,title,body_file,body_sha256,task_id,requested_by,status,last_error,attempts,pr_url,created_at,decided_at,executed_at,herdr_session,base,base_source"
 unset PR_QUEUE_CONF
 
 # ---- ブランチ登録の拡張: 接頭辞を conf で列挙(既定は agent/ のみ)。登録時に origin に実在するかを確かめる(fail-closed)
@@ -499,6 +499,73 @@ eq "config: custom branch_prefix is used, the default one is refused" \
 eq "config: without body_first_line any first line passes the guard" "$(rc $TB pr-queue approve "$nid") $(pqsql "SELECT status FROM pr_queue WHERE id=$nid;")" "0 approved"
 printf 'branch_prefix = not valid\n' >"$PR_QUEUE_CONF"
 eq "config: an invalid branch_prefix falls back to agent/" "$(pqadd agent/nf3 nf1 | cut -d' ' -f2)" "pending"
+unset PR_QUEUE_CONF
+
+# ---- base(#133): 既定は main 固定のまま。base_mode = default_branch なら origin の既定ブランチ。--base で明示(base_allow の形だけ)
+export PR_QUEUE_CONF=$TMP/pq-base.conf; printf '%s\n' "$PQ_RULE" >"$PR_QUEUE_CONF"
+pqid() { pqsql "SELECT MAX(id) FROM pr_queue;"; }
+pqst() { pqsql "SELECT status FROM pr_queue WHERE id=$1;"; }
+pqbody bs1; pqadd agent/bs1 bs1 >/dev/null; bs1=$(pqid)
+eq "base: without settings the base is main (fixed), and show says so" \
+  "$(pqsql "SELECT base||','||base_source FROM pr_queue WHERE id=$bs1;") $($TB pr-queue show $bs1 | grep -c 'base: main(固定')" "main,fixed 1"
+$TB pr-queue reject $bs1 >/dev/null
+# 既定ブランチが develop のリポジトリ
+git -C "$R" push -q origin main:develop 2>/dev/null; git --git-dir="$PQ_O" symbolic-ref HEAD refs/heads/develop
+printf '%s\n' "$PQ_RULE" 'base_mode = default_branch' >"$PR_QUEUE_CONF"
+pqbody bs2; pqadd agent/bs2 bs2 >/dev/null; bs2=$(pqid)
+eq "base: base_mode = default_branch reads origin's default branch (develop) and records how" \
+  "$(pqsql "SELECT base||','||base_source FROM pr_queue WHERE id=$bs2;") $($TB pr-queue show $bs2 | grep -c 'base: develop(origin の既定ブランチ')" "develop,default 1"
+eq "base: approve shows the base" "$($TB pr-queue approve $bs2 | grep -c 'base: develop')" "1"
+: >"$FAKE_GH_LOG"; $TB pr-queue run >/dev/null 2>&1
+eq "base: run creates the draft PR against develop" "$(pqst $bs2) $(pqgh 'pr create .*--base develop --head agent/bs2')" "created 1"
+# 承認のあとに既定ブランチが変わった → 作らず理由を残す
+pqbody bs3; pqadd agent/bs3 bs3 >/dev/null; bs3=$(pqid); $TB pr-queue approve $bs3 >/dev/null
+git --git-dir="$PQ_O" symbolic-ref HEAD refs/heads/main
+: >"$FAKE_GH_LOG"; $TB pr-queue run >/dev/null 2>&1
+eq "base: the default branch changed after approval → rejected with the reason, nothing created" \
+  "$(pqst $bs3) $(pqsql "SELECT last_error FROM pr_queue WHERE id=$bs3;" | grep -c '既定ブランチが、登録したときの develop から変わった') $(pqgh 'pr create')" "rejected 1 0"
+git --git-dir="$PQ_O" symbolic-ref HEAD refs/heads/develop
+# 既定ブランチを確かめられない → 行は触らない
+pqbody bs4; pqadd agent/bs4 bs4 >/dev/null; bs4=$(pqid); $TB pr-queue approve $bs4 >/dev/null
+: >"$FAKE_GH_LOG"; FAKE_GIT_LSREMOTE_FAIL=1 $TB pr-queue run >/dev/null 2>&1
+eq "base: cannot read the default branch → row untouched, nothing created; the next run creates it" \
+  "$(pqst $bs4) $(pqgh 'pr create')" "approved 0"
+$TB pr-queue run >/dev/null 2>&1; eq "base: …and the next normal run creates it" "$(pqst $bs4)" "created"
+# 明示の base
+git -C "$R" push -q origin main:release/1 2>/dev/null
+pqbody bs5
+eq "base: an explicit base outside base_allow is refused; same as head / bad name / unknown on origin too" \
+  "$(rc pqadd agent/bs5 bs5 --base release/1) $(rc pqadd agent/bs5 bs5 --base agent/bs5) $(rc pqadd agent/bs5 bs5 --base 'rel ease') $(rc pqadd agent/bs5 bs5 --base ../x)" "1 1 1 1"
+printf '%s\n' "$PQ_RULE" 'base_mode = default_branch' 'base_allow = release/*, hotfix' >"$PR_QUEUE_CONF"
+eq "base: an allowed pattern that is not on origin is refused" "$(rc pqadd agent/bs5 bs5 --base release/9)" "1"
+eq "base: nothing was queued by the refused adds" "$(pqsql "SELECT COUNT(*) FROM pr_queue WHERE branch='agent/bs5';")" "0"
+pqadd agent/bs5 bs5 --base release/1 >/dev/null; bs5=$(pqid)
+eq "base: an explicit base matching base_allow is accepted and recorded as explicit" \
+  "$(pqsql "SELECT base||','||base_source FROM pr_queue WHERE id=$bs5;") $($TB pr-queue show $bs5 | grep -c 'base: release/1(指定')" "release/1,explicit 1"
+$TB pr-queue approve $bs5 >/dev/null; : >"$FAKE_GH_LOG"; $TB pr-queue run >/dev/null 2>&1
+eq "base: run creates the PR against the explicit base" "$(pqst $bs5) $(pqgh 'pr create .*--base release/1 --head agent/bs5')" "created 1"
+# 承認のあとに base が origin から消えた / 許可から外れた → 作らず理由を残す
+git -C "$R" push -q origin main:release/2 2>/dev/null
+pqbody bs6; pqadd agent/bs6 bs6 --base release/2 >/dev/null; bs6=$(pqid); $TB pr-queue approve $bs6 >/dev/null
+git -C "$R" push -q origin --delete release/2 2>/dev/null
+: >"$FAKE_GH_LOG"; $TB pr-queue run >/dev/null 2>&1
+pqbody bs7; pqadd agent/bs7 bs7 --base release/1 >/dev/null; bs7=$(pqid); $TB pr-queue approve $bs7 >/dev/null
+printf '%s\n' "$PQ_RULE" 'base_mode = default_branch' 'base_allow = hotfix' >"$PR_QUEUE_CONF"
+$TB pr-queue run >/dev/null 2>&1
+eq "base: explicit base deleted on origin / no longer allowed after approval → rejected with the reason, nothing created" \
+  "$(pqst $bs6) $(pqsql "SELECT last_error FROM pr_queue WHERE id=$bs6;" | grep -c 'origin に無い') $(pqst $bs7) $(pqsql "SELECT last_error FROM pr_queue WHERE id=$bs7;" | grep -c '許可されていない') $(pqgh 'pr create')" \
+  "rejected 1 rejected 1 0"
+# 移行より前の行(base が NULL)は今までどおり main。base_mode を戻せば今までどおり(rollback)
+git --git-dir="$PQ_O" symbolic-ref HEAD refs/heads/main
+printf '%s\n' "$PQ_RULE" >"$PR_QUEUE_CONF"
+pqbody bs8; pqadd agent/bs8 bs8 >/dev/null; bs8=$(pqid); $TB pr-queue approve $bs8 >/dev/null
+pqsql "UPDATE pr_queue SET base=NULL, base_source=NULL WHERE id=$bs8;"
+: >"$FAKE_GH_LOG"; $TB pr-queue run >/dev/null 2>&1
+eq "base: an old row without a base is created against main" "$(pqst $bs8) $(pqgh 'pr create .*--base main --head agent/bs8')" "created 1"
+pqbody bs9; pqadd agent/bs9 bs9 >/dev/null; bs9=$(pqid); $TB pr-queue approve $bs9 >/dev/null
+pqsql "UPDATE pr_queue SET base='develop' WHERE id=$bs9;"
+: >"$FAKE_GH_LOG"; $TB pr-queue run >/dev/null 2>&1
+eq "base: a fixed row whose base was rewritten is rejected" "$(pqst $bs9) $(pqgh 'pr create')" "rejected 0"
 unset PR_QUEUE_CONF
 
 # 後片付け: 触った変数を元に戻す
