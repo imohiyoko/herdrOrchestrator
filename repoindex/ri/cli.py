@@ -11,7 +11,7 @@ import shutil
 import subprocess
 import sys
 
-from . import read, scan, server, store
+from . import read, rollout, scan, server, store
 
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 BOUNDARIES = {"auth", "authz", "external", "data"}
@@ -73,6 +73,7 @@ def cmd_repo_add(a):
     if store._inside(store.data_dir(), top):
         return _err("データの置き場所がこのリポジトリの中にあります")
     con = store.connect_rw()
+    rollout.check_repo_add(con, a.name, a.granularity)
     with con:
         con.execute("INSERT INTO repos(name, path, granularity) VALUES (?, ?, ?) ON CONFLICT(name) DO UPDATE SET"
                     " path = excluded.path, granularity = excluded.granularity,"
@@ -200,6 +201,54 @@ def cmd_update(a):
     return rc
 
 
+def cmd_stage(a):
+    con = store.connect_rw()
+    try:
+        if a.op == "show":
+            print(json.dumps({"stage": rollout.current(con), "history": rollout.history(con)}, ensure_ascii=False, indent=1))
+            return 0
+        if a.stage is None or not a.by:
+            return _err("stage set <0-4> --by <人> --measures '<JSON>' | --measures-file F [--note T]", 2)
+        raw = a.measures
+        if a.measures_file:
+            with open(a.measures_file, encoding="utf-8") as f:
+                raw = f.read()
+        try:
+            m = json.loads(raw or "")
+        except ValueError:
+            return _err("--measures は JSON のオブジェクト", 2)
+        before, removed = rollout.set_stage(con, a.stage, a.by, m, a.note or "")
+        print(f"ok: 段階 {before} -> {a.stage}" + ("(定期更新の登録を外した)" if removed else ""))
+        return 0
+    finally:
+        con.close()
+
+
+def cmd_measures(a):
+    con = store.connect_rw()
+    print(json.dumps(rollout.measures(con, a.repo), ensure_ascii=False, indent=1))
+    con.close()
+    return 0
+
+
+def cmd_job(a):
+    con = store.connect_rw()
+    try:
+        if a.op == "register":
+            ok, out = rollout.job_register(con)
+            print(f"ok: {rollout.job_conf_path()} を書いた")
+            if not ok:
+                print(f"scheduler への登録はできなかった(launchd が無い環境など): {out}")
+            return 0
+        if a.op == "remove":
+            print("ok: 外した" if rollout.job_remove(con) else "ok: 登録はもともと無い")
+            return 0
+        print(json.dumps(rollout.job_status(con), ensure_ascii=False, indent=1))
+        return 0
+    finally:
+        con.close()
+
+
 def cmd_purge(a):
     """元に戻す: データのディレクトリごと消す。ほかの部品は何も依存していない。"""
     d = store.data_dir()
@@ -210,6 +259,10 @@ def cmd_purge(a):
         return 0
     if not os.path.exists(os.path.join(d, store.DB_NAME)):
         return _err(f"{d} に {store.DB_NAME} が無いので消しません(別のディレクトリのおそれ)")
+    con = store.connect_rw()
+    if rollout.job_remove(con, reason="purge"):  # データが無くなった後に定期更新が動き続けないように
+        print("定期更新の登録を外した")
+    con.close()
     shutil.rmtree(d)
     print(f"ok: {d} を消した")
     return 0
@@ -263,6 +316,14 @@ def build_parser():
     s.add_argument("--repo"); s.add_argument("--limit", type=int, default=50); s.set_defaults(fn=cmd_rejections)
     s = sp.add_parser("scan", help="標準入力の本文を検査だけする(保存しない)")
     s.add_argument("--path"); s.set_defaults(fn=cmd_scan)
+    s = sp.add_parser("stage", help="段階的な導入: show / set(人が判断し、測った値と一緒に残す)")
+    s.add_argument("op", choices=["show", "set"]); s.add_argument("stage", nargs="?", type=int)
+    s.add_argument("--by"); s.add_argument("--measures"); s.add_argument("--measures-file"); s.add_argument("--note")
+    s.set_defaults(fn=cmd_stage)
+    s = sp.add_parser("measures", help="索引が数えられる値(更新の回数・時間・検査で落ちた数・作り直し・上限)")
+    s.add_argument("--repo"); s.set_defaults(fn=cmd_measures)
+    s = sp.add_parser("job", help="定期更新: register(承認済みテンプレートだけ。段階 3 から)/ remove / status")
+    s.add_argument("op", choices=["register", "remove", "status"]); s.set_defaults(fn=cmd_job)
     s = sp.add_parser("purge", help="データのディレクトリごと消す(元に戻す)")
     s.add_argument("--yes", action="store_true"); s.set_defaults(fn=cmd_purge)
     s = sp.add_parser("query", help="読み取り(人が確かめる用。serve と同じ中身)")

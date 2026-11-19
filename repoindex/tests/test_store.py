@@ -62,6 +62,7 @@ class StoreTest(Case):
         con.close()
 
     def test_reader_without_db_creates_nothing(self):
+        self.ri("purge", "--yes")
         with self.assertRaises(store.StoreError):
             store.connect_ro()
         self.assertFalse(os.path.exists(self.data))
@@ -172,6 +173,7 @@ class ServerTest(Case):
         self.assertNotIn("SECRETLESS-BODY-TEXT", err)
 
     def test_missing_db_is_an_error_not_a_crash(self):
+        self.ri("purge", "--yes")
         out, _ = self.rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                            "params": {"name": "repoindex_freshness", "arguments": {}}})
         self.assertTrue(out[0]["result"]["isError"])

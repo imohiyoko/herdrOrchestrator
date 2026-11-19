@@ -50,7 +50,7 @@ class ScanTest(Case):
                 self.assertIsNone(scan.excluded(p, extra=[]))
 
     def test_custom_excludes_and_patterns(self):
-        os.makedirs(self.data, mode=0o700)
+        os.makedirs(self.data, mode=0o700, exist_ok=True)
         with open(os.path.join(self.data, "exclude.conf"), "w") as f:
             f.write("# comment\ninternal/customers/*\n")
         with open(os.path.join(self.data, "scan-patterns.conf"), "w") as f:
@@ -59,7 +59,7 @@ class ScanTest(Case):
         self.assertIn("custom_ticket", scan.scan_text("mentions CUST-12345 here"))
 
     def test_broken_pattern_file_stops(self):
-        os.makedirs(self.data, mode=0o700)
+        os.makedirs(self.data, mode=0o700, exist_ok=True)
         with open(os.path.join(self.data, "scan-patterns.conf"), "w") as f:
             f.write("bad line without equals\n")
         with self.assertRaises(store.StoreError):
