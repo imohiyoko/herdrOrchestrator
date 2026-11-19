@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# スプリントとボード(018)。project は sp / sp2 だけを使う
+# スプリントとボード(019)。project は sp / sp2 だけを使う
 s1=$($TB sprint-add -p sp -n "Sprint 1" --start 2026-11-17 --end 2026-11-30 --goal "ログイン刷新")
 s2=$($TB sprint-add -p sp -n "Sprint 2")
 eq "sprints: ids" "$s1 $s2" "$(sqlite3 "$TB_DB" "SELECT 'S-'||MIN(id)||' S-'||MAX(id) FROM sprints WHERE project='sp';")"
@@ -71,3 +71,8 @@ eq "sprints(race): carry target closed in between" \
 eq "sprints(race): task not moved into the closed sprint" "$($TB show "$ct" | jq -r .sprint_id)" "${c1#S-}"
 eq "sprints(race): source sprint stays open" "$(sqlite3 "$TB_DB" "SELECT state FROM sprints WHERE id=${c1#S-};")" "planned"
 eq "sprints: close twice fails" "$($TB sprint-close "$c1" >/dev/null; rc $TB sprint-close "$c1")" "1"
+# 履歴(task_events)にスプリントとポイントの変化が残る
+h1=$($TB sprint-add -p sp -n hist); ht=$($TB add -p sp -t hist-task)
+$TB update "$ht" --sprint "$h1" --points 3 >/dev/null; $TB update "$ht" --sprint '' >/dev/null
+eq "sprints(history): sprint into and out" "$($TB history "$ht" --json | jq -r 'select(.kind=="sprint") | "\(.old // "-")>\(.new // "-")"' | paste -sd' ')" "->$h1 $h1>-"
+eq "sprints(history): points" "$($TB history "$ht" --json | jq -r 'select(.kind=="points") | .new')" "3"

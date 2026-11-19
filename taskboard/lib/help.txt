@@ -9,6 +9,8 @@ tb list [-p project] [-s status] [--type T] [--priority P] [-l ラベル ...(す
 tb show <id>        labels・refs(外部リンク)と links(blocks / blocked_by / relates / duplicates / duplicated_by)も出す
 tb tree <id> | tree -p <project>   親子を字下げで(ID 種別 優先度 状態 担当 題)
 tb labels [-p project] [--json]    使われているラベルと件数(ラベル 未完了 全部)
+tb history <id> [--json]           チケットの履歴(E-番号 時刻 タスク 種類 前 後 変えた者 元)。作成・状態・題・種別・優先度・担当・期日・親・説明・ラベル・外部リンク・リンク・コメント
+tb events [--since E-n] [--kind K] [-p project] [--limit N(既定 50)] [--json]   このセッションの履歴を古い順に
 tb link <from> blocks|relates|duplicates <to>   blocks なら to は from が done になるまで claim できない
 tb unlink <from> <種類> <to>
 tb sprint-add -p <project> -n <名前> [--start YYYY-MM-DD] [--end YYYY-MM-DD] [--goal G]   → S-<n>(planned)
@@ -33,7 +35,7 @@ tb proxy-check <id>   1 行目が allow(自動代行可)か human(人に回す)�
 
 agent の活動記録(hook から。bin/tb-hook 経由が基本):
 tb db-import <旧 DB> [--session <名前>] [--dry-run]   旧形式(checkout ごと)の DB を、共有の DB の 1 セッション(既定は今のセッション)の行として取り込む。人の端末だけ。元の DB は読むだけ
-tb config [list]   設定(projects / approvals / grants / routes / delivery / limits / notify / compact / slash / sched-watch / spawn-policy / role-models / conv-routes)の出どころを出す。引く順: 環境変数で明示したファイル > DB のこのセッションの行 > DB の共通の行(*) > checkout の taskboard/config/<名前> > .example
+tb config [list]   設定(projects / approvals / grants / routes / delivery / limits / notify / compact / slash / sched-watch / spawn-policy / role-models / conv-routes / conv-learn / conv-stages)の出どころを出す。引く順: 環境変数で明示したファイル > DB のこのセッションの行 > DB の共通の行(*) > checkout の taskboard/config/<名前> > .example
 tb config show <キー> | history <キー>   今効いている本文 / 変更の履歴
 tb config set <キー> [--shared] < 本文 | edit <キー> [--shared] | unset <キー> [--shared]   DB のこのセッションの行(--shared なら全セッション共通の行)を書く・消す。人の端末だけ
 tb config import [--dry-run]   checkout の taskboard/config/*.conf を、全セッション共通の行として DB に取り込む(共通の行が既にあるキーは飛ばす)。人の端末だけ
@@ -59,8 +61,9 @@ tb reminders --check     出すものがあれば 0、無ければ 3(何も出�
 tb reminders --publish [--json]   まとめを出し、前回の記録(notify_seen の reminders:*)を更新する。同じ項目は「継続(N 日目)」の 1 行。1 日 1 回は全件
 
 指揮官 → worker の送信(herdr agent prompt を直接打たない。送信者は herdr から決まり、config/routes.conf のルールで許可されたものだけ届く):
-tb send <宛先 agent 名> --text T [--task T-..] [--kind task|info|answer] [--json]
+tb send <宛先 agent 名> --text T [--task T-..] [--kind task|info|answer] [--reply-to O-<n>] [--json]
          delivery の設定(tb config show delivery)で hold なら宛先の入力に打たず inbox に置く(0。出力は held for)
+         --reply-to O-<n>: 自分宛てに届いた O-<n> への返信。tb が DB で確かめ(O-<n> が宛先 → 自分で、届いていて、未返信)、認めれば reply= の規則で届ける
          終了コード 0=送信済み 10=宛先使用中で outbox に積んだ 11=送信失敗で積んだ 4=ルールで拒否 20=人の承認待ち 3=送信者を特定できず未保存 12=保留に失敗して積んだ
 tb flush            積まれた送信を届ける(tb digest も最初に呼ぶ)
 tb outbox [--status pending|queued|sent|denied] [--json]
@@ -208,3 +211,26 @@ tb conv-length --draft F --request F   文字数を比べる。0=依頼以下 / 
 tb conv-kinds [--json]   種別ごとのチームの有無とパターンの数
 tb conv-patterns <種別> [--all]   採用済み(--all なら候補も)のパターン
 tb conv-lint   共通の土台・声の役・種別のファイル・パターン・振り分け表を確かめる。0 / 1
+
+会話の学習(#97。組と台帳は DB にも checkout にも置かず $TB_CONV_STATE_DIR(既定 ~/.local/state/herdr/conv、700)。設計: docs/conversation-learning.md):
+tb conv-pair-add --kind K --draft-file F --final-file F --situation S --intent I --posted [--points-offered N --points-accepted M]
+         人が送ったあとにだけ、下書きと送った文の組を記録する(人だけ)。→ "<pair-id> <編集の割合>"。下書きが空なら人が一から書いた組
+tb conv-pairs [--kind K] [--json]   組の一覧(本文は出さない)
+tb conv-pair-show <pair-id>   組の記録と本文(この機械の中だけで読む)
+tb conv-candidate-add --kind K --direction D --desc 説明 --evidence human-edit|human-written|other-source|agent-generated (--pair ID | --ref 説明)
+         [--situation S --intent I --ending E --conclusion first|last --avoid A] [--permissive]
+         手直し 1 つを候補の証拠にする。agent-generated は記録するが数えない。別々の状況で conv-learn の threshold(既定 3)回そろえば proposed
+tb conv-ledger [--kind K] [--json]   台帳(種別 向き 状態 件数/しきい値 証拠の種類ごとの数 許す方向か 説明)
+tb conv-candidate-adopt <kind> <direction> [--approve-permissive] [--situation ...]   人だけ。proposed だけを、名前・番号・URL などの検査を通して patterns.conf に adopted で足す
+tb conv-candidate-reject <kind> <direction>   人だけ
+tb conv-scan < 文   パターンに残せないもの(url email mention ref number name deny quote)があれば 1
+tb conv-learn-purge [--kind K] --yes   組と台帳を消す(人だけ)。採用済みのパターンと段階の記録は残る
+
+会話チームの段階(#98。0 下書きだけ / 1 声の役割 / 2 下書き保存 / 3 1 通ごとに 1 回の承認で送信。設定は conv-stages):
+tb conv-stage [<kind>] [--json]   段階・測った値(組の数・直近の編集の割合・採用数・事故の無い日数・役割の指摘の受け入れ率)・次の段階の条件
+tb conv-stage-set <kind> <0-3> --reason R [--override]   人だけ。上げるのは 1 段ずつ。high の種別・draft-save・stage3 の一覧による上限は --override でも越えない(4)
+tb conv-stage-reset [--to 0|1] --reason R   人だけ。すべての種別を 1 回で戻す(データは消さない)
+tb conv-stage-log [<kind>] [--json]   段階の変更の記録(その時の測った値つき)
+tb conv-incident <kind> --note N   人だけ。事故を記録する(段階は変えない)
+tb conv-gate <kind> --action draft|review|save-draft|post [--counterpart C] [--severity low|normal|high] [--source-vis V --dest-vis V]
+         決まった表で判定(読み取りのみ)。0=allow 20=ask(この 1 通を人が承認) 4=deny。post は allow を返さない

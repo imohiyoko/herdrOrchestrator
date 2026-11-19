@@ -122,6 +122,7 @@ cmd_add() {
   check_hierarchy "$type" "$parent"
   local sid=""; [[ -z $sprint ]] || sid=$(sprint_for_task "$sprint" "$project")
   local lj rj; lj=$(labels_json ${labs[@]+"${labs[@]}"}); rj=$(refs_json ${refs[@]+"${refs[@]}"})
+  event_actor_resolve
   local n=$(now) p out; p=$(q "$project")
   # 採番と挿入を 1 文で行い、同時 add でも重複しないようにする。親の種別の規則も同じ文で確かめる(HAVING)
   # ID は DB 全体で一意(採番は全セッションの行を見る。ここだけ herdr_session で絞らない)
@@ -237,7 +238,7 @@ cmd_claim() {
   blockers=$(sql "SELECT group_concat(t.id||'('||t.status||')', ', ') FROM task_links l JOIN tasks t ON t.id=l.from_id
                   WHERE l.to_id=$(q "$id") AND l.link_type='blocks' AND t.status!='done';")
   [[ -z $blockers ]] || die "claim できません(先に終わらせるタスクがあります: $blockers): $id"
-  local changed
+  local changed; event_actor_resolve
   changed=$(sql "UPDATE main.tasks SET status='in_progress', owner_agent=$(q "$owner"),
       session_id=COALESCE(NULLIF($(q "$session"),''), session_id),
       account=COALESCE(NULLIF($(q "$account"),''), account), updated_at=$(q "$(now)")
@@ -316,6 +317,7 @@ cmd_update() {
     guard=" AND $(hierarchy_ok_sql "$ftype" "$fparent" "$id") AND type=$(q "$(jq -r .type <<<"$row")")
             AND parent_id IS NULLIF($(q "$(jq -r '.parent_id // empty' <<<"$row")"),'')"
   fi
+  event_actor_resolve
   local IFS=,
   n=$(sql "BEGIN IMMEDIATE; UPDATE main.tasks SET ${sets[*]}, updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id")$guard$sguard;
            SELECT changes(); COMMIT;")
@@ -346,6 +348,7 @@ cmd_done() {
   row=$(require_task "$id"); cur=$(jq -r .status <<<"$row")
   [[ $cur != done ]] || die "すでに done です: $id"
   dj=$(jq -nc '$ARGS.positional' --args "${dels[@]}")
+  event_actor_resolve
   sql "UPDATE main.tasks SET status='done', deliverables=$(q "$dj"), summary=$(q "$summary"),
          reported_at=NULL, updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id");"
   notify_hook notify_hook_task_done "$id"
@@ -365,6 +368,7 @@ cmd_block() {
   done
   local row cur; row=$(require_task "$id"); cur=$(jq -r .status <<<"$row")
   [[ $cur != done ]] || die "done のタスクは block できません: $id"
+  event_actor_resolve
   sql "UPDATE main.tasks SET status='blocked', note=NULLIF($(q "$reason"),''), updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id");"
   echo "$id blocked"
 }
@@ -433,6 +437,7 @@ cmd_link() {
   LINK_CMD=link link_args "$@"
   local from=$1 type=$2 to=$3 by cyc=0 out
   by=$(actor_name) || return $?
+  event_actor_resolve
   # blocks は、to から blocks をたどって from に着くなら循環。検査と挿入は 1 つの書き込みトランザクションで行う
   [[ $type != blocks ]] || cyc="EXISTS (WITH RECURSIVE r(id) AS (SELECT $(q "$to") UNION SELECT l.to_id FROM task_links l JOIN r ON l.from_id=r.id WHERE l.link_type='blocks')
         SELECT 1 FROM r WHERE id=$(q "$from"))"
@@ -445,6 +450,7 @@ cmd_link() {
 }
 cmd_unlink() {
   LINK_CMD=unlink link_args "$@"
+  event_actor_resolve
   local n; n=$(sql "DELETE FROM main.task_links WHERE herdr_session=$SQS AND from_id=$(q "$1") AND link_type=$(q "$2") AND to_id=$(q "$3"); SELECT changes();")
   [[ $n == 1 ]] || die "そのリンクはありません: $1 $2 $3"
   echo "unlinked $1 $2 $3"
@@ -610,4 +616,44 @@ cmd_board() {
     printf '\n== %s ==\n' "$c"
     sql -separator $'\t' "SELECT id, priority, owner, COALESCE(points,'-'), replace(title, char(10), ' ') FROM ($qs) WHERE status=$(q "$c");"
   done
+}
+
+# ---------- history / events(018 の task_events。ADR 0003 の段 1) ----------
+# tb history <id>: そのタスクの履歴を古い順に(E-番号 時刻 種類 前 後 変えた者 元)
+EVENT_COLS="'E-'||id AS id, task_id, kind, old, new, actor, ref, created_at"
+events_out() {  # $1=json(0/1) $2=WHERE $3=ORDER/LIMIT
+  # task_events には一時ビューが無い(lib/db.sh)ので、このセッションの行に明示して絞る
+  local w="herdr_session=$SQS AND ($2)"
+  if (($1)); then sql -json "SELECT $EVENT_COLS FROM main.task_events WHERE $w $3;" | jq -c '(. // [])[]'
+  else sql -separator $'\t' "SELECT 'E-'||id, created_at, task_id, kind, COALESCE(replace(old, char(10), ' '),'-'), COALESCE(replace(new, char(10), ' '),'-'), actor, COALESCE(ref,'-')
+         FROM main.task_events WHERE $w $3;"; fi
+}
+cmd_history() {
+  local id="" json=0
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --json) json=1; shift;;
+      -*) usage "history: 不明な引数 $1";;
+      *) [[ -z $id ]] || usage "history <id> [--json]"; valid_id "$1"; id=$1; shift;;
+    esac
+  done
+  [[ -n $id ]] || usage "history <id> [--json]"
+  require_task "$id" >/dev/null
+  events_out "$json" "task_id=$(q "$id")" "ORDER BY id"
+}
+# tb events [--since E-n] [--kind K] [-p project] [--limit N] [--json]: このセッションの履歴を古い順に(既定は最新の 50 件)
+cmd_events() {
+  local where="1=1" json=0 limit=50 n
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --since) need_arg "$@"; [[ $2 =~ ^E-([0-9]{1,18})$ ]] || usage "events: --since は E-<数字>: $2"; where+=" AND id > ${BASH_REMATCH[1]}"; shift 2;;
+      --kind)  need_arg "$@"; [[ $2 =~ ^[a-z_]{1,32}$ ]] || usage "events: --kind が不正です: $2"; where+=" AND kind=$(q "$2")"; shift 2;;
+      -p|--project) need_arg "$@"; valid_project "$2"; where+=" AND task_id LIKE $(q "T-$2-%")"; shift 2;;
+      --limit) need_arg "$@"; [[ $2 =~ ^[0-9]{1,6}$ ]] && ((10#$2 > 0)) || usage "events: --limit は 1〜999999: $2"; limit=$((10#$2)); shift 2;;
+      --json)  json=1; shift;;
+      *) usage "events: 不明な引数 $1";;
+    esac
+  done
+  # 最新の N 件を古い順に
+  events_out "$json" "id IN (SELECT id FROM main.task_events WHERE herdr_session=$SQS AND $where ORDER BY id DESC LIMIT $limit)" "ORDER BY id"
 }
