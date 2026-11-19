@@ -26,7 +26,7 @@ tb proxy-check <id>   1 行目が allow(自動代行可)か human(人に回す)�
 
 agent の活動記録(hook から。bin/tb-hook 経由が基本):
 tb db-import <旧 DB> [--session <名前>] [--dry-run]   旧形式(checkout ごと)の DB を、共有の DB の 1 セッション(既定は今のセッション)の行として取り込む。人の端末だけ。元の DB は読むだけ
-tb config [list]   設定(projects / approvals / grants / routes / limits / notify / compact / sched-watch / spawn-policy)の出どころを出す。引く順: 環境変数で明示したファイル > DB のこのセッションの行 > DB の共通の行(*) > checkout の taskboard/config/<名前> > .example
+tb config [list]   設定(projects / approvals / grants / routes / limits / notify / compact / sched-watch / spawn-policy / conv-routes)の出どころを出す。引く順: 環境変数で明示したファイル > DB のこのセッションの行 > DB の共通の行(*) > checkout の taskboard/config/<名前> > .example
 tb config show <キー> | history <キー>   今効いている本文 / 変更の履歴
 tb config set <キー> [--shared] < 本文 | edit <キー> [--shared] | unset <キー> [--shared]   DB のこのセッションの行(--shared なら全セッション共通の行)を書く・消す。人の端末だけ
 tb config import [--dry-run]   checkout の taskboard/config/*.conf を、全セッション共通の行として DB に取り込む(共通の行が既にあるキーは飛ばす)。人の端末だけ
@@ -169,3 +169,19 @@ tb pr-watch                   許可リスト(config/repos.md、TB_REPOS_FILE)�
                               (scheduler の COMMAND ジョブ。許可リストが空・notify が off なら何もせず 0。初回は基準線の記録だけ)
          外へ出るのは tb が整形した 1 行の本文だけ(タスク ID・重大度・要約・成果物のパス)。秘密らしい値を含むものは slack / webhook に出さない。
          sink: file(data/notify/<日付>.md と sent.log)・stdout・slack(slack_via=agent|webhook)。1 分/1 時間の上限を超えた分は 1 通にまとめる
+
+会話チーム(下書きだけ。送信はしない。文面は DB・記録に書かない。設計と書式: conversation/README.md):
+tb conv-route --event E --counterpart C --depth D --severity S --deadline DL [--json] | --stdin [--json]
+         構造化した依頼(5 つの区分の名前だけ。本文は受け付けない)を振り分け表(設定 conv-routes)で決める。
+         routed なら kind・counterpart・channel・timing・severity。表に無い依頼・未登録の相手の区分は推測せず unregistered(needs_human)
+tb conv-routes-set [--shared] [--approve-looser] [--dry-run] < 新しい表   振り分け表を書く(人の端末だけ)。version は今より大きくする。
+         今の表と全組み合わせで比べ、未登録 → 振り分け・振り分け先の変更があれば --approve-looser が要る(無ければ終了コード 20)。厳しくするだけならそのまま書ける
+tb conv-draft (--route <conv-route --json の出力|-> | --kind K) [--note 一般化した状況] [--ref 参照] [--max-chars N | --request <依頼のファイル>]
+         下書きの指示(共通の土台 + 種別のチーム + 採用済みのパターン + 今回の依頼)を出す。チームが無い種別・未登録の依頼は共通の土台だけで、そう書く。
+         --note に数字・URL・@・# は使えない(一般化した言い方にする)。TB_CONV_TEAMS=off でチームの層を止める
+tb conv-voice <役> --draft F [--request F | --request-chars N]   声の役(direct / empathetic / receiver / brevity)に渡す指示と下書きだけを出す(ほかの役の出力は入れない)
+tb conv-voice-check <役> [--draft F --request F] < 役の出力   形を確かめる(多くても 3 点。brevity は 1 行目に長さの判定。--draft/--request があれば実際の長さと突き合わせる)。0 / 1
+tb conv-length --draft F --request F   文字数を比べる。0=依頼以下 / 1=依頼より長い
+tb conv-kinds [--json]   種別ごとのチームの有無とパターンの数
+tb conv-patterns <種別> [--all]   採用済み(--all なら候補も)のパターン
+tb conv-lint   共通の土台・声の役・種別のファイル・パターン・振り分け表を確かめる。0 / 1
