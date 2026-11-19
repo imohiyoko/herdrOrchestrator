@@ -83,6 +83,9 @@ d=$(TB_SCHEDWATCH_WAIT_MAX_MIN=30 $TB digest --dry-run)
 [[ $d == *"ジョブ allbusy が、宛先の作業中(exit 10)で 55 分送れていない(その間 6 回とも待ち)"* ]] && ok "schedwatch: long wait is reported" || { ng "schedwatch: long wait is reported"; echo "   actual: $d"; }
 [[ $d != *"busyok が、宛先の作業中"* ]] && ok "schedwatch: wait ends after a successful run" || ng "schedwatch: wait ends after a successful run"
 eq "schedwatch: wait_max_min=0 reports no wait" "$(TB_SCHEDWATCH_WAIT_MAX_MIN=0 $TB digest --dry-run | grep -c '宛先の作業中(exit 10)で')" "0"
+d=$(TB_SCHEDWATCH_WAIT_MAX_MIN=030 $TB digest --dry-run 2>&1)
+[[ $d == *"ジョブ allbusy が、宛先の作業中(exit 10)で 55 分送れていない"* ]] && ok "schedwatch: leading-zero setting is read as decimal" || { ng "schedwatch: leading-zero setting is read as decimal"; echo "   actual: $d"; }
+eq "schedwatch: setting 08 is accepted" "$(TB_SCHEDWATCH_FAIL_RATE_PCT=08 rc $TB digest --dry-run)" "0"
 TB_SCHEDWATCH_WAIT_MAX_MIN=30 $TB digest >/dev/null
 eq "schedwatch: wait observation recorded once" "$(ssql "SELECT COUNT(*) FROM observations WHERE kind='schedwait';")" "1"
 lgx allbusy 1 ran 0

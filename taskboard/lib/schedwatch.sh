@@ -119,6 +119,9 @@ collect_sched_obs() {
   wait_max=$(sw_cfg wait_max_min 180)
   [[ $off_min =~ ^[0-9]+$ && $stale_min =~ ^[0-9]+$ && $fail_win =~ ^[0-9]+$ && $fail_runs =~ ^[0-9]+$ && $fail_pct =~ ^[0-9]+$ && $wait_max =~ ^[0-9]+$ ]] \
     || usage "sched-watch.conf の disabled_min / watch_stale_min / fail_window_min / fail_min_runs / fail_rate_pct / wait_max_min は 0 以上の整数"
+  # 先頭が 0 の値(08 など)を算術で 8 進数として読まないよう、10 進数にそろえる
+  off_min=$((10#$off_min)); stale_min=$((10#$stale_min)); fail_win=$((10#$fail_win))
+  fail_runs=$((10#$fail_runs)); fail_pct=$((10#$fail_pct)); wait_max=$((10#$wait_max))
   local now watchers conf job cfg log sum w is_watch enabled start end days tz dnum sec ws we ref key cur=""
   now=$(sw_now); watchers=$(limit_get watchers 2>/dev/null || true)
   for conf in "$SW_DIR"/jobs/*.conf; do
