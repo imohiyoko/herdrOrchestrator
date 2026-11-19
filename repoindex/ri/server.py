@@ -7,7 +7,7 @@ agent ごとに 1 プロセスを stdio で起動する形。DB は読み取り�
 import json
 import sys
 
-from . import read, store
+from . import read, rollout, store
 
 PROTOCOL = "2024-11-05"
 TOOLS = [
@@ -42,6 +42,7 @@ TOOLS = [
 def _call(name, args):
     con = store.connect_ro()
     try:
+        rollout.require(con, 2, "読み取りの口")
         if name == "repoindex_search":
             return read.search(con, args.get("query"), args.get("repo"), args.get("limit"))
         if name == "repoindex_get":

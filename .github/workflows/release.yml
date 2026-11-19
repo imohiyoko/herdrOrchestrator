@@ -1,0 +1,32 @@
+name: release
+# タグ v* を push したときだけ動く。公開の認証(contents: write)を持つのはこのジョブだけ(ADR 0001 の L0、ADR 0002)
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: read
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write       # GitHub Releases に置く
+      id-token: write       # ビルドの来歴の証明
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # GoReleaser が変更履歴をタグ間で作る
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test ./...
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-checksums: dist/checksums.txt

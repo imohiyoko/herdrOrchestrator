@@ -140,9 +140,44 @@ repoindex/bin/repoindex rejections [--repo R]      # 落ちた要約の一覧(�
 
 元に戻す(安全な側): 保存を止める(`put` / 更新を動かさない)か、`purge --yes` でデータを消す。
 
+## 段階的な導入(#110)
+
+段階は人が決め、変えるたびに **判断した人と測った値** が `stages` に残る(測った値の無い変更は受け付けない)。どの段階にも戻せる。
+
+| 段階 | できること | 次へ進む条件(人が判断) |
+|---|---|---|
+| 0 | 何もしない。測る値を決め、既存の道具(コード検索・言語サーバー・リポジトリのホストの CLI)だけで基準を測る | 測る値の合意 |
+| 1 | `repo-add`(1 つ、`--granularity dir` だけ)・`update`・`query` | 検査のテストがすべて通る・落ちる割合が許せる |
+| 2 | 読み取りの口 `serve`(専用の読み取り役の agent はここで作る)。`--granularity file` | 基準より速く、見落としが少ない。stale を頼った回数が少ない |
+| 3 | 2 つ目のリポジトリ。定期更新の登録(`job register`) | 更新が速い・stale の見落としが無い |
+| 4 | 採用・拡大を決める(制限なし) | 上の測る値 |
+
+```
+repoindex/bin/repoindex stage show
+repoindex/bin/repoindex stage set <0-4> --by <人> --measures '{"time_to_answer_min": 12, "missed_items": 3}' [--note ...]
+repoindex/bin/repoindex measures [--repo R]    # 索引が数えられる値
+```
+
+測る値: 答えるまでの時間・見落とし・要約の誤り率(抜き取って元ソースと比べる)・stale を頼った回数(ここまでは人が測る)と、
+更新の回数と時間・検査で落ちた回数・作り直しで通った数・試行の上限に達した数(`measures` が `runs` / `rejections` から数える)。
+原則: まず「何も悪くならない」ことを確かめる。
+
+### 定期更新(承認済みテンプレートだけ)
+
+`repoindex job register`(段階 3 から)は、[`jobs/update.conf.template`](jobs/update.conf.template) を
+[`jobs/allowlist.conf`](jobs/allowlist.conf) の sha256 と突き合わせ、合うときだけ `scheduler/jobs/repoindex-update.conf` を書き、
+scheduler の `gen-plist.sh` → `install.sh install` で登録する(人がインストーラを動かさなくてよい)。
+
+- 決まったコマンド(`update --all`、変更が無ければ `GATE` の `update --all --check` で止まる)・決まった間隔(60 分)・決まった場所だけ。
+- テンプレートが書き換えられて hash が合わない・既存の登録がテンプレートと違うときは、登録も上書きもせず `refused` を残して止まる(人が確かめる)。
+- 誰が・いつ・どの hash で登録 / 解除したかは `job_log`。`repoindex job status` で見る。
+- 外すのは `repoindex job remove`(1 コマンド)。段階を 3 より下に戻す・`purge` するときは自動で外す。
+- `allowlist.conf` とテンプレートの変更は、人のレビュー(PR)を通す。それが一度きりの承認になる。
+- scheduler から動くときの要約のコマンドは `<データの場所>/settings.conf`(`REPOINDEX_SUMMARIZER=...` などの決まったキーだけを読む)。
+
 ## 元に戻す
 
-`repoindex purge --yes`(データのディレクトリごと消す)。ほかの部品は何も依存していない。モジュールごと外すなら、このディレクトリも消す。
+`repoindex purge --yes`(定期更新の登録を外し、データのディレクトリごと消す)。1 つのリポジトリだけなら `repo-remove`。ほかの部品は何も依存していない。モジュールごと外すなら、このディレクトリも消す。
 
 ## テスト
 

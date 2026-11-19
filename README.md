@@ -21,6 +21,7 @@ conductor  <--- reports ---  workers (herdr panes)
 | [`herdr-up.sh`](herdr-up.sh) | Creates workspaces and starts agents from a preset |
 | [`conductor/`](conductor/README.md) | Description of the conductor role |
 | [`roles/`](roles/README.md) | Role files handed to each agent on startup / after compact (SessionStart hook), maintained by the HR agent |
+| [`cmd/herdrctl/`](cmd/herdrctl/main.go) | 1 つのバイナリ `herdrctl`(仮称)。bash と Python の部品を順に移していく先([ADR 0002](docs/adr/0002-services-and-binary-distribution.md))。今は `version` だけ (Go) |
 | [`lib/`](lib/herdr-env.sh) | Defaults shared by every component (repo root, DB path, herdr binary, schema dir), in bash and Python |
 | [`setup/`](setup/README.md) | Setup agent (`./herdr-up.sh setup`) that walks you through the setup and asks before writing any settings, plus a read-only doctor `setup/check.sh` |
 | [`repoindex/`](repoindex/README.md) | Optional (opt-in) module: a local index of per-repository summaries with its own SQLite database (outside the checkout, `0700`/`0600`) and a read-only MCP tool interface. The core never calls it |
@@ -44,6 +45,18 @@ bash repoindex/tests/run.sh
 Tests use fake `herdr` binaries and do not touch a real herdr, launchd, or the network. Runtime state (`data/`, `run/`, `logs/`, `generated/`) is git-ignored.
 
 Copy `scheduler/jobs/*.conf.example` to `*.conf` and adjust before use, or start the setup agent with `./herdr-up.sh setup` and let it guide you. `bash setup/check.sh` shows what is installed and what is missing.
+
+## Release
+
+`herdrctl` は macOS・Windows・Linux(各 amd64 / arm64)向けにビルドして GitHub Releases に置く。`v*` のタグを push すると `.github/workflows/release.yml` が GoReleaser で作り、`checksums.txt` とビルドの来歴の証明を付ける。
+
+```
+go test ./...                          # 手元のテスト
+go run ./cmd/herdrctl version
+git tag v0.1.0 && git push origin v0.1.0   # リリース(タグは人が打つ)
+```
+
+バイナリはまだ署名していない。macOS では初回に「開発元を確認できない」と出るので、Finder で右クリック →「開く」か `xattr -d com.apple.quarantine ./herdrctl`。Windows では SmartScreen が出るので「詳細情報」→「実行」。
 
 ## License
 
