@@ -3,7 +3,7 @@
 #
 # - 読み取り専用。書くのは notify_seen の自分の行(キーが reminders: で始まるもの)だけ
 # - 材料: 未対応の質問・ブロック報告 / 承認待ち(送信・agent 操作・代行依頼・アラートの解析役)/ 宛先に届いていない送信 /
-#         停滞したタスク / 期限(tasks.due 列があれば。無くても期限ファイル)/
+#         停滞したタスク / 期限(tasks.due 列があれば。無くても期限ファイル)/ 未読の保留メッセージ(inbox 表があれば)/
 #         許可リストのリポジトリの、レビュー待ちの PR(gh で読むだけ)
 # - 本文は出さない。題(短い見出し)と参照 ID だけ。出す前に秘密らしい値を探して伏せる(notify と同じ規則)
 # - 出力は stdout と、Web UI が読む行(notify_seen の reminders:last)。agent にも外にも送らない
@@ -57,6 +57,11 @@ reminders_collect_db() {
         '期限: ' || id || ' ' || title, COALESCE(owner_agent, '人'), due, id, created_at
       FROM tasks WHERE status != 'done' AND due IS NOT NULL AND due != ''
         AND date(due) <= date($t, '+$REMINDERS_DUE_DAYS days')")
+  fi
+  if reminders_has_col inbox recipient; then   # 保留した送信の受信箱(別の変更で足す)。未読だけ。本文は出さない
+    parts+=("SELECT 4, 'inbox:'||id, 'unread', '未読の保留メッセージ: ' || from_name || ' → ' || recipient || ' (' || kind || ')',
+        recipient, '', 'I-'||id, created_at
+      FROM main.inbox WHERE herdr_session=$SQS AND read_at IS NULL")
   fi
   local all="" s
   for s in "${parts[@]}"; do all+="${all:+ UNION ALL }$s"; done
