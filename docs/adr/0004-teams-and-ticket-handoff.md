@@ -42,14 +42,14 @@
 |---|---|---|---|
 | **A. agent の運用** | agents, spawn, limits, models, roles, send, slash, compact, shed | 循環あり(agents ↔ limits ↔ spawn、agents ↔ roles、agents ↔ send) | `agents` 表を 17 本が直接読み書きしている。作成・停止・上限・モデル・役割・送信が互いを呼ぶ |
 | **B. チケットと通知** | tasks, comments, notify, notifyrules, alerts, reminders, dbimport, prqueue, risk | 循環あり(tasks → notify → tasks、comments ↔ notify) | 各機能が `notify_hook_*` を決め打ちで呼ぶ。ADR 0003 でイベントの表はできたが、呼び出しはまだ直接 |
-| 集計役 | digest(7 本)、schedwatch(3 本) | 外へ出るだけ | いろいろな表を読んでまとめる。読むだけなので、読み取りの口を通せば独立できる |
-| **独立している** | activity, proxy, whoami, schedjobs, conv / convlearn / convstage, gate, handoff, review, repoindex(別ディレクトリ) | 0〜1 本 | すぐにモジュールとして切り出せる |
+| 集計役 | digest(7 本)、schedwatch(3 本) | 外へ出るだけ | いろいろな表を読んでまとめる。読むだけなので、store の読み取り関数を通せば独立できる |
+| **独立している** | activity, proxy, whoami, schedjobs, conv / convlearn / convstage, gate, handoff, review、要約の索引(任意。別ディレクトリ) | 0〜1 本 | すぐにモジュールとして切り出せる |
 
 ### 3. 表の共有
 
 | 表 | 直接触るファイルの数 | 備考 |
 |---|---|---|
-| `agents` | 17 | 塊 A の根。読み取りの口(`agent_*` 関数)を通すのは一部だけ |
+| `agents` | 17 | 塊 A の根。読み取り関数(`agent_*`)を通すのは一部だけ |
 | `tasks` | 12 | 塊 B の根 |
 | `comments` / `agent_ops` | 8 / 8 | |
 | `alerts`(互換ビュー) / `outbox` / `task_events` | 7 / 6 / 6 | |
@@ -89,7 +89,7 @@
 │ 機能のモジュール(互いを呼ばない。チケットのイベントでつながる) │
 │  agents(運用) / alerts / proposals・review / prqueue / gate │
 │  conversation / reminders / digest / scheduler / webui      │
-│  repoindex(任意)                                           │
+│  要約の索引(任意)                                         │
 ├──────────────────────────────────────────────────────────────┤
 │ チケットの通り道(ticket bus)                                │
 │  tasks・task_links・task_events・comments / teams / notify   │
@@ -102,8 +102,8 @@
 
 - **土台**は機能を知らない。誰でも呼べる。
 - **チケットの通り道**は、チケットの作成・変更と、その結果のイベントだけを持つ。機能は「イベントを出す」「イベントを受ける」のどちらかで参加する。今の `notify_hook_comment` などの決め打ちの呼び出しは、「イベントを残す → 通知の規則が拾う」に置き換える(ADR 0003 の段 2 の延長)。
-- **機能のモジュール**は、他のモジュールの関数も表も直接触らない。他の機能の状態が要るときは、その機能が出す読み取りの口(関数か、読み取り用のビュー)を使う。
-- `tb` は「モジュールの一覧」を読んで読み込む。任意のモジュール(会話、repoindex、prqueue、gate など)は設定で外せる(`modules` の設定。既定は今と同じく全部)。
+- **機能のモジュール**は、他のモジュールの関数も表も直接触らない。他の機能の状態が要るときは、**土台の store に置いた読み取り関数**を使う(例: `store_agent_row`、`store_alerts_open`)。読み取り関数はその表を持つ機能が書いて store に置き、SQL を書くのは store だけにする(ADR 0002 と同じ)。こうすると、読み取りも「機能 → 土台」の向きになり、依存の検査の例外は要らない。
+- `tb` は「モジュールの一覧」を読んで読み込む。任意のモジュール(会話、要約の索引、prqueue、gate など)は設定で外せる(`modules` の設定。既定は今と同じく全部)。
 - CI に**依存の検査**を足す: 許した向き(機能 → 通り道 → 土台)以外の呼び出しや、他のモジュールの表への直接の SQL があれば落とす。今ある違反は一覧(許容リスト)に入れておき、減らす方向にだけ動かす。
 
 ### 2. チーム
@@ -149,6 +149,7 @@ roles       = worker=web-worker               # このチームの worker には
 
 - `tb ask <チーム> "<題>"`: チームの受付にチケットを作る。`--parent` を付けると親と `blocks` でつなぎ、親は子が全部終わるまで done にできない(上書きは人だけ)。
 - **連絡の向きはイベントで決まる**: 受付に入った → lead に、担当が決まった → 担当に、子が done / blocked / question → 親の担当に。どれも通知の規則の既定の行として持ち、チームごとに上書きできる。
+- **親に担当がいないとき**(受付に入ったままの親に子を付けた場合など)は、親のチームの lead に送る。親にチームも無ければ、親を作った者(`created` のイベントの actor。人なら Web UI)に送る。後で担当が決まっても送り直さない(子の状態は親のチケットの詳細で見える)。
 - 依頼する側は相手の agent 名を知らなくてよい。チームの中の割り振りは lead が決める(または `intake` に `auto_assign = round-robin` を書いたら tb が決める)。
 - `tb send` は「指示・確認の連絡」として残す。仕事を頼むのに `tb send` を使っていたところ(指揮役の役割の文面)は `tb ask` / `tb assign` に書き換える。
 - 権限: 他のチームに頼めるかは routes と同じ書式(`@worker -> team:web`)で決める。書いていなければ lead どうしだけが頼める。
@@ -166,7 +167,7 @@ roles       = worker=web-worker               # このチームの worker には
 | 2 | 塊 B をほどく: `tasks` / `comments` から `notify_hook_*` を直接呼ぶのをやめ、イベントを残すだけにする。通知は規則の既定の行で今と同じに出す | なし | 中 |
 | 3 | チーム: `team:<名前>` の設定、`agents.team` と `tasks.team`、決まり方(agent > チーム > 全体)を models / limits / spawn / routes / notify / roles に通す | 023(列 2 つ) | 中 |
 | 4 | チケットで頼む: `tb ask` / `tb assign`、親子の `blocks`、届け先 `team-lead` / `parent-owner` | なし(`task_links` を使う) | 中 |
-| 5 | 塊 A をほどく: `agents` 表を直接触るのを agents モジュールの口に寄せる(17 本 → 数本)。Web UI の SQL を読み取り用のビューに寄せる | ビュー | 大 |
+| 5 | 塊 A をほどく: `agents` 表を直接触るのを、読み取りは store の読み取り関数、書き込みは agents モジュールのコマンドに寄せる(17 本 → 数本)。Web UI の SQL を store の読み取り関数に寄せる(Web UI は Go への移行で同じバイナリに入るので、そこで store を直接使う。それまでは Python 側に読み取り関数の層を 1 つ置く) | なし | 大 |
 
 - ADR 0002 の手順 3(コマンドを 1 つずつ Go に移す)は、段 0・1 のあとに進めると、移す単位がこの ADR のモジュールと一致する。段 2 以降と Go への移行は並行できる(同じモジュールを同時に触らない)。
 - スキーマの番号は、マージの時点の main の次の空き番号にする。
