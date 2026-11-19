@@ -85,8 +85,23 @@ tb update T-web-002 --add-label frontend --remove-label ui --priority highest
 - **外部リンク** `--ref [種類=]URL`: Slack のスレッド・PR・ドキュメントなどの URL を何個でも(`tb update --add-ref` / `--remove-ref <URL>` で付け外し)。種類を省くと URL から `slack` / `github` / `link` を決める。http(s) の URL だけ。`tb show` と Web UI の詳細(押せるリンク)に出る。
 - **担当の agent**: 既存の `--owner`(agent 名)と `--session`(その agent の会話 ID)で紐付く。`tb list --owner <agent>` で絞り込める。
 - **リンク** `tb link <from> blocks|relates|duplicates <to>`: `blocks` は claim を止める(先行タスクが done になれば claim できる)。blocks の循環は止める。`tb show` は向きつき(`blocks` / `blocked_by` など)で出す。
-- `tb list` の既定の出力(ID 状態 担当 題)は変えていない。種別・優先度・作成・更新・ラベルは `--long`(または `--json`)で出る。
+- `tb list` の既定の出力(ID 状態 担当 題)は変えていない。種別・優先度・作成・更新・ラベル・期日は `--long`(または `--json`)で出る。
 - Web UI のタスク一覧は 種別・優先度・ラベル・作成・更新 の列と、種別・優先度・ラベルの絞り込みを持つ。ラベルを押すとそのラベルで絞り込む。
+
+### 期日(期限切れ・期限間近)
+
+```sh
+tb add -p web -t "ログ掃除" --due 2026-12-01      # 期日は日付だけ(YYYY-MM-DD)。既定は期日なし
+tb update T-web-012 --due 2026-12-15            # 変える。--due '' で外す
+tb list --overdue                               # 期日が今日より前で done でないもの
+tb list --due-within 3 --sort due --long        # 今日〜3 日後が期日で done でないもの(0 は今日だけ)。--long の最後の列が期日
+```
+
+- 期日のないタスクは期限切れにも期限間近にもならない。done のタスクも出さない。
+- 「今日」は tb を動かす端末の地方時の日付。境界の確認やテストでは `TB_TODAY=YYYY-MM-DD` で固定できる。
+- 作業タスクに紐付かない締め切り(掃除の期限など)は、担当なしのタスク(`--owner` を付けない)に `--due` を付けて置く。
+- 存在しない日付(`2026-02-30`)や形式違い(`2026/12/01`)は使い方の誤り(終了コード 2)。
+- Web UI のタスク一覧は期日の列と「期限切れ」「期限間近(N 日以内)」の絞り込み、期日の近い順の並びを持つ。期限切れは赤で出す。
 
 ## 代行依頼(権限が足りないとき)
 

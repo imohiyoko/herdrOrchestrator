@@ -656,7 +656,31 @@ check("タスク: 報告の種別ごとの件数と未対応", "progress 2" in T
 check("タスク: 題は先頭 80 文字だけ", "TITLETAIL" not in TL[2] and ("x" * 80) in TL[2] and ("x" * 100) not in TL[2])
 check("タスク: 題の HTML はエスケープ", XSS not in TL[2] and "&lt;script&gt;" in TL[2])
 _th = TL[2].split("</form>", 1)[1].split("</tr>")[0]
-check("タスク: 種別・優先度・ラベル・作成の列があり、期限の列は無い", all(x in _th for x in ("種別", "優先度", "ラベル", "作成", "更新")) and "期限" not in _th)
+check("タスク: 種別・優先度・期日・ラベル・作成の列", all(x in _th for x in ("種別", "優先度", "期日", "ラベル", "作成", "更新")))
+# 期日(015): 期限切れ / 期限間近の絞り込みと境界(昨日・今日・明日)。期日なし・done は出ない
+_today = datetime.now()
+_d = lambda n: (_today + timedelta(days=n)).strftime("%Y-%m-%d")
+_cx.execute("UPDATE tasks SET due=? WHERE id='T-1'", (_d(-1),))
+_cx.execute("UPDATE tasks SET due=? WHERE id='T-2'", (_d(0),))
+_cx.execute("UPDATE tasks SET due=? WHERE id='T-3'", (_d(1),))
+_cx.execute("UPDATE tasks SET due=? WHERE id='T-4'", (_d(-5),))   # done なので期限切れにならない
+_cx.commit()
+check("タスク: 期限切れ(昨日だけ。done と期日なしは出ない)", _ids("/tasks?due=overdue") == ["T-1"], str(_ids("/tasks?due=overdue")))
+check("タスク: 期限間近 0 日は今日だけ", _ids("/tasks?due=soon&days=0") == ["T-2"], str(_ids("/tasks?due=soon&days=0")))
+check("タスク: 期限間近 1 日は今日と明日", sorted(_ids("/tasks?due=soon&days=1")) == ["T-2", "T-3"])
+check("タスク: 期限間近の既定(3 日)", sorted(_ids("/tasks?due=soon")) == ["T-2", "T-3"])
+check("タスク: 期日の近い順(期日なしは最後)", _ids("/tasks?sort=due") == ["T-4", "T-1", "T-2", "T-3", "T-5"], str(_ids("/tasks?sort=due")))
+_TLd = cl.get("/tasks")[2]
+_t1row = re.search(r'<tr><td><a href="/tasks/T-1">.*?</tr>', _TLd, re.S).group(0)
+_t4row = re.search(r'<tr><td><a href="/tasks/T-4">.*?</tr>', _TLd, re.S).group(0)
+check("タスク: 期限切れの目印と件数", "期限切れ</span>" in _t1row and "期限切れ" not in _t4row and "期限切れ 1</span>" in _TLd and "期限間近(3 日以内)2" in _TLd)
+check("タスク詳細: 期日", "<th>期日</th><td><span class=warn>" + _d(1) + " 間近" in cl.get("/tasks/T-3")[2])
+for bad in ["due=zz", "due=soon&days=-1", "due=soon&days=9999", "days=%27%3B--"]:
+    r = cl.get("/tasks?" + bad)
+    check(f"タスク: 不正な期日の絞り込み {bad} でも 200 でエラー表示", r[0] == 200 and "class=err" in r[2] and "'--" not in r[2], str(r[0]))
+_cx.execute("UPDATE tasks SET due=NULL")
+_cx.commit()
+check("タスク: 期日が無ければ期限の件数は出ない", "期限切れ 0" not in cl.get("/tasks")[2] and _ids("/tasks?due=overdue") == [])
 # チケットの構造(014): 種別・優先度・ラベルで絞る、ラベルは押すと絞り込み、優先度順
 _cx.execute("UPDATE tasks SET type='epic', priority='high', labels='[\"ui\",\"auth\"]' WHERE id='T-2'")
 _cx.execute("UPDATE tasks SET type='story', priority='highest', labels='[\"ui\"]' WHERE id='T-3'")
