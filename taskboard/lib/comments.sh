@@ -7,7 +7,6 @@ COMMENT_KINDS="done progress question blocked"
 # すぐ送る kind。それ以外は保存だけして tb digest でまとめて送る
 IMMEDIATE_KINDS=${TB_IMMEDIATE_KINDS:-question blocked}
 
-
 deliver_comment() {  # $1=comments.id → 0 送信済み / 10 / 11
   local cid=$1 row delivered tid kind text name pane project target msg
   [[ $cid =~ ^[0-9]+$ ]] || usage "コメント ID は C-<数字>"

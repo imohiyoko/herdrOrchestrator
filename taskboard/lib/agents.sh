@@ -94,7 +94,6 @@ killable_of() {
       ELSE 'yes' END FROM agents WHERE name=$(q "$1");"
 }
 
-
 # 実行してよいか。人なら 0。agent なら approvals の agent:<op>:<名前>: allow → 0、ask → L-<n> を積んで 20
 authorize_op() {  # $1=op $2=対象 $3=引数の JSON
   requester

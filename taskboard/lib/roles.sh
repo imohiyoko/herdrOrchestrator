@@ -12,7 +12,6 @@ else ROLES_DIR=$ROLES_BASE; fi
 ROLE_MAX=${TB_ROLE_MAX:-12000}
 ROLE_FILE=""; ROLE_HASH=""; ROLE_TEXT=""
 
-
 # ---------- 役割の本文(DB の config 表。キーは role:<役割名> と role-map)----------
 # 引く順: DB のこのセッションの行 > 共通の行(*) > ROLES_DIR のファイル(roles/sessions/<セッション>/ があればそこ、無ければ roles/)。
 # 役割名は roles/<役割名>.md の名前(_common を含む)。@map は roles/map.conf(agent 名のパターン = 役割)
@@ -185,8 +184,6 @@ record_briefing() {  # session agent file hash source via
   sql "INSERT INTO main.role_briefings (herdr_session, session_id, agent, role_file, hash, source, via, created_at)
     VALUES ($SQS, $(q "$1"), $(q "$2"), NULLIF($(q "$3"),''), $(q "$4"), $(q "$5"), $(q "$6"), $(q "$(now)"));" >/dev/null
 }
-
-
 
 # SessionStart hook から呼ぶ(bin/tb-role-hook 経由)。常に終了コード 0。渡すときだけ stdout に hook 用の JSON を出す
 cmd_role-context() {
