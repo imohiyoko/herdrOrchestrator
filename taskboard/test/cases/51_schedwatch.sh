@@ -60,4 +60,39 @@ d=$(TB_SCHEDWATCH_DISABLED_MIN=60 TB_SCHEDWATCH_WATCH_STALE_MIN=999 TB_SCHEDWATC
 ssql "DELETE FROM observations;"; printf 'WINDOW=10:00-12:00\n' >>"$TB_SCHED_DIR/jobs/watchstale.conf"
 [[ $($TB digest --dry-run) != *"見張り系ジョブ watchstale"* ]] && ok "schedwatch: outside the window is not stale" || ng "schedwatch: outside the window is not stale"
 eq "schedwatch: bad config value is refused" "$(TB_SCHEDWATCH_FAIL_RATE_PCT=abc rc $TB digest --dry-run)" "2"
+# exit 10(宛先が作業中で保留)は失敗率に入れない。exit 11 などは失敗のまま(#88)
+ssql "DELETE FROM observations;"
+rm -f "$TB_SCHED_DIR"/jobs/*.conf "$TB_SCHED_DIR"/logs/*.log "$TB_SCHED_DIR"/settings/*
+# ログ 1 行(exit 付き): <job> <何分前> <action> <exit>
+lgx() { jq -nc --arg job "$1" --arg a "$3" --argjson x "$4" --argjson e $((NOW - $2 * 60 + 32400)) \
+          '{ts:($e|strftime("%Y-%m-%dT%H:%M:%S+0900")),job:$job,action:$a,reason:"exit \($x)",exit:$x}' >>"$TB_SCHED_DIR/logs/$1.log"; }
+mkjob allbusy 1 other;  for m in 55 45 35 25 15 5; do lgx allbusy $m failed 10; done
+mkjob busyok 1 other;   for m in 55 45 35; do lgx busyok $m failed 10; done; for m in 25 15 5; do lgx busyok $m ran 0; done
+mkjob busy11 1 other;   for m in 55 50 45; do lgx busy11 $m failed 10; done; for m in 40 35 30 25 20; do lgx busy11 $m failed 11; done; lgx busy11 10 ran 0
+d=$($TB digest --dry-run)
+[[ $d != *"ジョブ allbusy の失敗が多い"* ]] && ok "schedwatch: all exit 10 is not a failure" || { ng "schedwatch: all exit 10 is not a failure"; echo "   actual: $d"; }
+[[ $d != *"ジョブ busyok "* ]] && ok "schedwatch: exit 10 mixed with exit 0 is not a failure" || { ng "schedwatch: exit 10 mixed with exit 0 is not a failure"; echo "   actual: $d"; }
+want="ジョブ busy11 の失敗が多い(直近 60 分で 6 回実行して failed 5 回 = 83%。しきい値 50%。ほかに宛先の作業中で待った回(exit 10)が 3 回あり、これは数えていない"
+[[ $d == *"$want"* ]] && ok "schedwatch: exit 11 still counts, exit 10 is shown as waiting" || { ng "schedwatch: exit 11 still counts, exit 10 is shown as waiting"; echo "   actual: $d"; }
+# 分母から外すので、exit 10 を足しても fail_min_runs に届かなければ出さない
+mkjob busyfew 1 other;  for m in 55 50 45 40; do lgx busyfew $m failed 10; done; for m in 30 20; do lgx busyfew $m failed 11; done
+[[ $($TB digest --dry-run) != *"ジョブ busyfew の失敗"* ]] && ok "schedwatch: exit 10 does not count toward fail_min_runs" || ng "schedwatch: exit 10 does not count toward fail_min_runs"
+# 待ちが長い: 既定(180 分)では 55 分は出さない。しきい値を下げると出す。送れたら(ran)待ちは終わる
+[[ $d != *"allbusy が、宛先の作業中"* ]] && ok "schedwatch: short wait is not reported" || ng "schedwatch: short wait is not reported"
+d=$(TB_SCHEDWATCH_WAIT_MAX_MIN=30 $TB digest --dry-run)
+[[ $d == *"ジョブ allbusy が、宛先の作業中(exit 10)で 55 分送れていない(その間 6 回とも待ち)"* ]] && ok "schedwatch: long wait is reported" || { ng "schedwatch: long wait is reported"; echo "   actual: $d"; }
+[[ $d != *"busyok が、宛先の作業中"* ]] && ok "schedwatch: wait ends after a successful run" || ng "schedwatch: wait ends after a successful run"
+eq "schedwatch: wait_max_min=0 reports no wait" "$(TB_SCHEDWATCH_WAIT_MAX_MIN=0 $TB digest --dry-run | grep -c '宛先の作業中(exit 10)で')" "0"
+d=$(TB_SCHEDWATCH_WAIT_MAX_MIN=030 $TB digest --dry-run 2>&1)
+[[ $d == *"ジョブ allbusy が、宛先の作業中(exit 10)で 55 分送れていない"* ]] && ok "schedwatch: leading-zero setting is read as decimal" || { ng "schedwatch: leading-zero setting is read as decimal"; echo "   actual: $d"; }
+eq "schedwatch: setting 08 is accepted" "$(TB_SCHEDWATCH_FAIL_RATE_PCT=08 rc $TB digest --dry-run)" "0"
+TB_SCHEDWATCH_WAIT_MAX_MIN=30 $TB digest >/dev/null
+eq "schedwatch: wait observation recorded once" "$(ssql "SELECT COUNT(*) FROM observations WHERE kind='schedwait';")" "1"
+lgx allbusy 1 ran 0
+TB_SCHEDWATCH_WAIT_MAX_MIN=30 $TB digest >/dev/null
+eq "schedwatch: wait record cleared after delivery" "$(ssql "SELECT COUNT(*) FROM observations WHERE kind='schedwait';")" "0"
+# 待ちのあとに止めて(skipped_disabled)、次の実行の前に有効へ戻したら、前の待ちから数え直さない
+mkjob waitoff 1 other; for m in 55 45; do lgx waitoff $m failed 10; done; lg waitoff 40 skipped_disabled
+[[ $(TB_SCHEDWATCH_WAIT_MAX_MIN=30 $TB digest --dry-run) != *"waitoff が、宛先の作業中"* ]] && ok "schedwatch: disabled period ends the wait" || ng "schedwatch: disabled period ends the wait"
+eq "schedwatch: bad wait_max_min is refused" "$(TB_SCHEDWATCH_WAIT_MAX_MIN=x rc $TB digest --dry-run)" "2"
 unset TB_SCHED_DIR TB_SCHEDWATCH_NOW TB_LIMIT_WATCHERS TB_SCHEDWATCH_CONF
