@@ -124,3 +124,16 @@ eq "tickets(race): only the reverse link exists" "$(sqlite3 "$TB_DB" "SELECT fro
 $TB update "$re" --add-label keep >/dev/null
 PATH="$TMP/race-bin:$PATH" RACE_MARK=$TMP/race4 RACE_SQL="UPDATE tasks SET labels='[\"keep\",\"other\"]' WHERE id='$re'" $TB update "$re" --add-label mine >/dev/null
 eq "tickets(race): concurrent label add is kept" "$($TB show "$re" | jq -c .labels)" '["keep","mine","other"]'
+
+# --- 外部リンク(Slack・PR・ドキュメントの URL)
+x1=$($TB add -p tk7 -t refs --ref https://acme.slack.com/archives/C1/p123 --ref pr=https://github.com/o/r/pull/1 --ref https://example.invalid/doc)
+eq "tickets: refs stored with kinds" "$($TB show "$x1" | jq -c '[.refs[] | .kind]')" '["slack","pr","link"]'
+eq "tickets: refs keep url" "$($TB show "$x1" | jq -r '.refs[0].url')" "https://acme.slack.com/archives/C1/p123"
+eq "tickets: github url gets github kind" "$($TB show "$($TB add -p tk7 -t g --ref https://github.com/o/r/issues/2)" | jq -r '.refs[0].kind')" "github"
+eq "tickets: bad ref url" "$(rc $TB add -p tk7 -t x --ref 'javascript:alert(1)')" "2"
+eq "tickets: ref url with quote" "$(rc $TB add -p tk7 -t x --ref 'https://a/"b')" "2"
+eq "tickets: bad ref kind" "$(rc $TB add -p tk7 -t x --ref 'Bad=https://a/b')" "2"
+eq "tickets: duplicate ref url kept once" "$($TB show "$($TB add -p tk7 -t d --ref https://a/b --ref doc=https://a/b)" | jq -c '.refs')" '[{"kind":"link","url":"https://a/b"}]'
+$TB update "$x1" --add-ref doc=https://example.invalid/doc --remove-ref https://github.com/o/r/pull/1 >/dev/null
+eq "tickets: add-ref replaces kind, remove-ref by url" "$($TB show "$x1" | jq -c '[.refs[] | .kind]')" '["slack","doc"]'
+eq "tickets: list --json refs are arrays" "$($TB list -p tk7 --json | jq -sc 'map(select(.id=="'"$x1"'"))[0].refs | length')" "2"

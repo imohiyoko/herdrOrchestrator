@@ -675,7 +675,13 @@ _TD3 = cl.get("/tasks/T-3")[2]
 check("タスク詳細: 種別・優先度・ラベル・リンク", "<th>種別</th><td>story</td>" in _TD3 and 'href="/tasks?label=ui"' in _TD3
       and "<h2>リンク</h2>" in _TD3 and "blocked by" in _TD3 and 'href="/tasks/T-5"' in _TD3)
 check("タスク詳細: リンクは相手側にも出る", "<h2>リンク</h2>" in cl.get("/tasks/T-5")[2] and "blocks" in cl.get("/tasks/T-5")[2])
-_cx.execute("UPDATE tasks SET type='task', priority='medium', labels='[]'")
+_cx.execute("UPDATE tasks SET refs=? WHERE id='T-3'", (json.dumps([{"kind": "slack", "url": "https://acme.slack.com/archives/C1/p1"},
+                                                                  {"kind": "x", "url": "javascript:alert(1)"}]),))
+_cx.commit()
+_TD3 = cl.get("/tasks/T-3")[2]
+check("タスク詳細: 外部リンク(http(s) だけをリンクに)", 'href="https://acme.slack.com/archives/C1/p1"' in _TD3 and 'rel="noopener noreferrer"' in _TD3
+      and 'href="javascript' not in _TD3 and "javascript:alert(1)" in _TD3)
+_cx.execute("UPDATE tasks SET type='task', priority='medium', labels='[]', refs='[]'")
 _cx.execute("DELETE FROM task_links")
 _cx.commit()
 for bad in ["status=zzz", "owner=a%20b%3Cx", "sort=zz", "project=%27%3B--", "unreported=%27"]:

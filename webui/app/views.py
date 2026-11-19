@@ -540,6 +540,23 @@ def labels_html(raw, href=None):
     return " ".join(f'<a href="{e(href(label=x))}"><code>{e(x)}</code></a>' for x in labs)
 
 
+REF_URL_RE = re.compile(r"https?://[^\s\"'<>]{1,500}")
+
+
+def refs_html(raw):
+    """外部リンク(Slack・PR など)。http(s) の URL だけをリンクにし、それ以外は文字として出す。"""
+    out = []
+    for r in safe_json_list(raw):
+        if not isinstance(r, dict):
+            continue
+        kind, url = str(r.get("kind") or "link"), str(r.get("url") or "")
+        if REF_URL_RE.fullmatch(url):
+            out.append(f'<code>{e(kind)}</code> <a href="{e(url)}" rel="noopener noreferrer" target="_blank">{e(_head(url, TITLE_MAX))}</a>')
+        else:
+            out.append(f"<code>{e(kind)}</code> {e(_head(url, TITLE_MAX))}")
+    return "<br>".join(out) or "-"
+
+
 def db_conn_ok():
     c = db_conn()
     if c is None:
@@ -602,6 +619,8 @@ def page_task(tid, qs=None, ctx=None):
         info[3:3] = [("種別", e(t.get("type"))), ("優先度", priority_html(t.get("priority"))),
                      ("ラベル", labels_html(t.get("labels"), lambda label: "/tasks?" + urlencode({"label": label})))]
         info.append(("説明", f'<pre>{e(_head(t.get("description"), REPORT_MAX))}</pre>' if t.get("description") else "-"))
+    if "refs" in t:
+        info.append(("外部リンク", refs_html(t.get("refs"))))
     info.append(("summary", e(_head(t.get("summary"), REPORT_MAX))))
     info.append(("note", e(_head(t.get("note"), REPORT_MAX))))
     sh = task_stale(t)

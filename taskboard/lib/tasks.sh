@@ -17,6 +17,25 @@ labels_json() {
   done
   jq -nc '$ARGS.positional | unique' --args ${out[@]+"${out[@]}"}
 }
+# 引数(<種類>=<URL> か URL)→ 外部リンクの JSON 配列 [{kind,url}](url で重複なし、先に書いたものを残す)
+refs_json() {
+  local a kind url out=()
+  for a in "$@"; do
+    [[ -n ${a//[[:space:]]/} ]] || continue
+    if [[ $a =~ ^([a-z][a-z0-9_-]*)=(.*)$ ]]; then kind=${BASH_REMATCH[1]}; url=${BASH_REMATCH[2]}
+    else
+      url=$a
+      case $url in
+        https://*slack.com/*) kind=slack;; https://github.com/*) kind=github;; *) kind=link;;
+      esac
+    fi
+    valid_ref_kind "$kind"; valid_ref_url "$url"
+    out+=("$kind" "$url")
+  done
+  jq -nc '[$ARGS.positional as $a | range(0; $a|length; 2) | {kind: $a[.], url: $a[.+1]}]
+          | reduce .[] as $r ([]; if any(.[]; .url == $r.url) then . else . + [$r] end)' \
+     --args ${out[@]+"${out[@]}"}
+}
 # 種別と親の組み合わせ。$1=種別 $2=親の ID(無ければ空) $3=自分の ID(add では空)
 # epic は親を持たない / subtask は親が必須で、親は epic でも subtask でもない / subtask は誰の親にもなれない
 check_hierarchy() {
@@ -66,7 +85,7 @@ actor_name() {
 
 # ---------- add ----------
 cmd_add() {
-  local project="" title="" parent="" owner="" session="" account="" type=task priority=medium desc="" labs=()
+  local project="" title="" parent="" owner="" session="" account="" type=task priority=medium desc="" labs=() refs=()
   while [[ $# -gt 0 ]]; do
     case $1 in
       -p|--project) need_arg "$@"; project=$2; shift 2;;
@@ -75,6 +94,7 @@ cmd_add() {
       --priority)   need_arg "$@"; valid_priority "$2"; priority=$2; shift 2;;
       -l|--label)   need_arg "$@"; labs+=("$2"); shift 2;;
       --desc|--description) need_arg "$@"; desc=$2; shift 2;;
+      --ref)        need_arg "$@"; refs+=("$2"); shift 2;;
       --parent)     need_arg "$@"; parent=$2; shift 2;;
       --owner)      need_arg "$@"; owner=$2; shift 2;;
       --session)    need_arg "$@"; session=$2; shift 2;;
@@ -87,14 +107,14 @@ cmd_add() {
   blank "$title" && usage "add: -t <title> が必要です"
   if [[ -n $parent ]]; then valid_id "$parent"; require_task "$parent" >/dev/null; fi
   check_hierarchy "$type" "$parent"
-  local lj; lj=$(labels_json ${labs[@]+"${labs[@]}"})
+  local lj rj; lj=$(labels_json ${labs[@]+"${labs[@]}"}); rj=$(refs_json ${refs[@]+"${refs[@]}"})
   local n=$(now) p out; p=$(q "$project")
   # 採番と挿入を 1 文で行い、同時 add でも重複しないようにする。親の種別の規則も同じ文で確かめる(HAVING)
   # ID は DB 全体で一意(採番は全セッションの行を見る。ここだけ herdr_session で絞らない)
-  out=$(sql "BEGIN IMMEDIATE; INSERT INTO main.tasks (id, project, title, owner_agent, session_id, account, parent_id, type, priority, labels, description, created_at, updated_at, herdr_session)
+  out=$(sql "BEGIN IMMEDIATE; INSERT INTO main.tasks (id, project, title, owner_agent, session_id, account, parent_id, type, priority, labels, description, refs, created_at, updated_at, herdr_session)
        SELECT 'T-'||$p||'-'||printf('%03d', COALESCE(MAX(CAST(substr(id, length($p)+4) AS INTEGER)),0)+1),
               $p, $(q "$title"), NULLIF($(q "$owner"),''), NULLIF($(q "$session"),''), NULLIF($(q "$account"),''),
-              NULLIF($(q "$parent"),''), $(q "$type"), $(q "$priority"), $(q "$lj"), NULLIF($(q "$desc"),''),
+              NULLIF($(q "$parent"),''), $(q "$type"), $(q "$priority"), $(q "$lj"), NULLIF($(q "$desc"),''), $(q "$rj"),
               $(q "$n"), $(q "$n"), $SQS
        FROM main.tasks WHERE project=$p HAVING $(hierarchy_ok_sql "$type" "$parent");
        SELECT CASE WHEN changes()=1 THEN (SELECT id FROM main.tasks WHERE rowid=last_insert_rowid()) ELSE '' END;   -- rowid は表のもの(ビューには無い)
@@ -137,7 +157,7 @@ cmd_list() {
     *) usage "list: --sort は priority / updated / created / id のどれか: $sort";;
   esac
   if ((json)); then
-    sql -json "SELECT * FROM tasks WHERE ($where) ORDER BY $order;" | jq -c '(. // [])[] | .deliverables |= fromjson | .labels |= fromjson'
+    sql -json "SELECT * FROM tasks WHERE ($where) ORDER BY $order;" | jq -c '(. // [])[] | .deliverables |= fromjson | .labels |= fromjson | .refs |= fromjson'
   elif ((long)); then
     sql -separator $'\t' "SELECT id, status, type, priority, COALESCE(owner_agent,'-'), created_at, updated_at,
         COALESCE((SELECT group_concat(value, ',') FROM json_each(tasks.labels)), '-'), replace(title, char(10), ' ')
@@ -169,7 +189,7 @@ cmd_show() {
     act=$(sql -json "$(act_select 10) WHERE session_id=$(q "$sid");" | jq -c '.[0] // null')
   fi
   local links; links=$(task_links_json "$1")
-  jq --argjson a "${act:-null}" --argjson l "$links" '.deliverables |= fromjson | .labels |= fromjson | .activity = $a | .links = $l' <<<"$row"
+  jq --argjson a "${act:-null}" --argjson l "$links" '.deliverables |= fromjson | .labels |= fromjson | .refs |= fromjson | .activity = $a | .links = $l' <<<"$row"
 }
 
 # ---------- claim ----------
@@ -205,7 +225,7 @@ cmd_update() {
   [[ $# -ge 1 ]] || usage "update <id> [--status S] [--title T] [--owner N] [--session S] [--account A] [--parent ID] [--type T] [--priority P] [--desc D] [--label L ...] [--add-label L] [--remove-label L]"
   local id=$1; shift
   valid_id "$id"
-  local sets=() row cur ntype="" nparent="" setlab=() addlab=() rmlab=() relabel=0
+  local sets=() row cur ntype="" nparent="" setlab=() addlab=() rmlab=() relabel=0 addref=() rmref=()
   while [[ $# -gt 0 ]]; do
     case $1 in
       --status)  need_arg "$@"; valid_status "$2"
@@ -224,10 +244,12 @@ cmd_update() {
       -l|--label)       need_arg "$@"; relabel=1; setlab+=("$2"); shift 2;;   # 置き換え(--label '' で全部外す)
       --add-label)      need_arg "$@"; addlab+=("$2"); shift 2;;
       --remove-label)   need_arg "$@"; rmlab+=("$2"); shift 2;;
+      --add-ref)        need_arg "$@"; addref+=("$2"); shift 2;;      # <種類>=<URL> か URL
+      --remove-ref)     need_arg "$@"; valid_ref_url "$2"; rmref+=("$2"); shift 2;;   # URL で外す
       *) usage "update: 不明な引数 $1";;
     esac
   done
-  [[ ${#sets[@]} -gt 0 || $relabel == 1 || ${#addlab[@]} -gt 0 || ${#rmlab[@]} -gt 0 ]] || usage "update: 変更する項目がありません"
+  [[ ${#sets[@]} -gt 0 || $relabel == 1 || ${#addlab[@]} -gt 0 || ${#rmlab[@]} -gt 0 || ${#addref[@]} -gt 0 || ${#rmref[@]} -gt 0 ]] || usage "update: 変更する項目がありません"
   row=$(require_task "$id"); cur=$(jq -r .status <<<"$row")
   [[ $cur != done ]] || die "done のタスクは update できません: $id"
   if [[ -n $ntype || -n $nparent ]]; then
@@ -240,6 +262,14 @@ cmd_update() {
     add=$(labels_json ${addlab[@]+"${addlab[@]}"}); rm=$(labels_json ${rmlab[@]+"${rmlab[@]}"})
     sets+=("labels=(SELECT json_group_array(value) FROM (SELECT value FROM (SELECT value FROM json_each($base) UNION SELECT value FROM json_each($(q "$add")))
               WHERE value NOT IN (SELECT value FROM json_each($(q "$rm"))) ORDER BY value))")
+  fi
+  if [[ ${#addref[@]} -gt 0 || ${#rmref[@]} -gt 0 ]]; then
+    # 外部リンクも書く時点の refs に当てる。同じ URL を足すと種類を置き換える
+    local ra rr; ra=$(refs_json ${addref[@]+"${addref[@]}"}); rr=$(jq -nc '$ARGS.positional' --args ${rmref[@]+"${rmref[@]}"})
+    sets+=("refs=(SELECT json_group_array(json(v)) FROM (
+              SELECT value AS v FROM json_each(refs) WHERE json_extract(value,'\$.url') NOT IN (SELECT value FROM json_each($(q "$rr")))
+                AND json_extract(value,'\$.url') NOT IN (SELECT json_extract(value,'\$.url') FROM json_each($(q "$ra")))
+              UNION ALL SELECT value FROM json_each($(q "$ra"))))")
   fi
   # 種別・親を変えるときは、規則(循環を含む)の検査と書き込みを 1 つの書き込みトランザクションで行う(並行する変更で規則を破らない)
   local guard="" n ftype fparent
