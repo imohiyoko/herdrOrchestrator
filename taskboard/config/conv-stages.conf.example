@@ -1,0 +1,23 @@
+# 会話チームの段階的な自動化(#98)の設定。tb config set conv-stages < このファイル で DB に置く(人だけ)
+# 段階そのものは設定ではなく tb conv-stage-set で変える(測った値と一緒に記録される)。設計: taskboard/docs/conversation-learning.md
+
+# 問題の指摘・断り・組織の外へ出る種別。段階 1 より上に進めない(--override でも越えない)
+high = refusal
+
+# メッセージの道具に「下書きとして保存」があるか。人が確かめて available にするまで段階 2 にしない
+# unverified(未確認)/ available(ある)/ unavailable(無い。段階 2 は飛ばす)
+draft-save = unverified
+
+# 段階 3(1 通ごとに人が 1 回承認すれば送れる)の一覧。種別:相手の区分 をカンマ区切り。消せば段階 2 の扱いに戻る
+stage3 =
+
+# 段階 1 に上げる条件: 記録した組の数
+min-pairs.1 = 20
+# 段階 2 に上げる条件: 直近 window-days 日の組の数・編集の割合の平均・採用したパターンの数・事故の無い日数
+window-days = 28
+min-samples.2 = 20
+max-edit-ratio.2 = 0.15
+min-adopted.2 = 3
+quiet-days.2 = 21
+# 段階 3 に上げる条件: 段階 2 にいた日数と事故の無い日数
+quiet-days.3 = 42
