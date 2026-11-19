@@ -15,7 +15,7 @@
 
 NRULE_SINKS="file stdout slack webui conductor"
 NRULE_KEYS="type priority label project owner new old actor"
-NRULE_KINDS="created status title type priority owner due parent description label_added label_removed ref_added ref_removed link unlink comment overdue due_soon"
+NRULE_KINDS="created status title type priority owner due parent description label_added label_removed ref_added ref_removed link unlink comment overdue due_soon pr_opened pr_approved pr_changes pr_merged"
 NRULE_VAL_RE='^[^[:space:],"'"'"'<>;|&$`\\]{1,64}$'
 
 # 本文 → 規則の行(\x1f 区切り: 行番号 種類 条件(空白区切り。空のこともある) 届け先(空白区切り))。タブにしないのは、read が連続するタブを 1 つにまとめて空の条件がずれるため。誤りは NRULE_ERR に 1 行ずつ。誤りがあれば 1
@@ -24,8 +24,9 @@ nrule_parse() {  # $1=本文
   NRULE_ERR=""; NRULE_OUT=""
   while IFS= read -r line || [[ -n $line ]]; do
     n=$((n + 1))
-    line=${line%%#*}; line=$(trim "$line")
-    [[ -n $line ]] || continue
+    # コメントは行頭か空白の後の # から。値の中の #(new=acme/widgets#7 など PR の識別子)は残す
+    line=${line%%[[:space:]]#*}; line=$(trim "$line")
+    [[ -n $line && $line != \#* ]] || continue
     if [[ $line != *"->"* ]]; then NRULE_ERR+="$n 行目: -> がありません"$'\n'; err=1; continue; fi
     lhs=$(trim "${line%%->*}"); rhs=$(trim "${line#*->}")
     [[ $rhs != *"->"* ]] || { NRULE_ERR+="$n 行目: -> が 2 つあります"$'\n'; err=1; continue; }
@@ -123,6 +124,10 @@ nrule_describe() {  # $1=種類 $2=前 $3=後
     description) echo "説明の変更";;
     overdue) echo "期限切れ(期日 ${n})";;
     due_soon) echo "期限間近(期日 ${n})";;
+    pr_opened) echo "PR ${n} を出した";;
+    pr_approved) echo "PR ${n} が approve された";;
+    pr_changes) echo "PR ${n} に変更依頼";;
+    pr_merged) echo "PR ${n} がマージされた";;
     *) echo "$1";;
   esac
 }

@@ -212,6 +212,9 @@ eq "pr-watch: no allowlist file → quiet, exit 0, gh not called" "$(rc $TB pr-w
 printf '# 許可リスト\n\n' >"$TB_REPOS_FILE"
 eq "pr-watch: empty allowlist → quiet, exit 0, gh not called" "$(rc $TB pr-watch) $(wc -l <"$GH_LOG" | tr -d ' ')" "0 0"
 printf '# 許可リスト\n- acme/widgets\n- ../evil\n' >"$TB_REPOS_FILE"
+# PR をチケットに結ぶ(ADR 0003 の段 4c): 外部リンクに PR の URL を持つチケットと、題に書かれたチケットの履歴に残る
+prt=$(HERDR_PANE_ID= $TB add -p np -t 'PR を持つチケット' --ref https://github.com/Acme/Widgets/pull/1/files)
+prx=$(HERDR_PANE_ID= $TB add -p np -t '別の PR(番号の前方一致では当たらない)' --ref https://github.com/acme/widgets/pull/10)
 echo '[{"number":1,"title":"既存 PR","state":"OPEN","isDraft":false,"reviewDecision":"","author":{"login":"alice"},"mergedBy":null}]' >"$GH_JSON"
 $TB pr-watch
 eq "pr-watch: first run is a baseline (no events); invalid repo lines are ignored" "$(nsql "SELECT COUNT(*) FROM notify_events;") $(grep -c -- '--repo acme/widgets' "$GH_LOG") $(grep -c evil "$GH_LOG")" "0 1 0"
@@ -232,6 +235,10 @@ echo '[{"number":1,"title":"既存 PR","state":"MERGED","isDraft":false,"reviewD
 $TB pr-watch
 eq "pr-watch: merge detected with the merger" "$(nsql "SELECT text FROM notify_events WHERE type='pr_merged';")" "[PR] acme/widgets#1 マージ済み(carol): 既存 PR"
 eq "pr-watch: only read-only 'gh pr list' was ever called, requesting no body or diff" "$(grep -vc '^gh pr list --repo acme/widgets --state all' "$GH_LOG") $(grep -c 'body\|diff' "$GH_LOG")" "0 0"
+eq "pr-watch: PR events go to the ticket with the PR URL in refs (state unchanged)" "$($TB history "$prt" --json | jq -r 'select(.kind|startswith("pr_")) | [.kind, .new, .actor, .ref] | join(" ")' | sort | tr '\n' '|') $($TB show "$prt" | jq -r .status)" \
+  "pr_approved acme/widgets#1 system https://github.com/acme/widgets/pull/1|pr_merged acme/widgets#1 system https://github.com/acme/widgets/pull/1| todo"
+eq "pr-watch: the ticket named in the PR title gets the events too" "$($TB history T-np-001 --json | jq -r 'select(.kind|startswith("pr_")) | .kind' | sort | tr '\n' ' ')" "pr_changes pr_opened "
+eq "pr-watch: a different PR number does not match" "$($TB history "$prx" --json | jq -r 'select(.kind|startswith("pr_")) | .kind' | wc -l | tr -d ' ')" "0"
 eq "pr-watch: events reach the file sink" "$(grep -c '\[pr_merged\]' "$TB_NOTIFY_DIR/$(date +%F).md")" "1"
 echo '[{"number":3,"title":"'"to""ken=abcdef123456"' を含む題","state":"OPEN","isDraft":false,"reviewDecision":"","author":{"login":"dave"},"mergedBy":null}]' >"$GH_JSON"
 $TB pr-watch

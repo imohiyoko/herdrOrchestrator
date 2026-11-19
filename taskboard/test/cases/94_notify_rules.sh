@@ -102,6 +102,15 @@ od=$($TB add -p nr -t "期限切れ" --due 2026-01-01)
 n=$(nrcount)
 TB_TODAY=2026-01-05 $TB due-scan >/dev/null
 eq "rules: overdue from due-scan fires" "$(nrcount) $(nrlast)" "$((n + 1)) webui | [チケット] $od 期限切れ — 期限切れ(期日 2026-01-01) / medium / task / 担当 -"
+# PR の出来事(tb pr-watch がチケットに残す。段 4c)も規則に当たる
+printf 'pr_merged -> webui\n' >"$TB_NOTIFY_RULES"
+n=$(nrcount)
+nrsql "INSERT INTO task_events (herdr_session, task_id, kind, new, actor, ref, created_at)
+  SELECT herdr_session, id, 'pr_merged', 'acme/widgets#7', 'system', 'https://github.com/acme/widgets/pull/7', strftime('%Y-%m-%dT%H:%M:%SZ','now') FROM tasks WHERE id='$od';"
+$TB notify flush >/dev/null
+eq "rules: pr_merged from pr-watch fires" "$(nrcount) $(nrlast)" "$((n + 1)) webui | [チケット] $od 期限切れ — PR acme/widgets#7 がマージされた / medium / task / 担当 -"
+printf '# 先頭のコメント\npr_merged new=acme/widgets#7 -> stdout  # 値の # は残し、空白の後の # はコメント\n' >"$TB_NOTIFY_RULES"
+eq "rules: '#' inside a value is kept, '#' after a space is a comment" "$($TB notify rules | grep '^2 行目' | cut -f2) $($TB notify rules | grep -c '誤りのある行')" "pr_merged new=acme/widgets#7 -> stdout 0"
 
 # 規則のファイルを手で壊しても、正しい行だけが効く(誤りは show に出る)
 printf 'label_added label=notify -> file\nnope -> file\n' >"$TB_NOTIFY_RULES"

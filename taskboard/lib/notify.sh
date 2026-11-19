@@ -511,7 +511,7 @@ notify_hook() { notify_preload; ( "$@" ) >/dev/null 2>&1 || true; return 0; }
 # 初めて見るリポジトリは基準線として記録するだけ(既存の PR を全部「新規」にしない)。許可リストが無い・空なら何もせず 0
 cmd_pr-watch() {
   [[ $# -eq 0 ]] || usage "pr-watch(引数なし)"
-  local repos r gh=${TB_GH_BIN:-gh} out seen prev_json num title state dec draft author merger hasprev prev tid pstate pdec stmts ts
+  local repos r gh=${TB_GH_BIN:-gh} out seen prev_json num title state dec draft author merger hasprev prev tid pstate pdec stmts ts ev
   repos=$(notify_repos); [[ -n $repos ]] || return 0
   notify_on || return 0
   command -v "$gh" >/dev/null 2>&1 || return 0
@@ -531,21 +531,24 @@ cmd_pr-watch() {
       [[ $author =~ ^[A-Za-z0-9._-]{1,64}$ ]] || author=""
       [[ $merger =~ ^[A-Za-z0-9._-]{1,64}$ ]] || merger=""
       tid=""; [[ $title =~ T-[A-Za-z0-9_]+-[0-9]{3,} ]] && tid=${BASH_REMATCH[0]}
+      ev=""
       if [[ -n $seen ]]; then
         if [[ $hasprev != 1 ]]; then
-          if [[ $state == MERGED ]]; then notify_emit pr_merged "$r#$num" "" "$title" "" "$merger"
-          elif [[ $state == OPEN ]]; then notify_emit pr_opened "$r#$num" "" "$title" "$draft" "$author" "${tid:+タスク ${tid}}"; fi
+          if [[ $state == MERGED ]]; then ev=pr_merged; notify_emit pr_merged "$r#$num" "" "$title" "" "$merger"
+          elif [[ $state == OPEN ]]; then ev=pr_opened; notify_emit pr_opened "$r#$num" "" "$title" "$draft" "$author" "${tid:+タスク ${tid}}"; fi
         else
           pstate=${prev%%|*}; pdec=${prev#*|}
-          if [[ $state == MERGED && $pstate != MERGED ]]; then notify_emit pr_merged "$r#$num" "" "$title" "" "$merger"
+          if [[ $state == MERGED && $pstate != MERGED ]]; then ev=pr_merged; notify_emit pr_merged "$r#$num" "" "$title" "" "$merger"
           elif [[ $state == OPEN && $dec != "$pdec" ]]; then
             case $dec in
-              APPROVED) notify_emit pr_approved "$r#$num" "" "$title" "" "";;
-              CHANGES_REQUESTED) notify_emit pr_changes "$r#$num" "" "$title" "" "";;
+              APPROVED) ev=pr_approved; notify_emit pr_approved "$r#$num" "" "$title" "" "";;
+              CHANGES_REQUESTED) ev=pr_changes; notify_emit pr_changes "$r#$num" "" "$title" "" "";;
             esac
           fi
         fi
       fi
+      # チケットに結ぶ(ADR 0003 の段 4c): この PR の URL を外部リンクに持つチケットと、題に書かれたチケットの履歴に残す
+      [[ -z $ev ]] || stmts+=$(pr_ticket_event_sql "$ev" "$r" "$num" "$tid" "$ts")
       # 変わった PR だけ書く(変わらなければ DB に触らない)
       [[ $hasprev == 1 && $prev == "$state|$dec" ]] || stmts+=$(notify_seen_sql "pr:$r#$num" "$state|$dec" "$ts")
     done < <(jq -r --arg r "$r" --argjson prev "$prev_json" '
@@ -560,6 +563,20 @@ cmd_pr-watch() {
     [[ -z $stmts ]] || sql "BEGIN IMMEDIATE; $stmts COMMIT;" >/dev/null || true
   done <<<"$repos"
   return 0
+}
+
+# PR の出来事をチケットの履歴(task_events)に残す SQL。チケットの状態は変えない(マージで done にするかは人か担当が決める)。
+# 当てるのは、外部リンク(refs)にこの PR の URL(https://github.com/<repo>/pull/<n>。後ろに / ? # が続いてもよい。大文字小文字は問わない)を持つチケットと、
+# PR の題に書かれたチケット ID。kind は pr_opened / pr_approved / pr_changes / pr_merged、new は <repo>#<n>、ref は PR の URL、actor は system。
+# 通知の規則(notify-rules)はこの kind にも当たる(例: pr_merged label=release -> slack)
+pr_ticket_event_sql() {  # $1=kind $2=repo $3=番号 $4=題のチケット ID(空可) $5=時刻
+  local url="https://github.com/$2/pull/$3" u
+  u=$(q "$(printf '%s' "$url" | tr '[:upper:]' '[:lower:]')")
+  printf "INSERT INTO main.task_events (herdr_session, task_id, kind, old, new, actor, ref, created_at)
+    SELECT %s, t.id, %s, NULL, %s, 'system', %s, %s FROM tasks t
+    WHERE t.id=%s OR EXISTS (SELECT 1 FROM json_each(t.refs) r WHERE lower(json_extract(r.value, '\$.url'))=%s
+      OR substr(lower(json_extract(r.value, '\$.url')), 1, length(%s)+1) IN (%s||'/', %s||'?', %s||'#'));" \
+    "$SQS" "$(q "$1")" "$(q "$2#$3")" "$(q "$url")" "$(q "$5")" "$(q "$4")" "$u" "$u" "$u" "$u" "$u"
 }
 
 # ---------- tb notify ----------
