@@ -575,7 +575,7 @@ cmd_labels() {
   if ((defined)); then
     local defs dj
     defs=$(defined_labels) || die "用意したラベルはありません(設定 labels が無いので、ラベルは自由に付けられます。用意するのは人: tb config edit labels)"
-    dj=$(jq -Rnc '[inputs | select(length > 0) | split("\t") | {label: .[0], description: (.[1] // "")}]' <<<"$defs")
+    dj=$(jq -Rnc '[inputs | select(length > 0) | (capture("^(?<label>[^\t]*)\t(?<description>.*)$"; "s") // {label: ., description: ""})]' <<<"$defs")
     local qs="WITH d AS (SELECT key AS ord, json_extract(value,'\$.label') AS label, json_extract(value,'\$.description') AS description FROM json_each($(q "$dj")))
               SELECT d.label, COALESCE(SUM(t.id IS NOT NULL AND t.status!='done'), 0) AS open, COUNT(t.id) AS total, d.description
               FROM d LEFT JOIN (SELECT t.id, t.status, j.value AS lv FROM tasks t, json_each(t.labels) j WHERE ($where)) t ON t.lv = d.label

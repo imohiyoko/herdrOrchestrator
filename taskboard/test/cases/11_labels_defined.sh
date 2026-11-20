@@ -34,6 +34,9 @@ $TB update "$l1" --label ui >/dev/null
 $TB add -p tkl -t c -l ui >/dev/null
 eq "labels-defined: --defined lists in order with counts" "$($TB labels --defined -p tkl)" "$(printf 'ui\t2\t2\t画面\nbackend\t0\t0\tサーバ側\n認証\t0\t0\t\nnotify\t0\t0\t')"
 eq "labels-defined: --defined --json" "$($TB labels --defined -p tkl --json | head -1)" '{"label":"ui","open":2,"total":2,"description":"画面"}'
+printf 'ui = 画面\t担当\nx\n' >"$TB_LABELS"
+eq "labels-defined: description keeps tabs" "$($TB labels --defined -p tkl --json | head -1 | jq -r .description)" "$(printf '画面\t担当')"
+printf '# 用意したラベル\nui = 画面\nbackend = サーバ側\n認証\nnotify  # 通知の規則用\n' >"$TB_LABELS"
 eq "labels-defined: config list shows key" "$($TB config list | grep -c '^labels ')" "1"
 # 設定を消せばまた自由に付けられる
 rm -f "$TB_LABELS"
