@@ -387,10 +387,12 @@ cmd_update() {
   fi
   event_actor_resolve
   local IFS=,
-  n=$(sql "BEGIN IMMEDIATE; UPDATE main.tasks SET ${sets[*]}, updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id")$guard$sguard;
+  n=$(sql "BEGIN IMMEDIATE; UPDATE main.tasks SET ${sets[*]}, updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id") AND status NOT IN ('done','cancelled')$guard$sguard;
            SELECT changes(); COMMIT;")
   unset IFS
   if [[ $n != 1 ]]; then
+    cur=$(sql "SELECT status FROM tasks WHERE id=$(q "$id");")
+    [[ " $CLOSED_STATUSES " != *" $cur "* ]] || die "$cur のタスクは update できません(並行して閉じられました): $id"
     [[ -z $sguard || -n $(sql "SELECT 1 FROM sprints WHERE id=${nsprint#S-} AND state!='closed';") ]] || usage "閉じたスプリントには入れられません: $nsprint"
     [[ -z $fparent || -z $(sql "SELECT 1 WHERE $(parent_cycle_sql "$fparent" "$id");") ]] || usage "親子が循環します: $id → $fparent"
     usage "update: 種別・親が規則に合いません(並行して変わりました): $id"
@@ -413,15 +415,16 @@ cmd_done() {
   done
   [[ ${#dels[@]} -gt 0 ]] || usage "done: 成果物(-d)が必須です"
   blank "$summary" && usage "done: 要約(-m)が必須です"
-  local row cur dj
+  local row cur dj changed
   row=$(require_task "$id"); cur=$(jq -r .status <<<"$row")
   [[ $cur != done ]] || die "すでに done です: $id"
   [[ $cur != cancelled ]] || die "cancelled のタスクは done にできません: $id"
   special_ticket_guard "$id" "tb done"
   dj=$(jq -nc '$ARGS.positional' --args "${dels[@]}")
   event_actor_resolve
-  sql "UPDATE main.tasks SET status='done', deliverables=$(q "$dj"), summary=$(q "$summary"),
-         reported_at=NULL, updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id");"
+  changed=$(sql "UPDATE main.tasks SET status='done', deliverables=$(q "$dj"), summary=$(q "$summary"),
+         reported_at=NULL, updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id") AND status NOT IN ('done','cancelled'); SELECT changes();")
+  [[ $changed == 1 ]] || die "done できません(並行して閉じられました): $id"
   notify_hook notify_hook_task_done "$id"
   notify_rules_hook
   echo "$id done (報告は tb digest でまとめて届く。すぐ届けるなら tb report $id)"
@@ -438,11 +441,13 @@ cmd_block() {
       *) usage "block: 不明な引数 $1";;
     esac
   done
-  local row cur; row=$(require_task "$id"); cur=$(jq -r .status <<<"$row")
+  local row cur changed; row=$(require_task "$id"); cur=$(jq -r .status <<<"$row")
   [[ " $CLOSED_STATUSES " != *" $cur "* ]] || die "$cur のタスクは block できません: $id"
   special_ticket_guard "$id" "tb block"
   event_actor_resolve
-  sql "UPDATE main.tasks SET status='blocked', note=NULLIF($(q "$reason"),''), updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id");"
+  changed=$(sql "UPDATE main.tasks SET status='blocked', note=NULLIF($(q "$reason"),''), updated_at=$(q "$(now)")
+    WHERE herdr_session=$SQS AND id=$(q "$id") AND status NOT IN ('done','cancelled'); SELECT changes();")
+  [[ $changed == 1 ]] || die "block できません(並行して閉じられました): $id"
   notify_rules_hook
   echo "$id blocked"
 }
