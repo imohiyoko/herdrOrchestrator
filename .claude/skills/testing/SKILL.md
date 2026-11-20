@@ -1,6 +1,6 @@
 ---
 name: testing
-description: このリポジトリでテストを設計・追加・修正・実行するときに使う。tb(taskboard/test/cases)、Web UI、scheduler、setup、repoindex、Go(herdrctl)と TB_IMPL=go の契約テストの置き場所・書き方・並列化の決まり・CI の組を扱う。
+description: このリポジトリでテストを設計・追加・修正・実行するときに使う。tb(taskboard/test/cases)、Web UI、scheduler、setup、任意の部品、Go(herdrctl)と TB_IMPL=go の契約テストの置き場所・書き方・並列化の決まり・CI の組を扱う。
 ---
 
 # テストの設計と実装
@@ -22,7 +22,7 @@ description: このリポジトリでテストを設計・追加・修正・実�
 | Web UI(`webui/`) | `webui/tests/test_webui.py`(1 本のスクリプト) | `bash webui/tests/run.sh` |
 | scheduler | `scheduler/tests/run.sh` | 同左 |
 | setup | `setup/tests/run.sh`(疑似の repo・HOME・LaunchAgents、`setup/tests/fake/`) | 同左 |
-| repoindex | `repoindex/tests/test_*.py`(unittest、共通部品は `helpers.Case`) | `cd repoindex/tests && python3 -m unittest test_scan -v` |
+| 任意の部品(core から呼ばない部品) | その部品の `tests/run.sh`(組の一覧は `bash tests/run-all.sh --list`) | 同左 |
 | herdrctl(Go) | `internal/**/*_test.go`、`cmd/herdrctl/main_test.go` | `go test ./internal/kernel/store/` |
 | 全体の小物(misc) | `tests/test_env.sh`(bash と Python の既定値の突き合わせ)、`tests/test_instance.sh`(複数 herdr セッションの切り分け)、`tests/test_webui_queries.py`(webui の SQL を本物のスキーマで EXPLAIN)、`taskboard/tools/deps.py --check`(lib の層の向き) | `bash tests/run-all.sh misc` |
 
@@ -80,11 +80,11 @@ TB_IMPL=go TB_HERDRCTL=/tmp/herdrctl bash taskboard/test/run.sh
 - DB の fixture は本物のスキーマ(`taskboard/schema/*.sql`)を流して作り、`herdr_session` を入れる
 - webui が投げる SELECT は `tests/test_webui_queries.py` が本物のスキーマで確かめる。webui の SQL を変えたら misc も流す
 
-## scheduler / setup / repoindex
+## scheduler / setup / 任意の部品
 
 - scheduler: `DRY_RUN=1` と `NOW` の差し替えで tick の判定だけを見る。ジョブはファイル(`JOBS_DIR`、`SCHED_FILE_FALLBACK=1`)か一時の DB に置く
 - setup: `fresh` で全部そろった疑似環境を作り、そこから 1 つずつ壊して check.sh の判定を見る。PATH に置くコマンドを絞って「無いとき」を作る
-- repoindex: `helpers.Case` を継ぐ。データは `REPOINDEX_DIR`、リポジトリは一時の git リポジトリ(`GIT_CONFIG_GLOBAL=/dev/null`)。ネットワーク・モデルは使わない
+- 任意の部品: その部品の README と `tests/` の共通部品に従う。core(taskboard・webui・scheduler・setup など)とこのスキルを含む core 側のファイルからは、任意の部品の名前を出さない(任意の部品のテストが `git grep` で確かめている)
 
 ## Go(herdrctl)
 
