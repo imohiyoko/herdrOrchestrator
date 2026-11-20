@@ -82,6 +82,18 @@ collect_digest() {
              WHERE t.status='in_progress' AND a.last_stop_at IS NOT NULL
                AND (a.last_prompt_at IS NULL OR a.last_prompt_at <= a.last_stop_at)
                AND (julianday('now') - julianday(a.last_stop_at)) * 1440 >= $DIGEST_IDLE_MIN ORDER BY t.id;")
+  # 3b. 観測: 1 体の agent が in_progress のチケットを複数握っている(タスク agent は 1 枚が原則。tb nudge の文面でも本人に知らせる)
+  #     同じ組み合わせは二度出さない。解消したら記録を消す(また握れば、また出す)
+  local multi=""
+  while IFS=$'\t' read -r owner list project; do
+    [[ -n $owner ]] || continue
+    key="multi:$owner:$list"; multi+="$(q "$key"),"
+    obs_seen "$key" && continue
+    add_item "$(target_for "$project")" obs "${list%%,*}" "$key" "${list%%,*}" multi "$owner 観測 / 複数チケット" \
+      "in_progress のチケットを $(tr ',' '\n' <<<"$list" | grep -c .) 枚握っている(${list//,/ })。1 枚に絞るか、ほかを todo に戻すか、別の agent に回す"
+  done < <(sql -separator $'\t' "SELECT owner_agent, group_concat(id, ','), MIN(project) FROM (SELECT owner_agent, id, project FROM tasks
+             WHERE status='in_progress' AND owner_agent IS NOT NULL AND owner_agent!='' ORDER BY id) GROUP BY owner_agent HAVING COUNT(*) > 1 ORDER BY owner_agent;")
+  sql "DELETE FROM main.observations WHERE herdr_session=$SQS AND kind='multi' AND key NOT IN (${multi}'');"
   # 4. 観測: DIGEST_STUCK_MIN 分以上 working のまま
   while IFS=$'\t' read -r id project owner key m; do
     [[ -n $id ]] || continue
