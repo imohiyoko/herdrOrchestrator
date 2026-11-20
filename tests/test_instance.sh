@@ -58,9 +58,10 @@ for bad in 'a b' 'a/b' 'a;b' '-x' '.x' 'a"b' 'a<b' "$(printf 'a\nb')"; do
 done
 
 # --- plist
+# ジョブを conf ファイルで置いて試す(既定の scheduler は DB だけを読むので SCHED_FILE_FALLBACK=1)
 JOBS=$TMP/jobs; mkdir -p "$JOBS"
 printf "TARGET=dummy\nPROMPT='x'\nWINDOW=09:00-21:00\nINTERVAL_MIN=5\n" >"$JOBS/t.conf"
-sched() { clean env JOBS_DIR="$JOBS" LOG_DIR="$TMP/logs" OUT_DIR="$TMP/gen-$1" "${@:2}" bash "$ROOT/scheduler/bin/gen-plist.sh" t >/dev/null 2>&1; }
+sched() { clean env SCHED_FILE_FALLBACK=1 JOBS_DIR="$JOBS" LOG_DIR="$TMP/logs" OUT_DIR="$TMP/gen-$1" "${@:2}" bash "$ROOT/scheduler/bin/gen-plist.sh" t >/dev/null 2>&1; }
 web() { clean env OUT_DIR="$TMP/genw-$1" "${@:2}" bash "$ROOT/webui/bin/gen-plist.sh" >/dev/null 2>&1; }
 label_of() { grep -A1 '<key>Label</key>' "$1" | sed -n 's/.*<string>\(.*\)<\/string>.*/\1/p'; }
 
@@ -74,7 +75,7 @@ eq "sched plist: HERDR_SESSION passed" "$(grep -A1 '<key>HERDR_SESSION</key>' "$
 eq "sched plist: PATH kept" "$(grep -c '<key>PATH</key>' "$TMP/gen-b"/*.plist)" "1"
 sched c TB_INSTANCE='a b'; eq "sched plist: bad instance writes nothing" "$(ls "$TMP/gen-c" 2>/dev/null | wc -l | tr -d ' ')" "0"
 sched d HERDR_SESSION='a<b'; eq "sched plist: bad HERDR_SESSION writes nothing" "$(ls "$TMP/gen-d" 2>/dev/null | wc -l | tr -d ' ')" "0"
-clean env JOBS_DIR="$JOBS" LOG_DIR="$TMP/logs" OUT_DIR="$TMP/gen-e" TB_INSTANCE=staging HERDR_SESSION=staging bash "$ROOT/scheduler/bin/gen-plist.sh" --dispatch t >/dev/null 2>&1
+clean env SCHED_FILE_FALLBACK=1 JOBS_DIR="$JOBS" LOG_DIR="$TMP/logs" OUT_DIR="$TMP/gen-e" TB_INSTANCE=staging HERDR_SESSION=staging bash "$ROOT/scheduler/bin/gen-plist.sh" --dispatch t >/dev/null 2>&1
 eq "sched plist --dispatch: instance label" "$(label_of "$TMP/gen-e/local.herdr-staging-sched-dispatch.plist")" "local.herdr-staging-sched-dispatch"
 eq "sched plist --dispatch: HERDR_SESSION passed" "$(grep -A1 '<key>HERDR_SESSION</key>' "$TMP/gen-e"/*.plist | grep -c '<string>staging</string>')" "1"
 

@@ -127,7 +127,7 @@ collect_sched_obs() {
   fail_runs=$((10#$fail_runs)); fail_pct=$((10#$fail_pct)); wait_max=$((10#$wait_max))
   local now watchers conf job cfg log sum w is_watch enabled start end days tz dnum sec ws we ref key cur=""
   now=$(sw_now); watchers=$(limit_get watchers 2>/dev/null || true)
-  # ジョブ = DB の sched-job:<job> と jobs/*.conf の和(tb sched-job)
+  # ジョブ = DB の sched-job:<job>(SCHED_FILE_FALLBACK=1 なら jobs/*.conf との和。scheduler と同じ)
   while IFS= read -r job <&3; do
     [[ -n $job ]] || continue
     cfg=$(TB_DB=$DB JOBS_DIR=$SW_DIR/jobs LOG_DIR=$SW_DIR/logs SCHED_SETTINGS_DIR=$SW_DIR/settings bash "$SW_SHOW" "$job" 2>/dev/null) || continue
@@ -189,7 +189,7 @@ collect_sched_obs() {
         "ジョブ $job が、宛先の作業中(exit 10)で $(((now - wstart) / 60)) 分送れていない(その間 $(jq -r .wait_count <<<"$sum") 回とも待ち)。宛先が止まっていないか確認。scheduler/logs/$job.log を確認"
     fi
   done 3< <( { sql "SELECT DISTINCT substr(key, 11) FROM main.config WHERE key LIKE 'sched-job:%' AND herdr_session IN ($SQS, '*');"
-              for conf in "$SW_DIR"/jobs/*.conf; do [[ -f $conf ]] && basename "$conf" .conf; done; } | grep -E "$SJ_JOB_RE" | sort -u)
+              if [[ ${SCHED_FILE_FALLBACK:-0} == 1 ]]; then for conf in "$SW_DIR"/jobs/*.conf; do [[ -f $conf ]] && basename "$conf" .conf; done; fi; } | grep -E "$SJ_JOB_RE" | sort -u)
   # 条件が外れたものは記録を消す(再び当てはまったら、また送る)
   sql "DELETE FROM main.observations WHERE herdr_session=$SQS AND kind IN ('schedoff','schedstale','schedfail','schedwait') AND key NOT IN (${cur}'');"
 }

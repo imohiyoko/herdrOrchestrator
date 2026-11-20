@@ -6,7 +6,8 @@ launchd が `bin/tick.sh <job>` を毎分起動し、時間帯・曜日・間隔
 
 ## ジョブの足し方
 
-`jobs/<name>.conf` を作る(bash の変数代入)。例は `jobs/watch.conf.example`(`.example` を外して使う)。
+ジョブの定義(bash の変数代入)を DB に置く: `taskboard/bin/tb sched-job set <name> < 本文のファイル`(下の「ジョブ定義は DB に置く」)。
+本文の例は `jobs/watch.conf.example`(パスを直してから `set` に渡す)。**定期実行は DB の定義だけで動く。`jobs/<name>.conf` を置いただけでは動かない**(`tb sched-job import` で取り込む)。
 
 | 変数 | 意味 |
 |---|---|
@@ -36,7 +37,7 @@ launchd が `bin/tick.sh <job>` を毎分起動し、時間帯・曜日・間隔
 - `COMMAND_TIMEOUT`(秒、既定 60)を超えると子プロセスごと kill し、`failed`(exit 124)。
 - 同じジョブの多重実行はロック(`logs/<job>.lock.d`)で防ぎ、実行中なら `skipped_locked`。
 - ログには `action`(`ran` | `failed` | `skipped_*`)、`exit`、`stdout`、`stderr`(各先頭 500 字)を記録。
-- **`COMMAND` は `bash -c` でそのまま実行される。`jobs/*.conf` は人が管理するもので、外部入力(Slack・ファイル内容・引数など)を埋め込まないこと。**
+- **`COMMAND` は `bash -c` でそのまま実行される。ジョブの定義は人が管理するもので、外部入力(Slack・ファイル内容・引数など)を埋め込まないこと。**
 
 ### 発火条件(GATE)
 
@@ -107,13 +108,16 @@ PROMPT='新しい bug の issue です。優先度をつけてください:
   `DRY_RUN=1` の出力には、送るはずの本文(`text`)と出どころ(`prompt`: `cmd` / `rule:<i>` / `default`)が出る。通常の実行のログには `prompt` だけを残し、本文は残さない
 - `COMMAND` 型のジョブには書けない(エラー)。`bin/show.sh` は `prompt_rules`(ルールの数)/ `prompt_cmd`(有無)/ `prompt_vars`(数)を出す
 
-## ジョブ定義を DB に置く(`tb sched-job`)
+## ジョブ定義は DB に置く(`tb sched-job`)
 
-ジョブ定義(conf の本文)と上書き設定(settings の本文)は、taskboard の DB の `config` 表にも置ける。
+ジョブ定義(conf の本文)と上書き設定(settings の本文)は、taskboard の DB の `config` 表に置く。
 キーは `sched-job:<job>` と `sched-settings:<job>`、本文の書式はファイルと同じ。変更の履歴は `config_changes` に残る(`tb config` と同じ仕組み)。
 
-- 読む順: DB の**このセッション**の行 > DB の共通の行(`*`)> ファイル(`jobs/<job>.conf`・`settings/<job>.settings`)。
-  DB に行が無いジョブは、今までどおりファイルを読む。sqlite3・DB・表が無い環境でもファイルを読む。DB は読み取り専用で開く
+- 読む順: DB の**このセッション**の行 > DB の共通の行(`*`)。DB は読み取り専用で開く。
+  **ファイル(`jobs/<job>.conf`・`settings/<job>.settings`)は読まない**。DB に定義が無いジョブは動かさず、`tick.sh` が `failed`
+  (理由: DB に定義が無い。conf があれば `tb sched-job import <job>` で取り込む)を記録する(同じ理由が続く間は 1 行だけ)。
+  Web UI の一覧と `setup/check.sh` も、取り込んでいない conf を知らせる
+- `SCHED_FILE_FALLBACK=1` のときだけ、DB に無いジョブ・設定をファイルから読む(`tb sched-job` が書く前の検査とテスト用。普段は付けない)
 - セッションごとに別の定義を持てる(`HERDR_SESSION`、checkout の `herdr-session` ファイル。tb と同じ決まり方)
 - 書くのは人だけ: `tb sched-job set <job> < 本文` / `edit` / `unset`(`--settings` で上書き設定、`--shared` で共通の行)。
   書く前に、scheduler 自身(`bin/show.sh`)がその本文を読めるかを一時のディレクトリで確かめる(読めなければ書かない)
@@ -130,8 +134,8 @@ PROMPT='新しい bug の issue です。優先度をつけてください:
 
 ## Web UI からの変更(settings)
 
-間隔・時間帯・曜日・一時停止は、Web UI の `/jobs/<job>` から変えられる。保存先は DB の `sched-settings:<job>`(上の「ジョブ定義を DB に置く」)。
-`settings/<job>.settings`(git 管理外、0600)は DB に移す前の置き場所で、scheduler は DB に行が無いときだけ読む(Web UI はもう書かない)。
+間隔・時間帯・曜日・一時停止は、Web UI の `/jobs/<job>` から変えられる。保存先は DB の `sched-settings:<job>`(上の「ジョブ定義は DB に置く」)。
+`settings/<job>.settings` は DB に移す前の置き場所で、scheduler は読まない(残っていれば `tb sched-job import` で定義と一緒に取り込む)。
 
 - launchd は**毎分** `tick.sh` を起動し、実行するかどうか(曜日・時間帯・`INTERVAL_MIN` の刻み・一時停止)は `tick.sh` が実行時に判定する。
   なので設定を変えても plist の作り直し・再登録は要らない(次の分から反映)。対象外の回はログを書かない
@@ -142,7 +146,7 @@ PROMPT='新しい bug の issue です。優先度をつけてください:
   launchd の起動が遅れて過ぎてしまった回は、最後の 1 回にまとめて実行する(まとめて何度も送らない)。
   前の回が長引いて次の分にかかったら、残りの回は飛ばす。また launchd は実行中のジョブを重ねて起動しないので、
   分の最後の回(例: `:55`)の実行が次の分の頭にかかると、次の 1 分はまるごと飛ぶことがある
-- 優先順: `jobs/<job>.conf` < `settings/<job>.settings` < 環境変数 `SCHED_*`
+- 優先順: 定義(`sched-job:<job>`)< 上書き設定(`sched-settings:<job>`)< 環境変数 `SCHED_*`
 - settings は bash として読まない。`INTERVAL_MIN` か `INTERVAL_SEC` / `START` / `END`(`HH:MM` か `HH:MM:SS`)/ `DAYS` / `ENABLED` のキーだけを、決まった形で受け付ける
   (それ以外の行やシンボリックリンクはエラー)。宛先・本文・コマンドは Web UI から変えられない
 - `ENABLED=0` は一時停止(`skipped_disabled` を記録)
@@ -193,6 +197,7 @@ bash tests/run.sh                                            # 判定の決定�
 DRY_RUN=1 NOW="2026-11-05 21:00" bash bin/tick.sh <job>      # herdr を呼ばず判定だけ
 DRY_RUN=1 FAKE_STATE=working NOW="2026-11-05 12:00" bash bin/tick.sh <job>
 DRY_RUN=1 NOW="2026-11-05 12:00:30" bash bin/tick.sh <job>   # 秒まで指定
+SCHED_FILE_FALLBACK=1 DRY_RUN=1 bash bin/tick.sh <job>       # DB に取り込む前の jobs/<job>.conf を試す
 ```
 
 - `NOW` は `YYYY-MM-DD HH:MM[:SS]`(ジョブの TZ の現地時刻)。待たずに判定する。秒まで書くとその 1 秒だけ、

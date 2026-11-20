@@ -10,6 +10,19 @@
 set -u
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# 定義が DB に無いジョブ(jobs/*.conf を取り込んでいないなど)は動かさず、failed を記録する(Web UI の一覧と logs/<job>.log で見える)。
+# 毎分起動されるので、同じ理由が最後の記録なら書き足さない
+if [[ "${1:-}" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] && ! sched_files_ok && ! sched_db_body "sched-job:$1" >/dev/null; then
+  _why=$(sched_missing_msg "$1")
+  _line=$(jq -nc --arg ts "$(date '+%Y-%m-%dT%H:%M:%S%z')" --arg job "$1" --arg reason "$_why" '{ts:$ts,job:$job,action:"failed",reason:$reason}')
+  if [ "${DRY_RUN:-0}" = 1 ]; then echo "$_line"
+  else
+    mkdir -p "$LOG_DIR"
+    [ "$(tail -n 1 "$LOG_DIR/$1.log" 2>/dev/null | jq -r 'select(.action=="failed") | .reason' 2>/dev/null)" = "$_why" ] \
+      || echo "$_line" >>"$LOG_DIR/$1.log"
+  fi
+  die "$_why"
+fi
 load_job "${1:-}"
 
 DRY_RUN="${DRY_RUN:-0}"

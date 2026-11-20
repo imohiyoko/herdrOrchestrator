@@ -86,7 +86,8 @@ def make_env(name, **extra):
         WEBUI_SCHED_JOBS=os.path.join(d, "jobs"), WEBUI_SCHED_SETTINGS=os.path.join(d, "settings"),
         WEBUI_STATE_DIR=os.path.join(d, "state"), WEBUI_AUTH_DIR=os.path.join(d, "run"),
         XDG_CONFIG_HOME=os.path.join(d, "xdg"), HERDR_SESSION_FILE=os.path.join(d, "no-herdr-session"),
-        TB_PROTECT=os.path.join(d, "protect.conf"))
+        TB_PROTECT=os.path.join(d, "protect.conf"),
+        SCHED_FILE_FALLBACK="1")   # ジョブはファイル(jobs/*.conf)に置いて試す。既定(DB だけ)は「既定は DB だけ」のところで確かめる
     env.update(extra)
     env.setdefault("TB_UI_GATEWAY_PORT", str(free_range(1)))
     return env, d
@@ -976,6 +977,7 @@ check("次回: 不正な TZ は「不明」", "不明" in _jv.next_runs({**_inf,
 # conf の読み取り(CodeRabbit 指摘): 閉じ引用符の直後の # と、引用符内・継続行の中の代入
 def _jd(body):
     os.environ["WEBUI_SCHED_JOBS"] = _J
+    os.environ["SCHED_FILE_FALLBACK"] = "1"
     open(os.path.join(_J, "unit.conf"), "w").write(body)
     return _jv.job_defs("unit")
 for _q in ("'", '"'):
@@ -1004,6 +1006,21 @@ check("説明: コメントが無ければ tb のサブコマンドから推す(
       [c for c, _ in _jv.command_summary(_jv.job_defs("unit")["COMMAND"])] == ["tb notify flush", "tb digest"]
       and "通知" in _jv.job_summary("unit", {"kind": "command"}))
 os.remove(os.path.join(_J, "unit.conf"))
+# 既定は DB だけ(scheduler と同じ): SCHED_FILE_FALLBACK が無ければ jobs/*.conf のジョブは一覧に出さず、「未取り込み」として知らせる
+import app.jobs as _jobs  # noqa: E402
+os.environ.pop("SCHED_FILE_FALLBACK", None)
+_tbdb_saved = os.environ.get("WEBUI_TB_DB")
+os.environ["WEBUI_TB_DB"] = env["WEBUI_TB_DB"]
+check("既定: ファイルだけのジョブは一覧に出さない", "job1" not in _jobs.job_names() and "pj" not in _jobs.job_names(), str(_jobs.job_names()))
+check("既定: ファイルだけのジョブは未取り込みとして出す", "job1" in _jobs.unimported_jobs())
+check("既定: ファイルの定義は読まない", _jv.job_text("job1", 1000) is None)
+os.environ["SCHED_FILE_FALLBACK"] = "1"
+check("SCHED_FILE_FALLBACK=1: ファイルのジョブも出す", "job1" in _jobs.job_names() and _jv.job_text("job1", 1000) is not None)
+os.environ.pop("SCHED_FILE_FALLBACK", None)
+if _tbdb_saved is None:
+    os.environ.pop("WEBUI_TB_DB", None)
+else:
+    os.environ["WEBUI_TB_DB"] = _tbdb_saved
 
 # ---- 権限カタログ × approvals.conf(読み取りのみ)
 check("カタログ: 操作ごとの現在の権限の節", "操作ごとの現在の権限(カタログ × approvals.conf)" in P[2])

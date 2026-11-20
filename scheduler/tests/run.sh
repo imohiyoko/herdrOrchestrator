@@ -5,6 +5,9 @@ cd "$(dirname "$0")/.." || exit 1
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 export JOBS_DIR="$TMP/jobs" LOG_DIR="$TMP/logs"; mkdir -p "$JOBS_DIR"
 export TB_DB="$TMP/none.db"   # ジョブ定義の DB(config 表)は、下の「DB のジョブ定義」の節でだけ使う。本物の DB は読まない
+# 判定のテストはジョブをファイルに置く(DB に取り込む前の置き場所。SCHED_FILE_FALLBACK=1 のときだけ読む)。
+# 既定(DB だけ)の動きは末尾の「既定は DB だけ」の節で確かめる
+export SCHED_FILE_FALLBACK=1
 
 cat >"$JOBS_DIR/t.conf" <<'C'
 TARGET=dummy
@@ -389,6 +392,26 @@ NOW="2026-11-05 10:00" HERDR_BIN="$PWD/../taskboard/test/fake-herdr" bash bin/ti
 ok "送信: 切り替え・差し込み後の本文を送り、ログに出どころ(本文は残さない)" "$(grep -c $'^prompt dummy\t毎時 42' "$FAKE_LOG") $(last psend | jq -r '.action + " " + .prompt + " " + (has("text")|tostring)')" "1 sent rule:1 false"
 rm -f "$JOBS_DIR/psend.conf"
 unset FAKE_LOG FAKE_AGENTS; export TB_DB="$TMP/none.db"
+
+# ---- 既定は DB だけ: SCHED_FILE_FALLBACK が無ければ jobs/*.conf・settings/*.settings を読まない
+unset SCHED_FILE_FALLBACK
+D="$TMP/dbonly"; mkdir -p "$D/jobs" "$D/settings" "$D/logs"
+printf "COMMAND='echo hi'\nWINDOW=00:00-23:59\nINTERVAL_MIN=2\n" >"$D/jobs/fonly.conf"
+dbo() { JOBS_DIR="$D/jobs" SCHED_SETTINGS_DIR="$D/settings" LOG_DIR="$D/logs" TB_DB="$TMP/sj.db" "$@"; }
+out=$(dbo bash bin/show.sh fonly 2>&1); rc=$?
+ok "既定: DB に無いジョブは show.sh が読まない(取り込みを促す)" "$rc $(grep -c 'tb sched-job import fonly' <<<"$out")" "2 1"
+ok "既定: jobs.sh は DB のジョブだけ" "$(dbo bash bin/jobs.sh | grep -c '^fonly$')" "0"
+out=$(dbo env NOW="$THU 10:00" bash bin/tick.sh fonly 2>/dev/null); rc=$?
+ok "既定: tick.sh は取り込んでいないジョブを動かさず failed を記録" "$rc $(jq -r '.action + " " + (.reason | test("tb sched-job import fonly") | tostring)' "$D/logs/fonly.log")" "2 failed true"
+dbo env NOW="$THU 10:02" bash bin/tick.sh fonly 2>/dev/null
+ok "既定: 同じ理由の failed は毎分は書き足さない" "$(wc -l <"$D/logs/fonly.log" | tr -d ' ')" "1"
+ok "既定: DRY_RUN でも failed を出す" "$(dbo env DRY_RUN=1 NOW="$THU 10:00" bash bin/tick.sh fonly 2>/dev/null | jq -r .action)" "failed"
+TB_DB="$TMP/sj.db" sqlite3 "$TMP/sj.db" "INSERT INTO config (herdr_session, key, body, updated_by, updated_at) VALUES ('default', 'sched-job:fonly', 'COMMAND=''echo hi''
+WINDOW=00:00-23:59
+INTERVAL_MIN=2', 'human', 'x');"
+printf 'INTERVAL_MIN=30\n' >"$D/settings/fonly.settings"
+ok "既定: DB に定義があれば動き、ファイルの settings は読まない" \
+  "$(dbo env DRY_RUN=1 NOW="$THU 10:02" bash bin/tick.sh fonly 2>/dev/null | jq -r .action) $(dbo bash bin/show.sh fonly | jq -r '.settings_source + " " + (.interval_min|tostring)')" "ran none 2"
 
 echo "---- pass=$pass fail=$failn"
 [ "$failn" = 0 ]

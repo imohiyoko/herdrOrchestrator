@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 
 from . import perms
 from .config import SCHED_JOBS, SCHED_ROOT
-from .jobs import db_body
+from .jobs import db_body, files_ok
 from .docs import denied
 from .sanitize import clean
 
@@ -85,10 +85,12 @@ def _value(text, i):
 
 
 def job_text(name, limit):
-    """ジョブ定義の本文(DB の sched-job:<job> > jobs/<名>.conf)。limit 文字まで。読めなければ None。"""
+    """ジョブ定義の本文(DB の sched-job:<job>。SCHED_FILE_FALLBACK=1 なら、無いときに jobs/<名>.conf)。limit 文字まで。読めなければ None。"""
     body = db_body("sched-job:" + name)
     if body is not None:
         return body[:limit]
+    if not files_ok():
+        return None
     path = os.path.join(SCHED_JOBS(), name + ".conf")
     try:
         if os.path.islink(path) or not os.path.isfile(path):
