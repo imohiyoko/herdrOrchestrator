@@ -22,7 +22,7 @@ DAY_PRESETS = (("daily", "毎日"), ("weekdays", "平日"), ("weekends", "土日
 
 CONF_MAX_DB = 262144
 # ジョブ定義・上書き設定は DB の config 表(sched-job:<job> / sched-settings:<job>。tb sched-job)にも置ける。
-# 引く順は scheduler と同じ: このセッションの行 > 共通の行(*) > ファイル(jobs/<job>.conf・settings/<job>.settings)
+# 引く順は scheduler と同じ: このセッションの行 > 共通の行(*)(SCHED_FILE_FALLBACK=1 のときだけ、その後にファイル jobs/<job>.conf・settings/<job>.settings)
 _DB_JOBS_SQL = ("SELECT DISTINCT substr(key, 11) AS name FROM main.config WHERE key LIKE 'sched-job:%' "
                 "AND herdr_session IN (?, '*')")
 _DB_BODY_SQL = ("SELECT body FROM main.config WHERE key = ? AND herdr_session IN (?, '*') "
@@ -39,12 +39,26 @@ def db_body(key):
     return rows[0]["body"][:CONF_MAX_DB + 1] if rows and rows[0]["body"] is not None else None
 
 
-def job_names():
+def files_ok():
+    """ファイル(jobs/*.conf・settings/*.settings)も読むか。scheduler と同じく SCHED_FILE_FALLBACK=1 のときだけ(取り込み前の確認・テスト用)。"""
+    return os.environ.get("SCHED_FILE_FALLBACK") == "1"
+
+
+def _file_jobs():
     try:
-        files = {n[:-5] for n in os.listdir(SCHED_JOBS()) if n.endswith(".conf") and JOB_RE.fullmatch(n[:-5])}
+        return {n[:-5] for n in os.listdir(SCHED_JOBS()) if n.endswith(".conf") and JOB_RE.fullmatch(n[:-5])}
     except OSError:
-        files = set()
-    return sorted(files | _db_jobs())
+        return set()
+
+
+def job_names():
+    """ジョブ名。DB(このセッション > 共通)。SCHED_FILE_FALLBACK=1 なら jobs/*.conf との和(scheduler と同じ)。"""
+    return sorted((_file_jobs() if files_ok() else set()) | _db_jobs())
+
+
+def unimported_jobs():
+    """DB に取り込んでいない jobs/*.conf のジョブ名(scheduler は既定では読まない = 動かない)。"""
+    return sorted(_file_jobs() - _db_jobs())
 
 
 def job_in_db(name):

@@ -7,6 +7,8 @@ export HERDR_SESSION_FILE=$TMP/no-herdr-session   # 手元の checkout の herdr
 export TB_DB=$TMP/tasks.db TB_CONFIG=$TMP/projects.conf TB_LIMITS=$TMP/limits-default.conf
 unset HERDR_SOCKET_PATH   # 実行する pane の socket に左右されない(HSESS は HERDR_SOCKET_PATH を HERDR_SESSION より優先する)
 export HERDR_BIN=$HERE/fake-herdr FAKE_LOG=$TMP/herdr.log
+# scheduler のジョブをファイル(jobs/*.conf)に置くケースがあるので、DB の後にファイルも読ませる。既定(DB だけ)は 53_sched_jobs で確かめる
+export SCHED_FILE_FALLBACK=1
 TB=$HERE/../bin/tb
 # 起動直後の準備待ちは既定では短く、送信確認は切る(98_ready で個別に有効化)
 export TB_PROMPT_VERIFY_SEC=0 TB_SPAWN_POLL_SEC=0.05 TB_SPAWN_READY_SEC=0.2 TB_VERIFY_POLL_SEC=0.05

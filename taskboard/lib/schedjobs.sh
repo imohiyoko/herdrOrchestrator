@@ -2,7 +2,8 @@
 # scheduler のジョブ定義と上書き設定を DB(config 表)に置く(tb sched-job)。bin/tb から source される。単体では実行しない。
 #
 # キー: sched-job:<job>(jobs/<job>.conf の本文そのまま。bash の変数代入)/ sched-settings:<job>(settings/<job>.settings の本文)。
-# scheduler(scheduler/bin/lib.sh)は、このセッションの行 > 共通の行(*)> ファイル の順に読む。DB に行の無いジョブは今までどおりファイル。
+# scheduler(scheduler/bin/lib.sh)は DB だけを読む(このセッションの行 > 共通の行(*))。ファイル(jobs/*.conf・settings/*.settings)は
+# 取り込む前の置き場所で、SCHED_FILE_FALLBACK=1 のときだけ DB の後に読む。取り込んでいない conf のジョブは動かない(tb sched-job import で取り込む)。
 # 変更の履歴は config_changes(tb config と同じ仕組み)。書くのは人だけ。書く前に scheduler 自身(show.sh)で読めることを確かめる。
 # tb sched-job import でファイルを DB に取り込み、取り込んだファイルは checkout から退かす($HERDR_STATE_DIR/sched-imported/<日時>/)。
 
@@ -13,7 +14,8 @@ SJ_JOB_RE='^[A-Za-z0-9][A-Za-z0-9_-]*$'
 sj_valid_job() { [[ $1 =~ $SJ_JOB_RE && ${#1} -le 64 && $1 != dispatch ]] || usage "ジョブ名は英数字で始まり、英数字・_・- の 64 字以内(dispatch は予約名): $1"; }
 sj_key() { if [[ $2 == 1 ]]; then echo "sched-settings:$1"; else echo "sched-job:$1"; fi; }   # $1=job $2=settings なら 1
 
-# 今の本文と出どころ。SJ_BODY / SJ_SRC(db:<セッション> / db:* / file:<パス> / none)
+sj_files_ok() { [[ ${SCHED_FILE_FALLBACK:-0} == 1 ]]; }
+# 今の本文と出どころ。SJ_BODY / SJ_SRC(db:<セッション> / db:* / file:<パス> / none)。ファイルは scheduler と同じく SCHED_FILE_FALLBACK=1 のときだけ
 sj_lookup() {  # $1=job $2=settings なら 1
   local r f
   SJ_BODY=""; SJ_SRC=none
@@ -21,6 +23,7 @@ sj_lookup() {  # $1=job $2=settings なら 1
   if [[ -n $r ]]; then
     SJ_BODY=${r#?:}; if [[ ${r:0:1} == '*' ]]; then SJ_SRC="db:*"; else SJ_SRC="db:$SESS"; fi; return 0
   fi
+  sj_files_ok || return 1
   if [[ $2 == 1 ]]; then f=$SJ_DIR/settings/$1.settings; else f=$SJ_DIR/jobs/$1.conf; fi
   [[ -f $f && ! -L $f ]] || return 1
   SJ_BODY=$(cat "$f"); SJ_SRC="file:$f"
@@ -33,7 +36,7 @@ sj_check() {
   mkdir -p "$tmp/jobs" "$tmp/settings" "$tmp/logs"
   printf '%s\n' "$2" >"$tmp/jobs/$1.conf"
   [[ -z $3 ]] || printf '%s\n' "$3" >"$tmp/settings/$1.settings"
-  out=$(TB_DB=$tmp/none.db JOBS_DIR=$tmp/jobs LOG_DIR=$tmp/logs SCHED_SETTINGS_DIR=$tmp/settings \
+  out=$(SCHED_FILE_FALLBACK=1 TB_DB=$tmp/none.db JOBS_DIR=$tmp/jobs LOG_DIR=$tmp/logs SCHED_SETTINGS_DIR=$tmp/settings \
         env -u SCHED_WINDOW -u SCHED_START -u SCHED_END -u SCHED_INTERVAL_MIN -u SCHED_INTERVAL_SEC bash "$SJ_SHOW" "$1" 2>&1) || rc=$?
   rm -rf "$tmp"
   ((rc == 0)) && return 0
@@ -65,6 +68,8 @@ sj_list() {
     local js ss
     sj_lookup "$j" 0 || true; js=$SJ_SRC
     sj_lookup "$j" 1 || true; ss=$SJ_SRC
+    # DB に無い conf は、scheduler が既定では読まない(動かない)。取り込みを促す
+    [[ $js == none && -f $SJ_DIR/jobs/$j.conf ]] && js="未取り込み:$SJ_DIR/jobs/$j.conf(tb sched-job import $j)"
     printf '%s\t%s\tsettings=%s\n' "$j" "$js" "$ss"
   done <<<"$names"
 }
@@ -85,7 +90,7 @@ sj_args() {  # → SJ_JOB / SJ_SET / SJ_SHARED / SJ_DRY
 
 sj_show() {
   sj_args "$@"
-  sj_lookup "$SJ_JOB" "$SJ_SET" || die "$(sj_key "$SJ_JOB" "$SJ_SET") はありません(DB にもファイルにも無い)"
+  sj_lookup "$SJ_JOB" "$SJ_SET" || die "$(sj_key "$SJ_JOB" "$SJ_SET") は DB にありません$( [[ $SJ_SET == 0 && -f $SJ_DIR/jobs/$SJ_JOB.conf ]] && echo "(jobs/$SJ_JOB.conf は tb sched-job import $SJ_JOB で取り込む)")"
   echo "# $(sj_key "$SJ_JOB" "$SJ_SET"): $SJ_SRC" >&2
   [[ -z $SJ_BODY ]] || printf '%s\n' "$SJ_BODY"
 }
@@ -112,7 +117,7 @@ sj_change() {
   esac
   # scheduler が読めることを確かめてから書く(設定なら今の定義と組み合わせて)
   if ((SJ_SET)); then
-    sj_lookup "$SJ_JOB" 0 || die "ジョブ $SJ_JOB の定義がありません(先に定義を置く)"
+    sj_lookup "$SJ_JOB" 0 || die "ジョブ $SJ_JOB の定義が DB にありません(先に tb sched-job set $SJ_JOB か tb sched-job import $SJ_JOB で置く)"
     conf=$SJ_BODY; settings=$body
   else
     conf=$body; settings=""; sj_lookup "$SJ_JOB" 1 && settings=$SJ_BODY

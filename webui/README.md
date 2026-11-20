@@ -127,7 +127,7 @@ POST/PUT/DELETE/PATCH は 405。
 - `herdr agent list` / `herdr agent read`(結果は 3 秒キャッシュ)
 - tb と同じ DB(既定 `~/.local/state/herdr/tasks.db`。`mode=ro` で開く。無い・壊れていても落ちず、空の表になる)。DB は全セッション共有で、各セッションの Web UI は自分のセッションの行だけを見る(同じ名前の一時ビューで絞る)
 - 成果物として登録されたローカルのファイル(`/docs`。読むだけ)
-- `scheduler/logs/*.log`、`scheduler/jobs/*.conf`(`scheduler/bin/show.sh` 経由)、設定 `approvals` / `projects`(DB の `config` 表か `taskboard/config/` のファイル。`/perms` と宛先の表示)
+- `scheduler/logs/*.log`、ジョブの定義(DB の `sched-job:<job>`。`scheduler/bin/show.sh` 経由。DB に取り込んでいない `scheduler/jobs/*.conf` は一覧の上で知らせる)、設定 `approvals` / `projects`(DB の `config` 表か `taskboard/config/` のファイル。`/perms` と宛先の表示)
 - スケジュールの上書き設定は `tb sched-job set <job> --settings` で DB に書く(ファイルには書かず、残っている `scheduler/settings/<job>.settings` は消す)。入力は数値(間隔は分か秒)・`HH:MM` か `HH:MM:SS`・決まった曜日だけを受け付け、scheduler が読めない内容なら tb が書かない
 
 「滞留」は、`working` のまま最終入力(`agent_activity.last_prompt_at`)から 30 分を超えて停止がない agent。
