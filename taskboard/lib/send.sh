@@ -65,8 +65,9 @@ _route_rules() {
   ROUTE_REASON="routes.conf: $from -> $to に一致する行がない"; return 1
 }
 
-# ---------- delivery(今届ける / 保留する。config の delivery キー) ----------
-# 各行は "<送信者のパターン> -> <宛先のパターン> : <種別>=<now|hold> ..."(パターンは routes と同じ。種別は task info answer、* は残り全部)
+# ---------- delivery(今届ける / 保留する / 止める。config の delivery キー) ----------
+# 各行は "<送信者のパターン> -> <宛先のパターン> : <種別>=<now|hold|block> ..."(パターンは routes と同じ。種別は task info answer、* は残り全部)
+# block は宛先に届けず(入力にも inbox にも置かない)、送信者に「止めた。依頼はチケットにして」と返す(送信は拒否 = 終了コード 4)
 # reply は tb が確かめた返信(--reply-to)だけに効く(* では決めない。reply= の行が無ければ種別で決まる)
 #   coordinator -> assistant : info=hold answer=hold task=now
 #   @worker     -> assistant : *=hold
@@ -79,20 +80,20 @@ delivery_mode() {  # $1=送信者 $2=宛先 $3=種別 [$4=1 なら確かめた�
   config_has delivery || return 0
   local rc=0 pinned=0
   if [[ ${#ROLE_PIN_N[@]} -eq 0 ]]; then role_pin "$1" "$2"; pinned=1; fi
-  # 確かめた返信は、reply=<now|hold> を明示した行があればそれで決まる(* では決めない)。無ければ種別で決める
+  # 確かめた返信は、reply=<now|hold|block> を明示した行があればそれで決まる(* では決めない)。無ければ種別で決める
   if [[ ${4:-0} == 1 ]] && _delivery_rules "$1" "$2" reply exact; then :
   else _delivery_rules "$1" "$2" "$3" || rc=$?; fi
   ((pinned == 0)) || role_unpin
   return $rc
 }
-# 行の中から種別の値を引く。$1=指定の並び $2=種別 [$3=exact なら * を見ない] → 値(now|hold)を出す。書いていなければ 1
+# 行の中から種別の値を引く。$1=指定の並び $2=種別 [$3=exact なら * を見ない] → 値(now|hold|block)を出す。書いていなければ 1
 _delivery_pick() {
   local tok k v star="" toks
   read -ra toks <<<"${1//,/ }"   # glob を展開しない(*=hold がファイル名に化けない)
   for tok in "${toks[@]}"; do
     [[ $tok == *=* ]] || continue
     k=${tok%%=*}; v=${tok#*=}
-    [[ $v == now || $v == hold ]] || continue
+    [[ $v == now || $v == hold || $v == block ]] || continue
     [[ $k == "$2" ]] && { printf '%s' "$v"; return 0; }
     [[ $k == '*' && -z $star && ${3:-} != exact ]] && star=$v
   done
@@ -139,9 +140,33 @@ outbox_hold() {  # $1=outbox.id $2=送信者 $3=宛先 $4=種別 $5=task(空可)
   log_message hold "O-$oid" "$3" "$8" sent
 }
 
-outbox_deliver() {  # $1=outbox.id → 0 送信済み・保留済み(DELIVER_HELD に I-<n>)/ 10 / 11 / 12 保留に失敗
+# 止める(delivery の block): 宛先には何も置かず、outbox を denied にする。確かめた返信だったなら返信済みに数えない。
+# 送信者への知らせの文は BLOCK_NOTICE に入る(届け方は呼び出し側: tb send はその場で stderr、承認・flush のあとは送信者の pane に送る)
+BLOCK_NOTICE=""
+block_notice() {  # $1=outbox.id $2=宛先 $3=種別 $4=規則
+  printf '[tb: blocked / O-%s] %s への送信 O-%s(%s)は %s の受信設定で止められました(%s)。%s には届けていません。依頼や相談はチケットにしてください(tb add -p <project> -t <題> --desc <内容>。進み具合は tb comment で返ってきます)' \
+    "$1" "$2" "$1" "$3" "$2" "$4" "$2"
+}
+outbox_block() {  # $1=outbox.id $2=送信者 $3=宛先 $4=種別 $5=規則 $6=記録用の 1 行
+  local oid=$1 n
+  n=$(sql "UPDATE main.outbox SET status='denied', reason=reason||' / '||$(q "$5")||' → blocked',
+         reply_check=CASE WHEN reply_check='ok' THEN 'delivery で止めた' ELSE reply_check END
+       WHERE herdr_session=$SQS AND id=$oid AND status='queued'; SELECT changes();") || n=0
+  [[ $n == 1 ]] || { echo "tb: O-$oid を止められませんでした(queued ではない)" >&2; return 12; }
+  log_message block "O-$oid" "$3" "$6" sent
+  DELIVER_BLOCKED="O-$oid"; BLOCK_NOTICE=$(block_notice "$oid" "$3" "$4" "$5")
+}
+# 承認・flush のあとで止めたとき、送信者の pane に知らせる(送信者はもう tb send を抜けているため)。届かなければ stderr に出す
+block_notify() {  # $1=outbox.id $2=送信者
+  herdr_send "$2" "$BLOCK_NOTICE" "O-$1" block-notice 2>/dev/null ||
+    echo "tb: O-$1 を止めたことを送信者 '$2' に知らせられませんでした(outbox の reason に残っています)" >&2
+}
+
+DELIVER_BLOCKED=""
+outbox_deliver() {  # $1=outbox.id [$2=inline: 止めた知らせを送信者の pane に送らない(tb send が stderr に出す)]
+                    # → 0 送信済み・保留済み(DELIVER_HELD に I-<n>)・止めた(DELIVER_BLOCKED に O-<n>)/ 10 / 11 / 12 保留・停止に失敗
   local oid=$1 row st from pane target kind tid text msg re="" isreply=0
-  DELIVER_HELD=""
+  DELIVER_HELD="" DELIVER_BLOCKED="" BLOCK_NOTICE=""
   row=$(session_row outbox id "$oid")
   [[ -n $row ]] || die "outbox が見つかりません: O-$oid"
   st=$(jq -r .status <<<"$row")
@@ -151,6 +176,11 @@ outbox_deliver() {  # $1=outbox.id → 0 送信済み・保留済み(DELIVER_HEL
   if [[ $(jq -r '.reply_check // ""' <<<"$row") == ok ]]; then isreply=1; re=" re O-$(jq -r .reply_to <<<"$row")"; fi
   msg="[from: $from / $pane / $tid / $kind / O-$oid$re] $(oneline "$text" "$SEND_MAX")"
   delivery_mode "$from" "$target" "$kind" "$isreply"
+  if [[ $DELIVERY_MODE == block ]]; then
+    outbox_block "$oid" "$from" "$target" "$kind" "$DELIVERY_RULE" "$msg" || return $?
+    [[ ${2:-} == inline ]] || block_notify "$oid" "$from"
+    return 0
+  fi
   if [[ $DELIVERY_MODE == hold ]]; then
     outbox_hold "$oid" "$from" "$target" "$kind" "$(jq -r '.task_id // ""' <<<"$row")" "$text" "$DELIVERY_RULE" "$msg"; return $?
   fi
@@ -160,7 +190,7 @@ outbox_deliver() {  # $1=outbox.id → 0 送信済み・保留済み(DELIVER_HEL
 }
 
 # 終了コード: 0 送信済み(または delivery の設定で inbox に保留した)/ 10 宛先使用中で outbox に積んだ / 11 送信失敗で outbox に積んだ
-#             12 保留しようとして inbox に書けなかった(outbox に積んだまま)/ 4 ルールで拒否(記録のみ)
+#             12 保留しようとして inbox に書けなかった(outbox に積んだまま)/ 4 ルールで拒否(記録のみ。delivery の block も 4)
 #             20 人の承認待ち(approvals.conf が ask。人が tb approve O-<n>) / 3 送信者を特定できず未保存
 cmd_send() {
   [[ $# -ge 1 ]] || usage "send <宛先 agent 名> --text T [--task T-..] [--kind task|info|answer] [--reply-to O-<n>] [--json]"
@@ -228,12 +258,23 @@ cmd_send() {
     echo "tb: 人の承認待ちです(approvals.conf: $APPROVAL_RULE)。人が tb approve O-$oid で届けます" >&2
     rc=20
   else
-    outbox_deliver "$oid" >/dev/null || rc=$?
+    outbox_deliver "$oid" inline >/dev/null || rc=$?
+    # 受け付けてから届けるまでの間に、別の tb flush が同じ行を止めた・保留したなら、その結果を送信者に返す(行を読み直す)
+    if ((rc == 0)) && [[ -z $DELIVER_BLOCKED$DELIVER_HELD ]]; then
+      local st2; st2=$(sql "SELECT status || '|' || (reason LIKE '% → blocked') FROM outbox WHERE id=$oid;")
+      if [[ $st2 == "denied|1" ]]; then
+        local r2; r2=$(sql "SELECT reason FROM outbox WHERE id=$oid;"); r2=${r2##* / }; r2=${r2% → blocked}
+        DELIVER_BLOCKED="O-$oid"; BLOCK_NOTICE=$(block_notice "$oid" "$target" "$kind" "$r2")
+      elif [[ $st2 == sent* ]]; then
+        DELIVER_HELD=$(sql "SELECT 'I-'||id FROM inbox WHERE outbox_id=$oid;")
+      fi
+    fi
+    if ((rc == 0)) && [[ -n $DELIVER_BLOCKED ]]; then echo "tb: $BLOCK_NOTICE" >&2; rc=4; fi
   fi
-  if ((json)); then sql -json "SELECT * FROM outbox WHERE id=$oid;" | jq -c --arg held "$DELIVER_HELD" '.[0] | .id = "O-\(.id)" | if $held != "" then .inbox = $held else . end'
+  if ((json)); then sql -json "SELECT * FROM outbox WHERE id=$oid;" | jq -c --arg held "$DELIVER_HELD" --arg blk "$DELIVER_BLOCKED" '.[0] | .id = "O-\(.id)" | if $held != "" then .inbox = $held else . end | if $blk != "" then .blocked = true else . end'
   elif ((rc == 0)) && [[ -n $DELIVER_HELD ]]; then echo "O-$oid held for $target ($DELIVER_HELD)"
   else
-    case $rc in 0) echo "O-$oid sent to $target";; 4) echo "O-$oid denied";; 20) echo "O-$oid pending-approval";; *) echo "O-$oid queued";; esac
+    case $rc in 0) echo "O-$oid sent to $target";; 4) if [[ -n $DELIVER_BLOCKED ]]; then echo "O-$oid blocked by $target"; else echo "O-$oid denied"; fi;; 20) echo "O-$oid pending-approval";; *) echo "O-$oid queued";; esac
   fi
   return $rc
 }
@@ -255,7 +296,7 @@ cmd_flush() {
       echo "tb: 宛先 '$target' は停止中のため送りません(queued のまま。tb agent-revive $target のあとの flush で届きます)" >&2
       continue
     fi
-    r=0; outbox_deliver "$oid" || r=$?
+    r=0; outbox_deliver "$oid" || r=$?   # 止めた(block)ものは 0。同じ宛先の後続も続けて判定する
     if ((r)); then busy+="$target "; ((r > rc)) && rc=$r; fi
   done < <(sql -separator $'\t' "SELECT id, target FROM outbox WHERE status='queued' ORDER BY id;")
   return $rc
