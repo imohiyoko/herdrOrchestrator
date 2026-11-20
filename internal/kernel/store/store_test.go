@@ -146,7 +146,7 @@ func TestSameSchemaAsBashTB(t *testing.T) {
 	}
 	dir := t.TempDir()
 	bashDB, goDB := filepath.Join(dir, "bash.db"), filepath.Join(dir, "go.db")
-	cmd := exec.Command("bash", "../../taskboard/bin/tb", "list")
+	cmd := exec.Command("bash", "../../../taskboard/bin/tb", "list")
 	cmd.Env = append(os.Environ(), "TB_DB="+bashDB, "HERDR_BIN=false", "HERDR_SESSION=s1", "HERDR_SOCKET_PATH=")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("tb list: %v\n%s", err, out)

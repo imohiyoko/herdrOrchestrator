@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/imohiyoko/herdrorchestrator/internal/store"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 )
 
 func TestRun(t *testing.T) {

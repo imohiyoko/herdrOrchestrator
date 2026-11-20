@@ -21,7 +21,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      # ubuntu だけ、bash の tb と同じスキーマになるかも突き合わせる(internal/store の TestSameSchemaAsBashTB)
+      # ubuntu だけ、bash の tb と同じスキーマになるかも突き合わせる(internal/kernel/store の TestSameSchemaAsBashTB)
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y sqlite3 jq && echo TB_PARITY=1 >> "$GITHUB_ENV"
       - run: go vet ./...
@@ -41,10 +41,39 @@ jobs:
         with:
           version: "~> v2"
           args: release --snapshot --clean
+  # 契約テスト: taskboard のテストを TB_IMPL=go で流す(Go に移したコマンドは herdrctl が答える)。組は taskboard/test/shards から作る
+  tb-shards:
+    runs-on: ubuntu-latest
+    outputs:
+      shards: ${{ steps.list.outputs.shards }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - id: list
+        run: echo "shards=$(bash taskboard/test/run.sh --list-shards | jq -Rsc 'split("\n") | map(select(length > 0))')" >> "$GITHUB_OUTPUT"
+  tb-go:
+    needs: tb-shards
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.tb-shards.outputs.shards) }}
+    name: tb contract (TB_IMPL=go, ${{ matrix.shard }})
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: sudo apt-get update && sudo apt-get install -y sqlite3 jq
+      - run: go build -o "$RUNNER_TEMP/herdrctl" ./cmd/herdrctl
+      - run: TB_IMPL=go TB_HERDRCTL="$RUNNER_TEMP/herdrctl" bash taskboard/test/run.sh --shard "${{ matrix.shard }}"
   # ブランチ保護で必須にする 1 つのチェック
   go-all:
     if: always()
-    needs: [test, snapshot]
+    needs: [test, snapshot, tb-go]
     runs-on: ubuntu-latest
     steps:
-      - run: '[ "${{ needs.test.result }}" = success ] && [ "${{ needs.snapshot.result }}" = success ]'
+      - run: '[ "${{ needs.test.result }}" = success ] && [ "${{ needs.snapshot.result }}" = success ] && [ "${{ needs.tb-go.result }}" = success ]'
