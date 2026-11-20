@@ -259,6 +259,16 @@ cmd_send() {
     rc=20
   else
     outbox_deliver "$oid" inline >/dev/null || rc=$?
+    # 受け付けてから届けるまでの間に、別の tb flush が同じ行を止めた・保留したなら、その結果を送信者に返す(行を読み直す)
+    if ((rc == 0)) && [[ -z $DELIVER_BLOCKED$DELIVER_HELD ]]; then
+      local st2; st2=$(sql "SELECT status || '|' || (reason LIKE '% → blocked') FROM outbox WHERE id=$oid;")
+      if [[ $st2 == "denied|1" ]]; then
+        local r2; r2=$(sql "SELECT reason FROM outbox WHERE id=$oid;"); r2=${r2##* / }; r2=${r2% → blocked}
+        DELIVER_BLOCKED="O-$oid"; BLOCK_NOTICE=$(block_notice "$oid" "$target" "$kind" "$r2")
+      elif [[ $st2 == sent* ]]; then
+        DELIVER_HELD=$(sql "SELECT 'I-'||id FROM inbox WHERE outbox_id=$oid;")
+      fi
+    fi
     if ((rc == 0)) && [[ -n $DELIVER_BLOCKED ]]; then echo "tb: $BLOCK_NOTICE" >&2; rc=4; fi
   fi
   if ((json)); then sql -json "SELECT * FROM outbox WHERE id=$oid;" | jq -c --arg held "$DELIVER_HELD" --arg blk "$DELIVER_BLOCKED" '.[0] | .id = "O-\(.id)" | if $held != "" then .inbox = $held else . end | if $blk != "" then .blocked = true else . end'

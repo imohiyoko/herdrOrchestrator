@@ -49,9 +49,16 @@ n=$(prompts)
 eq "block: flush blocks then delivers the next" "$(rc $TB flush) $(bsql "SELECT group_concat(status) FROM (SELECT status FROM outbox WHERE id IN (9,10) ORDER BY id);")" "0 denied,sent"
 eq "block: flush notifies the sender and sends the info" "$(($(prompts) - n)) $(grep -c "^prompt coordinator	\[tb: blocked / O-9\]" "$FAKE_LOG")" "2 1"
 
+# 受け付けと届ける間に別の flush が同じ行を止めたら、送信者にも「止めた」と返す(sent と言わない)
+bsql "CREATE TRIGGER bl_race AFTER INSERT ON outbox WHEN NEW.text='race' BEGIN
+  UPDATE outbox SET status='denied', reason=reason||' / delivery: * -> worker2 : info=block → blocked' WHERE id=NEW.id; END;"
+out=$(BC send worker2 --kind info --text race 2>"$TMP/block-race.err"); r=$?
+bsql "DROP TRIGGER bl_race;"
+eq "block: a row blocked by a concurrent flush is reported as blocked" "$r $out $(grep -c 'info=block' "$TMP/block-race.err")" "4 O-11 blocked by worker2 1"
+
 # キーを消せば今までどおり
 unset TB_DELIVERY
-eq "block: removing the key → delivered again" "$(BW send reviewer --text back | tail -1)" "O-11 sent to reviewer"
+eq "block: removing the key → delivered again" "$(BW send reviewer --text back | tail -1)" "O-12 sent to reviewer"
 export TB_CONFIG=${_bl_saved[0]} TB_ROUTES=${_bl_saved[1]} TB_APPROVALS=${_bl_saved[2]}
 [[ -n $TB_ROUTES ]] || unset TB_ROUTES; [[ -n $TB_APPROVALS ]] || unset TB_APPROVALS
 unset FAKE_AGENTS _bl_saved
