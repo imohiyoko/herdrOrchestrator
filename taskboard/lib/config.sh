@@ -12,7 +12,7 @@
 # 書くのは人だけ。環境変数でファイルを明示しているときはそのファイルを、そうでなければ DB のこのセッションの行(--shared なら共通の行)を書く。
 
 CONFIG_DIR=${TB_CONFIG_DIR:-$TB_ROOT/config}   # checkout の設定ファイルの置き場(テストで差し替え)
-CONFIG_KEYS="projects approvals grants routes delivery limits notify notify-rules compact slash sched-watch spawn-policy role-models conv-routes conv-learn conv-stages"
+CONFIG_KEYS="projects approvals grants routes delivery limits notify notify-rules compact slash sched-watch spawn-policy role-models conv-routes conv-learn conv-stages protect"
 
 # キーの情報: CFG_ENV(上書きの環境変数)、CFG_FILE(checkout のファイル名)、CFG_EXAMPLE(1 なら .example も既定値として読む)
 config_key_info() {
@@ -34,6 +34,7 @@ config_key_info() {
     conv-routes)  CFG_ENV=TB_CONV_ROUTES;     CFG_FILE=conv-routes.conf;;   # 会話の振り分け表(lib/conv.sh)。.example は既定値にしない(無ければすべて未登録)
     conv-learn)   CFG_ENV=TB_CONV_LEARN;      CFG_FILE=conv-learn.conf; CFG_EXAMPLE=1;;
     conv-stages)  CFG_ENV=TB_CONV_STAGES;     CFG_FILE=conv-stages.conf; CFG_EXAMPLE=1;;
+    protect)      CFG_ENV=TB_PROTECT;         CFG_FILE=protect.conf;;   # tb から止めさせない agent(lib/agents.sh)。.example は既定値にしない(無ければ保護なし)
     *) return 1;;
   esac
 }

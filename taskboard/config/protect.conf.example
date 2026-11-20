@@ -1,0 +1,18 @@
+# tb から止めさせない agent(保護)。編集するのは人だけ(tb config edit protect)。再起動は要らない。
+# 実際に読むのは DB の行(tb config set / edit)か protect.conf。.example は既定値にしない(無ければ何も保護しない)。
+#
+# 1 行 1 つ。上から見て最初に一致した行が効く:
+#   <agent 名の glob> [= 理由]
+#   role:<役割の glob> [= 理由]      (役割は tb agents --group role で見えるもの)
+#
+# 保護された agent は:
+#   - tb agents の killable が protected になる
+#   - tb agent-stop は --force でも止めない(人・指揮官・Web UI のどこから呼んでも同じ)
+#   - tb agent-shed(絞る候補)に出さない
+#   - tb agent-restart(止めて同じ会話で戻す)はできる
+# 止めたいときは、人がこの設定から外してから tb agent-stop する。
+#
+# 例:
+# nightly-* = 定期実行の受け口
+# bigjob = 重い作業用。たまにしか使わないが会話を残したい
+# role:auditor = 定期の監査役

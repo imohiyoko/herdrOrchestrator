@@ -7,7 +7,7 @@
 #   2. killable   : 判定役が止めてよい(killable=yes)とし、その後に新しい入力が無く(stale でなく)、未完了のタスクが無い agent
 #   3. analyst    : 結果を返した(または起動待ちでない)解析役
 #      orphan     : 親のタスクが done、または親が動いていない子 agent
-# 指揮官は候補に入れない。止めてよいと判定されていないものの agent-stop には --force(人だけ)が付く
+# 指揮官と、config の protect で保護された agent は候補に入れない。止めてよいと判定されていないものの agent-stop には --force(人だけ)が付く
 
 shed_has() { [[ " $SHED_SEEN " == *" $1 "* ]]; }
 
@@ -16,6 +16,7 @@ shed_add() {  # $1=グループ $2=名前
   SHED_SEEN+=" $2"
   local k open cmd="tb agent-stop $2"
   k=$(killable_of "$2")
+  [[ $k != protected ]] || return 0
   open=$(sql "SELECT COUNT(*) FROM tasks WHERE owner_agent=$(q "$2") AND status IN ($OPEN_TASK_STATUSES);")
   [[ $k == yes && $open == 0 ]] || cmd+=" --force"
   SHED_OUT+="$1"$'\t'"$2"$'\t'"killable=$k"$'\t'"$cmd"$'\n'

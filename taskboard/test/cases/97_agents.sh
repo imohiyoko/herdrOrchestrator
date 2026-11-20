@@ -69,6 +69,20 @@ eq "agent-approve: rejected one cannot run" "$(rc $TB agent-approve "$lid")" "1"
 eq "agent-stop --force: human" "$(FAKE_AGENTS="[$A_C,$A_S,$A_W]" $TB agent-stop worker1 --force | cut -d' ' -f1-2)" "worker1 stopped"
 export FAKE_AGENTS="[$A_C,$A_S,$A_W]"
 eq "agent-stop: pane close fails → 11" "$(FAKE_CLOSE_RC=1 rc $TB agent-stop worker1 --force)" "11"
+# ---- 保護(config の protect): --force でも止めない。shed の候補にも出さない
+export TB_PROTECT=$TMP/protect.conf
+eq "config set protect: bad line refused" "$(printf 'bad line!\n' | rc $TB config set protect)" "1"
+printf '# 定期実行\nworker* = 定期実行の受け口\n' >"$TB_PROTECT"
+: >"$FAKE_LOG"
+eq "protect: killable shows protected" "$($TB agents --json | jq -r 'select(.name=="worker1") | .killable')" "protected"
+eq "protect: agent-stop --force refused, pane kept" "$($TB agent-stop worker1 --force 2>&1 | grep -c '保護されています(定期実行の受け口)') $(rc $TB agent-stop worker1 --force) $(grep -c '^pane-close' "$FAKE_LOG")" "1 1 0"
+eq "protect: not a shed candidate" "$($TB agent-shed | grep -c worker1)" "0"
+printf 'role:work*\n' >"$TB_PROTECT"
+eq "protect: by role glob (reason defaults to the line)" "$($TB agent-stop worker1 --force 2>&1 | grep -c 'protect: role:work\*')" "1"
+printf 'other*\n' >"$TB_PROTECT"
+eq "protect: no match → --force stops" "$($TB agent-stop worker1 --force | cut -d' ' -f1-2)" "worker1 stopped"
+unset TB_PROTECT
+export FAKE_AGENTS="[$A_C,$A_S,$A_W]"
 eq "agent-new: start fails → 11 and nothing left in the registry" "$(FAKE_START_RC=1 rc $TB agent-new helper3) $(agsql "SELECT COUNT(*) FROM agents WHERE name='helper3';") $(grep -c '^workspace-close wN' "$FAKE_LOG")" "11 0 1"
 # 起動失敗の理由(#83): 最後の agent start のエラーコードと短いメッセージを出す。失敗の回ごとに 1 行をログに残す(本文・引数は書かない)
 export TB_SPAWN_LOG=$TMP/spawn-errors.log; rm -f "$TB_SPAWN_LOG"; : >"$FAKE_LOG"
