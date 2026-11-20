@@ -86,7 +86,7 @@ def make_env(name, **extra):
         WEBUI_SCHED_JOBS=os.path.join(d, "jobs"), WEBUI_SCHED_SETTINGS=os.path.join(d, "settings"),
         WEBUI_STATE_DIR=os.path.join(d, "state"), WEBUI_AUTH_DIR=os.path.join(d, "run"),
         XDG_CONFIG_HOME=os.path.join(d, "xdg"), HERDR_SESSION_FILE=os.path.join(d, "no-herdr-session"),
-        TB_PROTECT=os.path.join(d, "protect.conf"))
+        TB_PROTECT=os.path.join(d, "protect.conf"), TB_LABELS=os.path.join(d, "labels.conf"))
     env.update(extra)
     env.setdefault("TB_UI_GATEWAY_PORT", str(free_range(1)))
     return env, d
@@ -768,6 +768,15 @@ check("タスク: ラベルで絞る", sorted(_ids("/tasks?label=ui")) == ["T-2"
 check("タスク: ラベル + 担当", _ids("/tasks?label=ui&owner=alpha") == ["T-3"])
 check("タスク: ラベルは絞り込みのリンク", 'href="/tasks?label=ui"' in cl.get("/tasks")[2])
 check("タスク: 優先度順", _ids("/tasks?sort=priority")[:2] == ["T-3", "T-2"])
+# 用意したラベル(設定 labels)は、まだ使われていなくても絞り込みの選択肢に先に出る
+with open(env["TB_LABELS"], "w") as _f:
+    _f.write("# 用意したラベル\nunused-yet = まだ誰も付けていない\nui\n")
+_tl = cl.get("/tasks")[2]
+check("タスク: 用意したラベルが選択肢に(書いた順に先、使われているものはその後)",
+      '<option value="unused-yet">' in _tl and _tl.index('value="unused-yet"') < _tl.index('<option value="ui">') < _tl.index('<option value="auth">')
+      and _tl.count('<option value="ui">') == 1)
+os.remove(env["TB_LABELS"])
+check("タスク: 設定を消せば使われているラベルだけ", 'value="unused-yet"' not in cl.get("/tasks")[2])
 for bad in ["type=zz", "priority=x", "label=a%20b", "label=%27%3B--"]:
     r = cl.get("/tasks?" + bad)
     check(f"タスク: 不正な絞り込み {bad} でも 200 でエラー表示", r[0] == 200 and "class=err" in r[2] and "'--" not in r[2], str(r[0]))

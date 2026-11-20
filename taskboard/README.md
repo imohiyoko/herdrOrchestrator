@@ -75,12 +75,15 @@ tb link T-web-003 blocks T-web-002        # T-web-002 は T-web-003 が done に
 tb list -l ui --sort priority --long      # ラベルで絞る(複数はすべてを持つもの)。作成・更新の時刻も出る
 tb tree T-web-001                         # epic から下を字下げで
 tb labels                                 # 使われているラベルと件数
+tb labels --defined                       # 用意したラベル(設定 labels)と件数・説明
 tb update T-web-002 --add-label frontend --remove-label ui --priority highest
 ```
 
 - **種別** `--type`: `epic` / `story` / `task`(既定)/ `bug` / `subtask`。epic は親を持たない。subtask は親が必須で、親は story / task / bug。subtask は誰の親にもなれない。親子の循環は止める。
 - **優先度** `--priority`: `highest` / `high` / `medium`(既定)/ `low` / `lowest`。`tb list --sort priority` と Web UI の「優先度が高い順」で並ぶ。
 - **ラベル** `-l` / `--label`: 何個でも(繰り返しかカンマ区切り)。1〜40 文字で空白・カンマ・引用符は使えない(日本語は可)。agent は `tb list -l <ラベル>` で自分の分野のチケットだけを見られる。
+- **用意したラベル**(設定 `labels`): 人が `tb config edit labels` で 1 行 1 つ `<ラベル> [= 説明]` を書くと、`tb add -l` / `tb update --label` / `--add-label` で付けられるのはそのラベルと tb 自身が付けるラベル(`alert` / `proposal` / `rejected` / `deadline` / `role:*`)だけになる(ほかは終了コード 2 で断り、使えるラベルを出す。打ち間違いや表記ゆれを防ぐ)。外す・絞り込むのは制限しない。設定が無ければ今までどおり自由に付けられる。例は [config/labels.conf.example](config/labels.conf.example)。`tb labels --defined` で書いた順に件数と説明、Web UI のタスク一覧のラベルの絞り込みにも使われる前から出る。
+- **緊急度はラベルではなく優先度**: 優先度(`priority` 列)とラベル(`labels` 列)は別の列。「緊急」は `--priority highest`(または `high`)で表し、ラベルには入れない。アラートの緊急度(critical / high / ...)も優先度に写る。
 - **説明** `--desc`: 本文・受け入れ条件。`tb show` と Web UI の詳細に出る。
 - **外部リンク** `--ref [種類=]URL`: Slack のスレッド・PR・ドキュメントなどの URL を何個でも(`tb update --add-ref` / `--remove-ref <URL>` で付け外し)。種類を省くと URL から `slack` / `github` / `link` を決める。http(s) の URL だけ。`tb show` と Web UI の詳細(押せるリンク)に出る。
 - **スプリント**: `tb sprint-add -p web -n "Sprint 1" --start 2026-11-17 --end 2026-11-30 --goal "..."` で作り、`tb add/update --sprint S-n --points 3` で入れる(`--sprint ''` でバックログへ)。`tb sprint-start S-n` で始め(1 つの project で active は 1 つ)、`tb sprint-close S-n --carry S-m` で閉じると終わっていないタスクを次へ移す。`tb board -p web` で状態ごとの列、`tb sprints` で件数とポイント。Web UI の「ボード」(`/board`)にも同じ列が出る(読み取りのみ)。
@@ -755,7 +758,7 @@ tb が `herdr agent prompt` で送ろうとしたものは、結果にかかわ�
 ## 設定(`tb config`)
 
 運用の設定は DB の `config` 表に置き、キーで引く(schema/013)。シングルポート・マルチセッションでも、セッションごとに違う設定を持てる。
-本文は今までの conf ファイルの中身そのまま(書式は各節のとおり)。キーは `projects` / `approvals` / `grants` / `routes` / `delivery` / `limits` / `notify` / `compact` / `slash` / `sched-watch` / `spawn-policy` / `role-models` / `protect`(tb から止めさせない agent)/ `conv-routes`(会話の振り分け表。書くのは `tb conv-routes-set` だけ)。
+本文は今までの conf ファイルの中身そのまま(書式は各節のとおり)。キーは `projects` / `approvals` / `grants` / `routes` / `delivery` / `limits` / `notify` / `compact` / `slash` / `sched-watch` / `spawn-policy` / `role-models` / `protect`(tb から止めさせない agent)/ `labels`(チケットに付けられるラベル)/ `conv-routes`(会話の振り分け表。書くのは `tb conv-routes-set` だけ)。
 
 引く順(最初に見つかったもの):
 
