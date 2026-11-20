@@ -1,9 +1,0 @@
-# taskboard のテストを CI で並列に流すときの組(run.sh --shard <名前>)。1 行 = 1 組: 「名前: ケース ...」
-# - 前のケースが作った状態(変数・設定ファイル)を使うケースは、使われる側と同じ組に入れる(組の中は番号順に流す)
-# - ここに無いケースはすべて rest に入る(新しいケースは書き足さなくても rest で流れる)
-# - 99_zzz_session_sweep.sh(その組が作った DB を見る)は、どの組でも最後に流す
-# - 所要時間がおおむね揃うように分ける(CI では組ごとに別のジョブ)
-gate:    98_gate.sh 99_gate_ingest.sh 99_gate_review_events.sh 99_compact.sh 99_ready.sh 99_layout.sh
-prqueue: 93_prqueue.sh 95_review.sh 95_review_governance.sh 97_roles_db.sh 97_roles_multi.sh 97_roles_session.sh 97_peek.sh 97_grants.sh
-notify:  94_notify.sh 96_limits.sh 10_tasks.sh 20_proxy.sh
-agents:  60_send.sh 90_alerts.sh 97_agents.sh 97_agents_graph.sh 97_kind_adapter.sh 98_agent_restart.sh 98_agent_spawn.sh 98_model_set.sh

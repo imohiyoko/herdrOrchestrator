@@ -4,7 +4,7 @@
 #   tests/run-all.sh -j 4            すべてを 4 本ずつ並列に流す
 #   tests/run-all.sh <組> ...        指定した組だけ流す(CI は組ごとに別のジョブで流す)
 #   tests/run-all.sh --list          組の名前を JSON の配列で出す(CI の matrix 用)
-# 組: misc(tests/ の小さなもの)/ taskboard-<名前>(taskboard/test/shards の組)/ webui / scheduler / setup / repoindex
+# 組: misc(tests/ の小さなもの)/ taskboard-<組>(taskboard/test/run.sh --list-shards の組。組の中もケースを並列に流す)/ webui / scheduler / setup / repoindex
 set -uo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 
@@ -44,6 +44,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 ((${#sel[@]})) || mapfile -t sel < <(suites)
+# taskboard の組は中でも CPU の数だけ並列に流すので、組を並列に流すときは 1 組あたりの本数を割る
+if ((jobs > 1)) && [[ -z ${TB_TEST_JOBS-} ]]; then
+  ncpu=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2); export TB_TEST_JOBS=$(( ncpu / jobs > 0 ? ncpu / jobs : 1 ))
+fi
 
 out=$(mktemp -d); trap 'rm -rf "$out"' EXIT
 running=0

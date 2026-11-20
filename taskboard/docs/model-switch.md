@@ -5,7 +5,7 @@
 
 ## 自動テスト(疑似 herdr)
 
-`taskboard/test/cases/98_model_set.sh`(`bash taskboard/test/run.sh --shard agents`)。本物の herdr・claude には触れない。
+`taskboard/test/cases/98_model_set.sh`(`bash taskboard/test/run.sh 98_model_set.sh`)。本物の herdr・claude には触れない。
 
 | 確かめること | テスト |
 |---|---|
