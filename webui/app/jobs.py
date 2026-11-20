@@ -1,4 +1,4 @@
-"""scheduler のジョブ定義と、Web UI から書く上書き設定(scheduler/settings/)。"""
+"""scheduler のジョブ定義と、Web UI から書く上書き設定(DB の sched-settings:<job>)。"""
 
 import json
 import os
@@ -93,82 +93,18 @@ def job_last(name):
     return last, (ran[-1] if ran else None)
 
 
-def settings_dest(name):
-    """上書き設定の書き先: "db" か "file"。scheduler(lib.sh の load_settings)が読む場所に合わせる。
-    scheduler は settings を「DB の sched-settings:<job> > settings/<job>.settings」の順に読み、定義の置き場所は見ない。
-    なので定義がファイルでも、DB に settings の行(このセッションか共通)があれば DB に書く(ファイルに書くと DB の行に隠れて効かない)。"""
-    if job_in_db(name) or db_body("sched-settings:" + name) is not None:
-        return "db"
-    return "file"
-
-
 def save_job_settings(name, form):
-    """フォームを検証して settings を書く。エラー文か None。
-    scheduler が settings を DB から読むジョブ(定義か settings が DB にある)は、DB(sched-settings:<job>)に tb sched-job で書く(変更の履歴が残る)。
+    """フォームを検証して上書き設定を DB(sched-settings:<job>。このセッションの行)に tb sched-job で書く。エラー文か None。
+    定義がファイル(jobs/<job>.conf)のジョブも DB に書く(scheduler は settings を DB > ファイルの順に読み、定義の置き場所は見ない)。
+    残っている settings/<job>.settings は消す(置き場所を DB の 1 つにする。DB の行を消したときに古い値が効き出さないように)。
     書いたあと、scheduler の読む設定(show.sh)が書いた値になったかを確かめる。"""
-    if settings_dest(name) == "db":
-        err = _save_db_settings(name, form)
-    else:
-        err = _save_file_settings(name, form)
-    return err or _verify_applied(name, form)
-
-
-def _settings_path(name):
-    return os.path.join(SCHED_SETTINGS(), name + ".settings")
-
-
-def _remove_settings_file(name):
-    """DB に移ったジョブに残ったファイルの settings を消す。DB の行を消したときにファイルの古い値が効き出さないように。エラー文か None。"""
-    path = _settings_path(name)
-    if os.path.islink(path):
-        return "settings/" + name + ".settings がシンボリックリンクです。手で確認してください"
-    if os.path.exists(path):
-        os.unlink(path)
-    return None
-
-
-def _save_file_settings(name, form):
-    path = _settings_path(name)
-    if os.path.islink(path):
-        return "settings がシンボリックリンクです。手で確認してください"
-    old = None
-    if os.path.exists(path):
-        with open(path) as f:
-            old = f.read()
-    if form.get("action") == "reset":
-        if old is not None:
-            os.unlink(path)
-        return None
-    body, err = settings_body(form)
-    if err:
-        return err
-    os.makedirs(SCHED_SETTINGS(), exist_ok=True)
-    tmp = path + ".tmp"
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
-        f.write(body)
-    os.replace(tmp, path)
-    _, err = job_info(name)
-    if err:  # scheduler 側で読めない設定は残さない
-        if old is None:
-            os.unlink(path)
-        else:
-            with open(path, "w") as f:
-                f.write(old)
-        return "scheduler が設定を受け付けませんでした: " + err
-    return None
-
-
-def _save_db_settings(name, form):
-    """DB の sched-settings:<job> を tb sched-job で書く / 消す(検査は tb が scheduler で行う)。エラー文か None。"""
     if form.get("action") == "reset":
         if db_body("sched-settings:" + name) is not None:
             rc, out = run_tb_input(["sched-job", "unset", name, "--settings"], "")
             # 共通の行(*)は、このセッションからは消さない(ほかのセッションにも効くため)。このセッションの行を消しても共通の行が残れば、それが効く
             if rc != 0 or db_body("sched-settings:" + name) is not None:
                 return "上書き設定を戻せませんでした(共通の行は tb sched-job unset " + name + " --settings --shared で人が消します)"
-        # DB の行が無くなると scheduler はファイルの settings を読むので、残っていれば消す(消さないと conf の値に戻らない)
-        return _remove_settings_file(name)
+        return _remove_settings_file(name) or _verify_applied(name, form)
     body, err = settings_body(form)
     if err:
         return err
@@ -176,6 +112,16 @@ def _save_db_settings(name, form):
     if rc != 0:
         first = next((ln for ln in out.splitlines() if ln.startswith("tb: ")), "")
         return "scheduler が設定を受け付けませんでした" + (": " + clean(first[4:])[:300] if first else "")
+    return _remove_settings_file(name) or _verify_applied(name, form)
+
+
+def _remove_settings_file(name):
+    """ファイルの settings(settings/<job>.settings。DB に移す前の置き場所)が残っていれば消す。エラー文か None。"""
+    path = os.path.join(SCHED_SETTINGS(), name + ".settings")
+    if os.path.islink(path):
+        return "settings/" + name + ".settings がシンボリックリンクです。手で確認してください"
+    if os.path.exists(path):
+        os.unlink(path)
     return None
 
 

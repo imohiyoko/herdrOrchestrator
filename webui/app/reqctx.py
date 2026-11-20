@@ -26,11 +26,6 @@ def session():
     return v[1] if v else herdr_env.session_name()
 
 
-def process_session():
-    """このプロセス(と同じ checkout の scheduler・tb)のセッション。URL では変わらない。"""
-    return herdr_env.session_name()
-
-
 def base():
     return f"/s/{name()}"
 
