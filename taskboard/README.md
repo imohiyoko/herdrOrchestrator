@@ -36,6 +36,20 @@ tb update T-<project>-NNN --status review     # todo|in_progress|review|blocked
 tb block  T-<project>-NNN -m "詰まっている理由"
 ```
 
+### 取り消し(cancelled)
+
+やらないと決めたタスクは `tb cancel` で閉じる(状態 `cancelled`)。
+
+```bash
+tb cancel T-<project>-NNN -m "取り消す理由"
+```
+
+- `done` と同じく閉じた状態として扱う: `tb update` / `tb block` / `tb done` / `tb claim` はできない。期限切れ・期限間近(`tb list --overdue` / `--due-within` / `tb due-scan` / Web UI)、`tb nudge`、未対応の報告の数え上げには出ない。
+- `blocks` の先行タスクが `cancelled` になれば、後続は claim できる(先行待ちが解ける)。
+- 理由は要約(`summary`)に残る。完了ではないので完了報告(`tb digest` / `tb report` / `tb pending`)には出さない。
+- スプリントの件数・ポイント(`tb sprints` / Web UI のボード)の分母には数えない。`tb board` には `cancelled` の列が最後に出る。
+- アラート・提案のチケットには使えない(それぞれのコマンドで閉じる)。
+
 ## 指示役 / 人向け
 
 ```bash
@@ -64,7 +78,7 @@ tb whoami --short   # herdr セッション名だけ
 
 ### チケットの構造(種別・優先度・ラベル・説明・リンク)
 
-Jira に近い形でタスクを整理できる。状態(todo / in_progress / review / done / blocked)と遷移は変えない。
+Jira に近い形でタスクを整理できる。状態(todo / in_progress / review / done / blocked / cancelled)と遷移は変えない。
 
 ```bash
 tb add -p web -t "ログイン刷新" --type epic --priority high -l auth,ui
@@ -88,7 +102,7 @@ tb update T-web-002 --add-label frontend --remove-label ui --priority highest
 - **外部リンク** `--ref [種類=]URL`: Slack のスレッド・PR・ドキュメントなどの URL を何個でも(`tb update --add-ref` / `--remove-ref <URL>` で付け外し)。種類を省くと URL から `slack` / `github` / `link` を決める。http(s) の URL だけ。`tb show` と Web UI の詳細(押せるリンク)に出る。
 - **スプリント**: `tb sprint-add -p web -n "Sprint 1" --start 2026-11-17 --end 2026-11-30 --goal "..."` で作り、`tb add/update --sprint S-n --points 3` で入れる(`--sprint ''` でバックログへ)。`tb sprint-start S-n` で始め(1 つの project で active は 1 つ)、`tb sprint-close S-n --carry S-m` で閉じると終わっていないタスクを次へ移す。`tb board -p web` で状態ごとの列、`tb sprints` で件数とポイント。Web UI の「ボード」(`/board`)にも同じ列が出る(読み取りのみ)。
 - **担当の agent**: 既存の `--owner`(agent 名)と `--session`(その agent の会話 ID)で紐付く。`tb list --owner <agent>` で絞り込める。
-- **リンク** `tb link <from> blocks|relates|duplicates <to>`: `blocks` は claim を止める(先行タスクが done になれば claim できる)。blocks の循環は止める。`tb show` は向きつき(`blocks` / `blocked_by` など)で出す。
+- **リンク** `tb link <from> blocks|relates|duplicates <to>`: `blocks` は claim を止める(先行タスクが done か cancelled になれば claim できる)。blocks の循環は止める。`tb show` は向きつき(`blocks` / `blocked_by` など)で出す。
 - `tb list` の既定の出力は ID 状態 担当 題 優先度。前の 4 列の位置は変えず、優先度を最後に足した(列の位置で読む agent が壊れないように)。ただし `IFS=$'\t' read -r id status owner title` のように最後の変数で題を受けていた読み方では、`title` に題と優先度が入るので `read -r id status owner title prio` にする。題の改行とタブは空白にして出す。種別・作成・更新・ラベル・期日は `--long`(または `--json`)で出る。
 - Web UI のタスク一覧は 種別・優先度・ラベル・作成・更新 の列と、種別・優先度・ラベルの絞り込みを持つ。ラベルを押すとそのラベルで絞り込む。
 
@@ -97,11 +111,11 @@ tb update T-web-002 --add-label frontend --remove-label ui --priority highest
 ```sh
 tb add -p web -t "ログ掃除" --due 2026-12-01      # 期日は日付だけ(YYYY-MM-DD)。既定は期日なし
 tb update T-web-012 --due 2026-12-15            # 変える。--due '' で外す
-tb list --overdue                               # 期日が今日より前で done でないもの
-tb list --due-within 3 --sort due --long        # 今日〜3 日後が期日で done でないもの(0 は今日だけ)。--long の最後の列が期日
+tb list --overdue                               # 期日が今日より前で done・cancelled でないもの
+tb list --due-within 3 --sort due --long        # 今日〜3 日後が期日で done・cancelled でないもの(0 は今日だけ)。--long の最後の列が期日
 ```
 
-- 期日のないタスクは期限切れにも期限間近にもならない。done のタスクも出さない。
+- 期日のないタスクは期限切れにも期限間近にもならない。done・cancelled のタスクも出さない。
 - 「今日」は tb を動かす端末の地方時の日付。境界の確認やテストでは `TB_TODAY=YYYY-MM-DD` で固定できる。
 - 作業タスクに紐付かない締め切り(掃除の期限など)は、担当なしのタスク(`--owner` を付けない)に `--due` を付けて置く。
 - 存在しない日付(`2026-02-30`)や形式違い(`2026/12/01`)は使い方の誤り(終了コード 2)。
@@ -563,7 +577,7 @@ tb spawn-freeze / tb spawn-unfreeze                                        # 人
   規則に合うが ask、または凍結中 → `L-<n>`(終了コード 20、`tb agent-approve`)。規則に合わない → 何も作らず stderr に理由を出して終了コード 4
 - 自動で作るには、人が `tb allow 'agent:spawn:*'`(`approvals.conf` に `agent:spawn:* = allow` を、`agent:* = ask` より上に足す)
 - 親子は `agents.spawned_by` / `spawn_task` に残る。子の `tb comment` は指揮官への本文の先頭に `spawned_by: <親>` が付く
-- `tb digest` が知らせる: 子の数が上限の 1 つ手前以上(全体、または 1 体の親)/ 親のタスクが done・blocked なのに子が動いている。子がいなければ何も出さない
+- `tb digest` が知らせる: 子の数が上限の 1 つ手前以上(全体、または 1 体の親)/ 親のタスクが done・cancelled・blocked なのに子が動いている。子がいなければ何も出さない
 
 ### スラッシュコマンドの一括送信(`tb slash`)
 
@@ -872,7 +886,7 @@ HERDR_SESSION=<その checkout のセッション> tb db-import /path/to/checkou
 `comments(id, task_id, kind, text, deliverables, from_name, from_pane, from_session, delivered_at, created_at)`
 `agent_activity(session_id PK, pane_id, tab_id, workspace_id, cwd, last_prompt_id, last_prompt_at, last_stop_at, updated_at)`
 `messages(id, kind, ref, target, body, result, created_at)` / `alerts(id, fingerprint, severity, title, body, source, source_pane, status, count, analyst, note, result_*, first_seen, last_seen, analysis_started_at, analyzed_at, closed_at)` / `proposals(id, role_file, title, text, status, by_name, note, delivered_at, resolved_at, created_at)` / `reviews(id, since_at, until_at, created_at)` / `approval_changes(id, pattern, value, created_at)` / `role_briefings(id, session_id, agent, role_file, hash, source, via, created_at)` / `outbox(id, from_name, from_pane, from_session, target, kind, task_id, text, status, reason, sent_at, created_at)` / `digests(id, target, item_count, body, created_at)` / `observations((herdr_session, key) PK, kind, task_id, text, digest_id, created_at)` / `agents((herdr_session, name) PK, kind, cwd, model, role, session_id, pane_id, herdr_session, state, killable, killable_reason, killable_by, killable_at, killable_session, created_by, created_at, updated_at, stopped_at)` / `agent_ops(id, op, target, args, requested_by, status, result, created_at, decided_at)`
-`tasks.status` は `todo|in_progress|review|done|blocked`。`summary`(done の要約)と `note`(block の理由)は設計メモの最小案への追加。
+`tasks.status` は `todo|in_progress|review|done|blocked|cancelled`(`cancelled` は 023 で追加)。`summary`(done の要約)と `note`(block の理由)は設計メモの最小案への追加。
 時刻は UTC の ISO 8601。
 
 ## 環境変数

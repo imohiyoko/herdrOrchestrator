@@ -41,7 +41,7 @@ cmd_agent-shed() {
     [[ $st == idle || $st == done ]] || continue
     shed_add done-idle "$name"
   done < <(sql "SELECT a.name FROM agents a WHERE a.state='running'
-      AND EXISTS (SELECT 1 FROM tasks t WHERE t.owner_agent=a.name AND t.status='done')
+      AND EXISTS (SELECT 1 FROM tasks t WHERE t.owner_agent=a.name AND t.status IN ('done','cancelled'))
       AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.owner_agent=a.name AND t.status IN ($OPEN_TASK_STATUSES)) ORDER BY a.name;")
   # 2. 止めてよいと判定されている(stale でない)
   while IFS= read -r name; do
@@ -62,7 +62,7 @@ cmd_agent-shed() {
     [[ -n $name ]] && shed_add orphan "$name"
   done < <(sql "SELECT a.name FROM agents a WHERE a.state='running' AND a.spawned_by IS NOT NULL
       AND (COALESCE((SELECT p.state FROM agents p WHERE p.name=a.spawned_by),'stopped')!='running'
-           OR EXISTS (SELECT 1 FROM tasks t WHERE t.id=a.spawn_task AND t.status='done')) ORDER BY a.name;")
+           OR EXISTS (SELECT 1 FROM tasks t WHERE t.id=a.spawn_task AND t.status IN ('done','cancelled'))) ORDER BY a.name;")
   local out=$SHED_OUT
   ((count == 0)) || out=$(printf '%s' "$SHED_OUT" | head -n "$count")
   [[ -n $out ]] || return 0

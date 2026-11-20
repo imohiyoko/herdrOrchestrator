@@ -417,7 +417,7 @@ cmd_nudge() {
     [[ -n $owner ]] || continue
     # 優先度が高い順、同じなら古い順。各行に「done でない先行チケット」の数を付ける
     rows=$(sql -json "SELECT t.id, t.title, t.project,
-        (SELECT COUNT(*) FROM task_links l JOIN tasks b ON b.id=l.from_id WHERE l.to_id=t.id AND l.link_type='blocks' AND b.status!='done') AS blockers
+        (SELECT COUNT(*) FROM task_links l JOIN tasks b ON b.id=l.from_id WHERE l.to_id=t.id AND l.link_type='blocks' AND b.status NOT IN ('done','cancelled')) AS blockers
       FROM tasks t WHERE t.status='in_progress' AND t.owner_agent=$(q "$owner")
       ORDER BY $PRIORITY_RANK, t.updated_at, t.id;")
     n=$(jq length <<<"$rows")
@@ -430,7 +430,7 @@ cmd_nudge() {
     grep -qxF -- "$owner" <<<"$conds" && { nudge_row "$owner" "${pick:--}" skip "指揮役"; continue; }
     if w=$(protect_reason "$owner"); then nudge_row "$owner" "${pick:--}" skip "保護($w)"; continue; fi
     w=$(sql "SELECT group_concat('C-'||c.id, ' ') FROM comments c LEFT JOIN tasks t ON t.id=c.task_id
-          WHERE c.from_name=$(q "$owner") AND c.kind IN ('question','blocked') AND c.resolved_at IS NULL AND COALESCE(t.status,'')!='done';")
+          WHERE c.from_name=$(q "$owner") AND c.kind IN ('question','blocked') AND c.resolved_at IS NULL AND COALESCE(t.status,'') NOT IN ('done','cancelled');")
     [[ -z $w ]] || { nudge_row "$owner" "${pick:--}" skip "人の返事待ち($w)"; continue; }
     [[ -n $pick ]] || { nudge_row "$owner" "$(jq -r '.[0].id' <<<"$rows")" skip "先行チケット(blocks)待ち"; continue; }
     # 区切りは空白でない文字(タブだと空の last_prompt_at が詰められて列がずれる)

@@ -3,7 +3,8 @@
 # bin/tb から source される。単体では実行しない。
 
 DEFAULT_TARGET=conductor
-STATUSES="todo in_progress review done blocked"
+STATUSES="todo in_progress review done blocked cancelled"
+CLOSED_STATUSES="done cancelled"   # 閉じた状態(cancelled = やらないと決めた。done と同じく、もう動かさない)
 TYPES="epic story task bug subtask"
 PRIORITIES="highest high medium low lowest"   # 上から順に高い
 LINK_TYPES="blocks relates duplicates"

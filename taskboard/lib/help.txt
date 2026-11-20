@@ -18,13 +18,14 @@ tb unlink <from> <種類> <to>
 tb sprint-add -p <project> -n <名前> [--start YYYY-MM-DD] [--end YYYY-MM-DD] [--goal G]   → S-<n>(planned)
 tb sprint-start S-n                 planned → active(1 つの project で active は 1 つ)
 tb sprint-close S-n [--carry S-m]   閉じる。終わっていないタスクは S-m(省略時はバックログ)へ
-tb sprints [-p project] [--state planned|active|closed] [--json]   件数・完了・ポイント
+tb sprints [-p project] [--state planned|active|closed] [--json]   件数・完了・ポイント(cancelled は件数・ポイントに数えない)
 tb board [S-n | -p project] [-l ラベル] [--json]   状態ごとの列(-p だけならその project の active なスプリント)
 tb claim <id> --owner <name> [--session S] [--account A]    todo → in_progress(todo 以外は失敗)
 tb update <id> [--status todo|in_progress|review|blocked] [--title T] [--owner N] [--session S] [--account A] [--parent ID]
            [--type T] [--priority P] [--desc D] [--due YYYY-MM-DD(''で外す)] [--label L ...(置き換え。'' で全部外す)] [--add-label L] [--remove-label L] [--add-ref [種類=]URL] [--remove-ref URL] [--sprint S-n|''] [--points N|'']
 tb done <id> -d <成果物> [-d ...] -m <要約>                  成果物と要約が必須。reported_at は空のまま
 tb block <id> [-m <理由>]
+tb cancel <id> [-m <理由>]   やらないと決めたタスクを閉じる(cancelled)。done と同じく閉じた状態で、期限切れ・nudge・先行チケット待ちの対象から外れる。完了報告には出さない
 tb report <id>      完了の報告を done の報告コメント(C-<n>)にして指示役へすぐ届ける。届いたときだけ reported_at を埋める(打たなくても tb digest が届ける)
                     終了コード 0=送信済み/報告済み 10=宛先が使用中で未送信 11=送信/状態取得に失敗
 tb pending [--json|--ids]   done なのに未報告のタスク

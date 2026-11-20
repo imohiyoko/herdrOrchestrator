@@ -349,10 +349,10 @@ def page_agent(key):
     return f"agent: {clean(agent_key(a))}", body
 
 
-TASK_STATUSES = ["todo", "in_progress", "review", "done", "blocked"]
+TASK_STATUSES = ["todo", "in_progress", "review", "done", "blocked", "cancelled"]
 
 
-TASK_SORTS = {"": ("優先順(未対応の報告 → blocked → in_progress → review → todo → done)", None),
+TASK_SORTS = {"": ("優先順(未対応の報告 → blocked → in_progress → review → todo → done・cancelled)", None),
               "project": ("PJ ごと・更新が新しい順", "project, updated_at DESC"),
               "oldest": ("更新が古い順", "updated_at ASC"),
               "created": ("作成が新しい順", "created_at DESC"), "id": ("タスク ID 順", "id ASC"),
@@ -398,9 +398,9 @@ def today_str():
 
 
 def due_state(t, today=None, days=DUE_SOON_DAYS):
-    """期日の状態: "overdue"(今日より前)/ "soon"(今日〜days 日後)/ None。期日なし・done は None。"""
+    """期日の状態: "overdue"(今日より前)/ "soon"(今日〜days 日後)/ None。期日なし・done・cancelled は None。"""
     d = t.get("due")
-    if not d or t.get("status") == "done" or not isinstance(d, str):
+    if not d or t.get("status") in ("done", "cancelled") or not isinstance(d, str):
         return None
     today = today or today_str()
     if d < today:
@@ -479,7 +479,7 @@ def page_tasks(qs, ctx=None):
         if sort == "priority":
             sort = ""
     if st and st not in TASK_STATUSES:
-        errs.append("状態は todo / in_progress / review / done / blocked のどれかです"); st = ""
+        errs.append("状態は todo / in_progress / review / done / blocked / cancelled のどれかです"); st = ""
     if owner and not OWNER_RE.fullmatch(owner):
         errs.append("担当は英数字と . _ - だけです"); owner = ""
     if sort not in TASK_SORTS:
@@ -498,11 +498,11 @@ def page_tasks(qs, ctx=None):
     if label:
         base_w.append("EXISTS (SELECT 1 FROM json_each(tasks.labels) WHERE value=?)"); base_p.append(label)
     today = today_str()
-    if dview == "overdue":   # 期日なし・done は出さない(tb list --overdue と同じ)
-        base_w += ["due IS NOT NULL", "due<?", "status!='done'"]; base_p.append(today)
+    if dview == "overdue":   # 期日なし・done・cancelled は出さない(tb list --overdue と同じ)
+        base_w += ["due IS NOT NULL", "due<?", "status NOT IN ('done','cancelled')"]; base_p.append(today)
     elif dview == "soon":
         end = (datetime.strptime(today, "%Y-%m-%d") + timedelta(days=days)).strftime("%Y-%m-%d")
-        base_w += ["due IS NOT NULL", "due>=?", "due<=?", "status!='done'"]; base_p += [today, end]
+        base_w += ["due IS NOT NULL", "due>=?", "due<=?", "status NOT IN ('done','cancelled')"]; base_p += [today, end]
     where, params = list(base_w), list(base_p)
     if st:
         where.append("status=?"); params.append(st)
@@ -515,7 +515,7 @@ def page_tasks(qs, ctx=None):
         order = TASK_SORTS[sort][1]
     else:   # 優先順。resolved_at 列が無い DB では未対応の報告の優先だけ使えない
         open_q = ("(EXISTS (SELECT 1 FROM comments c WHERE c.task_id=tasks.id AND c.kind IN ('question','blocked') AND c.resolved_at IS NULL"
-                  " AND tasks.status!='done')) DESC, ") if has_resolution() else ""
+                  " AND tasks.status NOT IN ('done','cancelled'))) DESC, ") if has_resolution() else ""
         order = open_q + STATUS_RANK + ", project, updated_at DESC"
     rows = q("SELECT * FROM tasks" + wh + " ORDER BY " + order + " LIMIT " + str(TASK_LIST_MAX), params)
     total = (q("SELECT COUNT(*) AS n FROM tasks" + wh, params) or [{"n": len(rows)}])[0]["n"]
@@ -539,13 +539,13 @@ def page_tasks(qs, ctx=None):
     cells = [f'<a href="{e(href(status=s))}">{e(s)} {summ.get(s, 0)}</a>' for s in TASK_STATUSES]
     body = err_html("。".join(errs)) * bool(errs)
     if hd:
-        n_over = q("SELECT COUNT(*) AS n FROM tasks WHERE due IS NOT NULL AND due<? AND status!='done'", (today,))[0]["n"]
+        n_over = q("SELECT COUNT(*) AS n FROM tasks WHERE due IS NOT NULL AND due<? AND status NOT IN ('done','cancelled')", (today,))[0]["n"]
         soon_end = (datetime.strptime(today, "%Y-%m-%d") + timedelta(days=DUE_SOON_DAYS)).strftime("%Y-%m-%d")
-        n_soon = q("SELECT COUNT(*) AS n FROM tasks WHERE due IS NOT NULL AND due>=? AND due<=? AND status!='done'", (today, soon_end))[0]["n"]
+        n_soon = q("SELECT COUNT(*) AS n FROM tasks WHERE due IS NOT NULL AND due>=? AND due<=? AND status NOT IN ('done','cancelled')", (today, soon_end))[0]["n"]
         if n_over or n_soon:
             body += (f'<p><a href="/tasks?due=overdue&amp;sort=due"><span class={"err" if n_over else "note"}>期限切れ {n_over}</span></a> / '
                      f'<a href="/tasks?due=soon&amp;sort=due">期限間近({DUE_SOON_DAYS} 日以内){n_soon}</a>'
-                     f' <span class=note>(今日 = {e(today)}、done は数えない)</span></p>')
+                     f' <span class=note>(今日 = {e(today)}、done・cancelled は数えない)</span></p>')
     if not db_conn_ok():
         body += '<p class=err>タスク DB がありません(または開けません)</p>'
     body += ("<h2>状態の件数</h2><p>" + " / ".join(cells) + f' / <a href="{e(href(status=""))}">全部 {sum(summ.values())}</a></p>'
@@ -642,7 +642,7 @@ def has_sprints():
 
 
 SPRINT_RE = re.compile(r"S-[0-9]{1,9}")
-BOARD_COLS = ["todo", "in_progress", "review", "blocked", "done"]
+BOARD_COLS = ["todo", "in_progress", "review", "blocked", "done", "cancelled"]
 
 
 def page_board(qs, ctx=None):
@@ -657,7 +657,9 @@ def page_board(qs, ctx=None):
         errs.append("スプリントは S-<番号> です"); sid = ""
     if label and not LABEL_RE.fullmatch(label):
         errs.append("ラベルは 40 文字までで、空白・カンマ・引用符を含みません"); label = ""
-    sprints = q("SELECT s.*, COUNT(t.id) AS n, SUM(t.status='done') AS done_n, COALESCE(SUM(t.points),0) AS pts,"
+    # cancelled(取り消し)は件数・ポイントの分母に入れない(tb sprints と同じ)
+    sprints = q("SELECT s.*, COALESCE(SUM(t.id IS NOT NULL AND t.status!='cancelled'),0) AS n, SUM(t.status='done') AS done_n,"
+                " COALESCE(SUM(CASE WHEN t.status!='cancelled' THEN t.points END),0) AS pts,"
                 " COALESCE(SUM(CASE WHEN t.status='done' THEN t.points END),0) AS done_pts"
                 " FROM sprints s LEFT JOIN tasks t ON t.sprint_id=s.id" + (" WHERE s.project=?" if proj else "") +
                 " GROUP BY s.id ORDER BY CASE s.state WHEN 'active' THEN 1 WHEN 'planned' THEN 2 ELSE 3 END, s.project, s.id DESC",

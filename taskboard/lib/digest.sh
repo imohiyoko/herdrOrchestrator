@@ -121,7 +121,7 @@ collect_digest() {
       [[ -n $pane ]] || continue
       key="blocked:$pane:$sess"; current+="$(q "$key"),"
       obs_seen "$key" && continue
-      task=$(sql -separator $'\t' "SELECT id, project FROM tasks WHERE status!='done'
+      task=$(sql -separator $'\t' "SELECT id, project FROM tasks WHERE status NOT IN ('done','cancelled')
                AND ((session_id IS NOT NULL AND session_id=$(q "$sess")) OR (owner_agent IS NOT NULL AND owner_agent=$(q "$name")))
                ORDER BY updated_at DESC LIMIT 1;")
       [[ -n $task ]] || continue
@@ -164,7 +164,7 @@ collect_spawn_obs() {
     add_item "$(target_for "$project")" obs "$task" "$key" "$task" spawnorphan "$task 観測 / $parent" \
       "親のタスクが $st になったが、子 $id はまだ動いている(止めるなら tb agent-stop $id)"
   done < <(sql -separator $'\t' "SELECT a.name, a.spawned_by, a.spawn_task, t.status, t.project FROM agents a JOIN tasks t ON t.id=a.spawn_task
-             WHERE a.spawned_by IS NOT NULL AND a.state='running' AND t.status IN ('done','blocked') ORDER BY a.name;")
+             WHERE a.spawned_by IS NOT NULL AND a.state='running' AND t.status IN ('done','cancelled','blocked') ORDER BY a.name;")
   # 条件が外れたものは記録を消す(再び当てはまったら、また送る)
   sql "DELETE FROM main.observations WHERE herdr_session=$SQS AND kind IN ('spawnlimit','spawnorphan') AND key NOT IN (${current}'');"
 }
