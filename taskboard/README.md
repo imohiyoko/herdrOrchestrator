@@ -197,6 +197,7 @@ tb digests [D-<n>] [--json]  # 送ったまとめの一覧 / 全文
 - **まとめるもの**: 未配送の報告(`progress` / `done` と、即時送信に失敗したもの)、`done` なのに未報告のタスク、そして **tb が観測した事象**。
   観測は worker の自己申告に頼らない:
   - turn が終わって `TB_DIGEST_IDLE_MIN`(既定 10)分たつのに、タスクが `in_progress` のまま(`agent_activity` の `Stop` から)
+  - 1 体の agent が `in_progress` のチケットを複数握っている(タスク agent は 1 枚が原則。本人への催促は `tb nudge`)
   - `TB_DIGEST_STUCK_MIN`(既定 30)分以上 `working` のまま
   - herdr 上で `blocked`(承認ダイアログ待ちなど)。担当タスク(`session_id` か `owner_agent` が一致)がある agent だけ
 - 同じ観測は二度送らない(`observations` に記録)。blocked が解けると記録を消し、また blocked になれば再び送る
@@ -252,6 +253,22 @@ tb outbox [--status queued|sent|denied] [--json]
 - 拒否したものも `outbox` に `denied` と根拠(`reason`)つきで残る
 - 終了コード: 0 送信済み(または保留した)/ 10 宛先使用中で積んだ / 11 送信失敗で積んだ / 12 保留に失敗して積んだ / 4 ルールで拒否 / 20 人の承認待ち(approvals)/ 3 送信者を特定できず未保存
 - agent に `herdr agent prompt` を直接打たせないようにするには、その agent の Claude Code 設定で拒否する(`conductor/README.md`)
+
+### 休んでいる担当への催促(`tb nudge`)
+
+チケットを握ったまま(担当で `in_progress`)turn が終わって止まっている agent に、そのチケットの指示役から「続けて」と送る。新しい送り方は作らず、指示役が `tb send <担当> --kind task --task <チケット>` したのと同じ outbox と delivery の規則で届く(文面のラベルの pane が `nudge`: `[from: <指示役> / nudge / T-x / task / O-n] [催促] ...`)。
+
+```bash
+tb nudge --dry-run            # 誰に送るか・なぜ飛ばすかを見るだけ(agent の pane からも読める)
+tb nudge [--idle-min 15] [--max 3] [--json]   # 送る(人の端末か scheduler から。例は scheduler/jobs/nudge.conf.example)
+```
+
+- **握っている**: 担当(`owner_agent`)が自分で、状態が `in_progress` のチケット。割り当てだけの `todo`、`review`・`blocked` は催促しない
+- **休んでいる**: herdr の状態が `idle` / `done` で、最後の turn の終わり(hook の活動記録)から `--idle-min` 分(`TB_NUDGE_IDLE_MIN`、既定 15)たっている
+- **催促しない**(理由つきで出す): herdr にいない・`working`・`blocked`(承認ダイアログなど人の操作待ち)/ 指示役(`conductor` と `projects` の値)/ 保護(`protect`)/ 人の返事待ち(自分が出した `question`・`blocked` の報告が未対応)/ 握っているチケットがすべて先行チケット(`blocks`)待ち / 活動記録が無い / delivery の規則で指示役 → その agent の `task` が `now` にならない(`hold` は inbox に置かれるだけで催促にならず、`block` は送ってはいけない宛先)
+- **しつこくしない**: 1 回の休みに 1 通。同じチケットで `--max` 回(`TB_NUDGE_MAX`、既定 3)送ったら止める(その先は `tb digest` の観測で指示役が見る)。届かなかった催促は outbox に `queued` で残さず `denied`(取り下げ)にする(あとで `tb flush` が古い催促を届けないように)
+- **複数のチケット**: タスク agent は 1 枚が原則。複数を握っていれば、先行チケット待ちでない中で優先度が高い(同じなら古い)1 枚を名指しし、ほかは `tb update <ID> --status todo` で戻すか指示役に相談するよう文面に書く。指示役には `tb digest` が「複数チケット」の観測として 1 度だけ知らせる(組み合わせが変わればまた出す)
+- 止めたい agent には delivery で `<指示役> -> <agent> : task=hold`(か `block`)を書く。催促だけを止める別の設定は持たない
 
 ### 送信の規則(delivery): 今届ける / 保留する / 止める と inbox
 
@@ -859,7 +876,7 @@ HERDR_SESSION=<その checkout のセッション> tb db-import /path/to/checkou
 
 `TB_DB`(DB パス。既定は全セッション共有の `~/.local/state/herdr/tasks.db`) / `TB_CONFIG`(projects.conf) / `HERDR_BIN`(herdr の実体。既定 `herdr`) / `TB_SCHEMA_DIR`(テスト用)
 DB パスと herdr の既定値は部品で共通の [`lib/herdr-env.sh`](../lib/herdr-env.sh)(Python は `lib/herdr_env.py`)で決まる。
-`TB_ROUTES`(routes.conf) / `TB_DELIVERY`(delivery.conf) / `TB_HR_NAME`(hr) / `TB_SCHED_LOGS` / `TB_REVIEW_TOP`(8) / `TB_ANALYST_MAX`(2) / `TB_ANALYST_CWD` / `TB_ANALYST_MODEL` / `TB_AGENT_CWD` / `TB_SWEEPER_PATTERN`(`sweeper*`) / `TB_LIMITS`(limits.conf) / `TB_LIMIT_<キー大文字>`(各制限の上書き) / `TB_HANDOFF_DIR`(handoff の置き場) / `TB_SPAWN_RETRY_SEC`(3) / `TB_APPROVALS`(approvals.conf) / `TB_ROLES`(roles/) / `TB_ROLE_MAX`(12000) / `TB_SEND_MAX`(4000) / `TB_IMMEDIATE_KINDS`(既定 `question blocked`) / `TB_DIGEST_IDLE_MIN`(10) / `TB_DIGEST_STUCK_MIN`(30) / `TB_DIGEST_ITEM_MAX`(160) / `TB_DIGEST_MSG_MAX`(1800)
+`TB_ROUTES`(routes.conf) / `TB_DELIVERY`(delivery.conf) / `TB_HR_NAME`(hr) / `TB_SCHED_LOGS` / `TB_REVIEW_TOP`(8) / `TB_ANALYST_MAX`(2) / `TB_ANALYST_CWD` / `TB_ANALYST_MODEL` / `TB_AGENT_CWD` / `TB_SWEEPER_PATTERN`(`sweeper*`) / `TB_LIMITS`(limits.conf) / `TB_LIMIT_<キー大文字>`(各制限の上書き) / `TB_HANDOFF_DIR`(handoff の置き場) / `TB_SPAWN_RETRY_SEC`(3) / `TB_APPROVALS`(approvals.conf) / `TB_ROLES`(roles/) / `TB_ROLE_MAX`(12000) / `TB_SEND_MAX`(4000) / `TB_IMMEDIATE_KINDS`(既定 `question blocked`) / `TB_DIGEST_IDLE_MIN`(10) / `TB_DIGEST_STUCK_MIN`(30) / `TB_DIGEST_ITEM_MAX`(160) / `TB_DIGEST_MSG_MAX`(1800) / `TB_NUDGE_IDLE_MIN`(15) / `TB_NUDGE_MAX`(3)
 
 ## テスト
 

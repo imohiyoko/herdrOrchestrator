@@ -364,3 +364,113 @@ cmd_inbox-read() {
     jq -r '"I-\(.id)  from: \(.from_name) / \(.kind) / \(.task_id // "-") / \(.created_at)  (O-\(.outbox_id))\n\n\(.text)"' <<<"$row"
   fi
 }
+
+# ---------- nudge(チケットを握ったまま休んでいる agent に「続けて」と送る。scheduler から定期実行する想定) ----------
+# 新しい送信の経路は作らない。指揮役(そのチケットの project の指示役)から tb send したのと同じく outbox に積み、
+# delivery の規則(outbox_deliver)で届ける。文面のラベルの pane は nudge になる([from: <指揮役> / nudge / T-x / task / O-n])。
+# 握っている = 担当(owner_agent)が自分で in_progress のチケット。todo(割り当てだけ)・review・blocked は催促しない。
+# 催促しない(理由つきで飛ばす)もの:
+#   - herdr にいない / herdr の状態が idle・done 以外(working は作業中、blocked は承認ダイアログなど人の操作待ち)
+#   - 指揮役(conductor と projects の値。人と話している)/ 保護(config の protect。定期実行の受け口など)
+#   - 人の返事待ち(自分が出した question / blocked の報告がまだ対応されていない)
+#   - 先行チケット(blocks)が done になっていない(握っているチケットがすべてそう)
+#   - 活動記録(hook)が無い・turn が終わって NUDGE_IDLE_MIN 分たっていない
+#   - delivery の規則で now にならない(hold は inbox に置かれるだけで催促にならず、block は送ってはいけない宛先)
+#   - この休み(最後の turn の終わり)のあとに催促済み / 同じチケットで NUDGE_MAX 回催促済み(以後は digest の観測で指揮役が見る)
+# 複数のチケットを握っているとき: 優先度が高く、先行チケット待ちでない 1 枚を「今やるもの」として名指しし、
+# ほかは todo に戻すか指揮役に相談するよう文面に書く(タスク agent は 1 枚が原則)。指揮役には digest の観測で知らせる。
+NUDGE_IDLE_MIN=${TB_NUDGE_IDLE_MIN:-15}
+NUDGE_MAX=${TB_NUDGE_MAX:-3}
+
+nudge_text() {  # $1=今やるチケット $2=題 $3=分 $4=握っているほかのチケット(空白区切り。空可)
+  local t="[催促] $1「$2」が in_progress のまま、turn が終わって $3 分止まっています。続きを進めてください。"
+  t+="終わったら tb done $1 -d <成果物> -m <要約> と tb report $1、進められない理由があれば tb block $1 -m <理由> か tb comment $1 --kind question --text <聞きたいこと> で知らせてください。"
+  if [[ -n $4 ]]; then
+    t+="あなたは in_progress のチケットをほかにも持っています($4)。1 枚ずつ進めるのが原則なので、まず $1 を進め、今やっていないものは tb update <ID> --status todo で戻すか、tb comment で指示役に相談してください。"
+  fi
+  printf '%s' "$t"
+}
+
+NUDGE_OUT=""
+nudge_row() {  # $1=agent $2=チケット(- 可) $3=結果(sent|would|skip|queued|held|blocked) $4=理由
+  NUDGE_OUT+=$(jq -nc --arg a "$1" --arg t "$2" --arg r "$3" --arg w "$4" '{agent:$a, task:$t, result:$r, reason:$w}')$'\n'
+}
+
+cmd_nudge() {
+  local dry=0 json=0 idle=$NUDGE_IDLE_MIN max=$NUDGE_MAX
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --dry-run) dry=1; shift;;
+      --json) json=1; shift;;
+      --idle-min) need_arg "$@"; idle=$2; shift 2;;
+      --max) need_arg "$@"; max=$2; shift 2;;
+      *) usage "nudge [--dry-run] [--idle-min N] [--max N] [--json]";;
+    esac
+  done
+  [[ $idle =~ ^[0-9]+$ && $max =~ ^[0-9]+$ ]] || usage "nudge: --idle-min / --max(TB_NUDGE_IDLE_MIN / TB_NUDGE_MAX)は数字"
+  ((dry)) || require_human "tb nudge"
+  load_live || { echo "tb: nudge: herdr agent list に失敗しました(何も送っていません)" >&2; return 11; }
+  NUDGE_OUT=""
+  local owner rows n live st sess act stop_at prompt_at mins w pick ptitle project others sender oid rc text conds
+  conds=$(conductor_names)
+  while IFS= read -r owner; do
+    [[ -n $owner ]] || continue
+    # 優先度が高い順、同じなら古い順。各行に「done でない先行チケット」の数を付ける
+    rows=$(sql -json "SELECT t.id, t.title, t.project,
+        (SELECT COUNT(*) FROM task_links l JOIN tasks b ON b.id=l.from_id WHERE l.to_id=t.id AND l.link_type='blocks' AND b.status!='done') AS blockers
+      FROM tasks t WHERE t.status='in_progress' AND t.owner_agent=$(q "$owner")
+      ORDER BY $PRIORITY_RANK, t.updated_at, t.id;")
+    n=$(jq length <<<"$rows")
+    pick=$(jq -r '[.[] | select(.blockers == 0)][0].id // empty' <<<"$rows")
+    others=$(jq -r --arg p "$pick" '[.[] | select(.id != $p) | .id] | join(" ")' <<<"$rows")
+    live=$(live_row "$owner")
+    [[ -n $live ]] || { nudge_row "$owner" "${pick:--}" skip "herdr にいない"; continue; }
+    st=$(jq -r '.agent_status // ""' <<<"$live"); sess=$(jq -r '.agent_session.value // ""' <<<"$live")
+    case $st in idle|done) ;; *) nudge_row "$owner" "${pick:--}" skip "herdr の状態が ${st:-不明}"; continue;; esac
+    grep -qxF -- "$owner" <<<"$conds" && { nudge_row "$owner" "${pick:--}" skip "指揮役"; continue; }
+    if w=$(protect_reason "$owner"); then nudge_row "$owner" "${pick:--}" skip "保護($w)"; continue; fi
+    w=$(sql "SELECT group_concat('C-'||c.id, ' ') FROM comments c LEFT JOIN tasks t ON t.id=c.task_id
+          WHERE c.from_name=$(q "$owner") AND c.kind IN ('question','blocked') AND c.resolved_at IS NULL AND COALESCE(t.status,'')!='done';")
+    [[ -z $w ]] || { nudge_row "$owner" "${pick:--}" skip "人の返事待ち($w)"; continue; }
+    [[ -n $pick ]] || { nudge_row "$owner" "$(jq -r '.[0].id' <<<"$rows")" skip "先行チケット(blocks)待ち"; continue; }
+    act=$(sql -separator $'\t' "SELECT COALESCE(last_stop_at,''), COALESCE(last_prompt_at,''),
+          CAST((julianday('now') - julianday(last_stop_at)) * 1440 AS INTEGER) FROM agent_activity WHERE session_id=$(q "$sess");")
+    IFS=$'\t' read -r stop_at prompt_at mins <<<"$act"
+    [[ -n $stop_at ]] || { nudge_row "$owner" "$pick" skip "活動記録が無い(hook)"; continue; }
+    if [[ -n $prompt_at && $(sql "SELECT julianday($(q "$prompt_at")) > julianday($(q "$stop_at"));") == 1 ]]; then
+      nudge_row "$owner" "$pick" skip "turn の途中"; continue
+    fi
+    ((mins >= idle)) || { nudge_row "$owner" "$pick" skip "休んで $mins 分(${idle} 分から催促)"; continue; }
+    if [[ -n $(sql "SELECT 1 FROM outbox WHERE from_pane='nudge' AND target=$(q "$owner") AND julianday(created_at) >= julianday($(q "$stop_at")) LIMIT 1;") ]]; then
+      nudge_row "$owner" "$pick" skip "この休みで催促済み"; continue
+    fi
+    if (($(sql "SELECT COUNT(*) FROM outbox WHERE from_pane='nudge' AND target=$(q "$owner") AND task_id=$(q "$pick") AND status='sent';") >= max)); then
+      nudge_row "$owner" "$pick" skip "催促 $max 回で止めた(指揮役は tb digest の観測で見る)"; continue
+    fi
+    project=$(jq -r --arg p "$pick" '.[] | select(.id == $p) | .project' <<<"$rows")
+    ptitle=$(jq -r --arg p "$pick" '.[] | select(.id == $p) | .title' <<<"$rows")
+    sender=$(target_for "$project")
+    [[ $sender != "$owner" ]] || { nudge_row "$owner" "$pick" skip "指揮役"; continue; }
+    delivery_mode "$sender" "$owner" task
+    [[ $DELIVERY_MODE == now ]] || { nudge_row "$owner" "$pick" skip "delivery が $DELIVERY_MODE(${DELIVERY_RULE})"; continue; }
+    text=$(nudge_text "$pick" "$(oneline "$ptitle" 80)" "$mins" "$others")
+    ((n > 1)) && w=" / in_progress $n 枚" || w=""
+    if ((dry)); then nudge_row "$owner" "$pick" would "休んで $mins 分 / $sender から$w"; continue; fi
+    oid=$(sql "INSERT INTO main.outbox (herdr_session, from_name, from_pane, from_session, target, kind, task_id, text, status, reason, created_at)
+      VALUES ($SQS, $(q "$sender"), 'nudge', '', $(q "$owner"), 'task', $(q "$pick"), $(q "$text"), 'queued',
+              $(q "nudge: 休んで $mins 分$w / $DELIVERY_RULE"), $(q "$(now)"));
+      SELECT last_insert_rowid();")
+    rc=0; outbox_deliver "$oid" inline >/dev/null 2>&1 || rc=$?
+    if ((rc == 0)) && [[ -n $DELIVER_BLOCKED ]]; then nudge_row "$owner" "$pick" blocked "O-$oid(届ける直前に delivery で止まった)"
+    elif ((rc == 0)) && [[ -n $DELIVER_HELD ]]; then nudge_row "$owner" "$pick" held "O-$oid → $DELIVER_HELD"
+    elif ((rc == 0)); then nudge_row "$owner" "$pick" sent "O-$oid / 休んで $mins 分$w"
+    else
+      # 届かなかった催促は後で届けない(flush で遅れて届くと、もう動いている agent への古い催促になる)
+      sql "UPDATE main.outbox SET status='denied', reason=reason||' / nudge: 届かず取り下げ(rc $rc)' WHERE herdr_session=$SQS AND id=$oid AND status='queued';"
+      nudge_row "$owner" "$pick" skip "O-$oid 届かず取り下げ(rc $rc)"
+    fi
+  done < <(sql "SELECT DISTINCT owner_agent FROM tasks WHERE status='in_progress' AND owner_agent IS NOT NULL AND owner_agent!='' ORDER BY owner_agent;")
+  if ((json)); then printf '%s' "$NUDGE_OUT" | jq -c .
+  else printf '%s' "$NUDGE_OUT" | jq -r '[.agent, .task, .result, .reason] | join("\t")'; fi
+  return 0
+}

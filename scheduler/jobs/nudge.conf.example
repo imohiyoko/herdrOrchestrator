@@ -1,0 +1,10 @@
+# チケットを握ったまま休んでいる agent に「続けて」と送る(tb nudge)。agent を介さず決定論的に実行。
+# 送るのは指示役 → 担当の task と同じ経路(outbox + delivery)。working・人の返事待ち・保護・delivery が now でない相手には送らない。
+# 1 回の休みに 1 通、同じチケットで 3 回まで(--max)。先に tb nudge --dry-run で誰に送るかを確かめる。
+# 注意: COMMAND は bash -c でそのまま実行される。このファイルは人が管理し、外部入力を埋め込まない。
+COMMAND='cd /path/to/taskboard && bin/tb nudge --idle-min 15'
+COMMAND_TIMEOUT=60
+WINDOW=09:00-21:00
+INTERVAL_MIN=10
+DAYS=daily
+TZ=Asia/Tokyo
