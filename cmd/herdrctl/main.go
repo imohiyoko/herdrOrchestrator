@@ -8,8 +8,9 @@ import (
 	"io"
 	"os"
 
-	"github.com/imohiyoko/herdrorchestrator/internal/env"
-	"github.com/imohiyoko/herdrorchestrator/internal/store"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/env"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
+	"github.com/imohiyoko/herdrorchestrator/internal/tbcli"
 	"github.com/imohiyoko/herdrorchestrator/internal/version"
 )
 
@@ -19,6 +20,7 @@ commands:
   version     版・コミット・ビルド日時・OS/アーキテクチャを出す
   db status   tasks.db の場所と版を出す(JSON。DB は変えない・作らない)
   db migrate  tasks.db のスキーマを最新にする(tb と同じスキーマ。TB_DB で場所を変える)
+  tb <cmd>     tb のコマンドの Go 版(移し終えたものだけ。tb --commands で一覧)。ふつうは bin/tb から TB_IMPL=go で呼ぶ
   help        この一覧を出す
 `
 
@@ -32,6 +34,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "version", "--version", "-v":
 		fmt.Fprintln(stdout, version.String())
 		return 0
+	case "tb":
+		return tbcli.Run(args[1:], stdout, stderr)
 	case "db":
 		return runDB(args[1:], stdout, stderr)
 	case "help", "-h", "--help":

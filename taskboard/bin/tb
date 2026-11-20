@@ -29,6 +29,15 @@ unset _m
 
 cmd_help() { cat "$TB_ROOT/lib/help.txt"; }
 
+# TB_HERDRCTL(既定は PATH の herdrctl)が持つコマンドなら、DB とセッションを渡して置き換わる(戻らない)。持たなければ何もしない
+tb_go() {
+  local hc=${TB_HERDRCTL:-herdrctl} have
+  command -v "$hc" >/dev/null || die "TB_IMPL=go ですが herdrctl が見つかりません: $hc"
+  have=$("$hc" tb --commands) || die "herdrctl tb --commands に失敗しました: $hc"
+  [[ " $have " == *" $1 "* ]] || return 0
+  TB_DB=$DB HERDR_SESSION=$(herdr_session_name) HERDR_SOCKET_PATH='' exec "$hc" tb "$@"
+}
+
 main() {
   local cmd=${1:-help}; shift || true
   case $cmd in
@@ -37,6 +46,8 @@ main() {
     touch) cmd_touch "$@"; return 0;;   # 常に 0。ツールの有無チェックや init_db の失敗でも止めない
     role-context) ( need_tools && init_db ) >/dev/null 2>&1 && session_setup_load && cmd_role-context "$@" 2>/dev/null; return 0;;   # hook 用。常に 0
   esac
+  # ADR 0002 の手順 3: TB_IMPL=go なら、Go に移し終えたコマンド(herdrctl tb --commands)は herdrctl に渡す。既定は bash
+  if [[ ${TB_IMPL:-bash} == go ]]; then tb_go "$cmd" "$@"; fi
   # コマンド = lib/*.sh で定義された cmd_<名前>。一覧を別に持たない
   [[ $cmd =~ ^[a-z][a-z-]*$ ]] && declare -F "cmd_$cmd" >/dev/null || usage "不明なコマンド: $cmd"
   need_tools
