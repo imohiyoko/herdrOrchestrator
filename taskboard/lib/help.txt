@@ -51,6 +51,7 @@ tb comment <task-id> --kind done|progress|question|blocked --text T [--deliverab
 tb comments [<task-id>] [--kind K] [--undelivered] [--open] [--json]   --open: 未対応の question/blocked だけ
          未配送は tb pending に C-<n> として出る。tb report C-<n> で再送
 tb resolve C-<n> [-m メモ]   question/blocked の報告を対応済みにする(人の操作。agent の pane からは拒否)
+tb reopen C-<n>   対応済みにした question/blocked の報告を未対応に戻す(tb resolve の逆。人の操作。履歴 task_events に comment_reopened で残る)
          question/blocked はすぐ送る。done/progress は保存だけして tb digest でまとめて送る(TB_IMMEDIATE_KINDS で変更)
 
 まとめ送信(scheduler から 10 分おきに呼ぶ想定):

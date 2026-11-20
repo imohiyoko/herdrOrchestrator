@@ -93,3 +93,16 @@ eq "resolve: tsv shows resolved" "$($TB comments | grep "^$qid	" | cut -f3)" "re
 eq "resolve: twice is ok" "$(HERDR_PANE_ID= $TB resolve "$qid" | grep -c 'すでに対応済み')" "1"
 eq "resolve: progress cannot be resolved" "$(HERDR_PANE_ID= rc $TB resolve "$pid")" "1"
 eq "resolve: unknown id → 1, bad id → 2" "$(HERDR_PANE_ID= rc $TB resolve C-99999) $(HERDR_PANE_ID= rc $TB resolve X-1)" "1 2"
+
+# --- reopen(resolve の取り消し。人だけ)
+eq "reopen: refused from an agent pane" "$(rc $TB reopen "$qid") $($TB comments --open --json | jq -r .id | grep -c "^$qid\$")" "1 0"
+eq "reopen: human reopens" "$(HERDR_PANE_ID= $TB reopen "$qid")" "$qid reopened"
+eq "reopen: back in the open list" "$($TB comments --open --json | jq -r .id | grep -c "^$qid\$")" "1"
+eq "reopen: resolved_at and note cleared" "$($TB comments --json | jq -r --arg i "$qid" 'select(.id==$i) | ((.resolved_at == null | tostring) + " " + (.resolved_note == null | tostring))')" "true true"
+eq "reopen: tsv shows needs-human" "$($TB comments | grep "^$qid	" | cut -f3)" "needs-human"
+eq "reopen: event records who and when" "$(sqlite3 "$TB_DB" "SELECT kind, actor, ref, old IS NOT NULL, created_at IS NOT NULL FROM task_events WHERE ref='$qid' AND kind='comment_reopened';" | tr '|' ' ')" "comment_reopened human $qid 1 1"
+eq "reopen: not resolved is a no-op" "$(HERDR_PANE_ID= $TB reopen "$qid" | grep -c '対応済みではありません') $(sqlite3 "$TB_DB" "SELECT count(*) FROM task_events WHERE kind='comment_reopened';")" "1 1"
+HERDR_PANE_ID= $TB resolve "$qid" >/dev/null
+eq "reopen: resolve again after reopen" "$($TB comments --open --json | jq -r .id | grep -c "^$qid\$")" "0"
+eq "reopen: progress cannot be reopened" "$(HERDR_PANE_ID= rc $TB reopen "$pid")" "1"
+eq "reopen: unknown id → 1, bad id → 2" "$(HERDR_PANE_ID= rc $TB reopen C-99999) $(HERDR_PANE_ID= rc $TB reopen X-1)" "1 2"
