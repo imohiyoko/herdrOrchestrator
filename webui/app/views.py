@@ -11,7 +11,7 @@ from .config import JOB_RE, REFRESH_SEC, SCHED_LOGS, STALL_MIN, TASK_STALE_HOURS
 from .sanitize import clean, e
 from . import graph
 from .herdr import agent_key, agent_session, get_agents, read_agent, workspace_label
-from .data import badge_count, has_resolution, parse_ts, NOTIFY_POLL_SEC, QUEUED_WARN_SEC, outbox_rows, activity_for, agent_ops, agent_registry, registry_row, stopped_agents, db_conn, needs_human, parse_jsonl, q, stalled, tail_lines, tasks_for_agent, urgent_items, held_message, held_messages, reminder_href, reminders_last, LEDGER_MAX, LEDGER_RESULTS, approval_history, ledger_kinds, ledger_rows, ledger_summary
+from .data import badge_count, defined_labels, has_resolution, parse_ts, NOTIFY_POLL_SEC, QUEUED_WARN_SEC, outbox_rows, activity_for, agent_ops, agent_registry, registry_row, stopped_agents, db_conn, needs_human, parse_jsonl, q, stalled, tail_lines, tasks_for_agent, urgent_items, held_message, held_messages, reminder_href, reminders_last, LEDGER_MAX, LEDGER_RESULTS, approval_history, ledger_kinds, ledger_rows, ledger_summary
 from .actions import NOTE_MAX
 from .jobview import agent_state, command_summary, job_about, job_defs, job_summary, mask, next_runs, prompt_file, send_task_decision
 from .jobs import DAY_PRESETS, DAY_TOKENS, INTERVAL_UNITS, interval_sec, interval_text, job_info, job_last, job_names, unimported_jobs
@@ -525,6 +525,9 @@ def page_tasks(qs, ctx=None):
     owners = [r["owner_agent"] for r in q("SELECT DISTINCT owner_agent FROM tasks WHERE owner_agent IS NOT NULL ORDER BY owner_agent")]
     kids = {r["parent_id"]: r["n"] for r in q("SELECT parent_id, COUNT(*) AS n FROM tasks WHERE parent_id IS NOT NULL GROUP BY parent_id")}
     labels = [r["value"] for r in q("SELECT DISTINCT j.value FROM tasks, json_each(tasks.labels) j ORDER BY j.value")] if tf else []
+    if tf:   # 用意したラベル(設定 labels)は、まだ使われていなくても選べるように先に並べる
+        defs = [k for k, _v in defined_labels()]
+        labels = defs + [x for x in labels if x not in defs]
     rc = report_counts()
 
     def href(**kw):

@@ -17,6 +17,56 @@ labels_json() {
   done
   jq -nc '$ARGS.positional | unique' --args ${out[@]+"${out[@]}"}
 }
+# ---------- 用意したラベル(設定 labels) ----------
+# 設定 labels があれば、tb add -l / tb update --label / --add-label で付けられるのは、そこに書いたラベルと tb 自身が使うラベルだけ。
+# 設定が無ければ今までどおり自由に付けられる。外す(--remove-label)・絞り込む(list / board -l)は制限しない。
+# 書式: 1 行 1 つ「<ラベル> [= 説明]」。# 以降はコメント。書くのは人だけ(tb config set / edit labels)
+# tb 自身が付けるラベル(アラート・提案・期限の取り込み)は設定に書かなくても付けられる
+SYSTEM_LABELS="alert proposal rejected deadline"
+system_label() { [[ " $SYSTEM_LABELS " == *" $1 "* || $1 == role:* ]]; }
+
+config_validate_labels() {  # $1=本文
+  local line k n=0 bad="" seen=" "
+  while IFS= read -r line || [[ -n $line ]]; do
+    n=$((n + 1))
+    line=$(trim "${line%%#*}"); [[ -n $line ]] || continue
+    k=$(trim "${line%%=*}")
+    if [[ -z $k || ${#k} -gt 40 || $k =~ [[:space:],\"\'] ]]; then
+      bad+="${n} 行目: ラベルは 1〜40 文字で、空白・カンマ・引用符を含まない: $k"$'\n'
+    elif [[ $seen == *" $k "* ]]; then
+      bad+="${n} 行目: ラベルが重複しています: $k"$'\n'
+    fi
+    seen+="$k "
+  done <<<"$1"
+  [[ -z $bad ]] && return 0
+  printf '%s' "$bad" >&2; return 1
+}
+
+# 用意したラベルを「ラベル<TAB>説明」で 1 行ずつ(書いた順)。設定が無ければ 1
+defined_labels() {
+  config_has labels || return 1
+  local line k v
+  while IFS= read -r line || [[ -n $line ]]; do
+    line=$(trim "${line%%#*}"); [[ -n $line ]] || continue
+    k=$(trim "${line%%=*}"); v=""; [[ $line != *=* ]] || v=$(trim "${line#*=}")
+    printf '%s\t%s\n' "$k" "$v"
+  done <<<"$CFG_BODY"
+}
+
+# 付けるラベル(JSON 配列)が用意したものかを確かめる。設定が無ければ何もしない。用意していないものがあれば usage で止める
+labels_check_defined() {  # $1=ラベルの JSON 配列
+  local defs l bad=()
+  [[ $1 != '[]' ]] || return 0   # 付けるものが無ければ設定を引かない
+  defs=$(defined_labels) || return 0
+  while IFS= read -r l; do
+    [[ -n $l ]] || continue
+    system_label "$l" && continue
+    grep -qxF -- "$l" < <(cut -f1 <<<"$defs") || bad+=("$l")
+  done < <(jq -r '.[]' <<<"$1")
+  [[ ${#bad[@]} -eq 0 ]] && return 0
+  usage "用意されていないラベルです: ${bad[*]}(使えるのは: $(cut -f1 <<<"$defs" | paste -sd' ' -)。一覧は tb labels --defined、足すのは人が tb config edit labels)"
+}
+
 # 引数(<種類>=<URL> か URL)→ 外部リンクの JSON 配列 [{kind,url}](url で重複なし、先に書いたものを残す)
 refs_json() {
   local a kind url out=()
@@ -132,6 +182,7 @@ cmd_add() {
   check_hierarchy "$type" "$parent"
   local sid=""; [[ -z $sprint ]] || sid=$(sprint_for_task "$sprint" "$project")
   local lj rj; lj=$(labels_json ${labs[@]+"${labs[@]}"}); rj=$(refs_json ${refs[@]+"${refs[@]}"})
+  labels_check_defined "$lj"
   event_actor_resolve
   local n=$(now) p out; p=$(q "$project")
   # 採番と挿入を 1 文で行い、同時 add でも重複しないようにする。親の種別の規則も同じ文で確かめる(HAVING)
@@ -311,8 +362,9 @@ cmd_update() {
   if [[ $relabel == 1 || ${#addlab[@]} -gt 0 || ${#rmlab[@]} -gt 0 ]]; then
     # 付け外しは書く時点の labels に当てる(並行する --add-label を互いに消さない)
     local base="labels" add rm
-    if ((relabel)); then base=$(q "$(labels_json "${setlab[@]}")"); fi
+    if ((relabel)); then local sj; sj=$(labels_json "${setlab[@]}"); labels_check_defined "$sj"; base=$(q "$sj"); fi
     add=$(labels_json ${addlab[@]+"${addlab[@]}"}); rm=$(labels_json ${rmlab[@]+"${rmlab[@]}"})
+    labels_check_defined "$add"
     sets+=("labels=(SELECT json_group_array(value) FROM (SELECT value FROM (SELECT value FROM json_each($base) UNION SELECT value FROM json_each($(q "$add")))
               WHERE value NOT IN (SELECT value FROM json_each($(q "$rm"))) ORDER BY value))")
   fi
@@ -509,15 +561,28 @@ cmd_tree() {
 
 # ---------- labels ----------
 # 使われているラベルと件数(done を除いた件数 / 全部)
+# --defined: 用意したラベル(設定 labels)を書いた順に「ラベル 未完了 全部 説明」で(使われていないものは 0)
 cmd_labels() {
-  local where="1=1" json=0
+  local where="1=1" json=0 defined=0
   while [[ $# -gt 0 ]]; do
     case $1 in
       -p|--project) need_arg "$@"; where+=" AND t.project=$(q "$2")"; shift 2;;
+      --defined) defined=1; shift;;
       --json) json=1; shift;;
       *) usage "labels: 不明な引数 $1";;
     esac
   done
+  if ((defined)); then
+    local defs dj
+    defs=$(defined_labels) || die "用意したラベルはありません(設定 labels が無いので、ラベルは自由に付けられます。用意するのは人: tb config edit labels)"
+    dj=$(jq -Rnc '[inputs | select(length > 0) | (capture("^(?<label>[^\t]*)\t(?<description>.*)$"; "s") // {label: ., description: ""})]' <<<"$defs")
+    local qs="WITH d AS (SELECT key AS ord, json_extract(value,'\$.label') AS label, json_extract(value,'\$.description') AS description FROM json_each($(q "$dj")))
+              SELECT d.label, COALESCE(SUM(t.id IS NOT NULL AND t.status!='done'), 0) AS open, COUNT(t.id) AS total, d.description
+              FROM d LEFT JOIN (SELECT t.id, t.status, j.value AS lv FROM tasks t, json_each(t.labels) j WHERE ($where)) t ON t.lv = d.label
+              GROUP BY d.ord ORDER BY d.ord;"
+    if ((json)); then sql -json "$qs" | jq -c '(. // [])[]'; else sql -separator $'\t' "$qs"; fi
+    return
+  fi
   local qs="SELECT j.value AS label, SUM(t.status!='done') AS open, COUNT(*) AS total
             FROM tasks t, json_each(t.labels) j WHERE ($where) GROUP BY j.value ORDER BY j.value;"
   if ((json)); then sql -json "$qs" | jq -c '(. // [])[]'; else sql -separator $'\t' "$qs"; fi

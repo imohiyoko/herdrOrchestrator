@@ -130,7 +130,8 @@ def q(sql, params=()):
 # 環境変数で明示したファイル > DB のこのセッションの行 > DB の共通の行(*) > checkout の taskboard/config/<名前> > <名前>.example
 CONFIG_KEYS = {"projects": (("TB_CONFIG",), "projects.conf"),
                "approvals": (("WEBUI_APPROVALS", "TB_APPROVALS"), "approvals.conf"),
-               "protect": (("TB_PROTECT",), "protect.conf")}
+               "protect": (("TB_PROTECT",), "protect.conf"),
+               "labels": (("TB_LABELS",), "labels.conf")}
 CONFIG_MAX = 262144
 
 
@@ -276,6 +277,23 @@ def protect_rules():
         k = k.strip()
         rules.append((k, v.strip() or "protect: " + k))
     return rules
+
+
+def defined_labels():
+    """config の labels(tb の lib/tasks.sh の defined_labels と同じ書式)。[(ラベル, 説明)] を書いた順に。
+    1 行 1 つ: <ラベル> [= 説明]。# 以降はコメント。無ければ空(ラベルは自由に付けられる)"""
+    text, _src = config_text("labels")
+    out, seen = [], set()
+    for line in (text or "").splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        k, _sep, v = line.partition("=")
+        k = k.strip()
+        if k and k not in seen:
+            seen.add(k)
+            out.append((k, v.strip()))
+    return out
 
 
 def protect_reason(name, reg_role=None, rules=None):

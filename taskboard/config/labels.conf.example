@@ -1,0 +1,17 @@
+# チケットに付けられるラベルの一覧(用意したラベル)。編集するのは人だけ(tb config edit labels / tb config set labels < ファイル)。
+# 実際に読むのは DB の行(tb config set / edit)か labels.conf。.example は既定値にしない(無ければラベルは自由に付けられる)。
+#
+# 1 行 1 つ: <ラベル> [= 説明]。# 以降はコメント。ラベルは 1〜40 文字で、空白・カンマ・引用符を含まない(日本語は可)。
+#
+# 設定があると:
+#   - tb add -l / tb update --label / --add-label で付けられるのは、ここに書いたラベルと tb 自身が付けるラベル
+#     (alert / proposal / rejected / deadline / role:*)だけ。ほかは終了コード 2 で断り、使えるラベルを出す
+#   - 外す(--remove-label)と絞り込み(tb list / board -l)は制限しない。設定より前に付いたラベルもそのまま残る
+#   - tb labels --defined で書いた順に件数と説明を出す。Web UI のタスク一覧の絞り込みにも、使われる前から出る
+# 緊急度はラベルではなく優先度(--priority highest|high|...)で表す。
+#
+# 例:
+# ui = 画面・Web UI
+# backend = サーバ側
+# docs = ドキュメント
+# notify = 付いたら通知する(notify-rules の label_added label=notify)
