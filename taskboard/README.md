@@ -86,7 +86,7 @@ tb update T-web-002 --add-label frontend --remove-label ui --priority highest
 - **スプリント**: `tb sprint-add -p web -n "Sprint 1" --start 2026-11-17 --end 2026-11-30 --goal "..."` で作り、`tb add/update --sprint S-n --points 3` で入れる(`--sprint ''` でバックログへ)。`tb sprint-start S-n` で始め(1 つの project で active は 1 つ)、`tb sprint-close S-n --carry S-m` で閉じると終わっていないタスクを次へ移す。`tb board -p web` で状態ごとの列、`tb sprints` で件数とポイント。Web UI の「ボード」(`/board`)にも同じ列が出る(読み取りのみ)。
 - **担当の agent**: 既存の `--owner`(agent 名)と `--session`(その agent の会話 ID)で紐付く。`tb list --owner <agent>` で絞り込める。
 - **リンク** `tb link <from> blocks|relates|duplicates <to>`: `blocks` は claim を止める(先行タスクが done になれば claim できる)。blocks の循環は止める。`tb show` は向きつき(`blocks` / `blocked_by` など)で出す。
-- `tb list` の既定の出力(ID 状態 担当 題)は変えていない。種別・優先度・作成・更新・ラベル・期日は `--long`(または `--json`)で出る。
+- `tb list` の既定の出力は ID 状態 担当 題 優先度。前の 4 列の位置は変えず、優先度を最後に足した(列の位置で読む agent が壊れないように)。種別・作成・更新・ラベル・期日は `--long`(または `--json`)で出る。
 - Web UI のタスク一覧は 種別・優先度・ラベル・作成・更新 の列と、種別・優先度・ラベルの絞り込みを持つ。ラベルを押すとそのラベルで絞り込む。
 
 ### 期日(期限切れ・期限間近)

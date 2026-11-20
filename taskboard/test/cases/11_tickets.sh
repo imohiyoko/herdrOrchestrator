@@ -23,8 +23,8 @@ eq "tickets: subtask can't be a parent" "$(rc $TB add -p tk -t x --parent "$st")
 eq "tickets: epic can't have a parent" "$(rc $TB add -p tk -t x --type epic --parent "$s1")" "2"
 eq "tickets: rejected adds leave no rows" "$($TB list -p tk | wc -l | tr -d ' ')" "5"
 
-# --- list: 既定の列は変えない / --long / 絞り込み / 並び
-eq "tickets: default list columns unchanged" "$($TB list -p tk | head -1)" "$(printf '%s\ttodo\t-\tログイン刷新' "$e1")"
+# --- list: 既定の列(前の 4 列は変えず、最後に優先度)/ --long / 絞り込み / 並び
+eq "tickets: default list columns (priority last)" "$($TB list -p tk | head -1)" "$(printf '%s\ttodo\t-\tログイン刷新\thigh' "$e1")"
 eq "tickets: --long columns" "$($TB list -p tk --long | head -1 | cut -f1-5,8,9)" "$(printf '%s\ttodo\tepic\thigh\t-\tauth,ui\tログイン刷新' "$e1")"
 eq "tickets: --long has created/updated" "$($TB list -p tk --long | head -1 | cut -f6,7 | grep -cE '^[0-9T:Z-]+'$'\t''[0-9T:Z-]+$')" "1"
 eq "tickets: filter by label" "$($TB list -p tk -l ui | cut -f1 | tr '\n' ' ')" "$e1 $s1 "
