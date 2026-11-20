@@ -887,8 +887,11 @@ DB パスと herdr の既定値は部品で共通の [`lib/herdr-env.sh`](../lib
 bash test/run.sh
 ```
 
-機能ごとのテストは `test/cases/NN_*.sh`(`lib/` のファイルにおおむね対応)で、`run.sh` が番号順に同じシェルで流す。
-CI では `test/shards` の組ごとに別のジョブで並列に流す(`bash test/run.sh --shard <組>`。`--list-shards` で組の一覧、`--shard-cases <組>` で組のケース)。前のケースが作った状態を使うケースは、使われる側と同じ組に書く。組に書いていないケースは `rest` で流れるので、新しいケースは書き足さなくても漏れない。ケースを足して CI の 1 組が長くなったら、`test/shards` で組を分け直す。
+機能ごとのテストは `test/cases/NN_*.sh`(`lib/` のファイルにおおむね対応)。`run.sh` はケースを「ユニット」ごとに別のプロセス・別の一時ディレクトリ(DB・設定・疑似 herdr の記録)で流し、ユニット同士は並列に流す(`-j N` で本数。既定は CPU の数、`TB_TEST_JOBS` でも変えられる)。
+- ユニットは 1 ケースが基本。前のケースが作った状態(変数・DB・設定ファイル)を使うケースだけ、`test/groups` に 1 行で書いて同じシェルで番号順に流す。新しいケースは、前の状態を使わなければ書き足さなくてよい(`project` や `TB_DB` などは自分で用意する)
+- どのユニットでも最後に `99_zzz_session_sweep.sh` を流す(そのユニットが作った DB を見る)
+- `bash test/run.sh 93_prqueue.sh` のようにケースを指定すると、そのケースを含むユニットだけ流す。`--units` でユニットの一覧
+- CI は `--shard 1of4` … `4of4` の組ごとに別のジョブで流す(`--list-shards` で組の一覧、`--shard-cases <組>` で組のケース)。組は `test/weights`(ケースごとの秒数)でおおむね揃うように自動で分ける。ケースを足して偏ったら `bash test/run.sh --timings` で `weights` を書き直す(無いケースは 10 秒とみなす)
 `HERDR_BIN` を `test/fake-herdr`(疑似 herdr)に固定して実行する。本物の herdr は呼ばない。
 `FAKE_STATUS`(idle / working / blocked / unknown / missing)で宛先の状態を、`FAKE_PROMPT_RC` で送信の成否を切り替えられる。
 `test/fake-herdr` には実行権限(`chmod +x`)が必要。

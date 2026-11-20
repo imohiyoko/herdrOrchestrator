@@ -3,6 +3,7 @@
 # --- tb agent-spawn(規則つきの子 agent 作成)/ spawn-freeze / spawned_by / digest の観測
 _saved_pane=${HERDR_PANE_ID-}; unset HERDR_PANE_ID
 export TB_DB=$TMP/spawn.db TB_APPROVALS=$TMP/appr-spawn.conf TB_SPAWN_RETRY_SEC=0 TB_AGENT_CWD=$TMP
+export TB_CONFIG=$TMP/spawn-projects.conf; printf 'sp=sp-conductor\n' >"$TB_CONFIG"   # project sp の conductor(報告の宛先)
 unset TB_SPAWN_POLICY   # 既定の読み先(spawn-policy.conf が無ければ .example の既定値)
 printf '# 環境ごとの決まり\n\nサンプルの稼働中サービスには触れない\n' >"$TMP/spawn-rules.txt"; export TB_SPAWN_RULES=$TMP/spawn-rules.txt
 printf 'agent:spawn:* = allow\nagent:* = ask\n* = ask\n' >"$TB_APPROVALS"

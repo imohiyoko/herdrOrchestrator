@@ -715,6 +715,7 @@ cmd_board() {
 # tb history <id>: そのタスクの履歴を古い順に(E-番号 時刻 種類 前 後 変えた者 元)
 EVENT_COLS="'E-'||id AS id, task_id, kind, old, new, actor, ref, created_at"
 events_out() {  # $1=json(0/1) $2=WHERE $3=ORDER/LIMIT
+  # ORDER BY は列名より別名(EVENT_COLS の id = 'E-n' の文字列)を先に見るので、並べるときは main.task_events.id と書く
   # task_events には一時ビューが無い(lib/db.sh)ので、このセッションの行に明示して絞る
   local w="herdr_session=$SQS AND ($2)"
   if (($1)); then sql -json "SELECT $EVENT_COLS FROM main.task_events WHERE $w $3;" | jq -c '(. // [])[]'
@@ -732,7 +733,7 @@ cmd_history() {
   done
   [[ -n $id ]] || usage "history <id> [--json]"
   require_task "$id" >/dev/null
-  events_out "$json" "task_id=$(q "$id")" "ORDER BY id"
+  events_out "$json" "task_id=$(q "$id")" "ORDER BY main.task_events.id"
 }
 # tb events [--since E-n] [--kind K] [-p project] [--limit N] [--json]: このセッションの履歴を古い順に(既定は最新の 50 件)
 cmd_events() {
@@ -748,7 +749,7 @@ cmd_events() {
     esac
   done
   # 最新の N 件を古い順に
-  events_out "$json" "id IN (SELECT id FROM main.task_events WHERE herdr_session=$SQS AND $where ORDER BY id DESC LIMIT $limit)" "ORDER BY id"
+  events_out "$json" "id IN (SELECT id FROM main.task_events WHERE herdr_session=$SQS AND $where ORDER BY id DESC LIMIT $limit)" "ORDER BY main.task_events.id"
 }
 
 # ---------- due-scan(期限のイベント。ADR 0003 の段 3) ----------

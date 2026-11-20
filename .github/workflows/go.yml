@@ -41,7 +41,7 @@ jobs:
         with:
           version: "~> v2"
           args: release --snapshot --clean
-  # 契約テスト: taskboard のテストを TB_IMPL=go で流す(Go に移したコマンドは herdrctl が答える)。組は taskboard/test/shards から作る
+  # 契約テスト: taskboard のテストを TB_IMPL=go で流す(Go に移したコマンドは herdrctl が答える)。組は taskboard/test/run.sh --list-shards(weights の秒数で自動で分ける)
   tb-shards:
     runs-on: ubuntu-latest
     outputs:
