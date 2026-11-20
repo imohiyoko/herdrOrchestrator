@@ -40,7 +40,7 @@
 
 **流れ・詰まり**
 - 送れなかった宛先(busy / failed)が多い agent。仕事の偏り、宛先の名前違い
-- 拒否された送信(routes.conf)や承認待ちが溜まっていないか
+- 拒否・停止された送信(設定 delivery。旧 routes.conf)や承認待ちが溜まっていないか
 - 何度も人が承認している操作は `allow` 候補として提案する(決めるのは人。提案の宛先は `-`)
 - 質問・ブロックの報告が同じ種類で繰り返されている → 役割に判断基準を書けば減る
 - 滞留(stuck / idle のまま in_progress)の観測が多い agent
@@ -51,5 +51,5 @@
 - 役割どうしの矛盾、古くなった記述、誰の仕事でもない隙間
 
 ## やらないこと
-- `roles/`・`approvals.conf`・`routes.conf`・scheduler の設定を直接変える
+- `roles/`・`approvals.conf`・`delivery`(旧 `routes.conf`)・scheduler の設定を直接変える
 - 他の agent に直接指示する(提案は設定役へ。人の判断が要るものは提案の本文に「人に確認」と書く)

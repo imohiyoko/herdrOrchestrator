@@ -29,10 +29,10 @@ eq "events: block" "$(evk "$a" | tail -1)" "status in_progress blocked human"
 $TB update "$a" --status review >/dev/null
 $TB done "$a" -d out.md -m ok >/dev/null
 eq "events: done" "$(evk "$a" | tail -1)" "status review done human"
-# 報告(reported_at)は履歴に残さない
+# 報告(reported_at)そのものは履歴に残さない。tb report は done の報告コメントを作るので、そのコメントだけが 1 件残る
 n2=$($TB history "$a" | wc -l | tr -d ' ')
 FAKE_STATUS=idle $TB report "$a" >/dev/null 2>&1
-eq "events: report leaves nothing" "$($TB history "$a" | wc -l | tr -d ' ')" "$n2"
+eq "events: report leaves only its done comment" "$(($($TB history "$a" | wc -l | tr -d ' ') - n2)) $($TB history "$a" | tail -1 | grep -c comment)" "1 1"
 
 # リンク: 両方のタスクに向きつきで。消したときも
 b=$($TB add -p ev -t b); c=$($TB add -p ev -t c)

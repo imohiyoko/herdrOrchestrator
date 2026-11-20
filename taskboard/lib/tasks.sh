@@ -369,7 +369,7 @@ cmd_done() {
          reported_at=NULL, updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id");"
   notify_hook notify_hook_task_done "$id"
   notify_rules_hook
-  echo "$id done (未報告。tb report $id を実行)"
+  echo "$id done (報告は tb digest でまとめて届く。すぐ届けるなら tb report $id)"
 }
 
 # ---------- block ----------
@@ -406,13 +406,18 @@ cmd_report() {
   if [[ -n $reported ]]; then echo "$id は報告済みです($reported)"; return 0; fi
 
   target=$(target_for "$project")
-  # prompt は 1 行にする(改行が入ると途中で submit されうる)
-  summary=$(printf '%s' "$summary" | tr '\r\n\t' '   ' | tr -s ' ')
-  summary=${summary%"${summary##*[![:space:]]}"}
-  msg="[$id done] $summary / $paths"
-  herdr_send "$target" "$msg" "$id" || return $?
-  sql "UPDATE main.tasks SET reported_at=$(q "$(now)"), updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id");"
-  echo "$id reported to $target"
+  # 完了の報告も報告コメント(kind done の C-<n>)として、tb comment と同じ経路で届ける(digest でも同じ行がまとめて届く)。
+  # 未配送の done コメントがあればそれを送り直す(作り直さない)。tb が作った行は from_pane が '-'(報告者はチケットの担当)
+  local cid
+  cid=$(sql "SELECT id FROM comments WHERE task_id=$(q "$id") AND kind='done' AND delivered_at IS NULL ORDER BY id LIMIT 1;")
+  if [[ -z $cid ]]; then
+    cid=$(sql "INSERT INTO main.comments (herdr_session, task_id, kind, text, deliverables, from_name, from_pane, from_session, created_at)
+      SELECT $SQS, id, 'done', COALESCE(summary,''), deliverables, COALESCE(owner_agent,'-'), '-', COALESCE(session_id,'-'), $(q "$(now)")
+        FROM tasks WHERE id=$(q "$id");
+      SELECT last_insert_rowid();")
+  fi
+  deliver_comment "$cid" >/dev/null || return $?
+  echo "$id reported to $target (C-$cid)"
 }
 
 # ---------- pending ----------
@@ -425,7 +430,8 @@ cmd_pending() {
       *) usage "pending: 不明な引数 $1";;
     esac
   done
-  local where="status='done' AND (reported_at IS NULL OR reported_at='')"
+  # 未配送の done コメントがあるタスクは C-<n> の行で出す(同じ報告を 2 回送らない)
+  local where="status='done' AND (reported_at IS NULL OR reported_at='') AND NOT EXISTS (SELECT 1 FROM comments c WHERE c.task_id=tasks.id AND c.kind='done' AND c.delivered_at IS NULL)"
   case $mode in
     ids)  sql "SELECT id FROM tasks WHERE ($where) ORDER BY updated_at, id;"
           sql "SELECT 'C-'||id FROM comments WHERE delivered_at IS NULL ORDER BY id;";;

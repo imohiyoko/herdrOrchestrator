@@ -3,9 +3,8 @@
 # bin/tb から source される。単体では実行しない。
 
 # ---------- send(指揮官 → worker の下り。agent は herdr agent prompt を直接打たず、これを使う) ----------
-# 送信者は HERDR_PANE_ID + herdr agent list から決まる(自己申告にしない)。宛先は config/routes.conf のルールで許可されたものだけ。
+# 送信者は HERDR_PANE_ID + herdr agent list から決まる(自己申告にしない)。届けるか・保留するか・止めるかは設定 delivery の規則で決まる。
 # 宛先が使用中なら outbox に積み、tb flush(tb digest からも呼ばれる)で後から届ける。送ろうとしたものはすべて outbox と messages に残る。
-ROUTES=${TB_ROUTES:-$TB_ROOT/config/routes.conf}
 SEND_KINDS="task info answer"
 SEND_MAX=${TB_SEND_MAX:-4000}
 # 届け先の herdr セッションは、この tb のセッション(lib/db.sh の SESS)。outbox の行もそのセッションのものだけを見る
@@ -15,6 +14,23 @@ SEND_MAX=${TB_SEND_MAX:-4000}
 outbox_target_stopped() {  # $1=宛先
   [[ -n $(sql "SELECT 1 FROM agents WHERE name=$(q "$1") AND state='stopped' LIMIT 1;" 2>/dev/null) ]]
 }
+
+# ---------- 送信の規則(config の delivery キー 1 つで「届ける / 保留する / 止める」を決める) ----------
+# 各行は次のどれか(パターンは agent 名の glob(* と ?)か @<役割の glob>。上から見て、最初に当たった行で決まる):
+#   <送信者> -> <宛先> : <種別>=<now|hold|block> ...   種別は task info answer、* はそれ以外の全部、reply は tb が確かめた返信(--reply-to)
+#   <送信者> -> <宛先>                                 全部 now(旧 routes の許可の行。reply も now)
+#   ! <送信者> -> <宛先>                               全部 block(旧 routes の拒否の行。reply も block)
+# 例:
+#   @worker     -> reviewer  : *=block reply=now     worker からは止める。reviewer が聞いたことへの返信だけ通す
+#   coordinator -> assistant : info=hold answer=hold task=now
+#   coordinator -> *
+# 種別を書いていない行(* も無い)は飛ばして次の行を見る。reply は、reply= を明示した行があればそれで決まる(* では決めない)。無ければ種別で決まる。
+# どの行にも当たらなければ、送信者が指揮官(conductor と projects.conf の値)なら now、それ以外は止める(旧 routes.conf が無いときと同じ)。
+# 役割を確かめられない行に当たったら hold に倒す(届けないが、捨てもしない)。
+# 旧 routes キー(routes.conf)が残っていれば互換で読む: その行を先に門として見て(当たらなければ止める)、通ったものだけを delivery の行で決める
+# (delivery の行に当たらなければ now)。delivery の行に移したら routes キーは消してよい(tb config unset routes)。
+# block は宛先に届けず(入力にも inbox にも置かない)、送信者に「止めた。依頼はチケットにして」と返す(送信は拒否 = 終了コード 4)。
+# 判定は tb send の受け付け時(止めるものは承認を求めない)と、届ける直前(outbox_deliver: 承認のあとや flush でも同じ規則)の 2 回。
 
 # 指揮官として扱う名前: 既定の宛先と projects.conf の値
 conductor_names() {
@@ -28,26 +44,10 @@ conductor_names() {
   done < <(config_text projects)
 }
 
-# route_allowed <from> <to>: 0 なら許可。理由は ROUTE_REASON に入る
-# routes.conf の各行は "<送信者のパターン> -> <宛先のパターン>"(* と ? の glob。@<役割> なら役割で比べる)。最初に一致した行で決まる。
-# 行頭に ! を付けると拒否。routes.conf が無いときは「指揮官 → 誰でも」だけを許可する
+# 旧 routes(互換)。0 なら通す。理由は ROUTE_REASON に入る
 ROUTE_REASON=""
-route_allowed() {
-  # 送信者と宛先の役割は判定の間 1 回だけ引いて固定する(行ごとに読み直さない)
-  local rc=0 pinned=0
-  if [[ ${#ROLE_PIN_N[@]} -eq 0 ]]; then role_pin "$1" "$2"; pinned=1; fi
-  _route_rules "$1" "$2" || rc=$?
-  ((pinned == 0)) || role_unpin
-  return $rc
-}
 _route_rules() {
-  local from=$1 to=$2 line neg l r n
-  if ! config_has routes; then
-    while IFS= read -r n; do
-      [[ $from == "$n" ]] && { ROUTE_REASON="default: conductor $n"; return 0; }
-    done < <(conductor_names)
-    ROUTE_REASON="default: $from は指揮官ではない(worker からの報告は tb comment を使う)"; return 1
-  fi
+  local from=$1 to=$2 line neg l r
   while IFS= read -r line || [[ -n $line ]]; do
     line=$(trim "${line%%#*}"); [[ -n $line ]] || continue
     neg=0; [[ $line == \!* ]] && { neg=1; line=$(trim "${line#!}"); }
@@ -65,26 +65,30 @@ _route_rules() {
   ROUTE_REASON="routes.conf: $from -> $to に一致する行がない"; return 1
 }
 
-# ---------- delivery(今届ける / 保留する / 止める。config の delivery キー) ----------
-# 各行は "<送信者のパターン> -> <宛先のパターン> : <種別>=<now|hold|block> ..."(パターンは routes と同じ。種別は task info answer、* は残り全部)
-# block は宛先に届けず(入力にも inbox にも置かない)、送信者に「止めた。依頼はチケットにして」と返す(送信は拒否 = 終了コード 4)
-# reply は tb が確かめた返信(--reply-to)だけに効く(* では決めない。reply= の行が無ければ種別で決まる)
-#   coordinator -> assistant : info=hold answer=hold task=now
-#   @worker     -> assistant : *=hold
-# 送信者と宛先が一致し、その種別(無ければ *)を書いた最初の行で決まる。どの行にも当たらなければ now(今までどおり)。
-# キーが無ければ判定もしない(今までどおり)。役割を確かめられない行に当たったら hold に倒す(人と話している相手の入力を邪魔しない)。
-# 判定の順は routes → approvals → delivery(outbox_deliver が届ける直前に決める。承認のあとや flush でも同じ)
-DELIVERY_MODE=now DELIVERY_RULE=""
-delivery_mode() {  # $1=送信者 $2=宛先 $3=種別 [$4=1 なら確かめた返信] → DELIVERY_MODE / DELIVERY_RULE
-  DELIVERY_MODE=now; DELIVERY_RULE="delivery: 設定なし"
-  config_has delivery || return 0
-  local rc=0 pinned=0
+# delivery_mode <送信者> <宛先> <種別> [1 なら確かめた返信] → DELIVERY_MODE(now|hold|block) / DELIVERY_RULE
+# DELIVERY_GATE=1 は経路そのものを止めた(既定の拒否・旧 routes)。0 の block は delivery の行で止めた
+DELIVERY_MODE=now DELIVERY_RULE="" DELIVERY_GATE=0
+delivery_mode() {
+  DELIVERY_MODE=now; DELIVERY_RULE=""; DELIVERY_GATE=0
+  local pinned=0 legacy=0 n
+  # 送信者と宛先の役割は判定の間 1 回だけ引いて固定する(行ごとに読み直さない)
   if [[ ${#ROLE_PIN_N[@]} -eq 0 ]]; then role_pin "$1" "$2"; pinned=1; fi
-  # 確かめた返信は、reply=<now|hold|block> を明示した行があればそれで決まる(* では決めない)。無ければ種別で決める
-  if [[ ${4:-0} == 1 ]] && _delivery_rules "$1" "$2" reply exact; then :
-  else _delivery_rules "$1" "$2" "$3" || rc=$?; fi
+  config_has routes && legacy=1
+  if ((legacy)) && ! _route_rules "$1" "$2"; then
+    DELIVERY_MODE=block; DELIVERY_RULE=$ROUTE_REASON; DELIVERY_GATE=1
+  elif config_has delivery && { { [[ ${4:-0} == 1 ]] && _delivery_rules "$1" "$2" reply exact; } || _delivery_rules "$1" "$2" "$3"; }; then
+    :
+  elif ((legacy)); then
+    DELIVERY_RULE="$ROUTE_REASON / delivery: 一致する行がない(now)"
+  else
+    DELIVERY_MODE=block; DELIVERY_GATE=1
+    DELIVERY_RULE="default: $1 は指揮官ではない(worker からの報告は tb comment、依頼はチケットを使う)"
+    while IFS= read -r n; do
+      [[ $1 == "$n" ]] && { DELIVERY_MODE=now; DELIVERY_GATE=0; DELIVERY_RULE="default: conductor $n"; break; }
+    done < <(conductor_names)
+  fi
   ((pinned == 0)) || role_unpin
-  return $rc
+  return 0
 }
 # 行の中から種別の値を引く。$1=指定の並び $2=種別 [$3=exact なら * を見ない] → 値(now|hold|block)を出す。書いていなければ 1
 _delivery_pick() {
@@ -100,11 +104,14 @@ _delivery_pick() {
   [[ -n $star ]] || return 1
   printf '%s' "$star"
 }
-_delivery_rules() {  # $1=送信者 $2=宛先 $3=種別 [$4=exact: その種別を明示した行だけ。当たらなければ 1]
-  local from=$1 to=$2 kind=$3 exact=${4:-} line pair spec l r v
+_delivery_rules() {  # $1=送信者 $2=宛先 $3=種別 [$4=exact: その種別を明示した行だけ]。当たれば 0、当たらなければ 1
+  local from=$1 to=$2 kind=$3 exact=${4:-} line pair spec l r v neg
   while IFS= read -r line || [[ -n $line ]]; do
-    line=$(trim "${line%%#*}"); [[ $line == *"->"*:* ]] || continue
-    pair=${line%%:*}; spec=$(trim "${line#*:}")
+    line=$(trim "${line%%#*}"); [[ $line == *"->"* ]] || continue
+    neg=0; [[ $line == \!* ]] && { neg=1; line=$(trim "${line#!}"); }
+    if [[ $line == *"->"*:* ]]; then pair=${line%%:*}; spec=$(trim "${line#*:}")
+    else pair=$line; spec="*=now reply=now"; fi
+    ((neg)) && spec="*=block reply=block"   # ! の行は書いた種別にかかわらず全部止める
     l=$(trim "${pair%%->*}"); r=$(trim "${pair#*->}")
     v=$(_delivery_pick "$spec" "$kind" "$exact") || continue
     local m1=0 m2=1
@@ -112,10 +119,9 @@ _delivery_rules() {  # $1=送信者 $2=宛先 $3=種別 [$4=exact: その種別�
     if ((m1 == 0)); then m2=0; name_matches "$to" "$r" || m2=$?; fi
     if ((m1 == 2 || m2 == 2)); then DELIVERY_MODE=hold; DELIVERY_RULE="delivery: $line の役割を確かめられないため保留"; return 0; fi
     ((m1 == 0 && m2 == 0)) || continue
-    DELIVERY_MODE=$v; DELIVERY_RULE="delivery: $l -> $r : $kind=$v"; return 0
+    DELIVERY_MODE=$v; DELIVERY_RULE="delivery: $( ((neg)) && printf '!')$l -> $r : $kind=$v"; return 0
   done < <(config_text delivery)
-  [[ -z $exact ]] || return 1
-  DELIVERY_RULE="delivery: $from -> $to に一致する行がない(now)"
+  return 1
 }
 
 # 保留する: inbox に置き、outbox は sent(届け先 inbox)にする。1 つのトランザクション。失敗したら 12(outbox は queued のまま)
@@ -218,9 +224,12 @@ cmd_send() {
   grep -qxF -- "$target" <<<"$names" || die "send: 宛先の agent が herdr にいません: $target(保存しません)"
   local status=queued reason="" rc=0 oid
   DELIVER_HELD=""
-  if ! route_allowed "$LABEL_NAME" "$target"; then status=denied; reason=$ROUTE_REASON
+  # 受け付け時の判定(返信の主張があれば返信として見る。届ける直前に、確かめた結果でもう一度決める)
+  delivery_mode "$LABEL_NAME" "$target" "$kind" "$([[ -n $reply ]] && echo 1 || echo 0)"
+  reason=$DELIVERY_RULE
+  if [[ $DELIVERY_MODE == block ]] && ((DELIVERY_GATE)); then status=denied   # 経路そのものを止めた(既定の拒否・旧 routes)
+  elif [[ $DELIVERY_MODE == block ]]; then :                                    # delivery の行で止める: 承認は求めず、下の outbox_deliver が止めて送信者に返す
   else
-    reason=$ROUTE_REASON
     approval_of "send:$kind:$target" "$LABEL_NAME"
     [[ $APPROVAL_VALUE == allow ]] || status=pending
     reason+=" / approvals: $APPROVAL_RULE"
