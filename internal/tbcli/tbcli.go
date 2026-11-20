@@ -215,7 +215,7 @@ func cmdList(args []string, w io.Writer) error {
 				if n == "" {
 					n = "0"
 				}
-				f.Add("due IS NOT NULL AND due >= ? AND due <= date(?, '+"+n+" days') AND status!='done'", td, td)
+				f.Add("due IS NOT NULL AND due >= ? AND due <= date(?, '+"+n+" days') AND status NOT IN ('done','cancelled')", td, td)
 			case "--sort":
 				sort = v
 			}
@@ -224,7 +224,7 @@ func cmdList(args []string, w io.Writer) error {
 			if err != nil {
 				return err
 			}
-			f.Add("due IS NOT NULL AND due < ? AND status!='done'", td)
+			f.Add("due IS NOT NULL AND due < ? AND status NOT IN ('done','cancelled')", td)
 		case "--has-due":
 			f.Add("due IS NOT NULL")
 		case "--long":

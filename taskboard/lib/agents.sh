@@ -566,7 +566,7 @@ cmd_agents() {
       a.created_by, a.created_at, a.stopped_at, a.spawned_by, a.spawn_task,
       (SELECT COUNT(*) FROM tasks t WHERE t.owner_agent=a.name AND t.status IN ($OPEN_TASK_STATUSES)) AS open_tasks,
       (SELECT COUNT(*) FROM comments c LEFT JOIN tasks t ON t.id=c.task_id WHERE c.from_name=a.name AND c.kind IN ('question','blocked')
-         AND c.resolved_at IS NULL AND COALESCE(t.status,'')!='done') AS open_questions,
+         AND c.resolved_at IS NULL AND COALESCE(t.status,'') NOT IN ('done','cancelled')) AS open_questions,
       aa.last_prompt_at, aa.last_stop_at,
       CASE WHEN aa.last_stop_at IS NOT NULL AND (aa.last_prompt_at IS NULL OR aa.last_stop_at >= aa.last_prompt_at)
            THEN CAST((julianday('now') - julianday(aa.last_stop_at)) * 1440 AS INTEGER) END AS idle_min

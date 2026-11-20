@@ -11,7 +11,7 @@ import (
 
 // 値の一覧(taskboard/lib/core.sh と同じ)
 var (
-	Statuses   = []string{"todo", "in_progress", "review", "done", "blocked"}
+	Statuses   = []string{"todo", "in_progress", "review", "done", "blocked", "cancelled"}
 	Types      = []string{"epic", "story", "task", "bug", "subtask"}
 	Priorities = []string{"highest", "high", "medium", "low", "lowest"}
 )

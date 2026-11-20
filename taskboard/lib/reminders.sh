@@ -39,7 +39,7 @@ reminders_collect_db() {
       CASE c.kind WHEN 'question' THEN '質問' ELSE 'ブロック報告' END || ': ' || c.task_id || ' ' || COALESCE(t.title, '') AS what,
       '人' AS who, '' AS due, 'C-'||c.id AS ref, c.created_at AS since
     FROM comments c LEFT JOIN tasks t ON t.id=c.task_id
-    WHERE c.kind IN ('question','blocked') AND c.resolved_at IS NULL AND COALESCE(t.status, '') != 'done'")
+    WHERE c.kind IN ('question','blocked') AND c.resolved_at IS NULL AND COALESCE(t.status, '') NOT IN ('done','cancelled')")
   parts+=("SELECT 2, 'o:'||id, status, '送信の承認待ち: ' || from_name || ' → ' || target || ' (' || kind || ')', '人', '', 'O-'||id, created_at
     FROM outbox WHERE status='pending'")
   parts+=("SELECT 2, 'l:'||id, status, 'agent 操作の承認待ち: ' || op || ' ' || target || ' (' || requested_by || ')', '人', '', 'L-'||id, created_at
@@ -60,7 +60,7 @@ reminders_collect_db() {
     parts+=("SELECT 2, 'prchg:'||e.task_id||':'||e.new, 'E-'||e.id, '変更依頼の PR: ' || e.new || ' (' || e.task_id || ' ' || t.title || ')',
         COALESCE(t.owner_agent, '人'), '', e.task_id, e.created_at
       FROM main.task_events e JOIN tasks t ON t.id=e.task_id
-      WHERE e.herdr_session=$SQS AND e.kind='pr_changes' AND t.status != 'done'
+      WHERE e.herdr_session=$SQS AND e.kind='pr_changes' AND t.status NOT IN ('done','cancelled')
         AND e.id = (SELECT MAX(x.id) FROM main.task_events x WHERE x.herdr_session=$SQS AND x.task_id=e.task_id AND x.new=e.new AND x.kind LIKE 'pr\_%' ESCAPE '\')")
   fi
   parts+=("SELECT 4, 'queue:'||id, status, '宛先に届いていない送信: ' || from_name || ' → ' || target || ' (' || kind || ')', target, '', 'O-'||id, created_at
@@ -69,7 +69,7 @@ reminders_collect_db() {
     local st; st=$(reminders_due_sql due)
     parts+=("SELECT CASE WHEN $st = 'soon' THEN 4 ELSE 1 END, 'due:'||id, ($st) || ':' || due,
         '期限: ' || id || ' ' || title, COALESCE(owner_agent, '人'), due, id, created_at
-      FROM tasks WHERE status != 'done' AND due IS NOT NULL AND due != ''
+      FROM tasks WHERE status NOT IN ('done','cancelled') AND due IS NOT NULL AND due != ''
         AND date(due) <= date($t, '+$REMINDERS_DUE_DAYS days')")
   fi
   if reminders_has_col inbox recipient; then   # 保留した送信の受信箱(別の変更で足す)。未読だけ。本文は出さない

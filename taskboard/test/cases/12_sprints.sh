@@ -29,7 +29,7 @@ $TB claim "$a" --owner w1 >/dev/null; $TB done "$a" -d /tmp/x -m ok >/dev/null
 eq "board: active sprint of project" "$($TB board -p sp | head -1)" "$s1 Sprint 1 [active] 2026-11-17..2026-11-30"
 eq "board: todo column priority order" "$($TB board -p sp | sed -n '/== todo ==/,/== in_progress ==/p' | grep -c '^T-')" "2"
 eq "board: first todo is the high one" "$($TB board -p sp | sed -n '/== todo ==/{n;p;}' | cut -f1)" "$b"
-eq "board: json columns" "$($TB board "$s1" --json | jq -c '.columns | map_values(length)')" '{"todo":2,"in_progress":0,"review":0,"blocked":0,"done":1}'
+eq "board: json columns" "$($TB board "$s1" --json | jq -c '.columns | map_values(length)')" '{"todo":2,"in_progress":0,"review":0,"blocked":0,"done":1,"cancelled":0}'
 eq "board: label filter" "$($TB board "$s1" -l ui --json | jq -c '[.columns[][] | .id]')" "[\"$a\"]"
 eq "board: no active sprint" "$(rc $TB board -p nosuch)" "1"
 eq "sprints: list counts" "$($TB sprints -p sp | head -1 | cut -f1,2,6,7)" "$(printf '%s\tactive\t1/3\t3/10' "$s1")"

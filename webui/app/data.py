@@ -201,7 +201,7 @@ def needs_human():
     comments = q(
         "SELECT c.*, t.status AS task_status, t.title AS task_title FROM comments c "
         "LEFT JOIN tasks t ON t.id=c.task_id WHERE c.kind IN ('question','blocked') "
-        "AND COALESCE(t.status,'') != 'done'" + (" AND c.resolved_at IS NULL" if has_resolution() else "") +
+        "AND COALESCE(t.status,'') NOT IN ('done','cancelled')" + (" AND c.resolved_at IS NULL" if has_resolution() else "") +
         " ORDER BY c.id DESC LIMIT 100")
     proxies = q("SELECT * FROM proxy_requests WHERE status='pending-human' ORDER BY id DESC LIMIT 100")
     agents, _ = get_agents()
@@ -247,9 +247,9 @@ def tasks_for_agent(a):
     name, sid = a.get("name"), agent_session(a)
     rows = []
     if name:
-        rows += q("SELECT * FROM tasks WHERE owner_agent=? AND status!='done' ORDER BY updated_at DESC", (name,))
+        rows += q("SELECT * FROM tasks WHERE owner_agent=? AND status NOT IN ('done','cancelled') ORDER BY updated_at DESC", (name,))
     if sid:
-        rows += [r for r in q("SELECT * FROM tasks WHERE session_id=? AND status!='done' ORDER BY updated_at DESC", (sid,))
+        rows += [r for r in q("SELECT * FROM tasks WHERE session_id=? AND status NOT IN ('done','cancelled') ORDER BY updated_at DESC", (sid,))
                  if r["id"] not in {x["id"] for x in rows}]
     return rows
 

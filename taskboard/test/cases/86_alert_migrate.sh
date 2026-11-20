@@ -21,3 +21,7 @@ eq "migrate 020: details kept (count, result, body)" "$(sqlite3 "$TB_DB" "SELECT
 eq "migrate 020: tb reads only this session's alerts" "$($TB alerts | cut -f1 | tr '\n' ' ')" "A-2 A-1 "
 eq "migrate 020: proposal ticket" "$($TB show T-proposal-001 | jq -r '[.status, .summary, (.labels|join(","))] | join(" ")')" "done 見送り: 不要 proposal,rejected,role:watcher.md"
 eq "migrate 020: the next alert continues the numbers" "$(HERDR_PANE_ID= $TB alert --title '新しい' | cut -d' ' -f1-2) $(sqlite3 "$TB_DB" "SELECT task_id FROM alerts WHERE id=4;")" "A-4 new T-alert-005"
+# 023: tasks を作り直しても、移した行・ビュー・トリガーはそのまま使え、cancelled を書ける
+eq "migrate 023: rows kept, cancelled allowed" "$($TB show T-alert-001 | jq -r .title) $($TB cancel T-alert-001)" "手で作った同名 PJ のタスク T-alert-001 cancelled"
+eq "migrate 023: views still work" "$(sqlite3 "$TB_DB" "PRAGMA integrity_check; SELECT COUNT(*) FROM alerts; SELECT COUNT(*) FROM proposals;" | tr '\n' ' ')" "ok 4 1 "
+eq "migrate 023: indexes recreated" "$(sqlite3 "$TB_DB" "SELECT group_concat(name, ' ') FROM (SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='tasks' AND name NOT LIKE 'sqlite_%' ORDER BY name);")" "tasks_due tasks_project_status tasks_session tasks_sprint"
