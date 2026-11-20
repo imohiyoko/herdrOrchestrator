@@ -268,6 +268,20 @@ coordinator -> assistant : info=hold answer=hold task=now
 - hold の送信は宛先の入力に打ち込まず `inbox` 表に置き、送信は成功(終了コード 0、出力は `O-<n> held for <宛先> (I-<m>)`)。outbox の行は `sent` になり、`reason` に `→ inbox I-<m>` が残る。messages には種別 `hold` で残る
 - inbox に書けなかったときは終了コード 12 で送信者に知らせ、outbox は `queued` のまま(次の `tb flush` で再び保留を試す。黙って捨てない)
 
+#### 止める(block)
+
+agent 間の作業の依頼はチケットで行う(tb send では受けない)相手には、`block` で宛先の手前で止める。誰を止めるか・どの種別を止めるかは設定で決める(役割の名前を tb に書き込んでいない)。
+
+```
+@worker -> reviewer : *=block reply=now     # worker からは届けない。ただし reviewer が聞いたことへの返信は通す
+*       -> worker2  : task=block            # 誰からでも、作業の依頼(task)だけ止める
+```
+
+- 止めた送信は宛先の入力にも inbox にも置かない。outbox の行は `denied` になり、`reason` に `delivery: ... → blocked` が残る。messages には種別 `block` で残る
+- 送信者には「止めた。依頼はチケットにして(`tb add ...`)」と返す。`tb send` ではその場で stderr に出し、終了コード 4、出力は `O-<n> blocked by <宛先>`(`--json` なら `"blocked": true`)
+- 承認待ちや `queued` のあとで止めたとき(`tb approve` / `tb flush`)は、送信者の pane にその知らせを打つ(`[tb: blocked / O-<n>] ...`。送信者が使用中で届かなければ stderr に出し、outbox の reason に残る)
+- routes の `!` との違い: routes は承認より前に経路ごと拒否する。block は種別ごとに選べ、確かめた返信(`reply=now`)を通せ、送信者にチケットへの誘導を返す
+
 ```bash
 tb inbox [--unread] [--json]      # 自分宛てに保留された送信の一覧(読み手は pane から決まる)
 tb inbox-read I-<n> [--json]      # 全文を読み、既読にする
@@ -282,7 +296,7 @@ tb inbox-read I-<n> [--json]      # 全文を読み、既読にする
 
 - `tb send <宛先> --reply-to O-<n> ...`: 届いた送信 `O-<n>`(文面のラベルの番号、inbox の `outbox_id`)への返信だと主張する
 - 認める条件(すべて): `O-<n>` がある / `O-<n>` は「この送信の宛先 → この送信の送信者」(組が逆向き)/ `O-<n>` が届いている(`sent`。inbox に保留されたものも含む)/ まだ認めた返信が無い。ルールで拒否された送信は認めない
-- 認めた返信は delivery の `reply=<now|hold>` で決まる(`*` には含まれない。`reply=` を書いた行が無ければ種別で決まる)。認めなかったら送信者に理由を出し(stderr)、返信ではない送信として通常の規則で扱う(拒否はしない)
+- 認めた返信は delivery の `reply=<now|hold|block>` で決まる(`*` には含まれない。`reply=` を書いた行が無ければ種別で決まる)。認めなかったら送信者に理由を出し(stderr)、返信ではない送信として通常の規則で扱う(拒否はしない)
 - 結果は outbox の `reply_to` / `reply_check`(`ok` か、認めなかった理由)に残る。返信の承認を人が却下したら返信済みに数えない
 - 返されていない依頼 = `reply_check='ok'` の行に `reply_to` で指されていない送信(`SELECT * FROM outbox o WHERE status='sent' AND NOT EXISTS (SELECT 1 FROM outbox r WHERE r.reply_to=o.id AND r.reply_check='ok')`)
 

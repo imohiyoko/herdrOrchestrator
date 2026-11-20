@@ -66,6 +66,7 @@ tb deadlines-import [-p project(既定 deadline)] [--dry-run]   期限ファイ�
 指揮官 → worker の送信(herdr agent prompt を直接打たない。送信者は herdr から決まり、config/routes.conf のルールで許可されたものだけ届く):
 tb send <宛先 agent 名> --text T [--task T-..] [--kind task|info|answer] [--reply-to O-<n>] [--json]
          delivery の設定(tb config show delivery)で hold なら宛先の入力に打たず inbox に置く(0。出力は held for)
+         block なら宛先に届けず、送信者に「チケットにして」と返す(4。出力は blocked by)
          --reply-to O-<n>: 自分宛てに届いた O-<n> への返信。tb が DB で確かめ(O-<n> が宛先 → 自分で、届いていて、未返信)、認めれば reply= の規則で届ける
          終了コード 0=送信済み 10=宛先使用中で outbox に積んだ 11=送信失敗で積んだ 4=ルールで拒否 20=人の承認待ち 3=送信者を特定できず未保存 12=保留に失敗して積んだ
 tb flush            積まれた送信を届ける(tb digest も最初に呼ぶ)
