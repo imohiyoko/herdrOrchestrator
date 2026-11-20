@@ -1240,6 +1240,17 @@ r = cl.raw("POST", "/agent-op", {**good_op, "csrf": cl.csrf("/agents")})
 check("保護中は強制停止も tb が断る", r[0] == 302 and r[1].get("Location") == "/agents?op=refused" and "pane close" not in flog(), str(r[:2]) + flog())
 with open(env["TB_PROTECT"], "w") as _f:
     _f.write("role:nosuch\n")
+with open(env["TB_PROTECT"], "w") as _f:
+    _f.write("role:a+b\n")
+check("role: は 1 つの役割の glob(+ で複数役割の同時一致にしない。tb と同じ)", "保護中" not in cl.get("/agents")[2])
+regdb("UPDATE agents SET name='alpha-moved' WHERE name='alpha'")
+with open(env["TB_PROTECT"], "w") as _f:
+    _f.write("alp* = 台帳に無い\n")
+ag = cl.get("/agents")[2]
+check("台帳に行が無い agent も protect に一致すれば保護中", "台帳に無い" in ag and "protect から外してから" in ag)
+regdb("UPDATE agents SET name='alpha' WHERE name='alpha-moved'")
+with open(env["TB_PROTECT"], "w") as _f:
+    _f.write("role:nosuch\n")
 check("一致しなければ従来どおり", 'value="force-stop"' in cl.get("/agents")[2] and "保護中" not in cl.get("/agents")[2])
 os.remove(env["TB_PROTECT"])
 r = cl.raw("POST", "/agent-op", {**good_op, "csrf": cl.csrf("/agents")})

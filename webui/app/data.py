@@ -6,6 +6,7 @@ import os
 import re
 import sqlite3
 from contextlib import contextmanager
+from fnmatch import fnmatchcase
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
@@ -281,8 +282,11 @@ def protect_reason(name, reg_role=None, rules=None):
     """保護されていれば理由(上から見て最初に一致した行)、されていなければ None。"""
     from . import graph
     for k, why in protect_rules() if rules is None else rules:
-        pat = "@" + k[5:] if k.startswith("role:") else k
-        if graph.name_matches(name, pat, reg_role):
+        if k.startswith("role:"):   # tb と同じく 1 つの役割の glob として、持っている役割のどれかと比べる
+            hit = any(fnmatchcase(r, k[5:]) for r in graph.roles_of(name, reg_role))
+        else:
+            hit = fnmatchcase(name, k)
+        if hit:
             return why
     return None
 
@@ -296,6 +300,16 @@ def _with_protect(rows):
             if why:
                 r["killable_now"], r["protect_reason"] = "protected", why
     return rows
+
+
+def registry_row(reg, name):
+    """agent_registry() の行。台帳に行が無くても(古い DB・同期前)、protect に一致すれば保護中の行を返す。"""
+    r = reg.get(name or "")
+    if r is None and name:
+        why = protect_reason(name)
+        if why:
+            r = {"name": name, "killable_now": "protected", "protect_reason": why}
+    return r
 
 
 def agent_registry():
