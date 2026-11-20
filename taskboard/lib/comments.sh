@@ -115,3 +115,32 @@ cmd_resolve() {
   sql "UPDATE main.comments SET resolved_at=$(q "$(now)"), resolved_note=NULLIF($(q "$note"),'') WHERE herdr_session=$SQS AND id=$ref AND resolved_at IS NULL;"
   echo "C-$ref resolved"
 }
+
+# tb reopen C-<n> [-m 理由]: tb resolve の逆。誤って対応済みにした question / blocked の報告を未対応に戻す。人だけ(require_human。agent の pane からは拒否)
+# 戻すと resolved_at / resolved_note を空にする。誰がいつ戻したかは task_events に 'comment_reopened'(old=対応済みだった時刻、new=-m の理由(省略可)、actor=変えた者、ref=C-<n>)で残す(スキーマ変更なし)
+# 終了コード 0 戻した / すでに未対応で何もしなかった、1 拒否・見つからない・対象外の種別、2 使い方
+cmd_reopen() {
+  [[ $# -ge 1 ]] || usage "reopen <C-n> [-m <理由>]"
+  local ref=${1#C-} note="" row kind at tid ev=""; shift
+  [[ $ref =~ ^[0-9]+$ ]] || usage "reopen: ID は C-<数字>: $ref"
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      -m|--message) need_arg "$@"; note=$2; shift 2;;
+      *) usage "reopen: 不明な引数 $1";;
+    esac
+  done
+  ((${#note} <= 500)) || usage "reopen: 理由は 500 字まで"
+  require_human "tb reopen"
+  row=$(sql -json "SELECT kind, resolved_at, task_id FROM comments WHERE id=$ref;" | jq -c '.[0] // empty')
+  [[ -n $row ]] || die "報告が見つかりません: C-$ref"
+  kind=$(jq -r .kind <<<"$row"); at=$(jq -r '.resolved_at // ""' <<<"$row"); tid=$(jq -r .task_id <<<"$row")
+  [[ $kind == question || $kind == blocked ]] || die "未対応に戻せるのは question / blocked だけです(C-$ref は $kind)"
+  if [[ -z $at ]]; then echo "C-$ref は対応済みではありません(未対応のまま)"; return 0; fi
+  [[ -n ${SESSION_SETUP-} ]] || session_setup_load   # HAS_TASK_EVENTS は $(...) の外で決める
+  if [[ ${HAS_TASK_EVENTS:-0} == 1 ]]; then
+    ev="INSERT INTO main.task_events (herdr_session, task_id, kind, old, new, actor, ref, created_at)
+          SELECT $SQS, $(q "$tid"), 'comment_reopened', $(q "$at"), NULLIF($(q "$note"),''), $(q "$EVENT_ACTOR"), 'C-$ref', $(q "$(now)") WHERE changes() > 0;"
+  fi
+  sql "BEGIN; UPDATE main.comments SET resolved_at=NULL, resolved_note=NULL WHERE herdr_session=$SQS AND id=$ref AND resolved_at IS NOT NULL; $ev COMMIT;"
+  echo "C-$ref reopened"
+}
