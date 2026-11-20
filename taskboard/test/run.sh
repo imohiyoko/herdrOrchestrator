@@ -40,10 +40,10 @@ if [[ ${1-} == --unit ]]; then
   # ケースは変数 c などを自由に使うので、ここの変数は __ で始める
   __cases=("$@" "$SWEEP")
   for ((__i = 0; __i < ${#__cases[@]}; __i++)); do
-    __t0=$EPOCHREALTIME
+    __t0=${EPOCHREALTIME-}
     # shellcheck source=/dev/null
     source "$HERE/cases/${__cases[__i]}"
-    [[ -n ${TB_TEST_TIMES-} ]] && echo "${__cases[__i]} $__t0 $EPOCHREALTIME" >>"$TB_TEST_TIMES"
+    [[ -n ${TB_TEST_TIMES-} ]] && echo "${__cases[__i]} $__t0 ${EPOCHREALTIME-}" >>"$TB_TEST_TIMES"   # --timings は bash 5 以上(EPOCHREALTIME)
   done
   echo; echo "pass=$pass fail=$fail"; [[ $fail -eq 0 ]]
   exit
