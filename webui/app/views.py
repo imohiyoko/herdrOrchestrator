@@ -980,6 +980,16 @@ def _job_overview(name, info):
         rows.append(("誰に送られるか", a_html))
         skip = defs.get("SKIP_IF", "")
         rows.append(("送る条件", "宛先が idle / done のときだけ送ります。" + (f"さらに状態が <code>{e(skip)}</code> のときは送りません(SKIP_IF)。" if skip else "")))
+        # 回ごとの切り替え・差し込み(scheduler の PROMPT_CMD → PROMPT_RULES → PROMPT_FILE / PROMPT の順に選び、{{名前}} を差し込む)
+        for key, label, desc in (
+            ("PROMPT_CMD", "本文を出すコマンド", "PROMPT_CMD: 出力が空でなければそれを送ります(下の切り替え・既定より先)"),
+            ("PROMPT_RULES", "時刻での切り替え", "PROMPT_RULES: 回の時刻に最初に合った行の本文を送ります。どれにも合わなければ下の既定の本文"),
+            ("PROMPT_VARS", "差し込み", "PROMPT_VARS: 本文の {{名前}} に、送る直前に実行したコマンドの出力を入れます(終了コード 1 ならその回は送りません)"),
+        ):
+            if defs.get(key):
+                masked, nmask = mask(clean(defs[key]))
+                rows.append((label, e(desc) + (inexact if key in cx else "") + _fold(masked, key)
+                             + (f'<p class=note>トークンらしい文字列 {nmask} 件をマスクしました</p>' if nmask else "")))
         text, note, src = None, "", ""
         if defs.get("PROMPT_FILE"):
             if "PROMPT_FILE" in cx:
@@ -990,7 +1000,9 @@ def _job_overview(name, info):
             text = body
         elif "PROMPT" in defs:
             text, src = defs["PROMPT"], "conf の PROMPT(展開前の記述そのまま)" + (inexact if "PROMPT" in cx else "")
-        if text is None:
+        if text is None and not src and (defs.get("PROMPT_RULES") or defs.get("PROMPT_CMD")):
+            rows.append(("何が送られるか", "既定の本文はありません(上の切り替えで本文が決まらない回は送りません)"))
+        elif text is None:
             rows.append(("何が送られるか", f'{src or "本文の定義が見つかりません"} <span class=note>{e(note)}</span>' + (inexact if "PROMPT_FILE" in cx else "")))
         else:
             masked, nmask = mask(clean(text))

@@ -267,6 +267,85 @@ NOW="$THU 12:00" bash bin/tick.sh gcmd
 ok "コマンド型: GATE が 0 なら実行" "$(tail -n1 "$LOG_DIR/gcmd.log" | jq -r .action) $([ -e "$TMP/gcmd-ran" ] && echo ran || echo not)" "ran ran"
 rm -f "$JOBS_DIR"/g*.conf
 
+# ---- 回ごとに本文を切り替える(PROMPT_RULES / PROMPT_CMD)と {{名前}} の差し込み(PROMPT_VARS)
+pjob() { printf "TARGET=dummy\nWINDOW=09:00-21:00\nINTERVAL_MIN=5\n%s\n" "$2" >"$JOBS_DIR/$1.conf"; }
+# dry <job> <NOW> [jq の式]: 1 行目の判定から取り出す(既定は action)
+dry() { DRY_RUN=1 NOW="$2" FAKE_STATE=idle bash bin/tick.sh "$1" 2>&1 | head -n1 | jq -r "${3:-.action}" 2>&1; }
+echo 'B の本文 {{hour}}時' >"$TMP/b.md"
+pjob pr "PROMPT_RULES='
+# 00 分は A、30 分は B(ファイル)、平日の 9-12 時の 15 分おきは C
+min=00 | A の本文
+min=30 | file:$TMP/b.md
+days=weekdays hour=9-12 min=*/15 | C の本文
+'
+PROMPT='既定の本文'"
+check "RULES: 00 分は A で送る"            sent  pr "$THU 12:00" idle
+ok "RULES: 00 分の本文と出どころ"  "$(dry pr "$THU 12:00" '.prompt + " " + .text')" "rule:1 A の本文"
+ok "RULES: 30 分は file: の中身(差し込み済み)" "$(dry pr "$THU 12:30" '.prompt + " " + .text')" "rule:2 B の本文 12時"
+ok "RULES: 平日 9-12 時の 15 分" "$(dry pr "$THU 10:45" '.prompt + " " + .text')" "rule:3 C の本文"
+ok "RULES: 土曜の 10:45 は既定" "$(dry pr "$SAT 10:45" '.prompt + " " + .text')" "default 既定の本文"
+ok "RULES: どれにも合わなければ PROMPT" "$(dry pr "$THU 13:05" '.prompt')" "default"
+pjob prnodef "PROMPT_RULES='min=00 | 毎時'"
+check "RULES: 既定が無く合わなければ送らない" skipped_prompt prnodef "$THU 12:05" idle
+check "RULES: 合えば送る"                    sent           prnodef "$THU 12:00" idle
+ok "show.sh: prompt_rules の数" "$(bash bin/show.sh pr | jq -c '[.prompt_rules,.prompt_cmd,.prompt_vars]') $(bash bin/show.sh t | jq -c '[.prompt_rules,.prompt_cmd,.prompt_vars]')" "[3,false,0] [0,false,0]"
+pjob pbad1 "PROMPT_RULES='min=60 | x'"
+pjob pbad2 "PROMPT_RULES='minute=0 | x'"
+pjob pbad3 "PROMPT_RULES='min=00 x'"
+pjob pbad4 "PROMPT_RULES='days=funday | x'"
+pjob pbad5 "PROMPT_RULES='min=1, | x'"
+printf "COMMAND='true'\nWINDOW=09:00-21:00\nINTERVAL_MIN=5\nPROMPT_RULES='* | x'\n" >"$JOBS_DIR/pbad6.conf"
+ok "RULES: 不正な定義は読み込みでエラー(exit 2)" "$(for j in pbad1 pbad2 pbad3 pbad4 pbad5 pbad6; do bash bin/show.sh $j >/dev/null 2>&1; printf '%s ' $?; done)" "2 2 2 2 2 2 "
+pjob pslash "PROMPT_RULES='* | /loop bad'"
+check "RULES: 先頭が / の本文は failed" failed pslash "$THU 12:00" idle
+# PROMPT_CMD: 時刻は SCHED_* で渡る。0 で空なら RULES → PROMPT へ
+pjob pc "PROMPT_CMD='[ \"\$SCHED_MIN\" = 00 ] && echo \"cmd \$SCHED_JOB \$SCHED_HOUR:\$SCHED_MIN dow=\$SCHED_DOW\"; exit 0'
+PROMPT='既定'"
+ok "CMD: 出力が本文" "$(dry pc "$THU 12:00" '.prompt + " " + .text')" "cmd cmd pc 12:00 dow=4"
+ok "CMD: 空なら既定" "$(dry pc "$THU 12:05" '.prompt + " " + .text')" "default 既定"
+pjob pcfail "PROMPT_CMD='exit 5'
+PROMPT='既定'"
+pjob pcslow "PROMPT_CMD='sleep 5'
+PROMPT_CMD_TIMEOUT=1"
+ok "CMD: 0 以外・時間切れは failed" "$(dry pcfail "$THU 12:00" '.action + ":" + .reason')|$(dry pcslow "$THU 12:00" '.action + ":" + .reason')" "failed:PROMPT_CMD exit 5|failed:PROMPT_CMD timeout after 1s"
+# GATE / COMMAND にも SCHED_* が渡る
+pjob pg "GATE='[ \"\$SCHED_MIN\" = 30 ]'
+PROMPT='x'"
+ok "SCHED_* は GATE にも渡る" "$(dry pg "$THU 12:30") $(dry pg "$THU 12:00")" "sent skipped_gate"
+# PROMPT_VARS: 本文の {{名前}} にコマンドの出力を差し込む
+pjob pv "PROMPT_VARS='
+hits | printf \"%s\" \"結果{{at}}\"; touch $TMP/pv-hits
+unused | touch $TMP/pv-unused
+'
+PROMPT='{{job}} {{date}} {{time}}: {{hits}} / {{hits}} / {{unknown}}'"
+rm -f "$TMP/pv-hits" "$TMP/pv-unused"
+ok "VARS: 差し込み(値の中の {{}} は展開しない・知らない名前は残す)" "$(dry pv "$THU 12:00" .text)" "pv $THU 12:00:00: 結果{{at}} / 結果{{at}} / {{unknown}}"
+ok "VARS: 本文に無い名前のコマンドは実行しない" "$([ -e "$TMP/pv-hits" ] && echo ran || echo not) $([ -e "$TMP/pv-unused" ] && echo ran || echo not)" "ran not"
+rm -f "$TMP/pv-hits"
+DRY_RUN=1 NOW="$THU 12:00" FAKE_STATE=working bash bin/tick.sh pv >/dev/null
+ok "VARS: 送らない状態ならコマンドを実行しない" "$([ -e "$TMP/pv-hits" ] && echo ran || echo not)" "not"
+pjob pv1 "PROMPT_VARS='hits | grep -c nothing /dev/null'
+PROMPT='見つかった: {{hits}}'"
+ok "VARS: exit 1 はこの回を送らない" "$(dry pv1 "$THU 12:00" '.action + ":" + .reason')" "skipped_prompt:PROMPT_VARS hits: exit 1 (nothing to send)"
+pjob pv2 "PROMPT_VARS='hits | exit 4'
+PROMPT='{{hits}}'"
+pjob pv3 "PROMPT_VARS='hits | sleep 5'
+PROMPT_VAR_TIMEOUT=1
+PROMPT='{{hits}}'"
+ok "VARS: 0/1 以外・時間切れは failed" "$(dry pv2 "$THU 12:00" '.action + ":" + .reason')|$(dry pv3 "$THU 12:00" '.action + ":" + .reason')" "failed:PROMPT_VARS hits: exit 4|failed:PROMPT_VARS hits: timeout after 1s"
+pjob pv4 "PROMPT_VARS='cmd | echo /evil'
+PROMPT='{{cmd}}'"
+check "VARS: 差し込み後に先頭が / なら failed" failed pv4 "$THU 12:00" idle
+pjob pvbad1 "PROMPT_VARS='hour | true'
+PROMPT=x"
+pjob pvbad2 "PROMPT_VARS='a | true
+a | true'
+PROMPT=x"
+pjob pvbad3 "PROMPT_VARS='Bad | true'
+PROMPT=x"
+ok "VARS: 不正な定義は読み込みでエラー(exit 2)" "$(for j in pvbad1 pvbad2 pvbad3; do bash bin/show.sh $j >/dev/null 2>&1; printf '%s ' $?; done)" "2 2 2 "
+rm -f "$JOBS_DIR"/p*.conf
+
 # ---- DB のジョブ定義(tb sched-job。config 表の sched-job:<job> / sched-settings:<job>)
 SJ="$TMP/sj"; mkdir -p "$SJ/jobs" "$SJ/settings" "$SJ/logs"
 export TB_SCHED_DIR="$SJ" HERDR_STATE_DIR_SAVE="${XDG_STATE_HOME:-}" XDG_STATE_HOME="$TMP/state"
@@ -305,6 +384,10 @@ NOW="2026-11-05 09:00" HERDR_BIN="$PWD/../taskboard/test/fake-herdr" bash bin/ti
 ok "送信: tb 経由で sent" "$(last t | jq -r .action)" sent
 ok "送信: 宛先にプロンプト" "$(grep -c $'^prompt dummy\tdo the thing' "$FAKE_LOG")" 1
 ok "送信: messages に kind=scheduler" "$(sqlite3 "$TB_DB" "SELECT kind||':'||ref||':'||result FROM messages;")" "scheduler:job:t:sent"
+printf "TARGET=dummy\nWINDOW=09:00-21:00\nINTERVAL_MIN=5\nPROMPT_RULES='min=00 | 毎時 {{n}}'\nPROMPT_VARS='n | echo 42'\n" >"$JOBS_DIR/psend.conf"
+NOW="2026-11-05 10:00" HERDR_BIN="$PWD/../taskboard/test/fake-herdr" bash bin/tick.sh psend
+ok "送信: 切り替え・差し込み後の本文を送り、ログに出どころ(本文は残さない)" "$(grep -c $'^prompt dummy\t毎時 42' "$FAKE_LOG") $(last psend | jq -r '.action + " " + .prompt + " " + (has("text")|tostring)')" "1 sent rule:1 false"
+rm -f "$JOBS_DIR/psend.conf"
 unset FAKE_LOG FAKE_AGENTS; export TB_DB="$TMP/none.db"
 
 echo "---- pass=$pass fail=$failn"
