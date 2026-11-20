@@ -206,7 +206,7 @@ pq_base_check() {
       case $lst in
         rejected|failed) PQ_REASON="下の PQ-$(jq -r .id <<<"$low") が $lst(上の PR も作らない)"; return 1;;
         created) [[ -n $lsha ]] || { PQ_REASON="下の PQ-$(jq -r .id <<<"$low") の作成時のコミットが記録されていない"; return 1; };;
-        *) if [[ ${2:-} != approve ]]; then PQ_REASON="下の PQ-$(jq -r .id <<<"$low") がまだ PR になっていない($lst。待つ)"; return 2; fi;;
+        *) if [[ ${2:-} != approve ]]; then PQ_REASON="下の PQ-$(jq -r .id <<<"$low") がまだ PR になっていない(${lst}。待つ)"; return 2; fi;;
       esac
       if [[ -n $lsha ]]; then
         cur=$(pq_origin_sha "$base") && rc=0 || { pq_origin_state "$base" && rc=2 || rc=$?; }
@@ -533,7 +533,7 @@ pq_approve() {
   pq_sync_origin "$(jq -r .branch <<<"$row")" 0 || die "PQ-$id は承認しません: $PQ_REASON"
   if ! pq_guard "$row"; then die "PQ-$id はガードに落ちるため承認しません: $PQ_REASON"; fi
   sql "UPDATE main.pr_queue SET status='approved', decided_at=$(q "$(now)"), last_error=NULL WHERE herdr_session=$SQS AND id=$id AND status='pending';"
-  echo "PQ-$id approved(base: $PQ_BASE。次の tb pr-queue run で draft PR を作ります)"
+  echo "PQ-$id approved(base: ${PQ_BASE}。次の tb pr-queue run で draft PR を作ります)"
 }
 
 pq_reject() {
@@ -574,7 +574,7 @@ pq_run() {
   case ${1:-} in "") ;; --dry-run) dry=1;; *) usage "pr-queue run [--dry-run]";; esac
   pq_gh || return 1; gh=$PQ_GH
   # 環境の不備(clone が無い)で承認済みの行を却下しない。行には触らず、警告して止まる(直せば次の回に進む)
-  pq_repo_dir_ok || { echo "pr-queue: $PQ_REASON。止めます(fail-closed。承認済みの行はそのまま残します)" >&2; return 1; }
+  pq_repo_dir_ok || { echo "pr-queue: ${PQ_REASON}。止めます(fail-closed。承認済みの行はそのまま残します)" >&2; return 1; }
   pq_deny_load || return 1
   maxc=$(pq_conf max_create_per_run "$PQ_MAX_CREATE"); [[ $maxc =~ ^[0-9]+$ ]] || maxc=$PQ_MAX_CREATE
   while IFS= read -r id; do
@@ -671,7 +671,7 @@ pq_scan() {
   repos=$(pq_repos); [[ -n $repos ]] || { echo "pr-queue scan: 許可リスト(config/repos.md)が空" >&2; return 0; }
   if [[ -z $repo ]]; then n=$(grep -c . <<<"$repos"); ((n == 1)) || { echo "pr-queue scan: 許可リストが複数。--repo を付ける" >&2; return 0; }; repo=$repos; fi
   grep -qxF -- "$repo" <<<"$repos" || { echo "pr-queue scan: リポジトリが許可リストに無い" >&2; return 0; }
-  pq_repo_dir_ok || { echo "pr-queue scan: $PQ_REASON。止めます(fail-closed)" >&2; return 1; }
+  pq_repo_dir_ok || { echo "pr-queue scan: ${PQ_REASON}。止めます(fail-closed)" >&2; return 1; }
   pq_gh || return 1; gh=$PQ_GH
   root=$(pq_body_root) || { echo "pr-queue scan: 本文のルートが無い" >&2; return 0; }
   auto=$(pq_conf auto_approve 0); [[ $auto == 1 ]] && st=approved || st=pending

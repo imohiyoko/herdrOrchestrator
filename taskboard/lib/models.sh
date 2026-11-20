@@ -68,7 +68,7 @@ do_model_set() {  # $1=名前 $2=モデル $3=依頼者
   if [[ -z $row ]]; then
     # 止まっている: 台帳の値だけを変える(次の tb agent-revive から効く)
     sql "UPDATE main.agents SET model=$(q "$model"), updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND name=$(q "$name");"
-    OP_OUT="changed (${old:-既定} -> $model。停止中のため、次の tb agent-revive $name から効きます)"; return 0
+    OP_OUT="changed (${old:-既定} -> ${model}。停止中のため、次の tb agent-revive $name から効きます)"; return 0
   fi
   status=$(jq -r '.agent_status // ""' <<<"$row")
   case $status in idle|done) ;; *) OP_OUT="skipped (${status:-状態不明}。idle か done のときだけ切り替えます)"; return 3;; esac
@@ -86,7 +86,7 @@ do_model_set() {  # $1=名前 $2=モデル $3=依頼者
     OP_OUT="$name を停止しましたが、$model での復活に失敗: ${OP_OUT}。停止のままです。戻すなら: tb agent-revive $name --model $model"
     return 11
   fi
-  OP_OUT="changed (${old:-既定} -> $model、同じ会話で再開)"
+  OP_OUT="changed (${old:-既定} -> ${model}、同じ会話で再開)"
 }
 
 # tb model-set <名前 | @役割 | --all> <モデル> [--dry-run] / tb model-set <名前 | @役割 | --all> --reset [--dry-run]
@@ -195,9 +195,9 @@ model_set_precheck() {  # $1=名前 $2=モデル $3=reset
   if [[ -n $row ]]; then
     status=$(jq -r '.agent_status // ""' <<<"$row")
     case $status in idle|done) ;; *) echo "skipped (${status:-状態不明}。idle か done のときだけ切り替えます)"; return 3;; esac
-    echo "change (${old:-既定} -> $model、止めて同じ会話で再開)"
+    echo "change (${old:-既定} -> ${model}、止めて同じ会話で再開)"
   else
-    echo "change (${old:-既定} -> $model、停止中なので台帳だけ)"
+    echo "change (${old:-既定} -> ${model}、停止中なので台帳だけ)"
   fi
 }
 

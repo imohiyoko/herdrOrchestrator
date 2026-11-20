@@ -446,7 +446,7 @@ cmd_conv-voice-check() {
     [[ -n $len ]] || { echo "tb: brevity は 1 行目に「長さ: 依頼より長い」か「長さ: 依頼より長くない」を書きます" >&2; return 1; }
     if [[ -n $draft ]]; then
       if (($(conv_chars "$draft") > $(conv_chars "$req"))); then exp=依頼より長い; else exp=依頼より長くない; fi
-      [[ $len == "$exp" ]] || { echo "tb: 長さの判定が実際と違います(実際は「$exp」)" >&2; return 1; }
+      [[ $len == "$exp" ]] || { echo "tb: 長さの判定が実際と違います(実際は「${exp}」)" >&2; return 1; }
     fi
     echo "長さ: $len"
   fi
@@ -527,7 +527,7 @@ cmd_conv-lint() {
     rm -f "$CONV_RT_FILE"
     if [[ $st -ne 0 ]]; then echo "conv-routes: ${out#ERR$'\t'}"; bad=1
     else
-      IFS=$'\t' read -r _ v k <<<"$out"; echo "conv-routes: version $v、$k 行($(config_source conv-routes))"
+      IFS=$'\t' read -r _ v k <<<"$out"; echo "conv-routes: version ${v}、$k 行($(config_source conv-routes))"
       # 振り分け先の種別にチームがあるか(無くても動くが、共通の土台だけになる)
       while IFS= read -r e; do
         conv_has_team "$e" || echo "conv-routes: 種別 $e のチームはありません(共通の土台だけで下書きされます)"
