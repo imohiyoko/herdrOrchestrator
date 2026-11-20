@@ -16,7 +16,7 @@ tb report T-<project>-NNN
 ```
 
 - `-d` と `-m` は必須(欠けると done にならない)
-- `report` は指示役へ `[T-xxx done] 要約 / 成果物パス` を送る。終了コードで結果が分かる:
+- `report` は完了の報告を done の報告コメント(`C-<n>`。`tb comment --kind done` と同じもの)にして指示役へすぐ届ける(`[from: <担当> / - / T-xxx / done] 要約 / 成果物: パス`)。打たなくても `tb digest` が 10 分おきにまとめて届ける。終了コードで結果が分かる:
 
 | code | 意味 | worker がやること |
 | --- | --- | --- |
@@ -24,7 +24,7 @@ tb report T-<project>-NNN
 | 10 | 宛先の指示役が working / blocked 等で**未送信** | 何もしない。`pending` に残り、あとで回収される(必要なら少し待って再実行) |
 | 11 | 送信または宛先の状態取得に失敗 | 同上。繰り返し 11 なら指示役の名前(設定 `projects`。`tb config show projects`)を確認 |
 
-`reported_at` は `report` が成功したときだけ入る。10 / 11 のときは空のまま `tb pending` に出る。
+`reported_at` は done の報告コメントが届いたとき(`report` か `digest`)だけ入る。10 / 11 のときは空のまま、作った報告コメントが `tb pending` に `C-<n>` で出る(同じ報告を 2 回作らない)。
 
 `tb` は PATH に無いので、`taskboard/bin/tb` のフルパスで呼ぶか PATH に足す。
 
@@ -42,8 +42,8 @@ tb block  T-<project>-NNN -m "詰まっている理由"
 tb add -p <project> -t "タイトル" [--parent T-..] [--owner N]   # ID を表示(T-<project>-NNN)
 tb list [-p project] [-s status] [--json]
 tb show T-<project>-NNN
-tb pending [--json|--ids]     # done なのに未報告のもの(id / project / 宛先 / 要約)
-tb pending --ids | xargs -n1 tb report    # 未報告の再送(scheduler から呼ぶ想定)
+tb pending [--json|--ids]     # done なのに未報告のもの・未配送の報告コメント(id / project / 宛先 / 要約)
+tb pending --ids | xargs -n1 tb report    # 未報告の再送(tb digest でもまとめて届く)
 ```
 
 ### 今どこを向いているか(`tb whoami`)
@@ -245,17 +245,23 @@ tb outbox [--status queued|sent|denied] [--json]
 ```
 
 - 送信者は `HERDR_PANE_ID` + `herdr agent list` から決まる(`--from` などはエラー)。宛先は herdr にいる agent 名だけ
-- 宛先ルールは `config/routes.conf`(例: `config/routes.conf.example`)。`<送信者> -> <宛先>` の glob を上から見て、最初に一致した行で決まる。
-  行頭 `!` は拒否。どれにも一致しなければ拒否。**ファイルが無いときは「指揮官(`conductor` と `projects.conf` の値)→ 誰にでも」だけ許可**
+- 届けるか・保留するか・止めるかは設定 `delivery` の 1 つの表で決まる(次の節)。どの行にも当たらなければ「指揮官(`conductor` と `projects.conf` の値)→ 誰にでも」だけ届け、ほかは止める
+- 旧 `routes`(`routes.conf`)は互換で読む(残っていれば先にその行で経路を決める)。行はそのまま `delivery` に移せるので、移したら `tb config unset routes`
 - 届く文面は `[from: <名前> / <pane> / <task-id か -> / <kind> / O-<n>] <本文>`(確かめた返信は `/ O-<n> re O-<元>`)(1 行化、`[from:` の偽装は無効化、`TB_SEND_MAX` 字まで)
 - 宛先が `idle` / `done` 以外なら `outbox` に積み、`tb flush` で古い順に届ける(同じ宛先の後続は追い越さない)
 - 拒否したものも `outbox` に `denied` と根拠(`reason`)つきで残る
 - 終了コード: 0 送信済み(または保留した)/ 10 宛先使用中で積んだ / 11 送信失敗で積んだ / 12 保留に失敗して積んだ / 4 ルールで拒否 / 20 人の承認待ち(approvals)/ 3 送信者を特定できず未保存
 - agent に `herdr agent prompt` を直接打たせないようにするには、その agent の Claude Code 設定で拒否する(`conductor/README.md`)
 
-### 今届ける / 保留する(delivery)と inbox
+### 送信の規則(delivery): 今届ける / 保留する / 止める と inbox
 
-人と話している agent に、ほかの agent からの送信が来るたびに割り込まれないよう、送信者・宛先・種別ごとに「今届ける(now)」か「保留する(hold)」かを設定 `delivery` で決める(例: `config/delivery.conf.example`。`tb config set delivery < 本文`)。
+送信者・宛先・種別ごとに「今届ける(now)」「保留する(hold)」「止める(block)」を設定 `delivery` の 1 つの表で決める(例: `config/delivery.conf.example`。`tb config set delivery < 本文`)。経路の許可・拒否(旧 routes)もこの表で書く。
+
+```
+! coordinator -> setup*                        # 全部止める(旧 routes の拒否)
+coordinator -> *                               # 全部今届ける(旧 routes の許可)
+coordinator -> assistant : info=hold task=now  # 種別ごと
+```
 
 ```
 coordinator -> assistant : info=hold answer=hold task=now
@@ -263,8 +269,9 @@ coordinator -> assistant : info=hold answer=hold task=now
 ```
 
 - パターンは routes と同じ(glob と `@<役割>`)。種別は `task` / `info` / `answer`、`*` はそれ以外の全部。送信者と宛先が一致し、その種別(無ければ `*`)を書いた最初の行で決まる。どの行にも当たらなければ now
-- **キーが無ければ今までどおり**(すべて今届ける)。役割を確かめられない行に当たったら hold に倒す
-- 判定の順は routes → approvals → delivery。承認待ちの送信は、承認したあとにこの規則で決まる(`tb flush` でも同じ)
+- `:` の無い行は全種別(reply も)now、行頭 `!` は全種別 block
+- **どの行にも当たらなければ**(キーが無いときも)、送信者が指揮官なら now、ほかは止める(終了コード 4、`O-<n> denied`)。役割を確かめられない行に当たったら hold に倒す
+- 判定は受け付け時(止めるものは承認を求めない)→ approvals → 届ける直前(承認待ちの送信は、承認したあとにこの規則でもう一度決まる。`tb flush` でも同じ)
 - hold の送信は宛先の入力に打ち込まず `inbox` 表に置き、送信は成功(終了コード 0、出力は `O-<n> held for <宛先> (I-<m>)`)。outbox の行は `sent` になり、`reason` に `→ inbox I-<m>` が残る。messages には種別 `hold` で残る
 - inbox に書けなかったときは終了コード 12 で送信者に知らせ、outbox は `queued` のまま(次の `tb flush` で再び保留を試す。黙って捨てない)
 
@@ -280,7 +287,7 @@ agent 間の作業の依頼はチケットで行う(tb send では受けない)�
 - 止めた送信は宛先の入力にも inbox にも置かない。outbox の行は `denied` になり、`reason` に `delivery: ... → blocked` が残る。messages には種別 `block` で残る
 - 送信者には「止めた。依頼はチケットにして(`tb add ...`)」と返す。`tb send` ではその場で stderr に出し、終了コード 4、出力は `O-<n> blocked by <宛先>`(`--json` なら `"blocked": true`)
 - 承認待ちや `queued` のあとで止めたとき(`tb approve` / `tb flush`)は、送信者の pane にその知らせを打つ(`[tb: blocked / O-<n>] ...`。送信者が使用中で届かなければ stderr に出し、outbox の reason に残る)
-- routes の `!` との違い: routes は承認より前に経路ごと拒否する。block は種別ごとに選べ、確かめた返信(`reply=now`)を通せ、送信者にチケットへの誘導を返す
+- 止めるものは受け付け時に決まり、承認は求めない。`!` の行や `*=block` は種別ごとに選べ、確かめた返信(`reply=now`)だけを通せる
 
 ```bash
 tb inbox [--unread] [--json]      # 自分宛てに保留された送信の一覧(読み手は pane から決まる)
@@ -425,7 +432,7 @@ agent 同士の関係は 1 本の木ではなく、`主体 -動詞→ 対象` �
 |---|---|---|
 | spawn | 台帳 `agents.spawned_by` | 親が `tb agent-spawn` で子を立てた |
 | lead | 未完了タスク(in_progress / review / blocked)の project | その project の指揮官(設定 `projects`)→ 担当 agent |
-| send:task / send:info / send:answer | `tb send` の outbox(直近 7 日) | 依頼・連絡・回答。routes.conf で拒否された試みは `[denied]` |
+| send:task / send:info / send:answer | `tb send` の outbox(直近 7 日) | 依頼・連絡・回答。delivery(旧 routes)で止めた試みは `[denied]` |
 | report | `tb comment`(直近 7 日) | 担当 agent → タスクの project の指揮官 |
 | analyze | アラート(直近 7 日) | 報告した見張り役 → 解析役 |
 | role | `tb role-set` の記録(直近 7 日) | 人事役 → ロールを変えられた agent(人の操作は辺にしない) |
@@ -449,7 +456,7 @@ agent 同士の関係は 1 本の木ではなく、`主体 -動詞→ 対象` �
 
 「どのロールがどのロールに何をしてよいか」を書けるように、次の規則では名前の glob の代わりに `@<役割の glob>` が使える。
 
-- `config/routes.conf`: `@conductor -> @worker`、`!@worker -> @conductor`(送信者・宛先の両方)
+- 設定 `delivery`(旧 `routes.conf` も): `@conductor -> @worker`、`!@worker -> @conductor`、`@worker -> reviewer : *=block`(送信者・宛先の両方)
 - 設定 `approvals`: 末尾の宛先を `@<役割>` にする(例 `send:task:@worker = allow`、`agent:stop:@analyst = allow`)
 - `config/spawn-policy.conf` の `denied_parents`(例 `@watcher`)
 
@@ -497,7 +504,7 @@ lead1    agent:stop @worker       # lead1 は worker を承認なしで止めら
 ```
 
 - 主体は agent 名の glob か `@<役割>`。対象は agent 名の glob、`@<役割>`、または `tb agent-spawn` の親子関係による相対指定 `~child` / `~descendant` / `~parent` / `~sibling`(同じセッションの台帳で引く)
-- どれかの行に当たれば allow。当たらなければ従来どおり `approvals.conf` が決める。許可を足すだけで、`routes.conf` の拒否などは外さない
+- どれかの行に当たれば allow。当たらなければ従来どおり `approvals.conf` が決める。許可を足すだけで、`delivery`(旧 `routes.conf`)の拒否などは外さない
 - 使う場所: `tb peek`(`agent:read`)、`tb send`(`send:<kind>`)、`tb agent-stop` などの agent 操作、`tb role-set`(`role:change`。人事役だけ・自分は不可・人事役は付けられない、の制限はそのまま)
 - 役割を確かめられない(台帳を読めない)行は使わない。`tb approval <操作> --by <agent>` で、その agent から見た判定(grants を含む)を確かめられる
 

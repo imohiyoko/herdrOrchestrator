@@ -32,17 +32,17 @@ n=$(prompts)
 eq "digest: busy target → exit 10" "$(FAKE_STATUS=working rc $TB digest)" "10"
 eq "digest: busy → nothing sent, nothing recorded" "$(prompts) $(dsql "SELECT COUNT(*) FROM digests;") $(dsql "SELECT result FROM messages WHERE kind='digest';")" "$n 0 busy"
 out=$($TB digest); r=$?
-eq "digest: sent exit 0" "$r|$out" "0|D-2 sent to dg-conductor (6 件)"
+eq "digest: sent exit 0" "$r|$out" "0|D-2 sent to dg-conductor (5 件)"
 msg=$(grep '^prompt' "$FAKE_LOG" | tail -1)
 eq "digest: to project's conductor" "$(cut -f1 <<<"$msg")" "prompt dg-conductor"
 eq "digest: single line" "$(printf '%s' "$msg" | wc -l | tr -d ' ')" "0"
-for want in "[digest D-2 / 6 件" "[$d1 progress / worker1] half done" "[$d1 done / worker1] fin / 成果物: /tmp/x.md" "[$d1 done / -] d1 summary" \
+for want in "[digest D-2 / 5 件" "[$d1 progress / worker1] half done" "[$d1 done / worker1] fin / 成果物: /tmp/x.md" \
             "[$d2 観測 / worker1] turn が終わって 20 分" "[$d3 観測 / w3] 45 分 working" "[$d4 観測 / w4] blocked" "(全文: tb digests D-2)"; do
   [[ $msg == *"$want"* ]] && ok "digest: contains $want" || { ng "digest: contains $want"; echo "   msg: $msg"; }
 done
 eq "digest: agent without task skipped" "$([[ $msg == *loner* ]] && echo yes || echo no)" "no"
 eq "digest: comments delivered, task reported" "$(dsql "SELECT COUNT(*) FROM comments WHERE delivered_at IS NULL;") $($TB show $d1 | jq -r '.reported_at!=null')" "0 true"
-eq "digest: full body stored" "$($TB digests D-2 | wc -l | tr -d ' ')" "7"
+eq "digest: full body stored" "$($TB digests D-2 | wc -l | tr -d ' ')" "6"
 eq "digest: messages log" "$(dsql "SELECT kind||':'||result FROM messages ORDER BY id;" | tr '\n' ' ')" "comment:sent digest:busy digest:sent "
 eq "digest: nothing new → no resend" "$($TB digest) $(grep -c '^prompt' "$FAKE_LOG")" "digest: 送るものはありません $((n+1))"
 # blocked が解けたら記録を消し、再び blocked なら送る

@@ -42,7 +42,9 @@ collect_digest() {
     id=$(jq -r .id <<<"$r"); project=$(jq -r .project <<<"$r"); owner=$(jq -r '.owner_agent // "-"' <<<"$r")
     summary=$(jq -r '.summary // ""' <<<"$r"); dels=$(jq -r '.deliverables | fromjson | join(", ")' <<<"$r")
     add_item "$(target_for "$project")" task "$id" "" "$id" "" "$id done / $owner" "$summary / 成果物: $dels"
-  done < <(sql -json "SELECT * FROM tasks WHERE status='done' AND (reported_at IS NULL OR reported_at='') ORDER BY updated_at, id;" | jq -c '(. // [])[]')
+  done < <(sql -json "SELECT * FROM tasks WHERE status='done' AND (reported_at IS NULL OR reported_at='')
+             AND NOT EXISTS (SELECT 1 FROM comments c WHERE c.task_id=tasks.id AND c.kind='done' AND c.delivered_at IS NULL)
+             ORDER BY updated_at, id;" | jq -c '(. // [])[]')   # 未配送の done コメントがあるものは 1. で届く
   # 2b. アラート: 新しく登録されたもの(まだまとめに入れていない)と、届いていない解析結果
   while IFS=$'\t' read -r id st title; do
     [[ -n $id ]] || continue
@@ -207,7 +209,8 @@ cmd_digest() {
       while IFS= read -r r; do
         local type ref; type=$(jq -r .type <<<"$r"); ref=$(jq -r .ref <<<"$r")
         case $type in
-          comment) sql "UPDATE main.comments SET delivered_at=$(q "$ts") WHERE herdr_session=$SQS AND id=${ref#C-} AND delivered_at IS NULL;";;
+          comment) sql "UPDATE main.comments SET delivered_at=$(q "$ts") WHERE herdr_session=$SQS AND id=${ref#C-} AND delivered_at IS NULL;"
+                   comment_marks_reported "${ref#C-}" "$ts";;
           task)    sql "UPDATE main.tasks SET reported_at=$(q "$ts"), updated_at=$(q "$ts") WHERE herdr_session=$SQS AND id=$(q "$ref") AND reported_at IS NULL;";;
           alert)   sql "UPDATE main.alerts SET result_delivered_at=$(q "$ts") WHERE herdr_session=$SQS AND id=${ref#A-} AND result_delivered_at IS NULL;";;
           obs)     sql "INSERT OR IGNORE INTO main.observations (herdr_session, key, kind, task_id, text, digest_id, created_at)

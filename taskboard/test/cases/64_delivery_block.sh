@@ -34,9 +34,12 @@ eq "block: a verified reply passes with reply=now" "$(BW send reviewer --kind an
 
 # 承認のあとで止めたら、送信者の pane に知らせる(tb send はもう終わっている)
 printf 'send:task:reviewer = ask\n* = allow\n' >"$TB_APPROVALS"
-eq "block: pending first" "$(BW send reviewer --text later 2>/dev/null | tail -1)" "O-8 pending-approval"
+eq "block: blocked at send time without asking for approval" "$(BW send reviewer --text nope 2>/dev/null | tail -1) $(bsql "SELECT status FROM outbox WHERE id=8;")" "O-8 blocked by reviewer denied"
+_bl_rules=$(cat "$TB_DELIVERY"); printf '@worker -> reviewer : *=now\n' >"$TB_DELIVERY"
+eq "block: pending first" "$(BW send reviewer --text later 2>/dev/null | tail -1)" "O-9 pending-approval"
+printf '%s\n' "$_bl_rules" >"$TB_DELIVERY"
 n=$(prompts)
-eq "block: approve → blocked, notice typed into the sender" "$($TB approve O-8) $(($(prompts) - n)) $(grep -c "^prompt worker1	\[tb: blocked / O-8\]" "$FAKE_LOG")" "O-8 approved but blocked by reviewer 1 1"
+eq "block: approve → blocked, notice typed into the sender" "$($TB approve O-9) $(($(prompts) - n)) $(grep -c "^prompt worker1	\[tb: blocked / O-9\]" "$FAKE_LOG")" "O-9 approved but blocked by reviewer 1 1"
 eq "block: approve → not typed into the target" "$(grep -c '^prompt reviewer	.*later' "$FAKE_LOG")" "0"
 printf '* = allow\n' >"$TB_APPROVALS"
 
@@ -46,19 +49,33 @@ FAKE_STATUS=working BC send worker2 --text q1 >/dev/null 2>&1
 FAKE_STATUS=working BC send worker2 --kind info --text q2 >/dev/null 2>&1
 printf '* -> worker2 : task=block\n' >"$TB_DELIVERY"
 n=$(prompts)
-eq "block: flush blocks then delivers the next" "$(rc $TB flush) $(bsql "SELECT group_concat(status) FROM (SELECT status FROM outbox WHERE id IN (9,10) ORDER BY id);")" "0 denied,sent"
-eq "block: flush notifies the sender and sends the info" "$(($(prompts) - n)) $(grep -c "^prompt coordinator	\[tb: blocked / O-9\]" "$FAKE_LOG")" "2 1"
+eq "block: flush blocks then delivers the next" "$(rc $TB flush) $(bsql "SELECT group_concat(status) FROM (SELECT status FROM outbox WHERE id IN (10,11) ORDER BY id);")" "0 denied,sent"
+eq "block: flush notifies the sender and sends the info" "$(($(prompts) - n)) $(grep -c "^prompt coordinator	\[tb: blocked / O-10\]" "$FAKE_LOG")" "2 1"
 
 # 受け付けと届ける間に別の flush が同じ行を止めたら、送信者にも「止めた」と返す(sent と言わない)
 bsql "CREATE TRIGGER bl_race AFTER INSERT ON outbox WHEN NEW.text='race' BEGIN
   UPDATE outbox SET status='denied', reason=reason||' / delivery: * -> worker2 : info=block → blocked' WHERE id=NEW.id; END;"
 out=$(BC send worker2 --kind info --text race 2>"$TMP/block-race.err"); r=$?
 bsql "DROP TRIGGER bl_race;"
-eq "block: a row blocked by a concurrent flush is reported as blocked" "$r $out $(grep -c 'info=block' "$TMP/block-race.err")" "4 O-11 blocked by worker2 1"
+eq "block: a row blocked by a concurrent flush is reported as blocked" "$r $out $(grep -c 'info=block' "$TMP/block-race.err")" "4 O-12 blocked by worker2 1"
 
 # キーを消せば今までどおり
 unset TB_DELIVERY
-eq "block: removing the key → delivered again" "$(BW send reviewer --text back | tail -1)" "O-12 sent to reviewer"
+eq "block: removing the key → delivered again" "$(BW send reviewer --text back | tail -1)" "O-13 sent to reviewer"
+# routes を delivery に吸収: routes キーが無ければ delivery の 1 表だけで決まる
+unset TB_ROUTES
+export TB_DELIVERY=$TMP/block-delivery2.conf
+printf '! coordinator -> setup*\ncoordinator -> *\n@worker -> reviewer : *=block reply=now\n@worker -> coordinator\n' >"$TB_DELIVERY"
+export FAKE_AGENTS="[$(bag coordinator),$(bag reviewer),$(bag worker1),$(bag worker2),$(bag setup1)]"
+$TB agents >/dev/null 2>&1
+eq "merged: a line without ':' allows every kind" "$(BC send worker2 --kind info --text a | tail -1) $(BW send coordinator --kind info --text up | tail -1)" "O-14 sent to worker2 O-15 sent to coordinator"
+eq "merged: '!' line blocks (before the allow line)" "$(BC send setup1 --text s 2>/dev/null; echo "rc=$?") $(bsql "SELECT reason LIKE 'delivery: !coordinator -> setup* : task=block%' FROM outbox WHERE id=16;")" "$(printf 'O-16 blocked by setup1\nrc=4') 1"
+eq "merged: no matching line and not a conductor → denied (as before routes.conf)" "$(BW send worker2 --text x 2>/dev/null | tail -1) $(bsql "SELECT reason LIKE 'default: worker1 は指揮官ではない%' FROM outbox WHERE id=17;")" "O-17 denied 1"
+printf '' >"$TB_DELIVERY"
+eq "merged: empty table → conductor only" "$(BC send worker1 --text y | tail -1) $(BW send reviewer --text z 2>/dev/null | tail -1)" "O-18 sent to worker1 O-19 denied"
+unset TB_DELIVERY
+
 export TB_CONFIG=${_bl_saved[0]} TB_ROUTES=${_bl_saved[1]} TB_APPROVALS=${_bl_saved[2]}
 [[ -n $TB_ROUTES ]] || unset TB_ROUTES; [[ -n $TB_APPROVALS ]] || unset TB_APPROVALS
 unset FAKE_AGENTS _bl_saved
+

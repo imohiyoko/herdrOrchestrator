@@ -20,10 +20,20 @@ deliver_comment() {  # $1=comments.id → 0 送信済み / 10 / 11
   # tb agent-spawn で立てた子なら、指揮官が親にも伝えられるよう親の名前を付ける(それ以外は従来のまま)
   local sby; sby=$(sql "SELECT COALESCE(spawned_by,'') FROM agents WHERE name=$(q "$name");")
   if [[ $sby =~ ^[A-Za-z0-9._-]{1,64}$ ]]; then sby="spawned_by: $sby "; else sby=""; fi
-  msg="[from: $name / $pane / $tid / $kind] ${sby}$(oneline "$text" 200) (詳細: tb comments $tid)"
+  local dels=""; [[ $kind == done ]] && dels=$(jq -r '.deliverables | fromjson | join(", ")' <<<"$row")
+  msg="[from: $name / $pane / $tid / $kind] ${sby}$(oneline "$text" 200)${dels:+ / 成果物: $(oneline "$dels" 300)} (詳細: tb comments $tid)"
   herdr_send "$target" "$msg" "C-$cid" comment || return $?
-  sql "UPDATE main.comments SET delivered_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$cid;"
+  local ts; ts=$(now)
+  sql "UPDATE main.comments SET delivered_at=$(q "$ts") WHERE herdr_session=$SQS AND id=$cid;"
+  comment_marks_reported "$cid" "$ts"
   echo "C-$cid delivered to $target"
+}
+
+# done の報告コメントが届いたら、そのタスク(done のもの)を報告済みにする(tb report と digest の両方から)
+comment_marks_reported() {  # $1=comments.id $2=時刻
+  sql "UPDATE main.tasks SET reported_at=$(q "$2"), updated_at=$(q "$2")
+         WHERE herdr_session=$SQS AND status='done' AND reported_at IS NULL
+           AND id=(SELECT task_id FROM comments WHERE id=$1 AND kind='done');"
 }
 
 # 終了コード: 0 配送済み / 10 保存済み・宛先使用中で未配送 / 11 保存済み・送信失敗 / 3 報告者を特定できず未保存 / 2 使い方 / 1 その他
