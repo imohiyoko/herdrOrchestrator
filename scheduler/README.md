@@ -121,14 +121,17 @@ PROMPT='新しい bug の issue です。優先度をつけてください:
   このセッションの行(`--shared` なら共通の行)に取り込み、取り込んだファイルは `$HERDR_STATE_DIR/sched-imported/<日時>/` へ退かす。
   既に行があるジョブは飛ばす。取り込みの前後で、判定の結果(`tick.sh` の dry-run)と実際に効く設定(`show.sh`)は変わらない(`tests/run.sh` が確かめる)
 - 一覧: `bin/jobs.sh`(DB とファイルの和)、`tb sched-job list`(出どころつき)。`bin/show.sh` は `source` / `settings_source`(`db` / `file` / `none`)も出す
-- Web UI: DB に定義があるジョブの上書き設定は、`tb sched-job set <job> --settings` を通して DB に書く(ファイルは書かない)。
-  「conf の値に戻す」はこのセッションの行を消す(共通の行は人が `tb sched-job unset <job> --settings --shared` で消す)
+- Web UI: 上書き設定は定義の置き場所(DB / ファイル)によらず、`tb sched-job set <job> --settings` を通して DB のこのセッションの行に書く(ファイルは書かない)。
+  残っている `settings/<job>.settings` は保存・戻すときに消す(置き場所を DB の 1 つにする)。
+  「conf の値に戻す」はこのセッションの行を消す。共通の行は人が `tb sched-job unset <job> --settings --shared` で消す。
+  保存・戻したあと、`show.sh` の値が書いた値になったかを確かめ、違えばエラーにする
 - plist(`gen-plist.sh`)はジョブ名だけを持つので、取り込んだあとも作り直さなくてよい
 - DB の本文も `COMMAND` と同じく bash として評価される。`tb sched-job` は人の端末からだけ書ける(agent の pane からは断る)
 
 ## Web UI からの変更(settings)
 
-間隔・時間帯・曜日・一時停止は、Web UI の `/jobs/<job>` から変えられる。保存先は `settings/<job>.settings`(git 管理外、0600)。
+間隔・時間帯・曜日・一時停止は、Web UI の `/jobs/<job>` から変えられる。保存先は DB の `sched-settings:<job>`(上の「ジョブ定義を DB に置く」)。
+`settings/<job>.settings`(git 管理外、0600)は DB に移す前の置き場所で、scheduler は DB に行が無いときだけ読む(Web UI はもう書かない)。
 
 - launchd は**毎分** `tick.sh` を起動し、実行するかどうか(曜日・時間帯・`INTERVAL_MIN` の刻み・一時停止)は `tick.sh` が実行時に判定する。
   なので設定を変えても plist の作り直し・再登録は要らない(次の分から反映)。対象外の回はログを書かない

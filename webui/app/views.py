@@ -1084,7 +1084,7 @@ def page_job(name, csrf, error="", saved=False):
     return "定期実行: " + name, (
         err_html(error) + msg + f"<p>{what}ジョブ。{'Web UI で変更済み。' if info.get('overridden') else ''}</p>" + _job_overview(name, info) + "<h2>スケジュールの変更</h2>" + form +
         "<p class=note>変更できるのはスケジュールだけです(宛先・本文・コマンドは jobs/*.conf を人が編集)。"
-        f'保存先: <code>scheduler/settings/{e(name)}.settings</code></p><p><a href="/jobs">一覧へ</a></p>')
+        f'保存先: DB の <code>sched-settings:{e(name)}</code>(セッション <code>{e(reqctx.session())}</code>)</p><p><a href="/jobs">一覧へ</a></p>')
 
 
 DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}", re.ASCII)

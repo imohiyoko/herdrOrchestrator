@@ -962,7 +962,7 @@ check("ジョブ詳細: 不正なジョブ名・トラバーサルは 404", cl.g
 check("ジョブ詳細: POST は従来のスケジュール保存だけ(prompt は書けない)",
       cl.raw("POST", "/jobs/pj", {"csrf": cl.csrf("/jobs/pj"), "action": "save", "interval": "5", "interval_unit": "min", "start": "09:00", "end": "10:00", "days": "daily", "enabled": "1", "prompt": "HACK"})[0] == 302
       and "HACK" not in open(os.path.join(_J, "pj.conf")).read() and "HACK" not in cl.get("/jobs/pj")[2])
-os.remove(os.path.join(env["WEBUI_SCHED_SETTINGS"], "pj.settings"))
+_c = sqlite3.connect(env["WEBUI_TB_DB"]); _c.execute("DELETE FROM config WHERE key='sched-settings:pj'"); _c.commit(); _c.close()
 # 次回の予定(時刻を固定した単体の確認)
 sys.path.insert(0, os.path.dirname(HERE))
 import app.jobview as _jv  # noqa: E402
@@ -1091,53 +1091,72 @@ check("権限: conf を戻すと元の表示に戻る", "<td>1</td>" in cl.get("
 
 
 # ---- 定期実行の設定(Web UI から変更できる唯一の操作)
-SET = os.path.join(env["WEBUI_SCHED_SETTINGS"], "job1.settings")
+SET = os.path.join(env["WEBUI_SCHED_SETTINGS"], "job1.settings")   # DB に移す前の置き場所。Web UI はもう書かない
+
+
+def dbset(job="job1"):
+    """DB の sched-settings:<job>(このセッションの行)の本文。無ければ ""。"""
+    c = sqlite3.connect(env["WEBUI_TB_DB"])
+    try:
+        r = c.execute("SELECT body FROM config WHERE key=? AND herdr_session='default'", ("sched-settings:" + job,)).fetchone()
+    finally:
+        c.close()
+    return r[0] if r else ""
+
+
 check("一覧に実際の間隔が出る", "10 分おき / 09:00-21:00 / daily" in cl.get("/jobs")[2])
 r = cl.get("/jobs/job1")
 check("設定フォームが出る(自動更新しない)", r[0] == 200 and 'name=interval ' in r[2] and 'name=interval_unit' in r[2] and 'http-equiv="refresh"' not in r[2])
 check("未知のジョブは 404", cl.get("/jobs/nope")[0] == 404 and cl.raw("POST", "/jobs/nope", {"csrf": cl.csrf("/jobs/job1")})[0] == 404)
 good = {"action": "save", "interval_min": "15", "start": "10:00", "end": "18:00", "days": "weekdays", "enabled": "1"}
-check("CSRF 無しの設定 POST は拒否", cl.raw("POST", "/jobs/job1", good)[0] == 403 and not os.path.exists(SET))
+check("CSRF 無しの設定 POST は拒否", cl.raw("POST", "/jobs/job1", good)[0] == 403 and not dbset())
 check("Origin 不一致の設定 POST は拒否",
       cl.raw("POST", "/jobs/job1", {**good, "csrf": cl.csrf("/jobs/job1")}, origin="http://evil.example")[0] == 403)
-check("未ログインの設定 POST は /login へ", Client(port).raw("POST", "/jobs/job1", good)[0] == 302 and not os.path.exists(SET))
+check("未ログインの設定 POST は /login へ", Client(port).raw("POST", "/jobs/job1", good)[0] == 302 and not dbset())
 check("ログイン画面の CSRF(anon)は使えない", cl.raw("POST", "/jobs/job1", {**good, "csrf": cl.csrf("/login")})[0] == 403)
 r = cl.raw("POST", "/jobs/job1", {**good, "csrf": cl.csrf("/jobs/job1")})
 check("保存すると 302 で戻る", r[0] == 302 and r[1].get("Location") == "/jobs/job1?saved=1", str(r[:2]))
-body = open(SET).read() if os.path.exists(SET) else ""
-check("settings に書かれる(0600)", "INTERVAL_MIN=15" in body and "DAYS=weekdays" in body and "ENABLED=1" in body
-      and mode(SET) == "0o600", body)
+body = dbset()
+check("上書き設定は DB に書かれる(ファイルは作らない)", "INTERVAL_MIN=15" in body and "DAYS=weekdays" in body and "ENABLED=1" in body
+      and not os.path.exists(SET), body)
 check("一覧に反映", "15 分おき / 10:00-18:00 / weekdays" in cl.get("/jobs")[2])
 for bad, label in ((dict(interval_min="0"), "間隔 0"), (dict(interval_min="5; rm"), "間隔に記号"),
                    (dict(start="25:00"), "開始が範囲外"), (dict(start="19:00"), "開始が終了より後"),
                    (dict(days="$(id)"), "曜日が不正"), (dict(days="custom"), "曜日を 1 つも選ばない"),
                    (dict(start="10:00\nCOMMAND=x"), "改行の注入")):
     r = cl.raw("POST", "/jobs/job1", {**good, **bad, "csrf": cl.csrf("/jobs/job1")})
-    check(f"不正な入力は 400 で書かない: {label}", r[0] == 400 and open(SET).read() == body, str(r[0]))
+    check(f"不正な入力は 400 で書かない: {label}", r[0] == 400 and dbset() == body, str(r[0]))
 r = cl.raw("POST", "/jobs/job1", {**good, "days": "custom", "day_mon": "1", "day_fri": "1", "enabled": "",
                                   "csrf": cl.csrf("/jobs/job1")})
-check("曜日指定と一時停止", r[0] == 302 and "DAYS=Mon Fri" in open(SET).read() and "ENABLED=0" in open(SET).read())
+check("曜日指定と一時停止", r[0] == 302 and "DAYS=Mon Fri" in dbset() and "ENABLED=0" in dbset())
 check("一時停止が一覧に出る", "一時停止" in cl.get("/jobs")[2])
 # 秒単位の間隔・時刻
 r = cl.raw("POST", "/jobs/job1", {**good, "interval": "30", "interval_unit": "sec", "start": "10:00:15", "end": "10:30",
                                   "csrf": cl.csrf("/jobs/job1")})
-sb = open(SET).read()
+sb = dbset()
 check("秒の間隔を保存", r[0] == 302 and "INTERVAL_SEC=30" in sb and "INTERVAL_MIN" not in sb and "START=10:00:15" in sb, sb)
 check("一覧に秒の間隔", "30 秒おき / 10:00:15-10:30 / weekdays" in cl.get("/jobs")[2])
 f = cl.get("/jobs/job1")[2]
 check("フォームに秒の値と単位", 'value="30"' in f and "<option value=sec selected>" in f and 'value="10:00:15"' in f)
 r = cl.raw("POST", "/jobs/job1", {**good, "interval": "2", "interval_unit": "min", "csrf": cl.csrf("/jobs/job1")})
-check("分の間隔で保存し直すと INTERVAL_MIN", r[0] == 302 and "INTERVAL_MIN=2" in open(SET).read()
-      and "INTERVAL_SEC" not in open(SET).read())
-sb = open(SET).read()
+check("分の間隔で保存し直すと INTERVAL_MIN", r[0] == 302 and "INTERVAL_MIN=2" in dbset()
+      and "INTERVAL_SEC" not in dbset())
+sb = dbset()
 for bad, label in ((dict(interval="86401", interval_unit="sec"), "秒の上限超え"), (dict(interval="5", interval_unit="hour"), "単位が不正"),
                    (dict(start="10:00:60"), "秒が範囲外"), (dict(start="18:00:30", end="18:00:10"), "開始が終了より後(秒)")):
     r = cl.raw("POST", "/jobs/job1", {**good, **bad, "csrf": cl.csrf("/jobs/job1")})
-    check(f"不正な入力は 400 で書かない: {label}", r[0] == 400 and open(SET).read() == sb, str(r[0]))
+    check(f"不正な入力は 400 で書かない: {label}", r[0] == 400 and dbset() == sb, str(r[0]))
 r = cl.raw("POST", "/jobs/job1", {**good, "start": "18:00:30", "end": "18:00", "csrf": cl.csrf("/jobs/job1")})
 check("終了 HH:MM はその分の 59 秒までなので 18:00:30-18:00 は可", r[0] == 302, str(r[0]))
 r = cl.raw("POST", "/jobs/job1", {"action": "reset", "csrf": cl.csrf("/jobs/job1")})
-check("conf の値に戻すと settings を消す", r[0] == 302 and not os.path.exists(SET) and "10 分おき" in cl.get("/jobs")[2])
+os.makedirs(os.path.dirname(SET), exist_ok=True)
+open(SET, "w").write("INTERVAL_MIN=50\n"); os.chmod(SET, 0o600)   # DB に移す前に Web UI が書いたファイルが残っている
+r = cl.raw("POST", "/jobs/job1", {**good, "csrf": cl.csrf("/jobs/job1")})
+check("残ったファイルの settings は保存で消え、DB の値が効く", r[0] == 302 and not os.path.exists(SET) and "INTERVAL_MIN=15" in dbset()
+      and "15 分おき / 10:00-18:00" in cl.get("/jobs")[2], str(r[:2]))
+open(SET, "w").write("INTERVAL_MIN=50\n"); os.chmod(SET, 0o600)
+r = cl.raw("POST", "/jobs/job1", {"action": "reset", "csrf": cl.csrf("/jobs/job1")})
+check("conf の値に戻すと DB の上書き設定を消す", r[0] == 302 and not dbset() and not os.path.exists(SET) and "10 分おき" in cl.get("/jobs")[2])
 # DB にある定義(tb sched-job。config 表の sched-job:<job>)。一覧・詳細に出て、上書き設定は DB に書く(履歴つき)
 _c = sqlite3.connect(env["WEBUI_TB_DB"])
 _sess = "default"   # このプロセスのセッション(HERDR_SESSION も herdr-session ファイルも無い)
@@ -1162,6 +1181,48 @@ _c = sqlite3.connect(env["WEBUI_TB_DB"])
 _left = _c.execute("SELECT COUNT(*) FROM config WHERE key='sched-settings:dbjob'").fetchone()[0]
 _c.close()
 check("DB の定義: 戻すと DB の上書き設定を消す", r[0] == 302 and _left == 0 and "20 分おき" in cl.get("/jobs")[2])
+# 定義はファイル(job1)でも、DB に settings の行があると scheduler は DB を読む。Web UI も DB に書く(ファイルに書くと隠れて効かない)
+_c = sqlite3.connect(env["WEBUI_TB_DB"])
+_c.execute("INSERT INTO config (herdr_session, key, body, updated_by, updated_at) VALUES (?, 'sched-settings:job1', ?, 'human', 'x')",
+           (_sess, "INTERVAL_MIN=40\n"))
+_c.commit(); _c.close()
+check("ファイルの定義 + DB の settings: 一覧は DB の値", "40 分おき" in cl.get("/jobs")[2])
+check("ファイルの定義 + DB の settings: 保存先は DB と出る", "DB の <code>sched-settings:job1</code>" in cl.get("/jobs/job1")[2])
+r = cl.raw("POST", "/jobs/job1", {**good, "csrf": cl.csrf("/jobs/job1")})
+_c = sqlite3.connect(env["WEBUI_TB_DB"])
+_sb = _c.execute("SELECT body FROM config WHERE key='sched-settings:job1'").fetchall()
+_c.close()
+check("ファイルの定義 + DB の settings: 保存は DB に書いて効く(ファイルは作らない)",
+      r[0] == 302 and _sb and "INTERVAL_MIN=15" in _sb[0][0] and not os.path.exists(SET)
+      and "15 分おき / 10:00-18:00 / weekdays" in cl.get("/jobs")[2], str((r[:2], _sb)))
+# DB の行を消すとファイルの settings が効き出すので、戻すときは残ったファイルも消す
+open(SET, "w").write("INTERVAL_MIN=50\n"); os.chmod(SET, 0o600)
+r = cl.raw("POST", "/jobs/job1", {"action": "reset", "csrf": cl.csrf("/jobs/job1")})
+_c = sqlite3.connect(env["WEBUI_TB_DB"])
+_left = _c.execute("SELECT COUNT(*) FROM config WHERE key='sched-settings:job1'").fetchone()[0]
+_c.close()
+check("ファイルの定義 + DB の settings: 戻すと DB の行と残ったファイルを消し、conf の値に戻る",
+      r[0] == 302 and _left == 0 and not os.path.exists(SET) and "10 分おき / 09:00-21:00 / daily" in cl.get("/jobs")[2], str(r[:2]))
+# 共通の行(*)だけがあるとき: 保存はこのセッションの行に書いて効く。戻すは共通の行を消さず、戻らないと伝える
+_c = sqlite3.connect(env["WEBUI_TB_DB"])
+_c.execute("INSERT INTO config (herdr_session, key, body, updated_by, updated_at) VALUES ('*', 'sched-settings:job1', ?, 'human', 'x')",
+           ("INTERVAL_MIN=45\n",))
+_c.commit(); _c.close()
+r = cl.raw("POST", "/jobs/job1", {**good, "csrf": cl.csrf("/jobs/job1")})
+check("共通の settings の行: 保存はこのセッションの行に書いて効く", r[0] == 302 and "15 分おき / 10:00-18:00" in cl.get("/jobs")[2], str(r[:2]))
+r = cl.raw("POST", "/jobs/job1", {"action": "reset", "csrf": cl.csrf("/jobs/job1")})
+r2 = cl.raw("POST", "/jobs/job1", {"action": "reset", "csrf": cl.csrf("/jobs/job1")})
+check("共通の settings の行: 戻すとこのセッションの行だけ消え、共通の行は残して 400 で知らせる",
+      r[0] == 400 and "共通の行" in r[2] and r2[0] == 400 and "共通の行" in r2[2] and "45 分おき" in cl.get("/jobs")[2], str((r[0], r2[0])))
+_c = sqlite3.connect(env["WEBUI_TB_DB"])
+_c.execute("DELETE FROM config WHERE key='sched-settings:job1'"); _c.commit(); _c.close()
+# 定義が DB、settings がファイルに残っている: 戻すとファイルも消す(消さないとファイルの値が効いたまま)
+_DBSET = os.path.join(env["WEBUI_SCHED_SETTINGS"], "dbjob.settings")
+open(_DBSET, "w").write("INTERVAL_MIN=55\n"); os.chmod(_DBSET, 0o600)
+check("DB の定義 + ファイルの settings: ファイルの値が効いている", "55 分おき" in cl.get("/jobs")[2])
+r = cl.raw("POST", "/jobs/dbjob", {"action": "reset", "csrf": cl.csrf("/jobs/dbjob")})
+check("DB の定義 + ファイルの settings: 戻すとファイルも消して conf の値に戻る",
+      r[0] == 302 and not os.path.exists(_DBSET) and "20 分おき" in cl.get("/jobs")[2], str(r[:2]))
 check("tasks のフィルタ", "T-1" in cl.get("/tasks?project=pj&status=in_progress")[2] and "T-1" not in cl.get("/tasks?status=done")[2])
 check("フィルタ値の XSS", "<script>" not in cl.get("/tasks?project=%3Cscript%3E")[2])
 

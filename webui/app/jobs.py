@@ -1,4 +1,4 @@
-"""scheduler のジョブ定義と、Web UI から書く上書き設定(scheduler/settings/)。"""
+"""scheduler のジョブ定義と、Web UI から書く上書き設定(DB の sched-settings:<job>)。"""
 
 import json
 import os
@@ -94,52 +94,17 @@ def job_last(name):
 
 
 def save_job_settings(name, form):
-    """フォームを検証して settings を書く。エラー文か None。
-    定義が DB にあるジョブは、settings も DB(sched-settings:<job>)に tb sched-job で書く(変更の履歴が残る)。"""
-    in_db = job_in_db(name)
-    path = os.path.join(SCHED_SETTINGS(), name + ".settings")
-    if in_db:
-        return _save_db_settings(name, form)
-    if os.path.islink(path):
-        return "settings がシンボリックリンクです。手で確認してください"
-    old = None
-    if os.path.exists(path):
-        with open(path) as f:
-            old = f.read()
+    """フォームを検証して上書き設定を DB(sched-settings:<job>。このセッションの行)に tb sched-job で書く。エラー文か None。
+    定義がファイル(jobs/<job>.conf)のジョブも DB に書く(scheduler は settings を DB > ファイルの順に読み、定義の置き場所は見ない)。
+    残っている settings/<job>.settings は消す(置き場所を DB の 1 つにする。DB の行を消したときに古い値が効き出さないように)。
+    書いたあと、scheduler の読む設定(show.sh)が書いた値になったかを確かめる。"""
     if form.get("action") == "reset":
-        if old is not None:
-            os.unlink(path)
-        return None
-    body, err = settings_body(form)
-    if err:
-        return err
-    os.makedirs(SCHED_SETTINGS(), exist_ok=True)
-    tmp = path + ".tmp"
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
-        f.write(body)
-    os.replace(tmp, path)
-    _, err = job_info(name)
-    if err:  # scheduler 側で読めない設定は残さない
-        if old is None:
-            os.unlink(path)
-        else:
-            with open(path, "w") as f:
-                f.write(old)
-        return "scheduler が設定を受け付けませんでした: " + err
-    return None
-
-
-def _save_db_settings(name, form):
-    """DB の sched-settings:<job> を tb sched-job で書く / 消す(検査は tb が scheduler で行う)。エラー文か None。"""
-    if form.get("action") == "reset":
-        if db_body("sched-settings:" + name) is None:
-            return None
-        rc, out = run_tb_input(["sched-job", "unset", name, "--settings"], "")
-        if rc != 0:
-            # 共通の行(*)だけがあるときは、このセッションからは消さない(ほかのセッションにも効くため)
-            return "上書き設定を戻せませんでした(共通の行は tb sched-job unset " + name + " --settings --shared で人が消します)"
-        return None
+        if db_body("sched-settings:" + name) is not None:
+            rc, out = run_tb_input(["sched-job", "unset", name, "--settings"], "")
+            # 共通の行(*)は、このセッションからは消さない(ほかのセッションにも効くため)。このセッションの行を消しても共通の行が残れば、それが効く
+            if rc != 0 or db_body("sched-settings:" + name) is not None:
+                return "上書き設定を戻せませんでした(共通の行は tb sched-job unset " + name + " --settings --shared で人が消します)"
+        return _remove_settings_file(name) or _verify_applied(name, form)
     body, err = settings_body(form)
     if err:
         return err
@@ -147,6 +112,36 @@ def _save_db_settings(name, form):
     if rc != 0:
         first = next((ln for ln in out.splitlines() if ln.startswith("tb: ")), "")
         return "scheduler が設定を受け付けませんでした" + (": " + clean(first[4:])[:300] if first else "")
+    return _remove_settings_file(name) or _verify_applied(name, form)
+
+
+def _remove_settings_file(name):
+    """ファイルの settings(settings/<job>.settings。DB に移す前の置き場所)が残っていれば消す。エラー文か None。"""
+    path = os.path.join(SCHED_SETTINGS(), name + ".settings")
+    if os.path.islink(path):
+        return "settings/" + name + ".settings がシンボリックリンクです。手で確認してください"
+    if os.path.exists(path):
+        os.unlink(path)
+    return None
+
+
+def _verify_applied(name, form):
+    """scheduler が読む設定(show.sh)が、いま書いた値になったか。違えばエラー文(書いた場所と、scheduler が読んでいる場所を出す)。"""
+    info, err = job_info(name)
+    if err:
+        return "保存しましたが、scheduler の読む設定を確かめられませんでした: " + err
+    src = {"db": "DB の sched-settings:" + name, "file": "settings/" + name + ".settings", "none": "conf の値"}
+    where = src.get(info.get("settings_source"), "?")
+    if form.get("action") == "reset":
+        if info.get("overridden"):
+            return f"conf の値に戻りませんでした(scheduler は {where} を読んでいます)"
+        return None
+    body, _ = settings_body(form)
+    want = dict(ln.split("=", 1) for ln in body.splitlines() if "=" in ln and not ln.startswith("#"))
+    iv = int(want.get("INTERVAL_SEC") or int(want.get("INTERVAL_MIN", "0")) * 60)
+    got = (interval_sec(info), info.get("start"), info.get("end"), info.get("days"), "1" if info.get("enabled") else "0")
+    if got != (iv, want["START"], want["END"], want["DAYS"], want["ENABLED"]):
+        return f"保存しましたが、scheduler の読む設定に反映されていません(scheduler は {where} を読んでいます)"
     return None
 
 

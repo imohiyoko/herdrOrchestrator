@@ -5,7 +5,7 @@ import re
 import subprocess
 
 from . import reqctx
-from .config import HERDR_ROOT, TB_DB
+from .config import HERDR_ROOT, SCHED_JOBS, SCHED_SETTINGS, TB_DB
 
 TB = os.path.join(HERDR_ROOT, "taskboard", "bin", "tb")
 NOTE_MAX = 200
@@ -30,6 +30,10 @@ def run_tb_input(args, text, timeout=15):
     env = reqctx.child_env()
     env.pop("HERDR_PANE_ID", None)
     env["TB_DB"] = TB_DB()
+    # tb sched-job が見る jobs/・settings/ を、Web UI が見ているものに揃える(WEBUI_SCHED_JOBS / WEBUI_SCHED_SETTINGS で動かしたとき)
+    jobs, sets = os.path.abspath(SCHED_JOBS()), os.path.abspath(SCHED_SETTINGS())
+    if os.path.basename(jobs) == "jobs" and os.path.basename(sets) == "settings" and os.path.dirname(jobs) == os.path.dirname(sets):
+        env["TB_SCHED_DIR"] = os.path.dirname(jobs)
     try:
         p = subprocess.run(["bash", TB, *args], env=env, capture_output=True, text=True, timeout=timeout,
                            input=text, errors="replace")

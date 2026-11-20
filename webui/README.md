@@ -115,7 +115,7 @@ POST/PUT/DELETE/PATCH は 405。
 | `/docs/view?ref=<参照>` | そのドキュメントを読む。Markdown は整形して表示(Mermaid は図に。「元のテキストを表示」で切り替え)、フォルダなら中のファイル一覧 |
 | `/docs/view?path=<絶対パス>` | パスを指定して読む(agent の作業ディレクトリ配下だけ。`/docs` の入力欄から) |
 | `/jobs` | 各 job の型・宛先(agent 名 / コマンド)・実際に効く設定(間隔・時間帯・曜日・有効/一時停止)、最終記録と最後の実行 |
-| `/jobs/<job>` | 「ジョブが行うこと」(型・宛先 agent と今の状態・送られる本文 / 実行されるコマンドの全文・次回の予定・直近の結果・副作用の注記・承認の扱い。読み取りのみ)と、スケジュールの変更フォーム(自動更新しない)。保存先は `scheduler/settings/<job>.settings`、次の分から反映。「conf の値に戻す」で settings を消す |
+| `/jobs/<job>` | 「ジョブが行うこと」(型・宛先 agent と今の状態・送られる本文 / 実行されるコマンドの全文・次回の予定・直近の結果・副作用の注記・承認の扱い。読み取りのみ)と、スケジュールの変更フォーム(自動更新しない)。保存先は DB の `sched-settings:<job>`(このセッションの行。`tb sched-job set --settings` を通す)、次の分から反映。残っている `scheduler/settings/<job>.settings` は消す。保存後に scheduler の読む値が変わったかを確かめる。「conf の値に戻す」で DB の行を消す |
 | `/ledger` | 送信履歴(tb の `messages` 表)。種別 × 結果の件数サマリと直近 100 件。failed は既定で畳む。`?kind=` `?result=`(sent / busy / failed / all) `?target=` `?from=` `?to=`(日付 `YYYY-MM-DD`、UTC)で絞り込み。send の `O-n` は `/outbox` にリンクし、本文は 1 行目だけ |
 | `/sessions` | セッション一覧(URL に書ける全セッションへのリンクと、それぞれの緊急通知・報告待ちの件数) |
 | `/perms` | 権限(設定 `approvals` の読み取り。tb と同じく DB のこのセッションの行 → 共通の行 → `taskboard/config/approvals.conf` → `.example`)。上から順に順位・パターン・ask/allow・最後の変更(行末の注記と `approval_changes`)・その行で決まる操作の例・警告(`* = ask`、広い allow、上の行に隠れる行(ワイルドカードを含まない行)、「この操作はどの行で決まるか」の検索(`?op=`、tb の `approval_of` と同じ規則をここで再現。tb は呼ばない)、操作ごとの現在の権限(権限カタログ `taskboard/config/approvals-catalog.conf` × approvals.conf: 現在の値・決まる行・規則の有無(明示 / 既定に落ちる)・リスク階層・副作用・allow 候補・状態、`?kind=` `?state=` `?fallback=1` `?allowed=1` で絞り込み、high / human-only の操作が allow なら警告、reserved(将来用)と unwired(承認判定に渡らない。`proxy:*`)は薄く表示し、unwired の操作に当たる規則には「何も効かない」と警告、カタログに無い規則は「未知の規則」の欄)、変更履歴、`tb allow` / `tb ask` のコマンド行の組み立て表示(`?pat=&val=`。表示だけで実行しない)。変更の操作・POST は無い |
@@ -128,7 +128,7 @@ POST/PUT/DELETE/PATCH は 405。
 - tb と同じ DB(既定 `~/.local/state/herdr/tasks.db`。`mode=ro` で開く。無い・壊れていても落ちず、空の表になる)。DB は全セッション共有で、各セッションの Web UI は自分のセッションの行だけを見る(同じ名前の一時ビューで絞る)
 - 成果物として登録されたローカルのファイル(`/docs`。読むだけ)
 - `scheduler/logs/*.log`、`scheduler/jobs/*.conf`(`scheduler/bin/show.sh` 経由)、設定 `approvals` / `projects`(DB の `config` 表か `taskboard/config/` のファイル。`/perms` と宛先の表示)
-- 書き込むのは `scheduler/settings/<job>.settings` だけ。入力は数値(間隔は分か秒)・`HH:MM` か `HH:MM:SS`・決まった曜日だけを受け付け、scheduler が読めない内容なら元に戻す
+- スケジュールの上書き設定は `tb sched-job set <job> --settings` で DB に書く(ファイルには書かず、残っている `scheduler/settings/<job>.settings` は消す)。入力は数値(間隔は分か秒)・`HH:MM` か `HH:MM:SS`・決まった曜日だけを受け付け、scheduler が読めない内容なら tb が書かない
 
 「滞留」は、`working` のまま最終入力(`agent_activity.last_prompt_at`)から 30 分を超えて停止がない agent。
 
