@@ -201,7 +201,8 @@ cmd_list() {
         COALESCE('S-'||sprint_id, '-'), COALESCE(points, '-')
       FROM tasks WHERE ($where) ORDER BY $order;"
   else
-    sql -separator $'\t' "SELECT id, status, COALESCE(owner_agent,'-'), replace(title, char(10), ' ') FROM tasks WHERE ($where) ORDER BY $order;"
+    # 既定の列: ID・状態・担当・タイトル・優先度。前の 4 列の位置は変えない(列の位置で読む agent がいる)ので、優先度は最後に足す
+    sql -separator $'\t' "SELECT id, status, COALESCE(owner_agent,'-'), replace(replace(title, char(10), ' '), char(9), ' '), priority FROM tasks WHERE ($where) ORDER BY $order;"
   fi
 }
 

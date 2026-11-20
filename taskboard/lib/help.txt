@@ -3,7 +3,7 @@ tb add -p <project> -t <title> [--parent ID] [--owner N] [--session S] [--accoun
        既定は task / medium。epic は親なし、subtask は親が必須(親は story/task/bug)、subtask は親になれない
 tb list [-p project] [-s status] [--type T] [--priority P] [-l ラベル ...(すべてを持つもの)] [--owner N] [--parent ID]
         [--overdue] [--due-within N] [--has-due] [--sprint S-n|backlog] [--sort priority|updated|created|id|due] [--long] [--json]
-        --long は ID 状態 種別 優先度 担当 作成 更新 ラベル 題 期日 スプリント ポイント(既定の 4 列は変えない。無いものは -)
+        --long は ID 状態 種別 優先度 担当 作成 更新 ラベル 題 期日 スプリント ポイント(既定は ID 状態 担当 題 優先度。無いものは -)
         --overdue は期日が今日より前、--due-within N は今日〜N 日後(0 は今日だけ)。どちらも done と期日なしは出さない
         「今日」は端末の地方時の日付(TB_TODAY=YYYY-MM-DD で固定できる)
 tb show <id>        labels・refs(外部リンク)と links(blocks / blocked_by / relates / duplicates / duplicated_by)も出す

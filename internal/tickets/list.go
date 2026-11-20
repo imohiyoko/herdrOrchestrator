@@ -60,7 +60,7 @@ func Order(sort string) (string, bool) {
 type Format int
 
 const (
-	Short Format = iota // id status owner title
+	Short Format = iota // id status owner title priority(前の 4 列の位置は変えない)
 	Long                // --long
 	JSON                // --json(1 行 1 件)
 )
@@ -76,7 +76,7 @@ func List(db *sql.DB, f *Filter, order string, format Format, emit func(cols []s
         COALESCE((SELECT group_concat(value, ',') FROM json_each(tasks.labels)), '-'), replace(title, char(10), ' '), COALESCE(due, '-'),
         COALESCE('S-'||sprint_id, '-'), COALESCE(points, '-') FROM tasks`
 	default:
-		q = "SELECT id, status, COALESCE(owner_agent,'-'), replace(title, char(10), ' ') FROM tasks"
+		q = "SELECT id, status, COALESCE(owner_agent,'-'), replace(replace(title, char(10), ' '), char(9), ' '), priority FROM tasks"
 	}
 	rows, err := db.Query(q+" WHERE ("+f.sql()+") ORDER BY "+order, f.args...)
 	if err != nil {
