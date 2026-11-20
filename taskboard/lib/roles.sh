@@ -293,7 +293,7 @@ role_put() {  # $1=役割名|@map $2=本文 $3=how $4=shared
   blank "$2" && die "本文が空です(消すときは人が tb config で行を消す)"
   config_db_put "$key" "$2" "$3" "$4" "$REQ_BY"
   role_forget "$1"
-  role_lookup "$1"; echo "$1: $RB_SRC。動いている agent に配るには: tb role-broadcast"
+  role_lookup "$1"; echo "$1: ${RB_SRC}。動いている agent に配るには: tb role-broadcast"
 }
 cmd_role-write() {
   role_write_args "$@"

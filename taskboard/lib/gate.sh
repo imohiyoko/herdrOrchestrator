@@ -329,7 +329,7 @@ gate_eval() {
     lins+="${R_LIN[i]} "; senders+="${R_BY[i]} "; nlin=$((nlin+1))
   done
   if ((nvalid == 0)); then GATE_HARD+=("H-03 head に対する有効なレビューの記録が無い")
-  elif ((nlin < 2)); then GATE_HARD+=("H-03 独立した 2 系統の pass がそろっていない(数えられた系統: $nlin。送信者 human と自称の外部系統は数えない)"); fi
+  elif ((nlin < 2)); then GATE_HARD+=("H-03 独立した 2 系統の pass がそろっていない(数えられた系統: ${nlin}。送信者 human と自称の外部系統は数えない)"); fi
   if [[ $G_TEST == run ]]; then
     if ((G_TEST_EXIT != 0)); then GATE_HARD+=("H-03 テストが失敗(exit=$G_TEST_EXIT)")
     elif [[ $G_TEST_SHA != "$G_HEAD" ]]; then GATE_HARD+=("H-03 テストの sha が head と一致しない"); fi
@@ -746,7 +746,7 @@ _gate_cmd_ingest_events() {
     # 本文は、ハッシュにするためだけにデコードする。変数に入れて展開・評価はしない
     sum=$(printf '%s' "$b64" | base64 -d 2>/dev/null | { if command -v sha256sum >/dev/null; then sha256sum; else shasum -a 256; fi; } | cut -c1-64)
     line="ts=$ts task=$tid repo=$owner/$repo pr=$num kind=$kind event=$ev actor=$login actor_id=$lid actor_type=$t assoc=$assoc author=$isauth sha=$sha state=$state label=$label addr=$addr body_sha256=$sum upd=$upd review=$rvid orig_sha=$osha outdated=$outd head=$head by=$GATE_INGEST_SENDER"
-    [[ -n $t && $line =~ $GATE_EV_RE ]] || { echo "tb: gate ingest-events: 形式が不正な発言があるため、何も記録しません(種類 $kind、id ${ev:0:20})" >&2; exit 12; }
+    [[ -n $t && $line =~ $GATE_EV_RE ]] || { echo "tb: gate ingest-events: 形式が不正な発言があるため、何も記録しません(種類 ${kind}、id ${ev:0:20})" >&2; exit 12; }
     key="$tid|$owner/$repo|$num|$kind|$ev|$sum|$upd|$state|$sha|$outd|$login|$t|$assoc"
     if grep -qxF -- "$key" "$tmp/keys"; then nskip=$((nskip+1)); continue; fi
     printf '%s\n' "$key" >>"$tmp/keys"; printf '%s\n' "$line" >>"$tmp/new"; nnew=$((nnew+1))
