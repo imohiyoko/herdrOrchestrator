@@ -29,6 +29,9 @@ eq "nudge: 複数 → 優先度の高い 1 枚を名指し" "$(row w3)" "$t4 wou
 eq "nudge: --dry-run は何も送らない" "$(prompts) $(nsql 'SELECT COUNT(*) FROM outbox;')" "0 0"
 eq "nudge: agent の pane からは拒否(--dry-run 以外)" "$(HERDR_PANE_ID=w1:p1 rc $TB nudge)" "1"
 eq "nudge: dry-run は agent の pane からも読める" "$(HERDR_PANE_ID=w1:p1 rc $TB nudge --dry-run)" "0"
+# 活動記録に入力の時刻が無い(Stop だけ)
+nsql "UPDATE agent_activity SET last_prompt_at=NULL WHERE session_id='s1';"
+eq "nudge: last_prompt_at が無くても休みを数える" "$(out=$($TB nudge --dry-run); row w1)" "$t1 would"
 # 休みが短い
 rest s1 3
 eq "nudge: 休みが短い → skip" "$($TB nudge --dry-run | grep -P '^w1\t' | grep -c '休んで 3 分')" "1"

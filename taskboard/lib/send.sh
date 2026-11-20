@@ -433,9 +433,10 @@ cmd_nudge() {
           WHERE c.from_name=$(q "$owner") AND c.kind IN ('question','blocked') AND c.resolved_at IS NULL AND COALESCE(t.status,'')!='done';")
     [[ -z $w ]] || { nudge_row "$owner" "${pick:--}" skip "人の返事待ち($w)"; continue; }
     [[ -n $pick ]] || { nudge_row "$owner" "$(jq -r '.[0].id' <<<"$rows")" skip "先行チケット(blocks)待ち"; continue; }
-    act=$(sql -separator $'\t' "SELECT COALESCE(last_stop_at,''), COALESCE(last_prompt_at,''),
+    # 区切りは空白でない文字(タブだと空の last_prompt_at が詰められて列がずれる)
+    act=$(sql -separator $'\x1f' "SELECT COALESCE(last_stop_at,''), COALESCE(last_prompt_at,''),
           CAST((julianday('now') - julianday(last_stop_at)) * 1440 AS INTEGER) FROM agent_activity WHERE session_id=$(q "$sess");")
-    IFS=$'\t' read -r stop_at prompt_at mins <<<"$act"
+    IFS=$'\x1f' read -r stop_at prompt_at mins <<<"$act"
     [[ -n $stop_at ]] || { nudge_row "$owner" "$pick" skip "活動記録が無い(hook)"; continue; }
     if [[ -n $prompt_at && $(sql "SELECT julianday($(q "$prompt_at")) > julianday($(q "$stop_at"));") == 1 ]]; then
       nudge_row "$owner" "$pick" skip "turn の途中"; continue
