@@ -385,6 +385,10 @@ tb agent-approve L-<n> [--always] / tb agent-reject L-<n>      # 人だけ
   台帳に pane を残し、herdr でその pane を開いて答えるよう案内する(終了コード 11。最初の指示は送らない)
 - **停止**: その agent の pane を `herdr pane close` で閉じる(herdr に agent 単体の停止は無い)。止める前に session と cwd(hook の記録を優先)を台帳に残す。
   止められるのは **killable=yes で、未完了(in_progress / review / blocked)のタスクを持っていない**ときだけ。人は `--force` で例外にできる。自分自身は止められない
+- **保護**(`tb config edit protect`): 定期実行の受け口や、たまにしか使わない重い作業用など、tb から消させたくない agent を人が登録する。
+  1 行 1 つで `<agent 名の glob> [= 理由]` か `role:<役割の glob> [= 理由]`(例は `config/protect.conf.example`。無ければ何も保護しない)。
+  一致した agent は `tb agents` の killable が `protected` になり、`tb agent-stop` は `--force` でも止めず、`tb agent-shed` の候補にも出ない。
+  `tb agent-restart` / `tb model-set`(止めて同じ会話で戻す)はできる。止めたいときは人が protect から外してから止める
 - **復活**: 台帳の cwd で新しい workspace を作り、`claude --resume <session>` で同じ会話から再開する(claude の場合。再開できない kind は終了コード 12 で止まり、`--fresh` なら新しい会話)。
   モデルは台帳の値か `--model`。復活したら判定フラグは `unknown` に戻る
 - **再起動**(`tb agent-restart <名前> [--prompt P]`): MCP の接続が切れた agent を、pane を閉じて `claude --resume` で同じ会話に戻して張り直す。killable の代わりに次の安全条件を全部見る
@@ -750,7 +754,7 @@ tb が `herdr agent prompt` で送ろうとしたものは、結果にかかわ�
 ## 設定(`tb config`)
 
 運用の設定は DB の `config` 表に置き、キーで引く(schema/013)。シングルポート・マルチセッションでも、セッションごとに違う設定を持てる。
-本文は今までの conf ファイルの中身そのまま(書式は各節のとおり)。キーは `projects` / `approvals` / `grants` / `routes` / `delivery` / `limits` / `notify` / `compact` / `slash` / `sched-watch` / `spawn-policy` / `role-models` / `conv-routes`(会話の振り分け表。書くのは `tb conv-routes-set` だけ)。
+本文は今までの conf ファイルの中身そのまま(書式は各節のとおり)。キーは `projects` / `approvals` / `grants` / `routes` / `delivery` / `limits` / `notify` / `compact` / `slash` / `sched-watch` / `spawn-policy` / `role-models` / `protect`(tb から止めさせない agent)/ `conv-routes`(会話の振り分け表。書くのは `tb conv-routes-set` だけ)。
 
 引く順(最初に見つかったもの):
 

@@ -11,6 +11,8 @@
 #   役割は SessionStart hook(tb role-context)が渡す。--role で決めた役割は台帳に残り、復活後も同じものが渡る
 # - 判定フラグ killable = yes|no|unknown。付けるのは人か判定役(TB_SWEEPER_PATTERN、既定 sweeper*)だけ。
 #   yes を付けた後にその agent が新しい入力を受けたら stale(付け直すまで yes として扱わない)
+# - 保護(config の protect): 一致した agent は killable が protected になり、tb agent-stop は --force でも止めない。
+#   agent-shed の候補にも出さない。外すのは人が tb config edit protect で行う(再起動は止めずに戻るので対象外)
 # - 人の端末からはそのまま実行する。agent の pane からは approvals の agent:<op>:<名前> を見て、ask なら L-<n> で人の承認待ち
 
 AGENT_NAME_RE='^[a-z][a-z0-9_-]{0,31}$'   # herdr agent start の名前の規則
@@ -85,8 +87,44 @@ other_session() {  # $1=名前
   OP_OUT="$1 は herdr セッション '$s' の agent です。HERDR_SESSION=$s を付けて実行してください"
 }
 
-# 判定フラグの実効値: yes|no|unknown|stale
+# protect の本文を検査する(tb config set / edit のときに呼ばれる)。問題があれば理由を出して 1
+# 1 行 1 つ: <名前の glob> [= 理由] または role:<役割の glob> [= 理由]。# 以降はコメント
+config_validate_protect() {  # $1=本文
+  local line k n=0 bad=""
+  while IFS= read -r line || [[ -n $line ]]; do
+    n=$((n + 1))
+    line=$(trim "${line%%#*}"); [[ -n $line ]] || continue
+    k=$(trim "${line%%=*}")
+    [[ ${k#role:} =~ ^[A-Za-z0-9*?._-]{1,64}$ ]] || bad+="${n} 行目: <名前の glob> か role:<役割の glob> の形ではありません: $k"$'\n'
+  done <<<"$1"
+  [[ -z $bad ]] && return 0
+  printf '%s' "$bad" >&2; return 1
+}
+
+# 保護されていれば 0 で理由(書いていなければ一致した行の glob)を出す。されていなければ 1
+protect_reason() {  # $1=agent 名
+  config_has protect || return 1
+  local line k v roles="" r rl=0; local -a have=()
+  while IFS= read -r line || [[ -n $line ]]; do
+    line=$(trim "${line%%#*}"); [[ -n $line ]] || continue
+    k=$(trim "${line%%=*}"); v=""; [[ $line != *=* ]] || v=$(trim "${line#*=}")
+    if [[ $k == role:* ]]; then
+      if ((rl == 0)); then rl=1; roles=$(role_name_of "$1" 2>/dev/null) || roles=""; IFS=, read -ra have <<<"$roles"; fi
+      for r in "${have[@]}"; do
+        # shellcheck disable=SC2053  # glob として比べる
+        [[ $r == ${k#role:} ]] && { printf '%s' "${v:-protect: $k}"; return 0; }
+      done
+    else
+      # shellcheck disable=SC2053  # glob として比べる
+      [[ $1 == $k ]] && { printf '%s' "${v:-protect: $k}"; return 0; }
+    fi
+  done < <(config_text protect)
+  return 1
+}
+
+# 判定フラグの実効値: protected|yes|no|unknown|stale
 killable_of() {
+  protect_reason "$1" >/dev/null && { echo protected; return 0; }
   sql "SELECT CASE WHEN killable!='yes' THEN killable
       WHEN killable_session IS NOT NULL AND session_id IS NOT NULL AND killable_session!=session_id THEN 'stale'
       WHEN EXISTS (SELECT 1 FROM main.agent_activity aa WHERE (aa.session_id=agents.session_id OR (aa.pane_id=agents.pane_id AND aa.herdr_session=agents.herdr_session))
@@ -198,6 +236,10 @@ do_agent_stop() {  # name force by
   [[ $by != "$name" ]] || { OP_OUT="自分自身は止められません"; return 1; }
   pane=$(jq -r '.pane_id // ""' <<<"$row"); sess=$(jq -r '.agent_session.value // ""' <<<"$row")
   [[ -n $pane ]] || { OP_OUT="$name の pane が分かりません"; return 1; }
+  if k=$(protect_reason "$name"); then   # 保護は --force でも越えない
+    OP_OUT="$name は保護されています($k)。止めるなら、人が tb config edit protect で外してから"
+    return 1
+  fi
   if [[ $force != 1 ]]; then
     k=$(killable_of "$name")
     open=$(sql "SELECT group_concat(id, ' ') FROM tasks WHERE owner_agent=$(q "$name") AND status IN ($OPEN_TASK_STATUSES);")

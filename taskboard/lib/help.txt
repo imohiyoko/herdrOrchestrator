@@ -36,7 +36,7 @@ tb proxy-check <id>   1 行目が allow(自動代行可)か human(人に回す)�
 
 agent の活動記録(hook から。bin/tb-hook 経由が基本):
 tb db-import <旧 DB> [--session <名前>] [--dry-run]   旧形式(checkout ごと)の DB を、共有の DB の 1 セッション(既定は今のセッション)の行として取り込む。人の端末だけ。元の DB は読むだけ
-tb config [list]   設定(projects / approvals / grants / routes / delivery / limits / notify / compact / slash / sched-watch / spawn-policy / role-models / conv-routes / conv-learn / conv-stages)の出どころを出す。引く順: 環境変数で明示したファイル > DB のこのセッションの行 > DB の共通の行(*) > checkout の taskboard/config/<名前> > .example
+tb config [list]   設定(projects / approvals / grants / routes / delivery / limits / notify / compact / slash / sched-watch / spawn-policy / role-models / conv-routes / conv-learn / conv-stages / protect)の出どころを出す。引く順: 環境変数で明示したファイル > DB のこのセッションの行 > DB の共通の行(*) > checkout の taskboard/config/<名前> > .example
 tb config show <キー> | history <キー>   今効いている本文 / 変更の履歴
 tb config set <キー> [--shared] < 本文 | edit <キー> [--shared] | unset <キー> [--shared]   DB のこのセッションの行(--shared なら全セッション共通の行)を書く・消す。人の端末だけ
 tb config import [--dry-run]   checkout の taskboard/config/*.conf を、全セッション共通の行として DB に取り込む(共通の行が既にあるキーは飛ばす)。人の端末だけ
@@ -127,7 +127,7 @@ tb agents [--json] [--all] [--group role] [--graph]   台帳と判定材料(状�
 tb agent-new <名前> [--cwd D] [--kind K] [--model M] [--role R] [--prompt P] [--killable yes|no]
          専用 workspace で agent(--kind の既定は claude)を起動。kind が対応していない指定(--model など)は終了コード 12。--role は roles/<R>.md(台帳に残り、復活後も同じ役割)
 tb agent-stop <名前> [--force]   pane を閉じて止める。killable=yes(判定後に新しい入力なし)で未完了タスクが無いときだけ。
-         --force は人だけ。止める前に session と cwd を台帳に残す
+         --force は人だけ。止める前に session と cwd を台帳に残す。config の protect で保護された agent は --force でも止めない
 tb agent-revive <名前> [--fresh] [--model M] [--prompt P]   台帳の session を kind の方法(claude は --resume)で再開(--fresh なら新しい会話)。再開できない kind は終了コード 12
 tb agent-kinds   kind(claude / codex / gemini)ごとの対応項目の表(起動・モデル指定・再開・起動中のモデル変更)。設計は docs/agent-kinds.md
 tb agent-restart <名前> [--prompt P]   MCP が切れた agent の復旧: 停止 + 同じ会話での復活。idle/done で in_progress のタスクが無いときだけ
