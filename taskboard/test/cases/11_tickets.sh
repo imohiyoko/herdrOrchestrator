@@ -25,6 +25,8 @@ eq "tickets: rejected adds leave no rows" "$($TB list -p tk | wc -l | tr -d ' ')
 
 # --- list: 既定の列(前の 4 列は変えず、最後に優先度)/ --long / 絞り込み / 並び
 eq "tickets: default list columns (priority last)" "$($TB list -p tk | head -1)" "$(printf '%s\ttodo\t-\tログイン刷新\thigh' "$e1")"
+tt=$($TB add -p tktab -t "$(printf 'a\tb')" --priority low)
+eq "tickets: tab in title stays in one column (priority is 5th)" "$($TB list -p tktab | cut -f4,5)" "$(printf 'a b\tlow')"
 eq "tickets: --long columns" "$($TB list -p tk --long | head -1 | cut -f1-5,8,9)" "$(printf '%s\ttodo\tepic\thigh\t-\tauth,ui\tログイン刷新' "$e1")"
 eq "tickets: --long has created/updated" "$($TB list -p tk --long | head -1 | cut -f6,7 | grep -cE '^[0-9T:Z-]+'$'\t''[0-9T:Z-]+$')" "1"
 eq "tickets: filter by label" "$($TB list -p tk -l ui | cut -f1 | tr '\n' ' ')" "$e1 $s1 "

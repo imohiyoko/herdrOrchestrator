@@ -76,7 +76,7 @@ func List(db *sql.DB, f *Filter, order string, format Format, emit func(cols []s
         COALESCE((SELECT group_concat(value, ',') FROM json_each(tasks.labels)), '-'), replace(title, char(10), ' '), COALESCE(due, '-'),
         COALESCE('S-'||sprint_id, '-'), COALESCE(points, '-') FROM tasks`
 	default:
-		q = "SELECT id, status, COALESCE(owner_agent,'-'), replace(title, char(10), ' '), priority FROM tasks"
+		q = "SELECT id, status, COALESCE(owner_agent,'-'), replace(replace(title, char(10), ' '), char(9), ' '), priority FROM tasks"
 	}
 	rows, err := db.Query(q+" WHERE ("+f.sql()+") ORDER BY "+order, f.args...)
 	if err != nil {

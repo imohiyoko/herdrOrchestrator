@@ -202,7 +202,7 @@ cmd_list() {
       FROM tasks WHERE ($where) ORDER BY $order;"
   else
     # 既定の列: ID・状態・担当・タイトル・優先度。前の 4 列の位置は変えない(列の位置で読む agent がいる)ので、優先度は最後に足す
-    sql -separator $'\t' "SELECT id, status, COALESCE(owner_agent,'-'), replace(title, char(10), ' '), priority FROM tasks WHERE ($where) ORDER BY $order;"
+    sql -separator $'\t' "SELECT id, status, COALESCE(owner_agent,'-'), replace(replace(title, char(10), ' '), char(9), ' '), priority FROM tasks WHERE ($where) ORDER BY $order;"
   fi
 }
 
