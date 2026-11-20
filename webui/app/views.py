@@ -14,7 +14,7 @@ from .herdr import agent_key, agent_session, get_agents, read_agent, workspace_l
 from .data import badge_count, defined_labels, has_resolution, parse_ts, NOTIFY_POLL_SEC, QUEUED_WARN_SEC, outbox_rows, activity_for, agent_ops, agent_registry, registry_row, stopped_agents, db_conn, needs_human, parse_jsonl, q, stalled, tail_lines, tasks_for_agent, urgent_items, held_message, held_messages, reminder_href, reminders_last, LEDGER_MAX, LEDGER_RESULTS, approval_history, ledger_kinds, ledger_rows, ledger_summary
 from .actions import NOTE_MAX
 from .jobview import agent_state, command_summary, job_about, job_defs, job_summary, mask, next_runs, prompt_file, send_task_decision
-from .jobs import DAY_PRESETS, DAY_TOKENS, INTERVAL_UNITS, interval_sec, interval_text, job_info, job_last, job_names
+from .jobs import DAY_PRESETS, DAY_TOKENS, INTERVAL_UNITS, interval_sec, interval_text, job_info, job_last, job_names, unimported_jobs
 from . import docs, perms, reqctx, sessions
 from .markdown import render as render_md
 
@@ -915,7 +915,7 @@ def page_jobs(_qs):
         logged = []
     rows = []
     for n in sorted(set(names) | set(logged)):
-        info, err = job_info(n) if n in names else (None, "jobs/ に conf がない")
+        info, err = job_info(n) if n in names else (None, "DB に定義がない")
         last, lr = job_last(n)
         if info:
             sched = (f'{e(interval_text(info))}おき / {e(info["start"])}-{e(info["end"])} / {e(info["days"])}'
@@ -935,7 +935,14 @@ def page_jobs(_qs):
                      (f'{e(last.get("ts"))} {e(last.get("action"))} {e(last.get("reason"))}' if last else "-"),
                      (f'{e(lr.get("ts"))} / {e(lr.get("action"))}' + (f' (exit {e(lr.get("exit"))})' if "exit" in lr else "")
                       if lr else "-")])
-    note = ("<p class=note>「何をする」の 2 行目は conf の先頭のコメント(無ければコマンドから推した説明)です。job 名を開くと、型(agent に送る / コマンドを実行)・宛先と今の状態・送られる本文やコマンド・次回の予定・承認の扱いを読めます。"
+    left = [n for n in unimported_jobs() if n not in names]
+    if left:   # DB に取り込んでいない conf のジョブは scheduler が動かさない
+        rows_note = ('<p class=warn>DB に取り込んでいない <code>scheduler/jobs/*.conf</code> があります。定期実行は DB の定義だけで動くので、これらは動きません: '
+                     + ", ".join(f"<code>{e(n)}</code>" for n in left)
+                     + '。取り込む: <code>taskboard/bin/tb sched-job import --dry-run</code> で確かめてから <code>taskboard/bin/tb sched-job import</code></p>')
+    else:
+        rows_note = ""
+    note = rows_note + ("<p class=note>「何をする」の 2 行目は conf の先頭のコメント(無ければコマンドから推した説明)です。job 名を開くと、型(agent に送る / コマンドを実行)・宛先と今の状態・送られる本文やコマンド・次回の予定・承認の扱いを読めます。"
             "スケジュール(間隔・時間帯・曜日・一時停止)だけ変更できます(次の分から反映)。</p>")
     return "定期実行", note + table(["job", "何をする(宛先)", "間隔 / 時間帯 / 曜日", "状態", "最終記録", "最後の実行"], rows)
 
@@ -1086,7 +1093,7 @@ def page_job(name, csrf, error="", saved=False):
     msg = '<p class=note>保存しました。次の分から反映されます。</p>' if saved else ""
     return "定期実行: " + name, (
         err_html(error) + msg + f"<p>{what}ジョブ。{'Web UI で変更済み。' if info.get('overridden') else ''}</p>" + _job_overview(name, info) + "<h2>スケジュールの変更</h2>" + form +
-        "<p class=note>変更できるのはスケジュールだけです(宛先・本文・コマンドは jobs/*.conf を人が編集)。"
+        "<p class=note>変更できるのはスケジュールだけです(宛先・本文・コマンドは人が tb sched-job edit で編集)。"
         f'保存先: DB の <code>sched-settings:{e(name)}</code>(セッション <code>{e(reqctx.session())}</code>)</p><p><a href="/jobs">一覧へ</a></p>')
 
 

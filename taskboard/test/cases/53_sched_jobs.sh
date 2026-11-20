@@ -56,4 +56,11 @@ printf 'ENABLED=0\n' | SJB sched-job set j3 --settings >/dev/null
 NOWE=1800000000
 for m in 40 35 30 25 20 15 10 5; do jq -nc --argjson e $((NOWE - m * 60 + 32400)) '{ts:($e|strftime("%Y-%m-%dT%H:%M:%S+0900")),job:"j3",action:"skipped_disabled",reason:"t"}' >>"$TB_SCHED_DIR/logs/j3.log"; done
 eq "schedwatch: sees a job defined only in the DB" "$(HERDR_SESSION=sjb TB_SCHEDWATCH_NOW=$NOWE TB_SCHEDWATCH_CONF=$TMP/none.conf "$TB" digest --dry-run | grep -c 'ジョブ j3 が ENABLED=0 のまま 40 分')" "1"
+# 既定(SCHED_FILE_FALLBACK 無し)は DB だけ: 取り込んでいない conf は「未取り込み」と出し、settings を書く先の定義としても使わない
+printf '%s\n' "$J1" >"$TB_SCHED_DIR/jobs/j9.conf"
+eq "default: list marks an unimported conf" "$(SCHED_FILE_FALLBACK=0 SJB sched-job list | grep '^j9' | cut -f2 | cut -d: -f1)" "未取り込み"
+eq "default: show points to import" "$(SCHED_FILE_FALLBACK=0 SJB sched-job show j9 2>&1 | grep -c 'tb sched-job import j9')" "1"
+eq "default: --settings needs a definition in the DB" "$(printf 'ENABLED=0\n' | SCHED_FILE_FALLBACK=0 rc SJB sched-job set j9 --settings)" "1"
+eq "default: set still checks the body with the scheduler" "$(printf 'TARGET=x\nWINDOW=bad\nINTERVAL_MIN=5\nPROMPT=y\n' | SCHED_FILE_FALLBACK=0 rc SJB sched-job set j9) $(printf '%s\n' "$J1" | SCHED_FILE_FALLBACK=0 rc SJB sched-job set j9)" "1 0"
+rm -f "$TB_SCHED_DIR/jobs/j9.conf"
 unset TB_SCHED_DIR; export HERDR_PANE_ID=$_saved_pane

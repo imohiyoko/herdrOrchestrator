@@ -10,6 +10,10 @@ pass=0 failn=0
 # PATH に置く実コマンド(check.sh が使うもの)。sqlite3 / jq は has_* で出し入れする
 CORE="bash sh sed grep wc tr head basename dirname stat id cat"
 
+SQLITE=$(command -v sqlite3) || { echo "sqlite3 が要る"; exit 1; }
+# sjob <job> <本文>: DB にジョブの定義を置く(共通の行 *)。sjob_rm <job>: 消す
+sjob() { "$SQLITE" "$SDB" "INSERT OR REPLACE INTO config VALUES ('*', 'sched-job:$1', '${2//\'/\'\'}', 'human', 'x');"; }
+sjob_rm() { "$SQLITE" "$SDB" "DELETE FROM config WHERE key='sched-job:$1';"; }
 # fresh: 全部そろった状態の疑似環境を $TMP/c<n> に作る
 n=0
 fresh() {
@@ -20,7 +24,10 @@ fresh() {
   : >"$R/taskboard/bin/tb-hook"
   printf 'COMMAND=x\n' >"$R/scheduler/jobs/taskboard-digest.conf.example"
   printf 'COMMAND=x\n' >"$R/scheduler/jobs/watch.conf.example"
-  printf "COMMAND='cd %s/taskboard && bin/tb digest'\n" "$R" >"$R/scheduler/jobs/taskboard-digest.conf"
+  # ジョブの定義は DB(config 表の sched-job:<job>)。check.sh は sqlite3 -readonly で読むだけ
+  SDB="$H/.local/state/herdr/tasks.db"; mkdir -p "$(dirname "$SDB")"
+  "$SQLITE" "$SDB" "CREATE TABLE config (herdr_session TEXT NOT NULL, key TEXT NOT NULL, body TEXT, updated_by TEXT, updated_at TEXT, PRIMARY KEY (herdr_session, key));"
+  sjob taskboard-digest "COMMAND='cd $R/taskboard && bin/tb digest'"
   echo 'conductor|1||~/x' >"$R/presets/example.conf"
   echo 'setup|1|x' >"$R/presets/setup.conf"
   printf 'conductor|1|hi|%s\n' "$P" >"$R/presets/mine.conf"
@@ -30,7 +37,8 @@ fresh() {
   WS="$H/.local/state/herdr-webui"; mkdir -p "$WS"
   echo '{}' >"$WS/auth.json"; chmod 600 "$WS/auth.json"
   for c in $CORE jq; do ln -s "$(command -v "$c")" "$B/$c"; done
-  for c in sqlite3 python3 claude plutil; do ln -s "$HERE/fake/stub" "$B/$c"; done
+  for c in python3 claude plutil; do ln -s "$HERE/fake/stub" "$B/$c"; done
+  ln -s "$SQLITE" "$B/sqlite3"
   ln -s "$HERE/fake/herdr" "$B/herdr"; ln -s "$HERE/fake/launchctl" "$B/launchctl"
   export FAKE_LOADED="local.herdr-sched-taskboard-digest local.herdr-webui" FAKE_HERDR_DOWN=0 FAKE_LOG="$W/calls.log"
   OSNAME=Darwin
@@ -71,7 +79,6 @@ grep -v '^launchctl print gui/[0-9]*/local\.herdr-' "$FAKE_LOG" | grep -q launch
   && ng "launchctl は print 以外を呼ばない" || ok "launchctl は print 以外を呼ばない"
 grep -q '^herdr workspace list$' "$FAKE_LOG" && ! grep -v '^herdr workspace list$' "$FAKE_LOG" | grep -q '^herdr' \
   && ok "herdr は workspace list だけ呼ぶ" || ng "herdr の呼び出し"
-grep -q '^fake .*sqlite3' "$FAKE_LOG" && ng "sqlite3 を実行しない" || ok "sqlite3 を実行しない"
 
 # --- 読み取りのみ(ファイルが増えない・変わらない) ---
 fresh
@@ -124,10 +131,18 @@ fresh; printf 'w|1||~/proj\n' >"$R/presets/mine.conf"; mv "$P" "$H/proj"; P="$H/
 has "プリセットの ~ を HOME に展開" ok hook:proj
 
 # --- scheduler ---
-fresh; rm "$R/scheduler/jobs/taskboard-digest.conf"; run
-has "digest の conf がないと missing" missing job:taskboard-digest
-fresh; echo "COMMAND='cd /path/to/taskboard && bin/tb digest'" >"$R/scheduler/jobs/taskboard-digest.conf"; run
+fresh; run; has "DB に定義があれば ok" ok job:taskboard-digest "DB に定義あり"
+fresh; sjob_rm taskboard-digest; run
+has "digest の定義が DB にないと missing" missing job:taskboard-digest
+printf '%s\n' "$OUT" | grep -A1 "job:taskboard-digest" | grep -q "tb sched-job set taskboard-digest" && ok "next: で tb sched-job set を案内" || ng "next: で tb sched-job set を案内"
+fresh; sjob taskboard-digest "COMMAND='cd /path/to/taskboard && bin/tb digest'"; run
 has "/path/to/ が残っていると missing" missing job:taskboard-digest "/path/to/"
+fresh; sjob_rm taskboard-digest; printf "COMMAND='cd %s/taskboard && bin/tb digest'\n" "$R" >"$R/scheduler/jobs/taskboard-digest.conf"; run
+has "DB に取り込んでいない conf は warn(動かない)" warn job:taskboard-digest "取り込まれていない"
+printf '%s\n' "$OUT" | grep -A1 "job:taskboard-digest" | grep -q "tb sched-job import taskboard-digest" && ok "next: で tb sched-job import を案内" || ng "next: で tb sched-job import を案内"
+has "取り込んでいない conf でも launchd は見る" ok launchd:taskboard-digest
+fresh; sjob taskboard-digest "COMMAND=x"; "$SQLITE" "$SDB" "UPDATE config SET herdr_session='other' WHERE key='sched-job:taskboard-digest';"; run
+has "ほかのセッションの行は数えない" missing job:taskboard-digest
 fresh; FAKE_LOADED="local.herdr-webui"; run
 has "plist はあるが読み込まれていない" warn launchd:taskboard-digest "読み込まれていない"
 fresh; rm "$LA/local.herdr-sched-taskboard-digest.plist"; run
@@ -136,15 +151,17 @@ fresh; rm "$LA/local.herdr-sched-taskboard-digest.plist"; : >"$R/scheduler/gener
 has "plist は生成済みだが未登録" missing launchd:taskboard-digest "生成済み"
 fresh; echo '<key>Hour</key>' >"$LA/local.herdr-sched-taskboard-digest.plist"; run
 has "時刻を焼き込んだ古い plist は warn" warn launchd:taskboard-digest "古い形式"
+fresh; sjob mine 'TARGET=x'; run
+has "独自のジョブ(DB)も出す" info job:mine; has "独自のジョブの launchd も見る" missing launchd:mine
 fresh; echo 'TARGET=x' >"$R/scheduler/jobs/mine.conf"; run
-has "独自のジョブも出す" info job:mine; has "独自のジョブの launchd も見る" missing launchd:mine
+has "取り込んでいない独自のジョブは warn" warn job:mine "取り込まれていない"
 dispatch_plist() { printf '<plist><dict><array>\n<string>/bin/bash</string>\n<string>%s/scheduler/bin/dispatch.sh</string>\n%s</array></dict></plist>\n' "$R" "$(for j in "$@"; do printf '<string>%s</string>\n' "$j"; done)" >"$LA/local.herdr-sched-dispatch.plist"; }
 fresh; rm "$LA/local.herdr-sched-taskboard-digest.plist"; dispatch_plist taskboard-digest; FAKE_LOADED="local.herdr-sched-dispatch local.herdr-webui"; run
 has "dispatch の plist が読み込み済み" ok launchd:dispatch
 has "dispatch に入れたジョブは個別の plist が無くても ok" ok launchd:taskboard-digest "まとめて実行"
 fresh; dispatch_plist taskboard-digest; FAKE_LOADED="local.herdr-sched-dispatch local.herdr-sched-taskboard-digest local.herdr-webui"; run
 has "dispatch と個別の plist の両方に登録したジョブは warn(二重に動く)" warn launchd:taskboard-digest "二重"
-fresh; echo 'TARGET=x' >"$R/scheduler/jobs/mine.conf"; dispatch_plist taskboard-digest; FAKE_LOADED="local.herdr-sched-dispatch local.herdr-sched-taskboard-digest local.herdr-webui"; run
+fresh; sjob mine 'TARGET=x'; dispatch_plist taskboard-digest; FAKE_LOADED="local.herdr-sched-dispatch local.herdr-sched-taskboard-digest local.herdr-webui"; run
 has "dispatch に入れていないジョブは従来どおり個別の plist を見る" missing launchd:mine
 fresh; OSNAME=Linux; run
 has "macOS 以外は launchd を skip" skip launchd:webui
@@ -166,7 +183,8 @@ fresh; echo '<plist><dict/></plist>' >"$LA/local.herdr-webui-gateway.plist"; run
 fresh; echo '<plist><dict/></plist>' >"$LA/local.herdr-staging-webui.plist"; run; has "旧版のセッションごとの plist は warn" warn webui:old-plist "local.herdr-staging-webui"
 
 # --- DB: 共有の 1 か所(ホーム)。旧形式(checkout ごと)の DB が残っていれば warn ---
-fresh; run; has "DB は共有の置き場を見る" info taskboard:db "$H/.local/state/herdr/tasks.db"; hasnt "旧形式の DB が無ければ何も言わない" warn taskboard:legacy-db
+fresh; run; has "DB は共有の置き場を見る" ok taskboard:db "$H/.local/state/herdr/tasks.db"; hasnt "旧形式の DB が無ければ何も言わない" warn taskboard:legacy-db
+fresh; rm "$SDB"; run; has "DB がまだ無ければ info" info taskboard:db "$H/.local/state/herdr/tasks.db"
 fresh; mkdir -p "$R/taskboard/data"; : >"$R/taskboard/data/tasks.db"; run
 has "旧形式の DB が残っていれば warn" warn taskboard:legacy-db "$R/taskboard/data/tasks.db"
 printf '%s\n' "$OUT" | grep -A1 "taskboard:legacy-db" | grep -q "tb db-import" && ok "next: で tb db-import を案内" || ng "next: で tb db-import を案内"

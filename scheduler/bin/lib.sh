@@ -16,9 +16,11 @@ export HERDR_BIN_PATH="${HERDR_BIN_PATH:-$HERDR}"
 die() { echo "error: $*" >&2; exit 2; }
 
 # ジョブ定義・上書き設定の DB(taskboard と同じ DB の config 表)。キー: sched-job:<job>(conf の本文)/ sched-settings:<job>(settings の本文)。
-# このセッションの行 > 全セッション共通の行(*)> ファイル(jobs/<job>.conf・settings/<job>.settings。DB に取り込むまでの移行用)。
-# 書くのは人だけ(tb sched-job)。ここは読むだけで、DB を書き込みで開かない。sqlite3・DB・表が無ければファイルを読む
+# 読むのは DB だけ: このセッションの行 > 全セッション共通の行(*)。書くのは人だけ(tb sched-job)。ここは読むだけで、DB を書き込みで開かない。
+# ファイル(jobs/<job>.conf・settings/<job>.settings)は DB へ取り込む前の置き場所で、SCHED_FILE_FALLBACK=1 のときだけ DB の後に読む
+# (tb sched-job が書く前の検査と、テスト用)。既定では読まないので、取り込んでいない conf のジョブは動かない(tick.sh が failed を記録する)
 SCHED_DB="${TB_DB:-$HERDR_DEFAULT_TB_DB}"
+sched_files_ok() { [ "${SCHED_FILE_FALLBACK:-0}" = 1 ]; }
 sched_db_body() {  # $1=キー。見つかれば本文を出して 0、無ければ 1
   command -v sqlite3 >/dev/null 2>&1 || return 1
   [ -f "$SCHED_DB" ] || return 1
@@ -38,10 +40,27 @@ sched_db_jobs() {
     "SELECT DISTINCT substr(key, 11) FROM config WHERE key LIKE 'sched-job:%' AND herdr_session IN ('$s', '*');" 2>/dev/null \
     | grep -E '^[A-Za-z0-9][A-Za-z0-9_-]*$' || true
 }
-# ジョブ名の一覧(DB とファイルの和。名前順)
+# ジョブ名の一覧(DB。SCHED_FILE_FALLBACK=1 ならファイルとの和。名前順)
 sched_job_names() {
-  { sched_db_jobs; local f; for f in "$JOBS_DIR"/*.conf; do [ -f "$f" ] && basename "$f" .conf; done; } \
+  { sched_db_jobs; local f; if sched_files_ok; then for f in "$JOBS_DIR"/*.conf; do [ -f "$f" ] && basename "$f" .conf; done; fi; } \
     | grep -E '^[A-Za-z0-9][A-Za-z0-9_-]*$' | sort -u
+}
+# DB に取り込んでいない jobs/*.conf のジョブ名(1 行 1 つ)。既定では動かないジョブ。setup/check.sh と tb sched-job list が知らせる
+sched_unimported_jobs() {
+  local db f j; db=$(sched_db_jobs)
+  for f in "$JOBS_DIR"/*.conf; do
+    [ -f "$f" ] || continue; j=$(basename "$f" .conf)
+    grep -qxF -- "$j" <<<"$db" || echo "$j"
+  done
+}
+
+# DB に定義が無いときの説明(tick.sh が failed の理由にも使う)
+sched_missing_msg() {
+  local m="ジョブ定義が DB に無い: sched-job:$1(セッション $(herdr_session_name))"
+  if ! command -v sqlite3 >/dev/null 2>&1; then m="${m}。sqlite3 が無い"
+  elif [ ! -f "$SCHED_DB" ]; then m="${m}。DB が無い: $SCHED_DB"; fi
+  [ -f "$JOBS_DIR/$1.conf" ] && m="${m}。jobs/$1.conf は DB に取り込むまで使われない: taskboard/bin/tb sched-job import $1"
+  printf '%s\n' "$m"
 }
 
 # 時刻 -> その日の 0 時からの秒数。"09:00" -> 32400、"09:00:30" -> 32430。
@@ -79,6 +98,7 @@ load_settings() {
   if body=$(sched_db_body "sched-settings:$JOB"); then
     SETTINGS_SRC=db; f="DB の sched-settings:$JOB"
   else
+    sched_files_ok || return 0   # 既定は DB だけ。settings/<job>.settings は読まない
     [ -e "$f" ] || return 0
     [ -f "$f" ] && [ ! -L "$f" ] || die "$JOB: settings が通常ファイルではない: $f"
     body=$(cat "$f"); SETTINGS_SRC=file
@@ -105,16 +125,17 @@ EOF_SETTINGS
 }
 
 # ジョブ定義を読み込み、既定値を埋めて検証する。
-# 優先順: jobs/<job>.conf < settings/<job>.settings < 環境変数 SCHED_*
+# 優先順: 定義(sched-job:<job>)< 上書き設定(sched-settings:<job>)< 環境変数 SCHED_*
 load_job() {
   JOB="${1:-}"
   [[ "$JOB" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || die "ジョブ名が不正: '$JOB'"
   JOB_CONF="$JOBS_DIR/$JOB.conf"
-  # 定義: DB の sched-job:<job> > jobs/<job>.conf。どちらを読んだかは JOB_SRC(db / file)
+  # 定義: DB の sched-job:<job>(SCHED_FILE_FALLBACK=1 なら、無いときに jobs/<job>.conf)。どちらを読んだかは JOB_SRC(db / file)
   local job_body=""
   if job_body=$(sched_db_body "sched-job:$JOB"); then
     JOB_SRC=db; JOB_CONF="db:sched-job:$JOB"
   else
+    sched_files_ok || die "$(sched_missing_msg "$JOB")"
     JOB_SRC=file
     [ -f "$JOB_CONF" ] || die "ジョブ定義がない: $JOB_CONF"
   fi
