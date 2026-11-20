@@ -118,7 +118,7 @@ load_job() {
     JOB_SRC=file
     [ -f "$JOB_CONF" ] || die "ジョブ定義がない: $JOB_CONF"
   fi
-  unset TARGET PROMPT PROMPT_FILE COMMAND COMMAND_TIMEOUT GATE GATE_TIMEOUT WINDOW START END INTERVAL_MIN INTERVAL_SEC DAYS SKIP_IF TZ ENABLED WATCHER
+  unset TARGET PROMPT PROMPT_FILE PROMPT_RULES PROMPT_CMD PROMPT_CMD_TIMEOUT PROMPT_VARS PROMPT_VAR_TIMEOUT COMMAND COMMAND_TIMEOUT GATE GATE_TIMEOUT WINDOW START END INTERVAL_MIN INTERVAL_SEC DAYS SKIP_IF TZ ENABLED WATCHER
   if [ "$JOB_SRC" = db ]; then
     eval "$job_body"   # 本文は conf と同じ(bash の変数代入)。人が tb sched-job で書いたもの
   else
@@ -159,14 +159,22 @@ load_job() {
   # GATE: 任意の発火条件(シェル 1 行)。終了コード 0 のときだけ発火する。conf にだけ書ける(settings・Web UI からは変えられない)
   : "${GATE:=}" "${GATE_TIMEOUT:=10}"
   [[ "$GATE_TIMEOUT" =~ ^[0-9]+$ ]] && ((GATE_TIMEOUT > 0)) || die "$JOB: GATE_TIMEOUT は正の整数(秒)"
+  # PROMPT_RULES / PROMPT_CMD: 回ごとに本文を切り替える(プロンプト型だけ)。下の parse_prompt_rules と tick.sh の select_prompt
+  # PROMPT_VARS: 本文の {{名前}} に差し込むコマンドの出力(検索結果など)。下の parse_prompt_vars と tick.sh の expand_prompt
+  : "${PROMPT_RULES:=}" "${PROMPT_CMD:=}" "${PROMPT_CMD_TIMEOUT:=10}" "${PROMPT_VARS:=}" "${PROMPT_VAR_TIMEOUT:=30}"
+  [[ "$PROMPT_CMD_TIMEOUT" =~ ^[0-9]+$ ]] && ((PROMPT_CMD_TIMEOUT > 0)) || die "$JOB: PROMPT_CMD_TIMEOUT は正の整数(秒)"
+  [[ "$PROMPT_VAR_TIMEOUT" =~ ^[0-9]+$ ]] && ((PROMPT_VAR_TIMEOUT > 0)) || die "$JOB: PROMPT_VAR_TIMEOUT は正の整数(秒)"
   if [ -n "${COMMAND:-}" ]; then
-    [ -z "${TARGET:-}${PROMPT:-}${PROMPT_FILE:-}" ] || die "$JOB: COMMAND は TARGET/PROMPT/PROMPT_FILE と同時に指定できない"
+    [ -z "${TARGET:-}${PROMPT:-}${PROMPT_FILE:-}$PROMPT_RULES$PROMPT_CMD$PROMPT_VARS" ] \
+      || die "$JOB: COMMAND は TARGET/PROMPT/PROMPT_FILE/PROMPT_RULES/PROMPT_CMD/PROMPT_VARS と同時に指定できない"
     TARGET=""   # COMMAND 型は agent を使わない
   else
     [ -n "${TARGET:-}" ] || die "$JOB: TARGET が未設定(または COMMAND を指定)"
   fi
   [ -n "${WINDOW:-}" ] || die "$JOB: WINDOW が未設定"
-  [ -n "${COMMAND:-}${PROMPT:-}${PROMPT_FILE:-}" ] || die "$JOB: PROMPT か PROMPT_FILE が必要"
+  [ -n "${COMMAND:-}${PROMPT:-}${PROMPT_FILE:-}$PROMPT_RULES$PROMPT_CMD" ] || die "$JOB: PROMPT か PROMPT_FILE(または PROMPT_RULES / PROMPT_CMD)が必要"
+  parse_prompt_rules
+  parse_prompt_vars
   [ -n "$INTERVAL_SEC" ] || die "$JOB: 間隔が未設定(INTERVAL_MIN か INTERVAL_SEC)"
   # 分で割り切れるときだけ INTERVAL_MIN も入れる(表示・互換用)
   if ((INTERVAL_SEC % 60 == 0)); then INTERVAL_MIN=$((INTERVAL_SEC / 60)); else INTERVAL_MIN=""; fi
@@ -177,10 +185,10 @@ load_job() {
   ((WIN_START <= WIN_END)) || die "$JOB: 日をまたぐ WINDOW は未対応"
 }
 
-# DAYS を ISO 曜日番号(1=Mon..7=Sun)の空白区切りに展開
+# DAYS(引数があればそれ)を ISO 曜日番号(1=Mon..7=Sun)の空白区切りに展開
 days_to_nums() {
   local out="" t
-  for t in $(echo "$DAYS" | tr ',A-Z' ' a-z'); do
+  for t in $(echo "${1:-$DAYS}" | tr ',A-Z' ' a-z'); do
     case "$t" in
       daily|everyday) out+=" 1 2 3 4 5 6 7" ;;
       weekdays) out+=" 1 2 3 4 5" ;;
@@ -191,4 +199,123 @@ days_to_nums() {
     esac
   done
   echo "$out"
+}
+
+# ---- PROMPT_RULES: 回の時刻で本文を切り替える
+# 1 行 1 ルール: <条件> | <本文>。上から見て最初に合った行の本文を送る。どれにも合わなければ PROMPT / PROMPT_FILE(無ければ送らない)
+# 条件は空白区切りの key=値(すべて満たすと合う)。key: min / hour / sec / days。* だけの条件は常に合う
+#   値: 数 / 範囲 a-b / 刻み */n / それらのカンマ区切り(例 min=00,30  hour=9-12  min=*/15)。days は DAYS と同じ語をカンマで(days=mon,wed / days=weekdays)
+# 本文が file:<パス> なら、そのファイルの中身を送る(PROMPT_FILE と同じ)
+# 結果は RULE_N(数)と RULE_COND_<i> / RULE_BODY_<i>(i は 1 から)。bash 3.2 でも動くよう配列を使わない
+rule_spec_ok() {  # <key> <値>。値が正しければ 0
+  local key=$1 spec=$2 max item a b
+  case "$key" in
+    min | sec) max=59 ;;
+    hour) max=23 ;;
+    days) (days_to_nums "$spec") >/dev/null 2>&1; return ;;
+    *) return 1 ;;
+  esac
+  [ -n "$spec" ] || return 1
+  [[ "$spec" =~ (^,|,,|,$) ]] && return 1
+  local IFS=,
+  for item in $spec; do
+    if [ "$item" = '*' ]; then continue
+    elif [[ "$item" =~ ^\*/([0-9]{1,2})$ ]]; then ((10#${BASH_REMATCH[1]} > 0)) || return 1
+    elif [[ "$item" =~ ^([0-9]{1,2})-([0-9]{1,2})$ ]]; then
+      a=$((10#${BASH_REMATCH[1]})); b=$((10#${BASH_REMATCH[2]}))
+      ((a <= b && b <= max)) || return 1
+    elif [[ "$item" =~ ^[0-9]{1,2}$ ]]; then ((10#$item <= max)) || return 1
+    else return 1
+    fi
+  done
+}
+rule_spec_match() {  # <値の指定> <値(数)>。合えば 0
+  local v=$((10#$2)) item n IFS=,
+  for item in $1; do
+    case "$item" in
+      '*') return 0 ;;
+      '*/'*) n=$((10#${item#*/})); ((v % n == 0)) && return 0 ;;
+      *-*) ((v >= 10#${item%-*} && v <= 10#${item#*-})) && return 0 ;;
+      *) ((v == 10#$item)) && return 0 ;;
+    esac
+  done
+  return 1
+}
+parse_prompt_rules() {
+  local line cond body tok n=0 k
+  local -a toks
+  RULE_N=0
+  [ -n "$PROMPT_RULES" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=${line#"${line%%[![:space:]]*}"}
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    [[ "$line" == *"|"* ]] || die "$JOB: PROMPT_RULES の行に | が無い(<条件> | <本文>): $line"
+    cond=${line%%|*}; body=${line#*|}
+    body=${body#"${body%%[![:space:]]*}"}
+    [ -n "$body" ] || die "$JOB: PROMPT_RULES の本文が空: $line"
+    read -r -a toks <<<"$cond"   # read -a はパス名展開をしない(* を含む値のため)
+    ((${#toks[@]})) || die "$JOB: PROMPT_RULES の条件が空(常に合わせるなら *): $line"
+    for tok in "${toks[@]}"; do
+      [ "$tok" = '*' ] && continue
+      [[ "$tok" =~ ^([a-z]+)=(.+)$ ]] || die "$JOB: PROMPT_RULES の条件が不正: $tok"
+      k=${BASH_REMATCH[1]}
+      rule_spec_ok "$k" "${BASH_REMATCH[2]}" || die "$JOB: PROMPT_RULES の条件が不正: $tok(key は min / hour / sec / days)"
+    done
+    n=$((n + 1))
+    printf -v "RULE_COND_$n" '%s' "${toks[*]}"
+    printf -v "RULE_BODY_$n" '%s' "$body"
+  done <<EOF_RULES
+$PROMPT_RULES
+EOF_RULES
+  RULE_N=$n
+  ((RULE_N)) || die "$JOB: PROMPT_RULES にルールが無い"
+}
+# <i> <時> <分> <秒> <曜日 1-7>。ルール i が合えば 0
+rule_match() {
+  local c tok k v
+  local -a toks
+  eval "c=\$RULE_COND_$1"
+  read -r -a toks <<<"$c"
+  for tok in "${toks[@]}"; do
+    [ "$tok" = '*' ] && continue
+    k=${tok%%=*}; v=${tok#*=}
+    case "$k" in
+      hour) rule_spec_match "$v" "$2" || return 1 ;;
+      min) rule_spec_match "$v" "$3" || return 1 ;;
+      sec) rule_spec_match "$v" "$4" || return 1 ;;
+      days) case " $(days_to_nums "$v") " in *" $5 "*) ;; *) return 1 ;; esac ;;
+    esac
+  done
+  return 0
+}
+
+# ---- PROMPT_VARS: 本文の {{名前}} に差し込むコマンド。1 行 1 つ: <名前> | <コマンド(シェル 1 行)>
+# 名前は英小文字で始まる英小文字・数字・_。組み込みの名前(job / target / at / date / time / hour / min / sec / dow)は使えない
+# 結果は VAR_N と VAR_NAME_<i> / VAR_CMD_<i>(i は 1 から)
+var_index() {  # <名前> → i を出して 0。無ければ 1
+  local i n
+  for ((i = 1; i <= VAR_N; i++)); do eval "n=\$VAR_NAME_$i"; [ "$n" = "$1" ] && { echo "$i"; return 0; }; done
+  return 1
+}
+parse_prompt_vars() {
+  local line name cmd n=0
+  VAR_N=0
+  [ -n "$PROMPT_VARS" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=${line#"${line%%[![:space:]]*}"}
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    [[ "$line" == *"|"* ]] || die "$JOB: PROMPT_VARS の行に | が無い(<名前> | <コマンド>): $line"
+    name=${line%%|*}; name=${name%"${name##*[![:space:]]}"}
+    cmd=${line#*|}; cmd=${cmd#"${cmd%%[![:space:]]*}"}
+    [[ "$name" =~ ^[a-z][a-z0-9_]*$ ]] || die "$JOB: PROMPT_VARS の名前が不正(英小文字・数字・_): $name"
+    case "$name" in job | target | at | date | time | hour | min | sec | dow) die "$JOB: PROMPT_VARS の名前 $name は組み込みと重なる" ;; esac
+    var_index "$name" >/dev/null && die "$JOB: PROMPT_VARS の名前が重複: $name"
+    [ -n "$cmd" ] || die "$JOB: PROMPT_VARS のコマンドが空: $name"
+    n=$((n + 1)); VAR_N=$n
+    printf -v "VAR_NAME_$n" '%s' "$name"
+    printf -v "VAR_CMD_$n" '%s' "$cmd"
+  done <<EOF_VARS
+$PROMPT_VARS
+EOF_VARS
+  ((VAR_N)) || die "$JOB: PROMPT_VARS に定義が無い"
 }

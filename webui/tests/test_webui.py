@@ -342,6 +342,7 @@ open(os.path.join(_J, "pmulti.conf"), "w").write("TARGET=alpha\nPROMPT='line1\n"
 open(os.path.join(_J, "pfin.conf"), "w").write(f"TARGET=alpha\nPROMPT_FILE={os.path.join(_REPO, 'scheduler', 'README.md')}\nWINDOW=09:00-21:00\nINTERVAL_MIN=30\nTZ=Asia/Tokyo\n")
 open(os.path.join(_J, "pfout.conf"), "w").write(f"TARGET=alpha\nPROMPT_FILE={_OUTSIDE}\nWINDOW=09:00-21:00\nINTERVAL_MIN=30\nTZ=Asia/Tokyo\n")
 open(os.path.join(_J, "pfrel.conf"), "w").write("TARGET=alpha\nPROMPT_FILE=../../etc/passwd\nWINDOW=09:00-21:00\nINTERVAL_MIN=30\nTZ=Asia/Tokyo\n")
+open(os.path.join(_J, "prules.conf"), "w").write("TARGET=alpha\nPROMPT_RULES='\nmin=00 | 毎時の<b>本文</b>\nmin=30 | 半の本文\n'\nPROMPT_VARS='hits | gh search issues --token=supersecretvalue2'\nWINDOW=09:00-21:00\nINTERVAL_MIN=30\nTZ=Asia/Tokyo\n")
 open(os.path.join(_J, "cmdx.conf"), "w").write("COMMAND='cd /x && TOKEN=supersecretvalue1 bin/tb <i>y</i> $(date)'\nCOMMAND_TIMEOUT=45\nWINDOW=00:00-23:59\nINTERVAL_SEC=120\nTZ=Asia/Tokyo\n")
 # 権限(approvals.conf)の fixture。順位・警告・届かない行・エスケープの確認用
 with open(env["WEBUI_APPROVALS"], "w") as f:
@@ -944,6 +945,9 @@ _c = cl.get("/jobs/cmdx")[2]
 check("ジョブ詳細: COMMAND 型はコマンド全文(展開せず・エスケープ・マスク)", "COMMAND 型" in _c and "bash -c" in _c and "$(date)" in _c and "&lt;i&gt;y&lt;/i&gt;" in _c
       and "supersecretvalue1" not in _c and "タイムアウト 45 秒" in _c)
 check("ジョブ詳細: COMMAND 型は宛先を出さない・承認の対象外と書く", "誰に送られるか" not in _c and "approvals.conf の対象外" in _c)
+_pr = cl.get("/jobs/prules")[2]
+check("ジョブ詳細: PROMPT_RULES / PROMPT_VARS を見せる(エスケープ・マスク・既定なし)", "時刻での切り替え" in _pr and "&lt;b&gt;本文&lt;/b&gt;" in _pr and "半の本文" in _pr
+      and "差し込み" in _pr and "supersecretvalue2" not in _pr and "既定の本文はありません" in _pr)
 _fi = cl.get("/jobs/pfin")[2]
 check("ジョブ詳細: PROMPT_FILE(リポジトリ内)は中身を出す", "scheduler" in _fi and "ファイル <code>" in _fi and "表示しません" not in _fi)
 _fo = cl.get("/jobs/pfout")[2]

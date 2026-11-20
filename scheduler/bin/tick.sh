@@ -14,7 +14,7 @@ load_job "${1:-}"
 
 DRY_RUN="${DRY_RUN:-0}"
 [ "$DRY_RUN" = 1 ] || mkdir -p "$LOG_DIR"
-PANE=""; STATE=""; EXITC=""; OUT_S=""; ERR_S=""
+PANE=""; STATE=""; EXITC=""; OUT_S=""; ERR_S=""; PSRC=""; DRY_TEXT=""
 
 # 時刻の変換(BSD date / GNU date の両方)
 if date -d @0 +%s >/dev/null 2>&1; then
@@ -52,13 +52,15 @@ emit() { # action reason
   local line
   line=$(jq -nc --arg ts "$(date '+%Y-%m-%dT%H:%M:%S%z')" --arg job "$JOB" --arg action "$1" \
     --arg reason "$2" --arg at "$AT" --arg target "$TARGET" --arg pane "$PANE" --arg state "$STATE" \
-    --arg exitc "$EXITC" --arg out "$OUT_S" --arg err "$ERR_S" \
+    --arg exitc "$EXITC" --arg out "$OUT_S" --arg err "$ERR_S" --arg psrc "$PSRC" --arg text "$DRY_TEXT" \
     --argjson dry "$([ "$DRY_RUN" = 1 ] && echo true || echo false)" \
     '{ts:$ts,job:$job,action:$action,reason:$reason,at:$at}
      + (if $target!="" then {target:$target} else {} end)
      + (if $pane!="" then {pane:$pane} else {} end)
      + (if $state!="" then {state:$state} else {} end)
+     + (if $psrc!="" then {prompt:$psrc} else {} end)
      + (if $exitc!="" then {exit:($exitc|tonumber),stdout:$out,stderr:$err} else {} end)
+     + (if $dry and $text!="" then {text:$text} else {} end)
      + (if $dry then {dry_run:true} else {} end)')
   if [ "$DRY_RUN" = 1 ]; then echo "$line"; else echo "$line" >>"$LOG_DIR/$JOB.log"; fi
 }
@@ -143,16 +145,107 @@ run_gate() {
   esac
 }
 
+# PROMPT_CMD: 本文を出すコマンド。終了コード 0 で stdout が空でなければそれが本文。0 で空なら次(PROMPT_RULES → PROMPT)へ。
+# 0 以外・時間切れ・起動失敗は failed。stderr は捨てる。stdout は 64 KiB まで。SCHED_* の環境変数でこの回の時刻を渡す
+run_prompt_cmd() {  # 本文を PTEXT に入れる。0=本文あり / 1=次へ / 2=失敗(記録済み)
+  local rc
+  run_capture "$PROMPT_CMD" "$PROMPT_CMD_TIMEOUT" 65536; rc=$?
+  PTEXT=$COUT
+  if ((CTIMEOUT)); then fail "PROMPT_CMD timeout after ${PROMPT_CMD_TIMEOUT}s"; return 2; fi
+  case $rc in
+    0) [ -n "$PTEXT" ] && return 0; return 1 ;;
+    126 | 127) fail "PROMPT_CMD could not start (exit $rc)"; return 2 ;;
+    *) fail "PROMPT_CMD exit $rc"; return 2 ;;
+  esac
+}
+
+# この回の本文を選ぶ: PROMPT_CMD → PROMPT_RULES(最初に合った行)→ PROMPT_FILE / PROMPT。
+# TEXT に本文、PSRC に出どころ(cmd / rule:<i> / default)。0=本文あり / 1=どれも無い / 2=失敗(記録済み)
+select_prompt() {
+  local i b f=""
+  TEXT=""; PSRC=""
+  if [ -n "$PROMPT_CMD" ]; then
+    run_prompt_cmd; case $? in 0) TEXT=$PTEXT; PSRC=cmd; return 0 ;; 2) return 2 ;; esac
+  fi
+  for ((i = 1; i <= RULE_N; i++)); do
+    rule_match "$i" "$SCHED_HOUR" "$SCHED_MIN" "$SCHED_SEC" "$SCHED_DOW" || continue
+    eval "b=\$RULE_BODY_$i"; PSRC="rule:$i"
+    case "$b" in file:*) f=${b#file:} ;; *) TEXT=$b; return 0 ;; esac
+    break
+  done
+  if [ -z "$PSRC" ]; then
+    if [ -n "${PROMPT_FILE:-}" ]; then f=$PROMPT_FILE; PSRC=default
+    elif [ -n "${PROMPT:-}" ]; then TEXT=$PROMPT; PSRC=default; return 0
+    else return 1
+    fi
+  fi
+  [ -r "$f" ] || { fail "$([ "$PSRC" = default ] && echo PROMPT_FILE || echo "$PSRC の file:")を読めない: $f"; return 2; }
+  TEXT="$(cat "$f")"
+}
+
+# コマンドを時間制限つきで実行し、stdout(NUL を除き <上限> バイトまで)を COUT に入れる。stderr は捨てる。
+# <コマンド> <秒> <上限バイト>。戻り値はコマンドの終了コード。時間切れは 124 + CTIMEOUT=1
+run_capture() {
+  local cpid wpid cexit mark outf
+  COUT=""; CTIMEOUT=0
+  mark=$(mktemp 2>/dev/null) && outf=$(mktemp 2>/dev/null) || return 126
+  rm -f "$mark"
+  /bin/bash -c "$1" >"$outf" 2>/dev/null </dev/null &
+  cpid=$!
+  ( sleep "$2"; : >"$mark"; kill_tree "$cpid" ) </dev/null >/dev/null 2>&1 &
+  wpid=$!
+  wait "$cpid" 2>/dev/null; cexit=$?
+  kill_tree "$wpid" 2>/dev/null; wait "$wpid" 2>/dev/null
+  COUT=$(head -c "$3" "$outf" | tr -d '\000'); rm -f "$outf"
+  if [ -e "$mark" ]; then rm -f "$mark"; CTIMEOUT=1; return 124; fi
+  return "$cexit"
+}
+
+# 本文の {{名前}} を差し込む。名前は組み込み(job / target / at / date / time / hour / min / sec / dow)か PROMPT_VARS の名前。
+# 知らない名前の {{...}} はそのまま残す。差し込んだ値の中の {{...}} は展開しない(1 回だけ)。
+# PROMPT_VARS のコマンド: 終了コード 0 → stdout を差し込む(空も可)/ 1 → この回は送らない(skipped_prompt。grep の「該当なし」と同じ意味)/
+# それ以外・時間切れ・起動失敗 → failed。同じ名前は 1 回だけ実行する。0=差し込み済み / 1=送らない(記録済み)/ 2=失敗(記録済み)
+expand_prompt() {
+  local re='\{\{([a-z][a-z0-9_]*)\}\}' rest out m name val i rc
+  local done_names=" "
+  [[ "$TEXT" == *"{{"* ]] || return 0
+  rest=$TEXT; out=""
+  while [[ "$rest" =~ $re ]]; do
+    m=${BASH_REMATCH[0]}; name=${BASH_REMATCH[1]}
+    out+=${rest%%"$m"*}; rest=${rest#*"$m"}
+    case "$name" in
+      job) val=$JOB ;; target) val=$TARGET ;; at) val=$SCHED_AT ;; date) val=${SCHED_AT%% *} ;; time) val=${SCHED_AT#* } ;;
+      hour) val=$SCHED_HOUR ;; min) val=$SCHED_MIN ;; sec) val=$SCHED_SEC ;; dow) val=$SCHED_DOW ;;
+      *)
+        i=$(var_index "$name") || { out+=$m; continue; }   # 知らない名前はそのまま
+        if [[ "$done_names" == *" $name "* ]]; then
+          eval "val=\$VAR_VAL_$i"
+        else
+          local vcmd; eval "vcmd=\$VAR_CMD_$i"
+          run_capture "$vcmd" "$PROMPT_VAR_TIMEOUT" 16384; rc=$?
+          if ((CTIMEOUT)); then fail "PROMPT_VARS $name: timeout after ${PROMPT_VAR_TIMEOUT}s"; return 2; fi
+          case $rc in
+            0) ;;
+            1) emit skipped_prompt "PROMPT_VARS $name: exit 1 (nothing to send)"; return 1 ;;
+            126 | 127) fail "PROMPT_VARS $name: could not start (exit $rc)"; return 2 ;;
+            *) fail "PROMPT_VARS $name: exit $rc"; return 2 ;;
+          esac
+          val=$COUT; printf -v "VAR_VAL_$i" '%s' "$val"; done_names+="$name "
+        fi ;;
+    esac
+    out+=$val
+  done
+  TEXT=$out$rest
+}
+
 # プロンプト型: agent が idle / done のときだけ本文を送る
 run_prompt() {
   local TEXT out sel s rc
-  # 本文(送信前に検証)
-  if [ -n "${PROMPT_FILE:-}" ]; then
-    [ -r "$PROMPT_FILE" ] || { fail "PROMPT_FILE を読めない: $PROMPT_FILE"; return 1; }
-    TEXT="$(cat "$PROMPT_FILE")"
-  else
-    TEXT="$PROMPT"
-  fi
+  # 本文(送信前に検証)。PROMPT_RULES / PROMPT_CMD があれば、この回の時刻で選ぶ
+  select_prompt; case $? in
+    1) emit skipped_prompt "no prompt for this run (PROMPT_CMD empty / no PROMPT_RULES matched / no PROMPT)"; return 0 ;;
+    2) return 1 ;;
+  esac
   [ -n "$TEXT" ] || { fail "本文が空"; return 1; }
   case "$TEXT" in /* | -*) fail "本文の先頭が / か - (スラッシュコマンド/オプションと解釈される)"; return 1 ;; esac
 
@@ -172,15 +265,27 @@ run_prompt() {
     [ "$STATE" = "$s" ] && { emit skipped_state "state=$STATE matches SKIP_IF"; return 0; }
   done
 
-  # idle / done のときだけ送る
-  if [ "$DRY_RUN" = 1 ] && [ -z "$STATE" ]; then
-    emit sent "dry-run: state not checked, would send"; return 0
+  # idle / done のときだけ送る(DRY_RUN で状態を仮定しないときは見ない)
+  if [ "$DRY_RUN" != 1 ] || [ -n "$STATE" ]; then
+    case "$STATE" in
+      idle | done) ;;
+      *) emit skipped_state "state=$STATE is not idle/done"; return 0 ;;
+    esac
   fi
-  case "$STATE" in
-    idle | done) ;;
-    *) emit skipped_state "state=$STATE is not idle/done"; return 0 ;;
+
+  # {{名前}} の差し込み(送ると決まってから。PROMPT_VARS のコマンドは本文に出てくるものだけ実行する)
+  expand_prompt; case $? in
+    1) return 0 ;;   # skipped_prompt は記録済み
+    2) return 1 ;;
   esac
-  if [ "$DRY_RUN" = 1 ]; then emit sent "dry-run: would send to $TARGET"; return 0; fi
+  [ -n "$TEXT" ] || { fail "差し込み後の本文が空"; return 1; }
+  case "$TEXT" in /* | -*) fail "差し込み後の本文の先頭が / か - (スラッシュコマンド/オプションと解釈される)"; return 1 ;; esac
+
+  if [ "$DRY_RUN" = 1 ]; then
+    DRY_TEXT=$TEXT
+    if [ -z "$STATE" ]; then emit sent "dry-run: state not checked, would send"; else emit sent "dry-run: would send to $TARGET"; fi
+    DRY_TEXT=""; return 0
+  fi
 
   # 送信は tb を通す(送ったものは taskboard の messages に kind=scheduler で残る)
   TB="${TB_BIN:-$SCHED_ROOT/../taskboard/bin/tb}"
@@ -201,7 +306,10 @@ for p in "${DUE[@]}"; do
     ((p > cur)) && sleep $((p - cur))
   fi
   n=$((n + 1))
-  AT=$(fmt_epoch "$p" '%Y-%m-%d %H:%M:%S'); PANE=""; STATE=""; EXITC=""; OUT_S=""; ERR_S=""
+  AT=$(fmt_epoch "$p" '%Y-%m-%d %H:%M:%S'); PANE=""; STATE=""; EXITC=""; OUT_S=""; ERR_S=""; PSRC=""
+  # この回の時刻を GATE / COMMAND / PROMPT_CMD に渡す(ジョブの TZ の現地時刻。曜日は 1=Mon..7=Sun)
+  read -r SCHED_HOUR SCHED_MIN SCHED_SEC SCHED_DOW <<<"$(fmt_epoch "$p" '%H %M %S %u')"
+  export SCHED_JOB=$JOB SCHED_AT=$AT SCHED_HOUR SCHED_MIN SCHED_SEC SCHED_DOW
   run_gate || continue
   if [ -n "${COMMAND:-}" ]; then run_command || RC=1; else run_prompt || RC=1; fi
 done

@@ -1,6 +1,6 @@
 """定期実行ジョブの「何が・誰に・いつ・承認は」を読み取りで見せる(編集機能は無い)。
 
-- conf は実行しない(bash として source しない)。PROMPT / PROMPT_FILE / COMMAND / SKIP_IF / COMMAND_TIMEOUT の記述を、そのまま(展開せず)読む。
+- conf は実行しない(bash として source しない)。PROMPT / PROMPT_FILE / PROMPT_RULES / PROMPT_CMD / PROMPT_VARS / COMMAND / SKIP_IF / COMMAND_TIMEOUT の記述を、そのまま(展開せず)読む。
 - PROMPT_FILE の中身は、scheduler/ か scheduler/jobs の配下の通常ファイルで、docs.denied() に当たらないものだけ読む。
 - 本文は表示前に、トークンらしい文字列をマスクする(完全ではない。機密を含みうる画面です)。
 """
@@ -17,7 +17,7 @@ from .sanitize import clean
 
 CONF_MAX = 64 * 1024
 FILE_MAX = 64 * 1024
-KEYS = ("PROMPT", "PROMPT_FILE", "COMMAND", "SKIP_IF", "COMMAND_TIMEOUT")
+KEYS = ("PROMPT", "PROMPT_FILE", "PROMPT_RULES", "PROMPT_CMD", "PROMPT_VARS", "COMMAND", "SKIP_IF", "COMMAND_TIMEOUT")
 
 # トークンらしい文字列のマスク(完全ではない。既存の画面は本文を出すだけなので、ここで足す)
 _MASKS = (
