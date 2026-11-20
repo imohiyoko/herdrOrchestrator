@@ -389,6 +389,7 @@ tb agent-approve L-<n> [--always] / tb agent-reject L-<n>      # 人だけ
   1 行 1 つで `<agent 名の glob> [= 理由]` か `role:<役割の glob> [= 理由]`(例は `config/protect.conf.example`。無ければ何も保護しない)。
   一致した agent は `tb agents` の killable が `protected` になり、`tb agent-stop` は `--force` でも止めず、`tb agent-shed` の候補にも出ない。
   `tb agent-restart` / `tb model-set`(止めて同じ会話で戻す)はできる。止めたいときは人が protect から外してから止める
+  Web UI の agent 一覧でも「保護中」と出て、停止ボタンを出さない
 - **復活**: 台帳の cwd で新しい workspace を作り、`claude --resume <session>` で同じ会話から再開する(claude の場合。再開できない kind は終了コード 12 で止まり、`--fresh` なら新しい会話)。
   モデルは台帳の値か `--model`。復活したら判定フラグは `unknown` に戻る
 - **再起動**(`tb agent-restart <名前> [--prompt P]`): MCP の接続が切れた agent を、pane を閉じて `claude --resume` で同じ会話に戻して張り直す。killable の代わりに次の安全条件を全部見る

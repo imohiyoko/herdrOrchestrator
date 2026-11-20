@@ -11,7 +11,7 @@ from .config import JOB_RE, REFRESH_SEC, SCHED_LOGS, STALL_MIN, TASK_STALE_HOURS
 from .sanitize import clean, e
 from . import graph
 from .herdr import agent_key, agent_session, get_agents, read_agent, workspace_label
-from .data import badge_count, has_resolution, parse_ts, NOTIFY_POLL_SEC, QUEUED_WARN_SEC, outbox_rows, activity_for, agent_ops, agent_registry, stopped_agents, db_conn, needs_human, parse_jsonl, q, stalled, tail_lines, tasks_for_agent, urgent_items, held_message, held_messages, reminder_href, reminders_last, LEDGER_MAX, LEDGER_RESULTS, approval_history, ledger_kinds, ledger_rows, ledger_summary
+from .data import badge_count, has_resolution, parse_ts, NOTIFY_POLL_SEC, QUEUED_WARN_SEC, outbox_rows, activity_for, agent_ops, agent_registry, registry_row, stopped_agents, db_conn, needs_human, parse_jsonl, q, stalled, tail_lines, tasks_for_agent, urgent_items, held_message, held_messages, reminder_href, reminders_last, LEDGER_MAX, LEDGER_RESULTS, approval_history, ledger_kinds, ledger_rows, ledger_summary
 from .actions import NOTE_MAX
 from .jobview import agent_state, command_summary, job_about, job_defs, job_summary, mask, next_runs, prompt_file, send_task_decision
 from .jobs import DAY_PRESETS, DAY_TOKENS, INTERVAL_UNITS, interval_sec, interval_text, job_info, job_last, job_names
@@ -147,7 +147,7 @@ def page_overview(_qs):
     return "概要", body
 
 
-KILL_LABEL = {"yes": "止めてよい", "no": "止めない", "unknown": "未判定", "stale": "判定が古い"}
+KILL_LABEL = {"yes": "止めてよい", "no": "止めない", "unknown": "未判定", "stale": "判定が古い", "protected": "保護中"}
 OP_MSG = {"done": "実行しました。", "pending": "人の承認待ちに積みました。", "refused": "前提を満たさないため実行しませんでした(下の「直近の操作」に理由)。",
           "error": "実行に失敗しました(下の「直近の操作」か、手元の tb agent-ops を確認してください)。"}
 
@@ -172,7 +172,9 @@ def killable_html(r):
     if not r:
         return '<span class=note>未判定</span>'
     k = r.get("killable_now") or "unknown"
-    cls = {"yes": "st-done", "no": "st-idle", "stale": "warn"}.get(k, "note")
+    cls = {"yes": "st-done", "no": "st-idle", "stale": "warn", "protected": "st-idle"}.get(k, "note")
+    if k == "protected":
+        return f'<span class={cls}>{e(KILL_LABEL[k])}</span><br><span class=note>{e(r.get("protect_reason"))}(config の protect)</span>'
     why = f'<br><span class=note>{e(r.get("killable_reason"))}({e(r.get("killable_by"))})</span>' if r.get("killable_reason") else ""
     return f'<span class={cls}>{e(KILL_LABEL.get(k, k))}</span>{why}'
 
@@ -180,6 +182,8 @@ def killable_html(r):
 def stop_cell(ctx, name, r):
     if not ctx.get("csrf") or not name:
         return ""
+    if r and r.get("killable_now") == "protected":   # tb が --force でも止めない。外すのは人が tb config edit protect
+        return '<span class=note>保護中(停止は protect から外してから)</span>'
     if r and r.get("killable_now") == "yes" and not r.get("open_tasks"):
         return op_form(ctx, "stop", name, "停止")
     return op_form(ctx, "force-stop", name, "強制停止", confirm=True)
@@ -243,7 +247,7 @@ def page_agents(qs, ctx=None):
             warn = "blocked(人の対応待ち)"
         elif stalled(a, act):
             warn = f"滞留 ({STALL_MIN} 分超)"
-        r = reg.get(a.get("name") or "")
+        r = registry_row(reg, a.get("name"))
         rows.append([
             alink(a), state_html(a.get("agent_status")), e(a.get("workspace_id")), cur_task_title(a, tasks),
             f'入力 {e(act.get("last_prompt_at") if act else "-")}<br>停止 {e(act.get("last_stop_at") if act else "-")}',
@@ -320,7 +324,7 @@ def page_agent(key):
         ("最終入力", e(act.get("last_prompt_at") if act else "-")),
         ("最終停止", e(act.get("last_stop_at") if act else "-")),
         ("session_id", f"<code>{e(sid)}</code>" if sid else "-"),
-        ("止めてよいか", killable_html(agent_registry().get(a.get("name") or "")) + ' <a href="/agents">停止・復活は agent 一覧から</a>'),
+        ("止めてよいか", killable_html(registry_row(agent_registry(), a.get("name"))) + ' <a href="/agents">停止・復活は agent 一覧から</a>'),
     ]
     body = err_html(err) + "<table>" + "".join(f"<tr><th>{k}</th><td>{v}</td></tr>" for k, v in info) + "</table>"
     attach = "herdr agent attach " + shlex.quote(str(agent_key(a)))
