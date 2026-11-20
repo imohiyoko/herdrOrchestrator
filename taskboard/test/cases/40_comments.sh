@@ -102,6 +102,8 @@ eq "reopen: resolved_at and note cleared" "$($TB comments --json | jq -r --arg i
 eq "reopen: tsv shows needs-human" "$($TB comments | grep "^$qid	" | cut -f3)" "needs-human"
 eq "reopen: event records who and when" "$(sqlite3 "$TB_DB" "SELECT kind, actor, ref, old IS NOT NULL, created_at IS NOT NULL FROM task_events WHERE ref='$qid' AND kind='comment_reopened';" | tr '|' ' ')" "comment_reopened human $qid 1 1"
 eq "reopen: not resolved is a no-op" "$(HERDR_PANE_ID= $TB reopen "$qid" | grep -c '対応済みではありません') $(sqlite3 "$TB_DB" "SELECT count(*) FROM task_events WHERE kind='comment_reopened';")" "1 1"
+eq "reopen: -m reason goes to the event (new column), blank reason is NULL" "$(HERDR_PANE_ID= $TB resolve "$qid" >/dev/null; HERDR_PANE_ID= $TB reopen "$qid" -m '誤って畳んだ' >/dev/null; sqlite3 "$TB_DB" "SELECT new FROM task_events WHERE kind='comment_reopened' ORDER BY id DESC LIMIT 1;") $(sqlite3 "$TB_DB" "SELECT new IS NULL FROM task_events WHERE kind='comment_reopened' ORDER BY id LIMIT 1;")" "誤って畳んだ 1"
+eq "reopen: unknown option → 2" "$(HERDR_PANE_ID= rc $TB reopen "$qid" --bogus)" "2"
 HERDR_PANE_ID= $TB resolve "$qid" >/dev/null
 eq "reopen: resolve again after reopen" "$($TB comments --open --json | jq -r .id | grep -c "^$qid\$")" "0"
 eq "reopen: progress cannot be reopened" "$(HERDR_PANE_ID= rc $TB reopen "$pid")" "1"
