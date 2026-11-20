@@ -1162,6 +1162,48 @@ _c = sqlite3.connect(env["WEBUI_TB_DB"])
 _left = _c.execute("SELECT COUNT(*) FROM config WHERE key='sched-settings:dbjob'").fetchone()[0]
 _c.close()
 check("DB の定義: 戻すと DB の上書き設定を消す", r[0] == 302 and _left == 0 and "20 分おき" in cl.get("/jobs")[2])
+# 定義はファイル(job1)でも、DB に settings の行があると scheduler は DB を読む。Web UI も DB に書く(ファイルに書くと隠れて効かない)
+_c = sqlite3.connect(env["WEBUI_TB_DB"])
+_c.execute("INSERT INTO config (herdr_session, key, body, updated_by, updated_at) VALUES (?, 'sched-settings:job1', ?, 'human', 'x')",
+           (_sess, "INTERVAL_MIN=40\n"))
+_c.commit(); _c.close()
+check("ファイルの定義 + DB の settings: 一覧は DB の値", "40 分おき" in cl.get("/jobs")[2])
+check("ファイルの定義 + DB の settings: 保存先は DB と出る", "DB の <code>sched-settings:job1</code>" in cl.get("/jobs/job1")[2])
+r = cl.raw("POST", "/jobs/job1", {**good, "csrf": cl.csrf("/jobs/job1")})
+_c = sqlite3.connect(env["WEBUI_TB_DB"])
+_sb = _c.execute("SELECT body FROM config WHERE key='sched-settings:job1'").fetchall()
+_c.close()
+check("ファイルの定義 + DB の settings: 保存は DB に書いて効く(ファイルは作らない)",
+      r[0] == 302 and _sb and "INTERVAL_MIN=15" in _sb[0][0] and not os.path.exists(SET)
+      and "15 分おき / 10:00-18:00 / weekdays" in cl.get("/jobs")[2], str((r[:2], _sb)))
+# DB の行を消すとファイルの settings が効き出すので、戻すときは残ったファイルも消す
+open(SET, "w").write("INTERVAL_MIN=50\n"); os.chmod(SET, 0o600)
+r = cl.raw("POST", "/jobs/job1", {"action": "reset", "csrf": cl.csrf("/jobs/job1")})
+_c = sqlite3.connect(env["WEBUI_TB_DB"])
+_left = _c.execute("SELECT COUNT(*) FROM config WHERE key='sched-settings:job1'").fetchone()[0]
+_c.close()
+check("ファイルの定義 + DB の settings: 戻すと DB の行と残ったファイルを消し、conf の値に戻る",
+      r[0] == 302 and _left == 0 and not os.path.exists(SET) and "10 分おき / 09:00-21:00 / daily" in cl.get("/jobs")[2], str(r[:2]))
+# 共通の行(*)だけがあるとき: 保存はこのセッションの行に書いて効く。戻すは共通の行を消さず、戻らないと伝える
+_c = sqlite3.connect(env["WEBUI_TB_DB"])
+_c.execute("INSERT INTO config (herdr_session, key, body, updated_by, updated_at) VALUES ('*', 'sched-settings:job1', ?, 'human', 'x')",
+           ("INTERVAL_MIN=45\n",))
+_c.commit(); _c.close()
+r = cl.raw("POST", "/jobs/job1", {**good, "csrf": cl.csrf("/jobs/job1")})
+check("共通の settings の行: 保存はこのセッションの行に書いて効く", r[0] == 302 and "15 分おき / 10:00-18:00" in cl.get("/jobs")[2], str(r[:2]))
+r = cl.raw("POST", "/jobs/job1", {"action": "reset", "csrf": cl.csrf("/jobs/job1")})
+r2 = cl.raw("POST", "/jobs/job1", {"action": "reset", "csrf": cl.csrf("/jobs/job1")})
+check("共通の settings の行: 戻すとこのセッションの行だけ消え、共通の行は残して 400 で知らせる",
+      r[0] == 400 and "共通の行" in r[2] and r2[0] == 400 and "共通の行" in r2[2] and "45 分おき" in cl.get("/jobs")[2], str((r[0], r2[0])))
+_c = sqlite3.connect(env["WEBUI_TB_DB"])
+_c.execute("DELETE FROM config WHERE key='sched-settings:job1'"); _c.commit(); _c.close()
+# 定義が DB、settings がファイルに残っている: 戻すとファイルも消す(消さないとファイルの値が効いたまま)
+_DBSET = os.path.join(env["WEBUI_SCHED_SETTINGS"], "dbjob.settings")
+open(_DBSET, "w").write("INTERVAL_MIN=55\n"); os.chmod(_DBSET, 0o600)
+check("DB の定義 + ファイルの settings: ファイルの値が効いている", "55 分おき" in cl.get("/jobs")[2])
+r = cl.raw("POST", "/jobs/dbjob", {"action": "reset", "csrf": cl.csrf("/jobs/dbjob")})
+check("DB の定義 + ファイルの settings: 戻すとファイルも消して conf の値に戻る",
+      r[0] == 302 and not os.path.exists(_DBSET) and "20 分おき" in cl.get("/jobs")[2], str(r[:2]))
 check("tasks のフィルタ", "T-1" in cl.get("/tasks?project=pj&status=in_progress")[2] and "T-1" not in cl.get("/tasks?status=done")[2])
 check("フィルタ値の XSS", "<script>" not in cl.get("/tasks?project=%3Cscript%3E")[2])
 

@@ -1084,7 +1084,20 @@ def page_job(name, csrf, error="", saved=False):
     return "定期実行: " + name, (
         err_html(error) + msg + f"<p>{what}ジョブ。{'Web UI で変更済み。' if info.get('overridden') else ''}</p>" + _job_overview(name, info) + "<h2>スケジュールの変更</h2>" + form +
         "<p class=note>変更できるのはスケジュールだけです(宛先・本文・コマンドは jobs/*.conf を人が編集)。"
-        f'保存先: <code>scheduler/settings/{e(name)}.settings</code></p><p><a href="/jobs">一覧へ</a></p>')
+        f'保存先: {_job_settings_dest(name, info)}</p><p><a href="/jobs">一覧へ</a></p>')
+
+
+def _job_settings_dest(name, info):
+    """保存先の表示。scheduler が settings を読む場所(jobs.settings_dest と同じ決まり)。"""
+    if info.get("source") == "db" or info.get("settings_source") == "db":
+        return f'DB の <code>sched-settings:{e(name)}</code>(セッション <code>{e(reqctx.session())}</code>)'
+    out = f'<code>scheduler/settings/{e(name)}.settings</code>'
+    if reqctx.session() != reqctx.process_session():
+        # ファイルはこの checkout の scheduler だけが読む。別の checkout で動くセッションの scheduler には届かない
+        out += (f' <b class=warn>この checkout のファイルです。読むのはこの checkout の scheduler(ふつうはセッション <code>{e(reqctx.process_session())}</code>)だけで、'
+                f'セッション <code>{e(reqctx.session())}</code> を別の checkout で動かしているなら、その scheduler には効きません'
+                f'(そのセッションのジョブは <code>tb sched-job import</code> で DB に置くと、ここから変えられます)</b>')
+    return out
 
 
 DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}", re.ASCII)
