@@ -85,7 +85,8 @@ def make_env(name, **extra):
         WEBUI_SCHED_LOGS=os.path.join(d, "logs"), WEBUI_APPROVALS=os.path.join(d, "approvals.conf"),
         WEBUI_SCHED_JOBS=os.path.join(d, "jobs"), WEBUI_SCHED_SETTINGS=os.path.join(d, "settings"),
         WEBUI_STATE_DIR=os.path.join(d, "state"), WEBUI_AUTH_DIR=os.path.join(d, "run"),
-        XDG_CONFIG_HOME=os.path.join(d, "xdg"), HERDR_SESSION_FILE=os.path.join(d, "no-herdr-session"))
+        XDG_CONFIG_HOME=os.path.join(d, "xdg"), HERDR_SESSION_FILE=os.path.join(d, "no-herdr-session"),
+        TB_PROTECT=os.path.join(d, "protect.conf"))
     env.update(extra)
     env.setdefault("TB_UI_GATEWAY_PORT", str(free_range(1)))
     return env, d
@@ -1231,6 +1232,16 @@ r = cl.raw("POST", "/agent-op", {"op": "stop", "name": "alpha", "csrf": cl.csrf(
 check("印の無い agent の通常停止は断る", r[0] == 302 and r[1].get("Location") == "/agents?op=refused" and "pane close" not in flog(), str(r[:2]))
 r = cl.raw("POST", "/agent-op", {"op": "force-stop", "name": "alpha", "csrf": cl.csrf("/agents")})
 check("強制停止は確認のチェックが要る", r[0] == 302 and r[1].get("Location") == "/agents?op=refused" and "pane close" not in flog())
+with open(env["TB_PROTECT"], "w") as _f:
+    _f.write("# 保護\nalp* = 定期実行の受け口\n")
+ag = cl.get("/agents")[2]
+check("protect に一致した agent は保護中で、停止ボタンを出さない", "保護中" in ag and "定期実行の受け口" in ag and "protect から外してから" in ag)
+r = cl.raw("POST", "/agent-op", {**good_op, "csrf": cl.csrf("/agents")})
+check("保護中は強制停止も tb が断る", r[0] == 302 and r[1].get("Location") == "/agents?op=refused" and "pane close" not in flog(), str(r[:2]) + flog())
+with open(env["TB_PROTECT"], "w") as _f:
+    _f.write("role:nosuch\n")
+check("一致しなければ従来どおり", 'value="force-stop"' in cl.get("/agents")[2] and "保護中" not in cl.get("/agents")[2])
+os.remove(env["TB_PROTECT"])
 r = cl.raw("POST", "/agent-op", {**good_op, "csrf": cl.csrf("/agents")})
 check("強制停止で pane を閉じる", r[0] == 302 and r[1].get("Location") == "/agents?op=done" and "pane close w1:p1" in flog(), str(r[:2]) + flog())
 check("台帳に会話が残る", regdb("SELECT state, session_id FROM agents WHERE name='alpha'") == [("stopped", "11111111-2222-3333-4444-555555555555")])

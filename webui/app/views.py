@@ -147,7 +147,7 @@ def page_overview(_qs):
     return "概要", body
 
 
-KILL_LABEL = {"yes": "止めてよい", "no": "止めない", "unknown": "未判定", "stale": "判定が古い"}
+KILL_LABEL = {"yes": "止めてよい", "no": "止めない", "unknown": "未判定", "stale": "判定が古い", "protected": "保護中"}
 OP_MSG = {"done": "実行しました。", "pending": "人の承認待ちに積みました。", "refused": "前提を満たさないため実行しませんでした(下の「直近の操作」に理由)。",
           "error": "実行に失敗しました(下の「直近の操作」か、手元の tb agent-ops を確認してください)。"}
 
@@ -172,7 +172,9 @@ def killable_html(r):
     if not r:
         return '<span class=note>未判定</span>'
     k = r.get("killable_now") or "unknown"
-    cls = {"yes": "st-done", "no": "st-idle", "stale": "warn"}.get(k, "note")
+    cls = {"yes": "st-done", "no": "st-idle", "stale": "warn", "protected": "st-idle"}.get(k, "note")
+    if k == "protected":
+        return f'<span class={cls}>{e(KILL_LABEL[k])}</span><br><span class=note>{e(r.get("protect_reason"))}(config の protect)</span>'
     why = f'<br><span class=note>{e(r.get("killable_reason"))}({e(r.get("killable_by"))})</span>' if r.get("killable_reason") else ""
     return f'<span class={cls}>{e(KILL_LABEL.get(k, k))}</span>{why}'
 
@@ -180,6 +182,8 @@ def killable_html(r):
 def stop_cell(ctx, name, r):
     if not ctx.get("csrf") or not name:
         return ""
+    if r and r.get("killable_now") == "protected":   # tb が --force でも止めない。外すのは人が tb config edit protect
+        return '<span class=note>保護中(停止は protect から外してから)</span>'
     if r and r.get("killable_now") == "yes" and not r.get("open_tasks"):
         return op_form(ctx, "stop", name, "停止")
     return op_form(ctx, "force-stop", name, "強制停止", confirm=True)

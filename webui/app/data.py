@@ -128,7 +128,8 @@ def q(sql, params=()):
 # ---- 設定(config 表。taskboard/schema/013)。tb の lib/config.sh の config_lookup と同じ順で引く:
 # 環境変数で明示したファイル > DB のこのセッションの行 > DB の共通の行(*) > checkout の taskboard/config/<名前> > <名前>.example
 CONFIG_KEYS = {"projects": (("TB_CONFIG",), "projects.conf"),
-               "approvals": (("WEBUI_APPROVALS", "TB_APPROVALS"), "approvals.conf")}
+               "approvals": (("WEBUI_APPROVALS", "TB_APPROVALS"), "approvals.conf"),
+               "protect": (("TB_PROTECT",), "protect.conf")}
 CONFIG_MAX = 262144
 
 
@@ -261,13 +262,49 @@ KILLABLE_SQL = """SELECT a.*, CASE WHEN a.killable!='yes' THEN a.killable
     FROM agents a"""
 
 
+def protect_rules():
+    """config の protect(tb の lib/agents.sh の protect_reason と同じ書式)。[(パターン, 理由)]。
+    1 行 1 つ: <名前の glob> [= 理由] / role:<役割の glob> [= 理由]。# 以降はコメント。無ければ空(何も保護しない)"""
+    text, _src = config_text("protect")
+    rules = []
+    for line in (text or "").splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        k, _sep, v = line.partition("=")
+        k = k.strip()
+        rules.append((k, v.strip() or "protect: " + k))
+    return rules
+
+
+def protect_reason(name, reg_role=None, rules=None):
+    """保護されていれば理由(上から見て最初に一致した行)、されていなければ None。"""
+    from . import graph
+    for k, why in protect_rules() if rules is None else rules:
+        pat = "@" + k[5:] if k.startswith("role:") else k
+        if graph.name_matches(name, pat, reg_role):
+            return why
+    return None
+
+
+def _with_protect(rows):
+    """保護された agent は killable_now を protected に、protect_reason に理由を入れる(tb の killable_of と同じ)。"""
+    rules = protect_rules()
+    if rules:
+        for r in rows:
+            why = protect_reason(r["name"], r.get("role"), rules)
+            if why:
+                r["killable_now"], r["protect_reason"] = "protected", why
+    return rows
+
+
 def agent_registry():
     """tb の台帳(agents)。{名前: 行}。スキーマ 004 より前の DB では空。"""
-    return {r["name"]: r for r in q(KILLABLE_SQL + " ORDER BY a.name")}
+    return {r["name"]: r for r in _with_protect(q(KILLABLE_SQL + " ORDER BY a.name"))}
 
 
 def stopped_agents():
-    return q(KILLABLE_SQL + " WHERE a.state='stopped' ORDER BY a.stopped_at DESC LIMIT 50")
+    return _with_protect(q(KILLABLE_SQL + " WHERE a.state='stopped' ORDER BY a.stopped_at DESC LIMIT 50"))
 
 
 def agent_ops(status=None, limit=20):
