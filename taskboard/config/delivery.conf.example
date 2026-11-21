@@ -3,7 +3,7 @@
 #   <送信者のパターン> -> <宛先のパターン> : <種別>=<now|hold|block> ...
 #   <送信者のパターン> -> <宛先のパターン>          全種別 now(reply も)
 #   ! <送信者のパターン> -> <宛先のパターン>        全種別 block(reply も)
-# パターンは agent 名の glob(* と ?)か @<役割の glob>。種別は task / info / answer、* はそれ以外の全部。
+# パターンは agent 名の glob(* と ?)か @<役割の glob>。宛先には送信者から見た関係も書ける(spawn の ~child ~parent など、組織図の ~manager ~report など。config/org.conf.example)。種別は task / info / answer、* はそれ以外の全部。
 # reply は tb が確かめた返信(tb send --reply-to O-<n>。* には含まれない。reply= を書いた行が無ければ種別で決まる)。
 # どの行にも当たらなければ、送信者が指揮官(conductor と projects の値)なら now、ほかは止める(キーが無いときも同じ)。
 # hold の送信は宛先の入力に打ち込まず inbox に置く(送信は成功。宛先は人に頼まれたときに tb inbox / tb inbox-read で読む)。

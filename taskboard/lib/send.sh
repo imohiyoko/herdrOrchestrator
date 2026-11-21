@@ -24,6 +24,8 @@ outbox_target_stopped() {  # $1=宛先
 #   @worker     -> reviewer  : *=block reply=now     worker からは止める。reviewer が聞いたことへの返信だけ通す
 #   coordinator -> assistant : info=hold answer=hold task=now
 #   coordinator -> *
+# 宛先には送信者から見た関係も書ける: spawn の ~child / ~descendant / ~parent / ~sibling、組織図(設定 org)の
+#   ~report / ~subordinate / ~manager / ~superior / ~peer(例: @worker -> ~manager : *=now は「自分の上司へは届ける」)
 # 種別を書いていない行(* も無い)は飛ばして次の行を見る。reply は、reply= を明示した行があればそれで決まる(* では決めない)。無ければ種別で決まる。
 # どの行にも当たらなければ、送信者が指揮官(既定の宛先と projects の値。conductor_names)なら now、それ以外は止める(旧 routes.conf が無いときと同じ)。
 # 役割を確かめられない行に当たったら hold に倒す(届けないが、捨てもしない)。
@@ -116,7 +118,11 @@ _delivery_rules() {  # $1=送信者 $2=宛先 $3=種別 [$4=exact: その種別�
     v=$(_delivery_pick "$spec" "$kind" "$exact") || continue
     local m1=0 m2=1
     name_matches "$from" "$l" || m1=$?
-    if ((m1 == 0)); then m2=0; name_matches "$to" "$r" || m2=$?; fi
+    if ((m1 == 0)); then
+      m2=0
+      if [[ $r == '~'* ]]; then grant_relation "$from" "$to" "$r" || m2=$?   # 送信者から見た関係(~manager は送信者の上司。grants と同じ書き方)
+      else name_matches "$to" "$r" || m2=$?; fi
+    fi
     if ((m1 == 2 || m2 == 2)); then DELIVERY_MODE=hold; DELIVERY_RULE="delivery: $line の役割を確かめられないため保留"; return 0; fi
     ((m1 == 0 && m2 == 0)) || continue
     DELIVERY_MODE=$v; DELIVERY_RULE="delivery: $( ((neg)) && printf '!')$l -> $r : $kind=$v"; return 0

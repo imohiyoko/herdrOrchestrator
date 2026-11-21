@@ -1,0 +1,20 @@
+# 組織図(上司の線)。編集するのは人だけ(tb config edit org / tb config set org < 本文)。再起動は要らない。
+# .example は既定値にしない(無ければ誰にも上司はいない = 中立)。役割を使う構成の例は setup/examples/org.conf。
+#
+# 1 行 1 つ: <部下のパターン> -> <上司>
+#   部下のパターン  agent 名の glob か @<役割>(@a+b も可)
+#   上司            agent 名、または ~parent(tb agent-spawn で立てた親。親がいなければその行は飛ばす)
+# agent ごとに上から見て、最初に当たった行で上司が 1 人に決まる(決定的)。自分自身を上司にする行は飛ばす。
+# 役割を確かめられない行に先に当たったら、その agent の上司は決まらない(関係はどれにも当たらない。許可側に倒さない)。
+#
+# 組織図そのものは全員が見られる: tb org(木)/ tb org <agent>(上司・上の全員・直属の部下・同じ上司)/ --json
+# できることは組織図ではなく、次の設定の行が関係を使って決める(組織図に線を引いただけでは何も許さない):
+#   grants    対象に ~report(直属の部下)/ ~subordinate(配下の全員)/ ~manager(上司)/ ~superior(上の全員)/ ~peer(同じ上司)
+#             例: @lead agent:read ~report
+#   delivery  宛先に同じ関係(送信者から見て)。例: @worker -> ~manager : *=now
+# 判定の確かめ方: tb can <主体> <操作> <対象>(例: tb can w1 send:task lead1)
+#
+# 例:
+# @worker -> lead1
+# kid-*   -> ~parent
+# lead*   -> boss

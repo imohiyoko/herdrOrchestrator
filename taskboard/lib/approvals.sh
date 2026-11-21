@@ -12,27 +12,95 @@ valid_action() { [[ $1 =~ ^[A-Za-z0-9._:*?@-]{1,128}$ ]] || usage "操作名に�
 # 1 行 1 つ: <主体> <操作> <対象>。どれかの行に当たれば allow(approvals.conf より先に見る)。当たらなければ approvals.conf が決める
 #   主体   agent 名の glob か @<役割>(@a+b も可)
 #   操作   操作名の glob(対象の手前まで。例 agent:read / send:task / agent:stop / role:change)
-#   対象   agent 名の glob か @<役割>、または spawn の関係で ~child(子)/ ~descendant(子孫)/ ~parent(親)/ ~sibling(兄弟)
+#   対象   agent 名の glob か @<役割>、または spawn の関係で ~child(子)/ ~descendant(子孫)/ ~parent(親)/ ~sibling(兄弟)、
+#          組織図(設定 org)の関係で ~report(直属の部下)/ ~subordinate(配下)/ ~manager(上司)/ ~superior(上の全員)/ ~peer(同じ上司)
 # 許可を足すだけで、拒否(routes.conf の ! など)を外すことはない。役割を確かめられない行は使わない(許可側に倒さない)
 GRANTS=${TB_GRANTS:-$TB_ROOT/config/grants.conf}
 GRANT_RULE=""
 grant_parent_of() {  # $1=agent 名 → spawned_by(同じセッションの agent だけ)。読めなければ 1
   sql "SELECT COALESCE(spawned_by,'') FROM agents WHERE name=$(q "$1");"
 }
-grant_relation() {  # $1=主体 $2=対象 $3=~関係 → 当たれば 0
+grant_relation() {  # $1=主体 $2=対象 $3=~関係 → 当たれば 0、当たらなければ 1、台帳(親・役割)を読めず確かめられなければ 2(delivery は hold、grants は使わない)
   local p x i
   case $3 in
-    '~child')      p=$(grant_parent_of "$2") || return 1; [[ -n $p && $p == "$1" ]];;
-    '~parent')     p=$(grant_parent_of "$1") || return 1; [[ -n $p && $p == "$2" ]];;
-    '~sibling')    p=$(grant_parent_of "$1") || return 1; x=$(grant_parent_of "$2") || return 1; [[ -n $p && $p == "$x" && $1 != "$2" ]];;
+    '~child')      p=$(grant_parent_of "$2") || return 2; [[ -n $p && $p == "$1" ]];;
+    '~parent')     p=$(grant_parent_of "$1") || return 2; [[ -n $p && $p == "$2" ]];;
+    '~sibling')    p=$(grant_parent_of "$1") || return 2; x=$(grant_parent_of "$2") || return 2; [[ -n $p && $p == "$x" && $1 != "$2" ]];;
     '~descendant') x=$2
                    for ((i = 0; i < 16; i++)); do   # 上へたどる(循環しても 16 段で止める)
-                     x=$(grant_parent_of "$x") || return 1; [[ -n $x ]] || return 1
+                     x=$(grant_parent_of "$x") || return 2; [[ -n $x ]] || return 1
                      [[ $x == "$1" ]] && return 0
                    done; return 1;;
+    '~report'|'~subordinate'|'~manager'|'~superior'|'~peer') org_relation "$1" "$2" "$3";;
     *) return 1;;
   esac
 }
+
+# ---------- 組織図(設定 org。上司の線)----------
+# 1 行 1 つ: <部下のパターン> -> <上司>。agent ごとに、上から見て最初に当たった行で上司が 1 人に決まる(決定的)
+#   部下のパターン  agent 名の glob か @<役割>(@a+b も可)
+#   上司            agent 名、または ~parent(tb agent-spawn で立てた親。親がいなければその行は飛ばす)
+# 自分自身を上司にする行は飛ばす。設定が無ければ誰にも上司はいない(中立。関係 ~report などはどれにも当たらない)
+# 組織図そのものは全員が見られる(tb org)。できることを決めるのは grants / delivery / approvals / protect の行
+ORG_DEPTH=16   # 上へたどる段数の上限(循環しても止まる)
+# org_manager_of <agent> → 上司の名前を出して 0。上司がいなければ 1、役割や親を確かめられない行に先に当たったら 2
+org_manager_of() {
+  local who=$1 line l r m
+  config_has org || return 1
+  while IFS= read -r line || [[ -n $line ]]; do
+    line=$(trim "${line%%#*}"); [[ $line == *"->"* ]] || continue
+    l=$(trim "${line%%->*}"); r=$(trim "${line#*->}")
+    [[ -n $l && -n $r && $r != *[[:space:]]* ]] || continue
+    m=0; name_matches "$who" "$l" || m=$?
+    ((m == 2)) && return 2
+    ((m == 0)) || continue
+    if [[ $r == '~parent' ]]; then r=$(grant_parent_of "$who") || return 2; [[ -n $r ]] || continue; fi
+    [[ $r != "$who" ]] || continue
+    printf '%s' "$r"; return 0
+  done < <(config_text org)
+  return 1
+}
+# org_chain <agent>: 上司を上へ順に 1 行ずつ(最大 ORG_DEPTH 段。循環したら止める)。役割を確かめられなければ 2
+org_chain() {
+  local x=$1 seen=" $1 " i rc
+  for ((i = 0; i < ORG_DEPTH; i++)); do
+    rc=0; x=$(org_manager_of "$x") || rc=$?
+    ((rc == 0)) || { ((rc == 2)) && return 2; return 0; }
+    [[ $seen != *" $x "* ]] || return 0
+    seen+="$x "; printf '%s\n' "$x"
+  done
+}
+# org_relation <主体> <対象> <~関係>: 組織図の上で当たれば 0、当たらなければ 1、役割を確かめられなければ 2
+#   ~report 対象の上司が主体(直属の部下)/ ~subordinate 対象の上をたどると主体(配下の全員)
+#   ~manager 主体の上司が対象 / ~superior 主体の上をたどると対象 / ~peer 上司が同じ(自分は除く)
+org_relation() {
+  local a=$1 b=$2 x y rc=0 chain
+  [[ $a != "$b" ]] || return 1
+  case $3 in
+    '~report')      x=$(org_manager_of "$b") || return $?; [[ $x == "$a" ]];;
+    '~manager')     x=$(org_manager_of "$a") || return $?; [[ $x == "$b" ]];;
+    '~subordinate') chain=$(org_chain "$b") || return $?; grep -qxF -- "$a" <<<"$chain";;
+    '~superior')    chain=$(org_chain "$a") || return $?; grep -qxF -- "$b" <<<"$chain";;
+    '~peer')        x=$(org_manager_of "$a") || return $?; y=$(org_manager_of "$b") || { rc=$?; ((rc == 2)) && return 2; return 1; }
+                    [[ $x == "$y" ]];;
+    *) return 1;;
+  esac
+}
+# 設定 org の本文を検査する(tb config set / edit のときに呼ばれる)
+config_validate_org() {  # $1=本文
+  local line l r n=0 bad=""
+  while IFS= read -r line || [[ -n $line ]]; do
+    n=$((n + 1))
+    line=$(trim "${line%%#*}"); [[ -n $line ]] || continue
+    if [[ $line != *"->"* ]]; then bad+="${n} 行目: <部下のパターン> -> <上司> の形ではありません: $line"$'\n'; continue; fi
+    l=$(trim "${line%%->*}"); r=$(trim "${line#*->}")
+    [[ $l =~ ^@?[A-Za-z0-9*?._+-]{1,64}$ ]] || bad+="${n} 行目: 部下は agent 名の glob か @<役割>: $l"$'\n'
+    [[ $r == '~parent' || $r =~ ^[a-z][a-z0-9_-]{0,31}$ ]] || bad+="${n} 行目: 上司は agent 名か ~parent(glob・@役割は書けない): $r"$'\n'
+  done <<<"$1"
+  [[ -z $bad ]] && return 0
+  printf '%s' "$bad" >&2; return 1
+}
+
 # grant_of <主体> <操作> <対象>: 当たれば 0 で GRANT_RULE に行を入れる
 grant_of() {
   local who=$1 op=$2 target=$3 line s o t rest m
