@@ -1,8 +1,11 @@
 # shellcheck shell=bash
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
 # --- 承認の委任: grants.conf の approve:<元の操作> <依頼者> に当たる agent が、人の承認待ち(O-<n> / L-<n>)を承認・却下できる
-_saved_pane=${HERDR_PANE_ID-}; unset HERDR_PANE_ID
-_saved_appr=${TB_APPROVALS-}; _saved_roles=${TB_ROLES-}; _saved_db=$TB_DB _saved_dlv=${TB_DELIVERY-}
+# 変える環境変数は、開始時の値と「設定されていたか」を残し、最後に戻す(未設定だったものは unset)
+_dg_vars="HERDR_PANE_ID TB_DB TB_APPROVALS TB_ROLES TB_GRANTS TB_AGENT_CWD TB_DELIVERY FAKE_AGENTS"
+declare -A _dg_saved=()
+for _v in $_dg_vars; do if [[ -v $_v ]]; then _dg_saved[$_v]=${!_v}; fi; done
+unset HERDR_PANE_ID
 export TB_DB=$TMP/delegate.db TB_APPROVALS=$TMP/delegate-appr.conf TB_ROLES=$TMP/delegate-roles TB_GRANTS=$TMP/delegate-grants.conf TB_AGENT_CWD=$TMP
 mkdir -p "$TB_ROLES"; for r in lead worker; do echo "ROLE-$r" >"$TB_ROLES/$r.md"; done
 printf 'lead* = lead\nw* = worker\n' >"$TB_ROLES/map.conf"
@@ -50,7 +53,8 @@ eq "agent-stop: w1 needs approval" "$(as w1 rc $TB agent-stop w2 >/dev/null 2>&1
 eq "agent-approve: refused without a grant" "$(as lead1 rc $TB agent-approve "$lid" 2>/dev/null) $(dsql "SELECT status FROM agent_ops WHERE id=${lid#L-};")" "1 pending"
 eq "agent-approve: --always is for the human only" "$(as rev1 rc $TB agent-approve "$lid" --always 2>/dev/null) $($TB approval agent:stop:w2 | head -1)" "1 ask"
 dsql "UPDATE agent_ops SET decided_at='x' WHERE id=${lid#L-};"   # ほかの承認者が処理中
-eq "agent-approve: a row another approver is running is not run twice" "$(as rev1 rc $TB agent-approve "$lid" 2>/dev/null) $(grep -c '^pane-close ww2:p1' "$FAKE_LOG")" "1 0"
+eq "agent-approve: a row another approver is running is not run twice (agent or human)" "$(as rev1 rc $TB agent-approve "$lid" 2>/dev/null) $(rc $TB agent-approve "$lid" 2>/dev/null) $(grep -c '^pane-close ww2:p1' "$FAKE_LOG")" "1 1 0"
+eq "agent-reject: an agent cannot reject a row being run" "$(as rev1 rc $TB agent-reject "$lid" 2>/dev/null) $(dsql "SELECT status FROM agent_ops WHERE id=${lid#L-};")" "1 pending"
 dsql "UPDATE agent_ops SET decided_at=NULL WHERE id=${lid#L-};"
 out=$(as rev1 $TB agent-approve "$lid" 2>&1)
 eq "agent-approve: rev1 approve:agent:stop:* w1 runs it" "$(grep -c 'w2 stopped' <<<"$out") $(grep -c '^pane-close ww2:p1' "$FAKE_LOG")" "1 1"
@@ -69,7 +73,5 @@ eq "agent-approve: model-set --all and slash --all stay human-only" "$(as rev1 r
 eq "agent-reject: a single model-set can be delegated (approve:agent:model:*)" "$(as rev1 $TB agent-reject "$m1")" "$m1 rejected"
 eq "model-set --all: the pending row is marked all:1" "$(HERDR_PANE_ID= $TB model-set --all sonnet >/dev/null 2>&1; dsql "SELECT COUNT(*) > 0 FROM agent_ops WHERE status='pending' AND json_extract(args,'\$.all')=1 AND id != ${ml#L-};")" "1"
 
-export TB_APPROVALS=$_saved_appr TB_DB=$_saved_db; unset TB_GRANTS
-if [[ -n $_saved_dlv ]]; then export TB_DELIVERY=$_saved_dlv; else unset TB_DELIVERY; fi
-if [[ -n $_saved_roles ]]; then export TB_ROLES=$_saved_roles; else unset TB_ROLES; fi
-unset FAKE_AGENTS; export HERDR_PANE_ID=$_saved_pane
+for _v in $_dg_vars; do if [[ -v _dg_saved[$_v] ]]; then export "$_v=${_dg_saved[$_v]}"; else unset "$_v"; fi; done
+unset _v _dg_vars _dg_saved

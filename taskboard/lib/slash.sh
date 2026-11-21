@@ -80,11 +80,11 @@ slash_send_one() {  # $1=宛先 $2=コマンド名 $3=依頼者 [$4=承認待ち
     0) if [[ $SL_CHECK == screen || -n $SL_OK ]] && ! slash_screen_check "${pane:-$name}" "$SL_OK"; then r=1; msg="failed($SLASH_WHY)"
        else msg=sent; fi;;
     1) msg="failed(処理の開始を確認できない。pane を見てください)";;
-    10) record_op slash "$name" "$args" "$by" 1 "$(oneline "$text: 送らず(送る直前に宛先が使用中)" 200)" "$lid"
+    10) record_op slash "$name" "$args" "$by" 1 "$(oneline "$text: 送らず(送る直前に宛先が使用中)" 200)${lid:+ / $(approver_label)が承認}" "$lid"
         SLASH_LINE="$name skip(busy)"; return 10;;
     *) msg="failed(送信に失敗)"; r=1;;
   esac
-  record_op slash "$name" "$args" "$by" "$r" "$(oneline "$text: $msg" 200)" "$lid"
+  record_op slash "$name" "$args" "$by" "$r" "$(oneline "$text: $msg" 200)${lid:+ / $(approver_label)が承認}" "$lid"
   SLASH_LINE="$name $msg"
   return $r
 }
@@ -208,6 +208,8 @@ slash_approve() {
   local id=$1 row=$2 always=$3 target args cmd by name why out="" r=0 rc=0 n=0
   target=$(jq -r .target <<<"$row"); args=$(jq -r .args <<<"$row"); by=$(jq -r .requested_by <<<"$row")
   cmd=$(jq -r '.command // ""' <<<"$args")
+  ((always == 0)) || [[ $target != '*' ]] || die "L-$id: --all の承認に --always は使えません"
+  op_claim "$id"   # 同時に承認しても送るのは 1 回(lib/agents.sh)
   # 承認待ちの間に許可リストが変わっていたら、今の行に従う(外された・deny になったら送らない)
   r=0; slash_lookup "$cmd" || r=$?
   if ((r)) || [[ $SL_POLICY != allow ]]; then
@@ -215,7 +217,6 @@ slash_approve() {
     echo "tb: L-$id: /$cmd は許可リストに無いか deny です。送りません" >&2; return 1
   fi
   if ((always)); then
-    [[ $target != '*' ]] || die "L-$id: --all の承認に --always は使えません"
     set_approval allow "agent:slash:$cmd:$target" >/dev/null && echo "agent:slash:$cmd:$target = allow(今後は承認なし)"
   fi
   agent_sync || die "herdr agent list に失敗しました"

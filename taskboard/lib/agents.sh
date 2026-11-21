@@ -687,12 +687,11 @@ agent_op_action() {  # $1=agent_ops の行(JSON)
   esac
 }
 
-# 承認を任された agent が実行する前に、承認待ちの行を 1 回だけ取る(2 体が同時に承認しても実行は 1 回)。
-# 取った印は decided_at(結果の記録で上書きされる)。人は印があっても実行できる(途中で止まった行を人が片付けられるように)
+# 実行する前に、承認待ちの行を 1 回だけ取る(人と agent、agent 同士が同時に承認しても実行は 1 回)。
+# 取った印は decided_at(結果の記録で上書きされる)。途中で止まって印だけ残った行は、人が tb agent-reject で片付ける
 op_claim() {  # $1=id
-  [[ $APPROVER == human ]] && return 0
   [[ $(sql "UPDATE main.agent_ops SET decided_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$1 AND status='pending' AND decided_at IS NULL; SELECT changes();") == 1 ]] \
-    || die "L-$1 はほかの承認者が処理中か、すでに決まっています"
+    || die "L-$1 はほかの承認者が処理中か、すでに決まっています(途中で止まった行なら、人が tb agent-reject L-$1 で片付ける)"
 }
 
 # 承認待ちの操作を実行する(人か、grants.conf の approve:agent:… で許された agent)。--always なら agent:<op>:<対象> を allow に(人だけ)
@@ -705,7 +704,7 @@ cmd_agent-approve() {
   approver_check "tb agent-approve" "$(agent_op_action "$row")" "$(jq -r .requested_by <<<"$row")"
   [[ $APPROVER == human ]] || ((always == 0)) || die "tb agent-approve: --always(今後は承認なしにする)は人だけが使えます"
   [[ $(jq -r .status <<<"$row") == pending ]] || die "L-$id は承認待ちではありません($(jq -r .status <<<"$row"))"
-  if [[ $(jq -r .op <<<"$row") == slash ]]; then op_claim "$id"; slash_approve "$id" "$row" "$always"; return; fi   # tb slash(lib/slash.sh)
+  if [[ $(jq -r .op <<<"$row") == slash ]]; then slash_approve "$id" "$row" "$always"; return; fi   # tb slash(lib/slash.sh)
   op=$(jq -r .op <<<"$row"); target=$(jq -r .target <<<"$row"); args=$(jq -r .args <<<"$row"); by=$(jq -r .requested_by <<<"$row")
   local aop=$op; [[ $(jq -r '.model_set // 0' <<<"$args") == 1 ]] && aop=model   # tb model-set の承認待ち(記録は op=revive)
   if [[ $op == new && -n $(jq -r '.spawn.parent // ""' <<<"$args") ]]; then spawn_recheck "$id" "$args" || return 1
@@ -729,7 +728,10 @@ cmd_agent-reject() {
   [[ -n $row ]] || { approver_check "tb agent-reject" "" ""; die "L-$id は承認待ちではありません"; }
   approver_check "tb agent-reject" "$(agent_op_action "$row")" "$(jq -r .requested_by <<<"$row")"
   [[ $(jq -r .status <<<"$row") == pending ]] || die "L-$id は承認待ちではありません"
-  sql "UPDATE main.agent_ops SET status='rejected', result=COALESCE(result,'')||$(q " / $(approver_label)が却下"), decided_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$id AND status='pending';"
+  # agent は処理中(印のある)の行を却下できない。人は、途中で止まって印だけ残った行も片付けられる
+  local free="AND decided_at IS NULL"; [[ $APPROVER == human ]] && free=""
+  [[ $(sql "UPDATE main.agent_ops SET status='rejected', result=COALESCE(result,'')||$(q " / $(approver_label)が却下"), decided_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$id AND status='pending' $free; SELECT changes();") == 1 ]] \
+    || die "L-$id はほかの承認者が処理中か、すでに決まっています"
   echo "L-$id rejected"
 }
 

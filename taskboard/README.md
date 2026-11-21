@@ -577,6 +577,7 @@ reviewer1  approve:send:task:w3   @worker  # worker からの w3 宛ての依頼
 - 操作は `approve:` のあとに、承認待ちになった元の操作名(`send:<kind>:<宛先>`、`agent:<op>:<対象>`、`agent:spawn:<子>`、`agent:model:<名前>`、`agent:slash:<コマンド>:<宛先>`)。対象は依頼した agent(spawn は親)で、ほかの grants と同じく名前の glob・`@<役割>`・`~child` などの関係が書ける
 - 当たる agent は、自分の pane から `tb approve O-<n>` / `tb reject O-<n>` / `tb agent-approve L-<n>` / `tb agent-reject L-<n>` を実行できる。当たらなければ従来どおり人だけ
 - 自分の依頼は承認できない。`--always`(今後は承認なしにする規則の書き換え)は人だけ。`tb slash --all` / `tb model-set --all` の承認待ちと spawn-freeze 中の spawn も人だけ。アラート(`tb alert-approve`)と PR キュー(`tb pr-queue approve`)は対象外(人だけ)
+- 同じ承認待ちを 2 人(人と agent でも)が同時に承認しても、実行・送信は 1 回だけ。実行の途中で止まった `L-<n>` は承認し直せないので、人が `tb agent-reject` で片付けて頼み直す
 - 誰が承認・却下したかは記録に残る(outbox の reason、`tb agent-ops` の結果に `agent <名前>(grants.conf: …)が承認`)。承認しても `delivery` の止める規則などは外れない
 - `tb can <承認者> approve:<元の操作> <依頼者>`(例 `tb can lead1 approve:send:task:w2 w1`)で、承認できるかを確かめられる(allow か deny)。組織図の関係も書ける(例 `@lead approve:send:task:* ~report`)
 - 承認者には自動では知らせない。依頼した agent が `tb send <承認者> --kind info --text 'O-12 の確認をお願いします'` のように頼む

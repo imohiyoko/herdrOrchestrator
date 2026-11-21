@@ -278,7 +278,8 @@ cmd_reject() {
   approver_check "tb reject" "send:$(jq -r .kind <<<"$row"):$(jq -r .target <<<"$row")" "$(jq -r .from_name <<<"$row")"
   [[ $(jq -r .status <<<"$row") == pending ]] || die "O-$oid は承認待ちではありません"
   # 却下した返信は「返信済み」に数えない(元の送信にもう一度返信できる)
-  sql "UPDATE main.outbox SET status='denied', reason=reason||$(q " / $(approver_label)が却下 $(now)"),
-         reply_check=CASE WHEN reply_check='ok' THEN $(q "$(approver_label)が却下") ELSE reply_check END WHERE herdr_session=$SQS AND id=$oid AND status='pending';"
+  [[ $(sql "UPDATE main.outbox SET status='denied', reason=reason||$(q " / $(approver_label)が却下 $(now)"),
+         reply_check=CASE WHEN reply_check='ok' THEN $(q "$(approver_label)が却下") ELSE reply_check END WHERE herdr_session=$SQS AND id=$oid AND status='pending'; SELECT changes();") == 1 ]] \
+    || die "O-$oid は承認待ちではありません(ほかで決まりました)"
   echo "O-$oid rejected"
 }
