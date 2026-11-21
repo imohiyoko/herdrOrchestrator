@@ -76,8 +76,9 @@ eq "claim guard: failed claim changes nothing" "$(cg_state $c3) $($TB show $c3 |
 eq "claim guard: reason points to reassignment" "$($TB claim $c3 --owner w2 2>&1 | grep -c 'tb update .* --owner')" "1"
 eq "claim guard: reassign with update, then claim" "$($TB update $c3 --owner w2 >/dev/null; rc $TB claim $c3 --owner w2) $(cg_state $c3)" "0 in_progress/w2"
 eq "claim guard: status not todo keeps the old reason" "$($TB claim $c3 --owner w2 2>&1 | grep -c 'todo ではない')" "1"
-c4=$($TB add -p cg -t "race")
+# two claims run one after the other; only the first succeeds (the condition sits in the UPDATE WHERE, so it is atomic)
+c4=$($TB add -p cg -t "second claim on the same todo")
 cg_a=$(rc $TB claim $c4 --owner wa); cg_b=$(rc $TB claim $c4 --owner wb)
-eq "claim guard: two claims on the same unowned todo → exactly one wins" "$cg_a $cg_b $(cg_state $c4)" "0 1 in_progress/wa"
+eq "claim guard: two sequential claims on the same unowned todo → only the first succeeds" "$cg_a $cg_b $(cg_state $c4)" "0 1 in_progress/wa"
 c5=$($TB add -p cg -t "pool text case" --owner w9)
 eq "claim guard: following a pool-style claim on an assigned todo fails and leaves it" "$(rc $TB claim $c5 --owner w1 --session s9) $(cg_state $c5)" "1 todo/w9"
