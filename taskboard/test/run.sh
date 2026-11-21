@@ -113,7 +113,7 @@ wait
 pass=0 fail=0 bad=()
 for i in "${!ulist[@]}"; do
   echo "=== ${ulist[i]}"
-  grep -v '^pass=[0-9]* fail=[0-9]*$' "$out/$i.log" | sed '${/^$/d}'
+  grep -v '^pass=[0-9]* fail=[0-9]*$' "$out/$i.log" | sed -e '${' -e '/^$/d' -e '}'
   last=$(grep -E '^pass=[0-9]+ fail=[0-9]+$' "$out/$i.log" | tail -n 1)
   if [[ -z $last ]]; then bad+=("${ulist[i]}"); echo "FAIL (ユニットが最後まで流れなかった: 終了コード $(cat "$out/$i.rc"))"; continue; fi
   p=${last#pass=}; p=${p%% *}; f=${last##*fail=}

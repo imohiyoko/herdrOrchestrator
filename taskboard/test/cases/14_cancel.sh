@@ -13,7 +13,7 @@ eq "cancel: not overdue" "$($TB list -p cx --overdue | wc -l | tr -d ' ')" "0"
 eq "cancel: not due-within" "$($TB list -p cx --due-within 30 | wc -l | tr -d ' ')" "0"
 eq "cancel: cancelled blocker no longer blocks claim" "$(rc $TB claim "$b" --owner w1)" "0"
 eq "cancel: not in pending (not a completion)" "$($TB pending --ids | grep -c "$a")" "0"
-eq "cancel: history has the status event" "$($TB history "$a" | grep -P '\tstatus\t' | cut -f5,6 | tr '\t' ' ')" "todo cancelled"
+eq "cancel: history has the status event" "$($TB history "$a" | grep "$(printf '\tstatus\t')" | cut -f5,6 | tr '\t' ' ')" "todo cancelled"
 
 # --- 閉じた状態なので、もう動かさない
 eq "cancel: twice rejected" "$(rc $TB cancel "$a")" "1"
