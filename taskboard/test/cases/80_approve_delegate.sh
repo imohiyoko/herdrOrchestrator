@@ -49,6 +49,9 @@ out=$(as w1 $TB agent-stop w2 2>&1); lid=$(head -1 <<<"$out" | cut -d' ' -f1)
 eq "agent-stop: w1 needs approval" "$(as w1 rc $TB agent-stop w2 >/dev/null 2>&1; dsql "SELECT COUNT(*) FROM agent_ops WHERE status='pending' AND op='stop';") ${lid%%-*}" "2 L"
 eq "agent-approve: refused without a grant" "$(as lead1 rc $TB agent-approve "$lid" 2>/dev/null) $(dsql "SELECT status FROM agent_ops WHERE id=${lid#L-};")" "1 pending"
 eq "agent-approve: --always is for the human only" "$(as rev1 rc $TB agent-approve "$lid" --always 2>/dev/null) $($TB approval agent:stop:w2 | head -1)" "1 ask"
+dsql "UPDATE agent_ops SET decided_at='x' WHERE id=${lid#L-};"   # ほかの承認者が処理中
+eq "agent-approve: a row another approver is running is not run twice" "$(as rev1 rc $TB agent-approve "$lid" 2>/dev/null) $(grep -c '^pane-close ww2:p1' "$FAKE_LOG")" "1 0"
+dsql "UPDATE agent_ops SET decided_at=NULL WHERE id=${lid#L-};"
 out=$(as rev1 $TB agent-approve "$lid" 2>&1)
 eq "agent-approve: rev1 approve:agent:stop:* w1 runs it" "$(grep -c 'w2 stopped' <<<"$out") $(grep -c '^pane-close ww2:p1' "$FAKE_LOG")" "1 1"
 eq "agent-approve: the approver is recorded" "$(dsql "SELECT status, result LIKE '%agent rev1(grants.conf: rev1 approve:agent:stop:* w1)が承認%' FROM agent_ops WHERE id=${lid#L-};")" "done|1"
