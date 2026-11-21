@@ -60,7 +60,8 @@ agent の名前・プロンプト・権限(approvals / grants / routes / deliver
   - `projects`: 報告の宛先。`*=<指揮役の agent 名>`(既定の宛先)、`<project>=<名前>`、提案の受け手は `proposal=<名前>`。
     `*` の行が無いと、宛先は `conductor` という名前の agent になる。
   - `grants`: 役割の名前に頼らず、特定の agent に操作を許す。例 `sweeper agent:flag *`(止めてよいかの印)、
-    `hr role:change *`(ロールの付け替え)。
+    `hr role:change *`(ロールの付け替え)。承認待ちの承認を任せるなら `<承認者> approve:<元の操作> <依頼者>`
+    (例 `@conductor approve:send:task:* ~report` = 直属の部下からの依頼の送信を指揮役が承認できる。`--always` と `--all` 系は人だけ)。
   - `org`: 組織図(誰の上司は誰か)。例は `setup/examples/org.conf`(指揮役の名前を実際の名前に直す)。承認後に
     `bash taskboard/bin/tb config set org --shared < <本文>`。組織図は全員が `tb org` で見られるが、線を引くだけでは何も許さない。
     できることは grants の対象・delivery の宛先に `~report`(直属の部下)/ `~subordinate`(配下)/ `~manager`(上司)/
