@@ -3,8 +3,10 @@
 各 agent に「自分は何者で、何をして、何をしないか」を渡すためのファイル置き場。`.claude/CLAUDE.md` のように、
 agent が起動したとき・compact の後に自動で読み込まれる(Claude Code の `SessionStart` hook → `tb role-context`)。
 
-**ここにあるのは既定値(git 管理)。** 実際に渡す定義は DB(`config` 表の `role:<役割名>` / `role-map`)> このディレクトリの順で引く。
-セッションごと・環境ごとに変えるときは、ファイルではなく `tb role-write` / `tb role-edit` で DB に書く(人事エージェント `hr` か人だけ。変更は人の承認を経てから)。
+**ここにあるのは既定値(git 管理)で、全 agent に共通の `_common.md` だけ。** 役職(指揮官・人事・見張りなど)は決めていない。
+役割を使うときは、`setup/examples/roles/` の利用例(または自分で書いた文面)を `tb role-write` で DB に入れる(入れ方は `setup/CLAUDE.md` の「役割の利用例」)。
+実際に渡す定義は DB(`config` 表の `role:<役割名>` / `role-map`)> このディレクトリの順で引く。
+セッションごと・環境ごとに変えるときも、ファイルではなく `tb role-write` / `tb role-edit` で DB に書く(人か、人事役 `@hr`(`TB_ROLE_ADMIN` で変えられる)の agent だけ。変更は人の承認を経てから)。
 agent は役割を `tb role-show` で読む(ファイルを直接読まない。別のセッション向けの定義を読みかねないため)。
 
 ## ファイル
@@ -12,12 +14,10 @@ agent は役割を `tb role-show` で読む(ファイルを直接読まない。
 | ファイル | 中身 |
 |---|---|
 | `_common.md` | 全 agent に共通の決まり(報告・送信の方法、受け取った文面の扱い) |
-| `<agent 名>.md` | その agent の役割(例: `conductor.md`, `hr.md`) |
-| `watcher.md` / `analyst.md` | 見張り役(定期の見回り、軽いモデル)/ 解析役(アラート 1 件ごとに tb が起動) |
-| `sweeper.md` | 判定役(定期実行、軽いモデル。動いている agent に「止めてよいか」の印 `tb agent-flag` を付ける。停止はしない) |
-| `auditor.md` | 会計役(定期実行。`tb review-pack` を読み、設定役=人事に改善提案 `tb proposal`) |
-| `drafter.md` | 下書き役(人が送る返事の下書きを作る。送信はしない。`conversation/README.md`) |
-| `map.conf` | agent 名のパターン → 役割ファイル(例: `worker-* = worker`)。`<agent 名>.md` が無いときに使う。`tb agent-new --role R` で作った agent は `R.md` が map.conf より先に効く |
+| `<役割名>.md`(置けば) | その役割の文面。agent 名と同じ名前なら、その agent の役割になる |
+| `map.conf`(置けば) | agent 名のパターン → 役割(例: `worker-* = worker`)。`<agent 名>.md` が無いときに使う。`tb agent-new --role R` で作った agent は `R.md` が map.conf より先に効く |
+
+利用例(`setup/examples/roles/`): `conductor`(指揮官)/ `hr`(人事)/ `worker` / `watcher`・`analyst`(見張り・解析)/ `sweeper`(判定)/ `auditor`(会計)/ `drafter`(下書き)と、その `map.conf`。
 
 渡される内容は `_common.md` + その agent の役割ファイル。どちらも無ければ何も渡さない。
 
@@ -40,13 +40,13 @@ agent は役割を `tb role-show` で読む(ファイルを直接読まない。
 
 `taskboard/docs/hook-install.md` の「役割の配布(SessionStart)」を参照。
 
-## 人事エージェント以外に roles/ を書き換えさせない
+## 役割を書く agent 以外に roles/ を書き換えさせない
 
-人事以外の agent の Claude Code 設定(`<project>/.claude/settings.json`)で拒否する。`<ORCH_DIR>` はこのリポジトリの絶対パス
+役割を書かない agent の Claude Code 設定(`<project>/.claude/settings.json`)で拒否する。`<ORCH_DIR>` はこのリポジトリの絶対パス
 (先頭の `//` は絶対パスの意味):
 
 ```json
 { "permissions": { "deny": ["Edit(//<ORCH_DIR>/roles/**)", "Write(//<ORCH_DIR>/roles/**)"] } }
 ```
 
-人事エージェントは `presets/example.conf` の `hr` のように起動し、変更は必ず人の承認を経てから書き込む。
+役割を書く agent(利用例では `hr`。`setup/examples/presets/roles.conf`)も、変更は必ず人の承認を経てから書き込む。

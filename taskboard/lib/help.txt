@@ -86,6 +86,7 @@ tb role-show [agent 名]            その agent に渡す役割の本文(省略
 tb role-list                       役割名と出どころ(DB のこのセッションの行 / 共通の行 / roles/ のファイル)。_common と @map(名前と役割の対応)も出す
 tb role-edit <役割名|@map> [--shared]   tb role-write と同じ(本文を $EDITOR で編集)
 tb role-write <役割名|@map> [--shared] < 本文   役割の定義を DB のこのセッションの行(--shared なら共通の行)に書く。人と人事役(role:change が allow のとき)。人事役は人事役の役割・人事役を付ける対応は書けない
+tb role-unset <役割名|@map> [--shared]   DB の役割の行を消す(人だけ)。消すと共通の行、無ければ roles/ のファイルに戻る
 tb roles [--json]                  agent ごとの役割ファイルと、渡した版が最新か(current|outdated|never|no-role)
 tb role-set <agent 名> <ロール[,ロール...]> [--reason R]   ロールを変える(台帳。複数は 分野×立場 の組み合わせ、例 hr,manager)。人と人事役(@hr)だけ。人事役からは role:change が allow のときだけ。自分・人事役のロールは不可
 tb role-log [--json]               ロール変更の記録(このセッションの分。誰がいつ誰を何から何に)

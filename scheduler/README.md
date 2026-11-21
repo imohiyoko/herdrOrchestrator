@@ -64,7 +64,7 @@ launchd が `bin/tick.sh <job>` を毎分起動し、時間帯・曜日・間隔
 ```bash
 PROMPT_RULES='
 # 00 分は全体のレビュー、30 分は差分だけ。平日 9-12 時の 15 分おきは別のファイルの本文
-min=00 | roles/auditor.md の手順で全体をレビューしてください。
+min=00 | 役割(tb role-show)の手順で全体をレビューしてください。
 min=30 | 前回からの差分だけ見てください。
 days=weekdays hour=9-12 min=*/15 | file:/path/to/morning.md
 '

@@ -21,12 +21,17 @@ eq "role-list: 出どころ" "$(RA role-list | awk '$1=="worker"{print $2}') $(R
 printf 'analyst(共通)\n' | RB role-write analyst --shared >/dev/null
 printf 'a* = analyst\nw* = worker\nhr* = hr\n' | RA role-write @map >/dev/null
 eq "role-write --shared / @map: 共通の役割と、セッションの対応" "$(RA role-show a1 | grep -c 'analyst(共通)') $(RB role-show a1 2>/dev/null | grep -c analyst) $(RB role-list | cut -f1 | tr '\n' ' ')" "1 0 _common @map analyst hr worker "
+printf 'tmp(共通)\n' | RB role-write tmprole --shared >/dev/null
+eq "role-unset: 人は DB の行を消せる(消すと無くなる)" "$(RB role-unset tmprole --shared) $(RB role-list | grep -c '^tmprole')" "tmprole: なし 0"
+printf 'worker(sb の DB)\n' | RB role-write worker >/dev/null
+eq "role-unset: このセッションの行を消すと roles/ のファイルに戻る" "$(RB role-unset worker | cut -d' ' -f1-2)" "worker: file:$TB_ROLES/worker.md"
 eq "role-set: DB にだけある役割も使える" "$(RA role-set nobody analyst 2>&1 | grep -c '定義のある役割名')" "0"
 
 # 人事役(agent)からは role:change が allow のときだけ。人事役の役割・人事役を付ける対応は書けない
 export FAKE_AGENTS='[{"pane_id":"wH:p1","name":"hr1","agent_session":{"value":"sh"}},{"pane_id":"wW:p1","name":"w1","agent_session":{"value":"sw"}}]'
 eq "role-write: 人事役は書ける(書いた人が残る)" "$(printf 'worker(hr が更新)\n' | HERDR_PANE_ID=wH:p1 RA role-write worker >/dev/null 2>&1; echo $?) $(sqlite3 "$TB_DB" "SELECT changed_by FROM config_changes WHERE key='role:worker' ORDER BY id DESC LIMIT 1;")" "0 hr1"
 eq "role-write: 人事役でない agent は断る" "$(printf 'x\n' | HERDR_PANE_ID=wW:p1 rc RA role-write worker)" "1"
+eq "role-unset: agent からは消せない" "$(HERDR_PANE_ID=wH:p1 rc RA role-unset worker)" "1"
 eq "role-write: 人事役は人事役の役割を書けない" "$(printf 'x\n' | HERDR_PANE_ID=wH:p1 rc RA role-write hr)" "1"
 eq "role-write: 人事役は人事役を付ける対応を書けない" "$(printf 'z* = worker, hr\n' | HERDR_PANE_ID=wH:p1 rc RA role-write @map)" "1"
 printf 'role:change = ask\n' >"$TB_APPROVALS"

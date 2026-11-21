@@ -3,7 +3,7 @@ TARGET=auditor
 # 1 行 1 ルール: <条件> | <本文>(本文は 1 行。複数行は file:<パス>)。上から見て最初に合った行を送る。合わなければ PROMPT(無ければ送らない)
 # 条件の key: min / hour / sec / days。値は 00 / 9-12 / */15 / 00,30。days は weekdays / mon,wed など
 PROMPT_RULES='
-min=00 | roles/auditor.md の手順で全体をレビューしてください。未解決の bug: {{bugs}}
+min=00 | 役割(tb role-show)の手順で全体をレビューしてください。未解決の bug: {{bugs}}
 min=30 | 前回({{date}} {{hour}}:00)からの差分だけ見てください。
 '
 # {{名前}} に入れるコマンドの出力。終了コード 1 ならその回は送らない(該当なし)。それ以外の失敗は failed
