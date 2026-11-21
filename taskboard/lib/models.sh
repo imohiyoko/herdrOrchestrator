@@ -5,7 +5,7 @@
 # モデルの決まり方(起動・復活のとき。上が勝つ):
 #   1. 明示の --model(tb agent-new / agent-revive / model-set)
 #   2. 台帳の model(明示の指定で書いた値。tb model-set <対象> --reset で消す)
-#   3. 役割の既定(config の role-models。<役割の glob> = <モデル>。上から見て最初に一致した行)
+#   3. 役割の既定(config の role-models。<役割の glob> = <モデル> か name:<agent 名の glob> = <モデル>。上から見て最初に一致した行)
 #   4. agent の CLI 自身の既定
 # 役割の既定は台帳に書かない(あとで role-models を変えても、台帳に値がある agent は変わらない)。
 # 切り替えは、idle / done の agent を止めて、同じ会話を --model 付きで復活させる。ユーザー単位の設定(~/.claude/settings.json など)は触らない。
@@ -17,9 +17,9 @@ config_validate_role_models() {  # $1=本文
   while IFS= read -r line || [[ -n $line ]]; do
     n=$((n + 1))
     line=$(trim "${line%%#*}"); [[ -n $line ]] || continue
-    if [[ $line != *=* ]]; then bad+="${n} 行目: <役割の glob> = <モデル> の形ではありません"$'\n'; continue; fi
+    if [[ $line != *=* ]]; then bad+="${n} 行目: <役割の glob> = <モデル>(または name:<agent 名の glob> = <モデル>)の形ではありません"$'\n'; continue; fi
     k=$(trim "${line%%=*}"); v=$(trim "${line#*=}")
-    [[ $k =~ ^[A-Za-z0-9*?._-]{1,64}$ ]] || bad+="${n} 行目: 役割の glob に使えない文字があります: $k"$'\n'
+    [[ ${k#name:} =~ ^[A-Za-z0-9*?._-]{1,64}$ ]] || bad+="${n} 行目: 役割(または name:<agent 名>)の glob に使えない文字があります: $k"$'\n'
     [[ $v =~ $MODEL_RE ]] || bad+="${n} 行目: モデル名に使えない文字があります: $v"$'\n'
   done <<<"$1"
   [[ -z $bad ]] && return 0
@@ -27,17 +27,22 @@ config_validate_role_models() {  # $1=本文
 }
 
 # 役割の既定モデル(無ければ空)。$1=agent 名 [$2=台帳の role]
+# 行は上から見て最初に当たったもの。name:<glob> の行は agent 名で比べる(役割が無い agent にも効く)
 role_model_for() {
   config_has role-models || return 0
-  local roles line k v r; local -a have
-  roles=$(role_name_of "$@" 2>/dev/null) || return 0
-  [[ -n $roles ]] || return 0
-  IFS=, read -ra have <<<"$roles"
+  local roles="" line k v r; local -a have=()
+  roles=$(role_name_of "$@" 2>/dev/null) || roles=""
+  [[ -z $roles ]] || IFS=, read -ra have <<<"$roles"
   while IFS= read -r line || [[ -n $line ]]; do
     line=$(trim "${line%%#*}"); [[ $line == *=* ]] || continue
     k=$(trim "${line%%=*}"); v=$(trim "${line#*=}")
     [[ $v =~ $MODEL_RE ]] || continue
-    for r in "${have[@]}"; do
+    if [[ $k == name:* ]]; then
+      # shellcheck disable=SC2053  # glob として比べる
+      [[ $1 == ${k#name:} ]] && { printf '%s' "$v"; return 0; }
+      continue
+    fi
+    for r in ${have[@]+"${have[@]}"}; do
       # shellcheck disable=SC2053  # glob として比べる
       [[ $r == $k ]] && { printf '%s' "$v"; return 0; }
     done

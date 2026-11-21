@@ -80,7 +80,7 @@ start_analyst() {  # $1=alerts.id
   fi
   agent_register "$name" "$cwd" "$ANALYST_MODEL" "" tb >/dev/null 2>&1 || true
   sql "UPDATE main.alerts SET status='analyzing', analyst=$(q "$name"), analysis_started_at=$(q "$(now)"), note=NULL WHERE herdr_session=$SQS AND id=$id;"
-  prompt="[from: tb / alert / A-$id / task] あなたはアラート A-$id の解析役です(役割は tb role-show で読める)。まず tb alerts A-$id で全文を読み、原因の仮説・根拠・影響範囲・推奨対応をまとめ、緊急度を決めて、tb alert-result A-$id --severity critical|high|medium|low --summary '<要約>' --report <報告ファイル> で返してください。"
+  prompt="[from: tb / alert / A-$id / task] あなたはアラート A-$id を解析する agent です。まず tb alerts A-$id で全文を読み、原因の仮説・根拠・影響範囲・推奨対応をまとめ、緊急度を決めて、tb alert-result A-$id --severity critical|high|medium|low --summary '<要約>' --report <報告ファイル> で返してください。"
   # 起動直後は idle になるまで少し待つ(herdr_send は idle/done でしか送らない)
   for i in 1 2 3 4 5; do herdr_send "$name" "$prompt" "A-$id" alert 2>/dev/null && return 0; sleep "${TB_ANALYST_RETRY_SEC:-3}"; done
   sql "UPDATE main.alerts SET note='解析役に依頼を送れていない(tb alert-dispatch で再送)' WHERE herdr_session=$SQS AND id=$id;"
