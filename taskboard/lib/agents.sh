@@ -667,14 +667,42 @@ cmd_agent-ops() {
   else sql -nullvalue - -separator $'\t' "SELECT 'L-'||id, op, target, requested_by, status, created_at, COALESCE(result,'') FROM agent_ops WHERE ($where) ORDER BY id DESC LIMIT 100;"; fi
 }
 
-# 人が承認待ちの操作を実行する。--always なら agent:<op>:<対象> を allow に
+# 承認待ちの操作の、承認を任せるときの操作名(grants.conf の approve:<これ> <依頼者>)。人だけが決めるものは空
+agent_op_action() {  # $1=agent_ops の行(JSON)
+  local op target args
+  op=$(jq -r .op <<<"$1"); target=$(jq -r .target <<<"$1"); args=$(jq -r '.args // "{}"' <<<"$1")
+  case $op in
+    slash)  [[ $target != '*' ]] || return 0   # --all は人だけ
+            printf 'agent:slash:%s:%s' "$(jq -r '.command // ""' <<<"$args")" "$target";;
+    new)    if [[ -n $(jq -r '.spawn.parent // ""' <<<"$args") ]]; then
+              spawn_frozen && return 0           # spawn-freeze の間は、spawn の承認は人だけ
+              printf 'agent:spawn:%s' "$target"
+            else printf 'agent:new:%s' "$target"; fi;;
+    revive) if [[ $(jq -r '.model_set // 0' <<<"$args") == 1 ]]; then
+              # tb model-set --all は人だけ
+              [[ $(jq -r '.all // 0' <<<"$args") != 1 && $(jq -r '.result // ""' <<<"$1") != '--all'* ]] || return 0
+              printf 'agent:model:%s' "$target"
+            else printf 'agent:revive:%s' "$target"; fi;;
+    *)      printf 'agent:%s:%s' "$op" "$target";;
+  esac
+}
+
+# 実行する前に、承認待ちの行を 1 回だけ取る(人と agent、agent 同士が同時に承認しても実行は 1 回)。
+# 取った印は decided_at(結果の記録で上書きされる)。途中で止まって印だけ残った行は、人が tb agent-reject で片付ける
+op_claim() {  # $1=id
+  [[ $(sql "UPDATE main.agent_ops SET decided_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$1 AND status='pending' AND decided_at IS NULL; SELECT changes();") == 1 ]] \
+    || die "L-$1 はほかの承認者が処理中か、すでに決まっています(途中で止まった行なら、人が tb agent-reject L-$1 で片付ける)"
+}
+
+# 承認待ちの操作を実行する(人か、grants.conf の approve:agent:… で許された agent)。--always なら agent:<op>:<対象> を allow に(人だけ)
 cmd_agent-approve() {
   [[ $# -ge 1 ]] || usage "agent-approve L-<n> [--always]"
   valid_lid "$1"; local id=${1#L-} always=0 row op target args by r=0; shift
   [[ ${1:-} == --always ]] && always=1
-  require_human "tb agent-approve"
   row=$(session_row agent_ops id "$id")
-  [[ -n $row ]] || die "操作が見つかりません: L-$id"
+  [[ -n $row ]] || { approver_check "tb agent-approve" "" ""; die "操作が見つかりません: L-$id"; }
+  approver_check "tb agent-approve" "$(agent_op_action "$row")" "$(jq -r .requested_by <<<"$row")"
+  [[ $APPROVER == human ]] || ((always == 0)) || die "tb agent-approve: --always(今後は承認なしにする)は人だけが使えます"
   [[ $(jq -r .status <<<"$row") == pending ]] || die "L-$id は承認待ちではありません($(jq -r .status <<<"$row"))"
   if [[ $(jq -r .op <<<"$row") == slash ]]; then slash_approve "$id" "$row" "$always"; return; fi   # tb slash(lib/slash.sh)
   op=$(jq -r .op <<<"$row"); target=$(jq -r .target <<<"$row"); args=$(jq -r .args <<<"$row"); by=$(jq -r .requested_by <<<"$row")
@@ -685,19 +713,25 @@ cmd_agent-approve() {
   if [[ $op == new ]] && role_conflict "$target" "$(jq -r '.role // ""' <<<"$args")"; then   # --always の規則を書く前に止める
     die "L-$id: $ROLE_CONFLICT_WHY(tb agent-reject L-$id で却下)"
   fi
+  op_claim "$id"
   ((always)) && set_approval allow "agent:$aop:$target" >/dev/null && echo "agent:$aop:$target = allow(今後は承認なし)"
   run_op "$op" "$target" "$args" "$by" || r=$?
-  record_op "$op" "$target" "$args" "$by" "$r" "$OP_OUT / 人が承認" "$id"
+  record_op "$op" "$target" "$args" "$by" "$r" "$OP_OUT / $(approver_label)が承認" "$id"
   if ((r)); then echo "tb: L-$id: $OP_OUT" >&2; else echo "L-$id: $OP_OUT"; fi
   return $r
 }
 
 cmd_agent-reject() {
   [[ $# -eq 1 ]] || usage "agent-reject L-<n>"
-  valid_lid "$1"; local id=${1#L-}
-  require_human "tb agent-reject"
-  [[ $(sql "SELECT status FROM agent_ops WHERE id=$id;") == pending ]] || die "L-$id は承認待ちではありません"
-  sql "UPDATE main.agent_ops SET status='rejected', result=COALESCE(result,'')||' / 人が却下', decided_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$id;"
+  valid_lid "$1"; local id=${1#L-} row
+  row=$(session_row agent_ops id "$id")
+  [[ -n $row ]] || { approver_check "tb agent-reject" "" ""; die "L-$id は承認待ちではありません"; }
+  approver_check "tb agent-reject" "$(agent_op_action "$row")" "$(jq -r .requested_by <<<"$row")"
+  [[ $(jq -r .status <<<"$row") == pending ]] || die "L-$id は承認待ちではありません"
+  # agent は処理中(印のある)の行を却下できない。人は、途中で止まって印だけ残った行も片付けられる
+  local free="AND decided_at IS NULL"; [[ $APPROVER == human ]] && free=""
+  [[ $(sql "UPDATE main.agent_ops SET status='rejected', result=COALESCE(result,'')||$(q " / $(approver_label)が却下"), decided_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$id AND status='pending' $free; SELECT changes();") == 1 ]] \
+    || die "L-$id はほかの承認者が処理中か、すでに決まっています"
   echo "L-$id rejected"
 }
 
@@ -848,6 +882,12 @@ cmd_can() {
         approval_of role:change; [[ $APPROVAL_VALUE == allow ]] || verdict=ask
         _can_out "人事役(@$ROLE_ADMIN)/ approvals: $APPROVAL_RULE"
       else verdict=deny; _can_out "人事役(@$ROLE_ADMIN)でなく、grants に role:change の行もない"; fi;;
+    approve:*)
+      # 承認の委任(tb approve / agent-approve)。対象は依頼した agent。grants の行だけで決まる(approvals.conf は見ない)
+      if [[ $who == "$target" ]]; then verdict=deny; _can_out "自分の依頼は承認できない"; return; fi
+      local g=1; role_pin "$who" "$target"; grant_of "$who" "$op" "$target" && g=0; role_unpin
+      if ((g == 0)); then _can_out "$GRANT_RULE(--always・--all 系・spawn-freeze 中は人だけ)"
+      else verdict=deny; _can_out "grants に $op $target に当たる approve の行がない(承認は人だけ)"; fi;;
     *)
       approval_of "$op:$target" "$who"; [[ $APPROVAL_VALUE == allow ]] || verdict=ask
       _can_out "$APPROVAL_RULE";;

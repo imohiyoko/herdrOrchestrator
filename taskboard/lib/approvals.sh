@@ -120,6 +120,30 @@ grant_of() {
   return 1
 }
 
+# ---------- 承認の委任(grants.conf の approve:<元の操作> <依頼者>)----------
+# 人の承認待ち(O-<n> / L-<n>)を、許可された agent が自分の pane から承認・却下できるようにする。
+#   例: @lead approve:send:task:* ~child   子からの依頼の送信(宛先は問わない)を、lead が承認できる
+#       reviewer1 approve:agent:stop:* w1  w1 が頼んだ agent の停止を、reviewer1 が承認できる
+# 「誰からの」= 対象(依頼者)、「何の」= 操作(approve: のあとに元の操作名。その glob)。
+# 自分の依頼は承認できない。--always(規則の書き換え)・人だけが決める承認待ち(--all など)は人だけ
+APPROVER=""; APPROVER_RULE=""
+# approver_check <コマンド名> <元の操作名(空 = 人だけ)> <依頼者>: 人なら APPROVER=human。許可された agent なら APPROVER=<名前>。どちらでもなければ die
+approver_check() {
+  local cmd=$1 act=$2 by=$3 rc=0 pinned=0
+  APPROVER=""; APPROVER_RULE=""
+  requester
+  if [[ $REQ_BY == human ]]; then APPROVER=human; return 0; fi
+  [[ -n $act ]] || die "$cmd: この承認待ちは人が自分の端末で実行します(agent '$REQ_BY' の pane からは承認できません)"
+  [[ $REQ_BY != "$by" ]] || die "$cmd: 自分の依頼は承認できません(agent '$REQ_BY')。人が自分の端末で実行します"
+  if ((${#ROLE_PIN_N[@]} == 0)); then role_pin "$by" "$REQ_BY"; pinned=1; fi   # 判定の間、役割を固定する
+  grant_of "$REQ_BY" "approve:$act" "$by" || rc=$?
+  ((pinned == 0)) || role_unpin
+  ((rc == 0)) || die "$cmd は人が自分の端末で実行します(agent '$REQ_BY' には $by からの $act を承認する許可がありません。grants.conf に '<承認者> approve:<操作> <依頼者>' の行が要ります)"
+  APPROVER=$REQ_BY; APPROVER_RULE=$GRANT_RULE
+}
+# 記録に残す承認者の書き方(人 / agent の名前と根拠)
+approver_label() { if [[ $APPROVER == human ]]; then printf '人'; else printf 'agent %s(%s)' "$APPROVER" "$APPROVER_RULE"; fi; }
+
 # approval_of <操作> [主体]: APPROVAL_VALUE に ask|allow、根拠の行を APPROVAL_RULE に入れる(サブシェルで呼ばない)
 # 主体(実行する agent)を渡すと、先に grants.conf を見る(操作の末尾を対象とみなす)
 APPROVAL_VALUE=ask
@@ -225,12 +249,15 @@ cmd_approve() {
   [[ $# -ge 1 && $1 =~ ^O-[0-9]+$ ]] || usage "approve O-<n> [--always]"
   local oid=${1#O-} always=0 row kind target; shift
   [[ ${1:-} == --always ]] && always=1
-  require_human "tb approve"
   row=$(session_row outbox id "$oid")
-  [[ -n $row ]] || die "outbox が見つかりません: O-$oid"
-  [[ $(jq -r .status <<<"$row") == pending ]] || die "O-$oid は承認待ちではありません($(jq -r .status <<<"$row"))"
+  [[ -n $row ]] || { approver_check "tb approve" "" ""; die "outbox が見つかりません: O-$oid"; }   # agent には、あるかどうかも先に言わない
   kind=$(jq -r .kind <<<"$row"); target=$(jq -r .target <<<"$row")
-  sql "UPDATE main.outbox SET status='queued', reason=reason||' / 人が承認 $(now)' WHERE herdr_session=$SQS AND id=$oid;"
+  approver_check "tb approve" "send:$kind:$target" "$(jq -r .from_name <<<"$row")"
+  [[ $APPROVER == human ]] || ((always == 0)) || die "tb approve: --always(今後は承認なしにする)は人だけが使えます"
+  [[ $(jq -r .status <<<"$row") == pending ]] || die "O-$oid は承認待ちではありません($(jq -r .status <<<"$row"))"
+  # 承認待ちのままの行だけを変える(同時に 2 人が承認しても、届けるのは 1 回)
+  [[ $(sql "UPDATE main.outbox SET status='queued', reason=reason||$(q " / $(approver_label)が承認 $(now)") WHERE herdr_session=$SQS AND id=$oid AND status='pending'; SELECT changes();") == 1 ]] \
+    || die "O-$oid は承認待ちではありません(ほかで決まりました)"
   ((always)) && set_approval allow "send:$kind:$target" >/dev/null && echo "send:$kind:$target = allow(今後は承認なし)"
   local r=0; outbox_deliver "$oid" >/dev/null || r=$?
   case $r in
@@ -245,11 +272,14 @@ cmd_approve() {
 }
 cmd_reject() {
   [[ $# -eq 1 && $1 =~ ^O-[0-9]+$ ]] || usage "reject O-<n>"
-  local oid=${1#O-}
-  require_human "tb reject"
-  [[ $(sql "SELECT status FROM outbox WHERE id=$oid;") == pending ]] || die "O-$oid は承認待ちではありません"
+  local oid=${1#O-} row
+  row=$(session_row outbox id "$oid")
+  [[ -n $row ]] || { approver_check "tb reject" "" ""; die "O-$oid は承認待ちではありません"; }
+  approver_check "tb reject" "send:$(jq -r .kind <<<"$row"):$(jq -r .target <<<"$row")" "$(jq -r .from_name <<<"$row")"
+  [[ $(jq -r .status <<<"$row") == pending ]] || die "O-$oid は承認待ちではありません"
   # 却下した返信は「返信済み」に数えない(元の送信にもう一度返信できる)
-  sql "UPDATE main.outbox SET status='denied', reason=reason||' / 人が却下 $(now)',
-         reply_check=CASE WHEN reply_check='ok' THEN '人が却下' ELSE reply_check END WHERE herdr_session=$SQS AND id=$oid;"
+  [[ $(sql "UPDATE main.outbox SET status='denied', reason=reason||$(q " / $(approver_label)が却下 $(now)"),
+         reply_check=CASE WHEN reply_check='ok' THEN $(q "$(approver_label)が却下") ELSE reply_check END WHERE herdr_session=$SQS AND id=$oid AND status='pending'; SELECT changes();") == 1 ]] \
+    || die "O-$oid は承認待ちではありません(ほかで決まりました)"
   echo "O-$oid rejected"
 }

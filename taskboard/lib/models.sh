@@ -145,6 +145,7 @@ cmd_model-set() {
     else
       args=$(jq -nc --arg m "$model" '{model_set:1, model:$m}')
     fi
+    ((all == 0)) || args=$(jq -c '. + {all:1}' <<<"$args")   # --all の承認待ちは人だけが決める(tb agent-approve)
     # 先に、承認に回す前に分かる「対応していない」「今は切り替えない」を見る(--dry-run の計画もここで出す)
     r=0; line=$(model_set_precheck "$n" "$model" "$reset") || r=$?
     if ((r)); then

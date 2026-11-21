@@ -544,7 +544,7 @@ lead1    agent:stop @worker       # lead1 は worker を承認なしで止めら
 
 - 主体は agent 名の glob か `@<役割>`。対象は agent 名の glob、`@<役割>`、または `tb agent-spawn` の親子関係による相対指定 `~child` / `~descendant` / `~parent` / `~sibling`(同じセッションの台帳で引く)、組織図(下の設定 `org`)の `~report` / `~subordinate` / `~manager` / `~superior` / `~peer`
 - どれかの行に当たれば allow。当たらなければ従来どおり `approvals.conf` が決める。許可を足すだけで、`delivery`(旧 `routes.conf`)の拒否などは外さない
-- 使う場所: `tb peek`(`agent:read`)、`tb send`(`send:<kind>`)、`tb agent-stop` などの agent 操作、`tb role-set`(`role:change`。grants に行があれば人事役でなくてよい。自分は不可・人事役は付けられない、の制限はそのまま。役割の本文・map を書く `tb role-write` は人事役だけ)、`tb agent-flag` / `agent-new --killable`(`agent:flag`)
+- 使う場所: `tb peek`(`agent:read`)、承認待ちの承認(`approve:<操作>`。下の節)、`tb send`(`send:<kind>`)、`tb agent-stop` などの agent 操作、`tb role-set`(`role:change`。grants に行があれば人事役でなくてよい。自分は不可・人事役は付けられない、の制限はそのまま。役割の本文・map を書く `tb role-write` は人事役だけ)、`tb agent-flag` / `agent-new --killable`(`agent:flag`)
 - 役割を確かめられない(台帳を読めない)行は使わない。`tb approval <操作> --by <agent>` で、その agent から見た判定(grants を含む)を確かめられる
 
 #### 組織図(設定 `org`)と `tb can`
@@ -562,6 +562,25 @@ lead*   -> boss
 - 線を引くだけでは何も許さない。grants の対象と delivery の宛先に `~report`(直属の部下)/ `~subordinate`(配下の全員)/ `~manager`(上司)/ `~superior`(上の全員)/ `~peer`(同じ上司)と書くと、その行がこの線で判定する(例 `@lead agent:read ~report`、`@worker -> ~manager : *=now`)。行の例は `setup/examples/org-rules.conf`
 - 役割を確かめられない行に先に当たった agent は、上司が決まらない(関係はどれにも当たらない。delivery は hold)
 - `tb can [<主体>] <操作> <対象>` は、誰が誰に何をできるかを実際の判定と同じ順で 1 つに決めて出す(読むだけ)。`send:<kind>` は delivery → approvals、`agent:stop` は protect → approvals、`role:change` / `agent:flag` は各コマンドの決まり、ほかは approvals(grants を含む)。終了コード 0=allow / 20=ask / 21=hold / 4=deny。主体を省くと叩いた agent
+
+#### 承認待ちの承認を agent に任せる(`approve:<操作> <依頼者>`)
+
+ask で止まった承認待ち(送信の `O-<n>`、agent 操作の `L-<n>`)は、ふだんは人が自分の端末で `tb approve` / `tb agent-approve` する。`grants.conf` に `approve:` の行を書くと、「誰からの」「どの操作の」承認待ちかを絞って、特定の agent に承認(LGTM)を任せられる。依頼した agent は、その agent が承認した時点で続けられる。
+
+```
+# <承認者> approve:<元の操作の glob> <依頼者>
+@lead      approve:send:task:*    ~child   # lead ロールは、子からの依頼の送信(宛先は問わない)を承認できる
+reviewer1  approve:agent:stop:*   w1       # reviewer1 は、w1 が頼んだ agent の停止を承認できる
+reviewer1  approve:send:task:w3   @worker  # worker からの w3 宛ての依頼だけ
+```
+
+- 操作は `approve:` のあとに、承認待ちになった元の操作名(`send:<kind>:<宛先>`、`agent:<op>:<対象>`、`agent:spawn:<子>`、`agent:model:<名前>`、`agent:slash:<コマンド>:<宛先>`)。対象は依頼した agent(spawn は親)で、ほかの grants と同じく名前の glob・`@<役割>`・`~child` などの関係が書ける
+- 当たる agent は、自分の pane から `tb approve O-<n>` / `tb reject O-<n>` / `tb agent-approve L-<n>` / `tb agent-reject L-<n>` を実行できる。当たらなければ従来どおり人だけ
+- 自分の依頼は承認できない。`--always`(今後は承認なしにする規則の書き換え)は人だけ。`tb slash --all` / `tb model-set --all` の承認待ちと spawn-freeze 中の spawn も人だけ。アラート(`tb alert-approve`)と PR キュー(`tb pr-queue approve`)は対象外(人だけ)
+- 同じ承認待ちを 2 人(人と agent でも)が同時に承認しても、実行・送信は 1 回だけ。実行の途中で止まった `L-<n>` は承認し直せないので、人が `tb agent-reject` で片付けて頼み直す
+- 誰が承認・却下したかは記録に残る(outbox の reason、`tb agent-ops` の結果に `agent <名前>(grants.conf: …)が承認`)。承認しても `delivery` の止める規則などは外れない
+- `tb can <承認者> approve:<元の操作> <依頼者>`(例 `tb can lead1 approve:send:task:w2 w1`)で、承認できるかを確かめられる(allow か deny)。組織図の関係も書ける(例 `@lead approve:send:task:* ~report`)
+- 承認者には自動では知らせない。依頼した agent が `tb send <承認者> --kind info --text 'O-12 の確認をお願いします'` のように頼む
 
 #### agent の中身を読むのは `tb peek` だけ
 
