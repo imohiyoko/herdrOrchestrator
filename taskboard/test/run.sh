@@ -14,6 +14,8 @@
 #   run.sh --units          ユニットの一覧(1 行 1 ユニット)
 #   run.sh --timings        すべてを流して、ケースごとの秒数を weights に書き直す
 set -uo pipefail
+# An agent pane running this suite would make tb refuse human-only operations. Cases that need a pane set HERDR_PANE_ID themselves.
+unset HERDR_PANE_ID
 HERE=$(cd "$(dirname "$0")" && pwd)
 SWEEP=99_zzz_session_sweep.sh
 

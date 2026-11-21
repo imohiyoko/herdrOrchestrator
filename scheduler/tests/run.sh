@@ -1,6 +1,8 @@
 #!/bin/bash
 # tick.sh の判定テスト。DRY_RUN=1 + NOW 差し替えのみ。herdr は呼ばない。
 # 使い方: tests/run.sh
+# An agent pane running this suite would change some results; the cases do not depend on it.
+unset HERDR_PANE_ID
 cd "$(dirname "$0")/.." || exit 1
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 export JOBS_DIR="$TMP/jobs" LOG_DIR="$TMP/logs"; mkdir -p "$JOBS_DIR"
