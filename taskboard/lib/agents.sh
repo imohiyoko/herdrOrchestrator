@@ -399,7 +399,13 @@ cmd_agent-new() {
   if [[ $kill != unknown ]]; then   # 判定フラグを付けられるのは agent-flag と同じく判定役か人だけ
     requester
     # shellcheck disable=SC2053  # glob として比べる
-    [[ $REQ_BY == human || $REQ_BY == $SWEEPER_PAT ]] || grant_of "$REQ_BY" agent:flag "$name" || die "agent-new --killable を付けられるのは人、判定役($SWEEPER_PAT)、grants で agent:flag を許された agent だけです($REQ_BY)"
+    if [[ $REQ_BY != human && $REQ_BY != $SWEEPER_PAT ]]; then
+      # 作る前の agent は台帳に無い。grants の @<役割> の対象は、要求された役割(--role)で比べる
+      local grc=0; [[ -z $role ]] || { ROLE_HINT_NAME=$name; ROLE_HINT=$role; }
+      grant_of "$REQ_BY" agent:flag "$name" || grc=$?
+      ROLE_HINT_NAME=""; ROLE_HINT=""
+      ((grc == 0)) || die "agent-new --killable を付けられるのは人、判定役($SWEEPER_PAT)、grants で agent:flag を許された agent だけです($REQ_BY)"
+    fi
   fi
   [[ ${#prompt} -le 4000 ]] || usage "agent-new: --prompt は 4000 字まで"
   [[ -n $cwd ]] || cwd=$AGENT_CWD

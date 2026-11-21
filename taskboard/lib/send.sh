@@ -39,7 +39,7 @@ conductor_names() {
   config_has projects || return 0
   while IFS='=' read -r k v || [[ -n $k ]]; do
     k=${k//[[:space:]]/}; v=${v//[[:space:]]/}
-    [[ -z $k || $k == \#* || -z $v || $k == proposal ]] && continue   # proposal は提案の宛先(lib/review.sh)で、指揮官ではない
+    [[ -z $k || $k == \#* || -z $v || $k == proposal || $k == '*' ]] && continue   # proposal は提案の宛先(lib/review.sh)で、指揮官ではない。* は先頭で default_target として出した(後の行が勝つ)
     printf '%s\n' "$v"
   done < <(config_text projects)
 }

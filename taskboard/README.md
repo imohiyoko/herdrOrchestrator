@@ -516,7 +516,7 @@ agent 同士の関係は 1 本の木ではなく、`主体 -動詞→ 対象` �
 agent ごとのロールを変える入口は `tb role-set <agent 名> <ロール> [--reason R]` に絞る(台帳の role を書き換え、`role_changes` に記録する)。
 
 - 人の端末からはそのまま実行できる
-- agent から実行できるのは人事役(`@hr`。`TB_ROLE_ADMIN` で変えられる)と、`grants` で `role:change` を許された agent だけ(grants に当たればそれで allow)。人事役は `approvals.conf` の `role:change` が allow でなければ終了コード 20 で止まり、人の実行を求める
+- agent から実行できるのは人事役(`@hr`。`TB_ROLE_ADMIN` で変えられる)と、`tb role-set` に限り `grants` で `role:change` を許された agent だけ(grants に当たればそれで allow)。人事役は `approvals.conf` の `role:change` が allow でなければ終了コード 20 で止まり、人の実行を求める
 - agent は自分のロールを変えられず、人事役のロールを付けることもできない(権限の自己拡大を防ぐ)
 - `roles/<名前>.md` がある agent は台帳のロールが効かないので拒否する
 - 記録は `tb role-log`。人事役による変更は関係グラフに `role` の辺として出る。会計役(auditor)は提案するだけで、変えない
@@ -544,7 +544,7 @@ lead1    agent:stop @worker       # lead1 は worker を承認なしで止めら
 
 - 主体は agent 名の glob か `@<役割>`。対象は agent 名の glob、`@<役割>`、または `tb agent-spawn` の親子関係による相対指定 `~child` / `~descendant` / `~parent` / `~sibling`(同じセッションの台帳で引く)
 - どれかの行に当たれば allow。当たらなければ従来どおり `approvals.conf` が決める。許可を足すだけで、`delivery`(旧 `routes.conf`)の拒否などは外さない
-- 使う場所: `tb peek`(`agent:read`)、`tb send`(`send:<kind>`)、`tb agent-stop` などの agent 操作、`tb role-set`(`role:change`。人事役だけ・自分は不可・人事役は付けられない、の制限はそのまま)
+- 使う場所: `tb peek`(`agent:read`)、`tb send`(`send:<kind>`)、`tb agent-stop` などの agent 操作、`tb role-set`(`role:change`。grants に行があれば人事役でなくてよい。自分は不可・人事役は付けられない、の制限はそのまま。役割の本文・map を書く `tb role-write` は人事役だけ)、`tb agent-flag` / `agent-new --killable`(`agent:flag`)
 - 役割を確かめられない(台帳を読めない)行は使わない。`tb approval <操作> --by <agent>` で、その agent から見た判定(grants を含む)を確かめられる
 
 #### agent の中身を読むのは `tb peek` だけ
