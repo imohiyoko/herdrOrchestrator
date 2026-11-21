@@ -211,7 +211,7 @@ slash_approve() {
   # 承認待ちの間に許可リストが変わっていたら、今の行に従う(外された・deny になったら送らない)
   r=0; slash_lookup "$cmd" || r=$?
   if ((r)) || [[ $SL_POLICY != allow ]]; then
-    record_op slash "$target" "$args" "$by" 1 "/$cmd は許可リストに無いか deny になったため送らない / 人が承認" "$id"
+    record_op slash "$target" "$args" "$by" 1 "/$cmd は許可リストに無いか deny になったため送らない / $(approver_label)が承認" "$id"
     echo "tb: L-$id: /$cmd は許可リストに無いか deny です。送りません" >&2; return 1
   fi
   if ((always)); then
@@ -233,7 +233,7 @@ slash_approve() {
   while IFS=$'\t' read -r name why; do
     [[ -n $name ]] || continue
     if [[ -n $why ]]; then
-      record_op slash "$target" "$args" "$by" 1 "$why / 人が承認" "$id"; echo "tb: L-$id: $name $why" >&2; return 1
+      record_op slash "$target" "$args" "$by" 1 "$why / $(approver_label)が承認" "$id"; echo "tb: L-$id: $name $why" >&2; return 1
     fi
     r=0; slash_send_one "$name" "$cmd" "$by" "$id" || r=$?
     out=$SLASH_LINE

@@ -101,8 +101,9 @@ tb gate ingest-events <task-id> --pr <o>/<r>#<n>   PR の全レビュー(reviews
 tb gate reviewers <o>/<r>#<n> [--task <id>]   記録をレビュアーごとにまとめて表示する(読み取りだけ。gh は呼ばない)
 tb allow <パターン>       今後は承認なしにする(人の端末からだけ)
 tb ask <パターン>         承認制に戻す(人の端末からだけ)
-tb approve O-<n> [--always]   承認待ちの送信を届ける。--always なら send:<kind>:<宛先> を allow にする
-tb reject O-<n>               承認待ちの送信を却下する
+tb approve O-<n> [--always]   承認待ちの送信を届ける。--always なら send:<kind>:<宛先> を allow にする(人だけ)。
+                              grants.conf の <agent> approve:send:<kind>:<宛先> <依頼者> に当たる agent も承認できる(自分の依頼は不可)
+tb reject O-<n>               承認待ちの送信を却下する(承認と同じく、人か approve: の許可がある agent)
 
 アラート(見張り役 → 解析役の agent を起動 → 結果を指揮官・Web UI へ):
 tb alert --title T [--body B|--body-file F] [--key K] [--json]   見張り役が登録(緊急度は付けない)
@@ -149,8 +150,9 @@ tb slash --list   許可リストを出す(deny の行は送らない)
 tb agent-flag <名前> --killable yes|no|unknown [--reason R]   止めてよいかの判定。判定役(TB_SWEEPER_PATTERN、既定 sweeper*)か人だけ
          終了コード(new/stop/revive): 0 実行済み 1 拒否・前提違い 11 herdr の失敗 20 人の承認待ち(L-<n>)
 tb agent-ops [--status pending|done|failed|rejected] [--json]   操作の記録と承認待ち
-tb agent-approve L-<n> [--always]   承認待ちの操作を実行(--always で agent:<op>:<名前> を allow)
-tb agent-reject L-<n>
+tb agent-approve L-<n> [--always]   承認待ちの操作を実行(--always で agent:<op>:<名前> を allow。人だけ)。
+                              grants.conf の <agent> approve:agent:<op>:<名前> <依頼者> に当たる agent も承認できる(--all・spawn-freeze 中は人だけ)
+tb agent-reject L-<n>   却下(人か approve: の許可がある agent)
 
 規則つきの子 agent 作成(agent の pane から。自動承認は LLM ではなく tb の規則。config/spawn-policy.conf は人だけが編集):
 tb agent-spawn <役割|-> --task <task-id> --brief <依頼の本文(2000 字まで)>

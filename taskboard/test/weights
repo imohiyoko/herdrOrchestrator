@@ -24,6 +24,7 @@
 70_roles.sh 4
 72_conv_learn.sh 14
 80_approvals.sh 8
+80_approve_delegate.sh 13
 81_risk.sh 7
 82_catalog.sh 6
 85_schema.sh 2
