@@ -224,13 +224,17 @@ cmd_role-broadcast() {
 }
 
 # ロールを変える(台帳 agents.role)。ロールは許可ルール(@<役割>)の主語・目的語なので、これは権限の変更でもある。
-# 人の端末からはそのまま。agent からは人事役(@hr、TB_ROLE_ADMIN で変えられる)だけで、approvals の role:change が allow のときだけ。
+# 人の端末からはそのまま。agent からは、grants に role:change の行がある主体か、人事役(@hr、TB_ROLE_ADMIN で変えられる)で
+# approvals の role:change が allow のときだけ。
 # agent は自分のロールと、人事役のロールを付けることはできない(権限の自己拡大を防ぐ)。記録は role_changes に残る
 ROLE_ADMIN=${TB_ROLE_ADMIN:-hr}
 # 人事役(agent)が役割を変えてよいか(人は呼ばない)。$1=対象(grants.conf の対象) $2=人に頼むときのコマンド。だめなら die か 20
 role_admin_check() {
-  name_matches "$REQ_BY" "@$ROLE_ADMIN" || die "ロールを変えられるのは人と人事役(@$ROLE_ADMIN)だけです($REQ_BY)"
-  if grant_of "$REQ_BY" role:change "$1"; then APPROVAL_VALUE=allow; APPROVAL_RULE=$GRANT_RULE; else approval_of "role:change"; fi
+  if grant_of "$REQ_BY" role:change "$1"; then APPROVAL_VALUE=allow; APPROVAL_RULE=$GRANT_RULE
+  else
+    name_matches "$REQ_BY" "@$ROLE_ADMIN" || die "ロールを変えられるのは人、人事役(@$ROLE_ADMIN)、grants で role:change を許された agent だけです($REQ_BY)"
+    approval_of "role:change"
+  fi
   if [[ $APPROVAL_VALUE != allow ]]; then
     echo "tb: role:change は人の承認が要ります($APPROVAL_RULE)。人が自分の端末で実行してください: $2" >&2
     return 20
@@ -327,7 +331,7 @@ cmd_role-set() {
   done
   requester
   if [[ $REQ_BY != human ]]; then
-    name_matches "$REQ_BY" "@$ROLE_ADMIN" || die "ロールを変えられるのは人と人事役(@$ROLE_ADMIN)だけです($REQ_BY)"
+    grant_of "$REQ_BY" role:change "$name" || name_matches "$REQ_BY" "@$ROLE_ADMIN" || die "ロールを変えられるのは人、人事役(@$ROLE_ADMIN)、grants で role:change を許された agent だけです($REQ_BY)"
     [[ $REQ_BY != "$name" ]] || die "自分のロールは変えられません"
     for x in "${xs[@]}"; do [[ $x != "$ROLE_ADMIN" ]] || die "人事役のロール($ROLE_ADMIN)を付けられるのは人だけです"; done
     role_admin_check "$name" "tb role-set $name $role" || return $?

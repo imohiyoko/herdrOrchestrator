@@ -263,7 +263,7 @@ tb outbox [--status queued|sent|denied] [--json]
 ```
 
 - 送信者は `HERDR_PANE_ID` + `herdr agent list` から決まる(`--from` などはエラー)。宛先は herdr にいる agent 名だけ
-- 届けるか・保留するか・止めるかは設定 `delivery` の 1 つの表で決まる(次の節)。どの行にも当たらなければ「指揮官(`conductor` と `projects.conf` の値)→ 誰にでも」だけ届け、ほかは止める
+- 届けるか・保留するか・止めるかは設定 `delivery` の 1 つの表で決まる(次の節)。どの行にも当たらなければ「指揮官(既定の宛先と `projects` の値。`proposal` の行を除く)→ 誰にでも」だけ届け、ほかは止める
 - 旧 `routes`(`routes.conf`)は互換で読む(残っていれば先にその行で経路を決める)。行はそのまま `delivery` に移せるので、移したら `tb config unset routes`
 - 届く文面は `[from: <名前> / <pane> / <task-id か -> / <kind> / O-<n>] <本文>`(確かめた返信は `/ O-<n> re O-<元>`)(1 行化、`[from:` の偽装は無効化、`TB_SEND_MAX` 字まで)
 - 宛先が `idle` / `done` 以外なら `outbox` に積み、`tb flush` で古い順に届ける(同じ宛先の後続は追い越さない)
@@ -282,7 +282,7 @@ tb nudge [--idle-min 15] [--max 3] [--json]   # 送る(人の端末か scheduler
 
 - **握っている**: 担当(`owner_agent`)が自分で、状態が `in_progress` のチケット。割り当てだけの `todo`、`review`・`blocked` は催促しない
 - **休んでいる**: herdr の状態が `idle` / `done` で、最後の turn の終わり(hook の活動記録)から `--idle-min` 分(`TB_NUDGE_IDLE_MIN`、既定 15)たっている
-- **催促しない**(理由つきで出す): herdr にいない・`working`・`blocked`(承認ダイアログなど人の操作待ち)/ 指示役(`conductor` と `projects` の値)/ 保護(`protect`)/ 人の返事待ち(自分が出した `question`・`blocked` の報告が未対応)/ 握っているチケットがすべて先行チケット(`blocks`)待ち / 活動記録が無い / delivery の規則で指示役 → その agent の `task` が `now` にならない(`hold` は inbox に置かれるだけで催促にならず、`block` は送ってはいけない宛先)
+- **催促しない**(理由つきで出す): herdr にいない・`working`・`blocked`(承認ダイアログなど人の操作待ち)/ 指示役(既定の宛先と `projects` の値)/ 保護(`protect`)/ 人の返事待ち(自分が出した `question`・`blocked` の報告が未対応)/ 握っているチケットがすべて先行チケット(`blocks`)待ち / 活動記録が無い / delivery の規則で指示役 → その agent の `task` が `now` にならない(`hold` は inbox に置かれるだけで催促にならず、`block` は送ってはいけない宛先)
 - **しつこくしない**: 1 回の休みに 1 通。同じチケットで `--max` 回(`TB_NUDGE_MAX`、既定 3)送ったら止める(その先は `tb digest` の観測で指示役が見る)。届かなかった催促は outbox に `queued` で残さず `denied`(取り下げ)にする(あとで `tb flush` が古い催促を届けないように)
 - **複数のチケット**: タスク agent は 1 枚が原則。複数を握っていれば、先行チケット待ちでない中で優先度が高い(同じなら古い)1 枚を名指しし、ほかは `tb update <ID> --status todo` で戻すか指示役に相談するよう文面に書く。指示役には `tb digest` が「複数チケット」の観測として 1 度だけ知らせる(組み合わせが変わればまた出す)
 - 止めたい agent には delivery で `<指示役> -> <agent> : task=hold`(か `block`)を書く。催促だけを止める別の設定は持たない
@@ -433,7 +433,7 @@ tb agent-approve L-<n> [--always] / tb agent-reject L-<n>      # 人だけ
   `--prompt` が無ければ「MCP を再接続した。前の作業を続け、MCP のツールが使えることを確かめ、まだなら tb comment で報告」という既定の一文を送る(準備完了を待ち、受け付けられたかも確かめる)。
   復活に失敗したら停止のまま残し、`tb agent-revive <名前> [--fresh]` を出して 0 以外で終わる(新しい会話は勝手に作らない)。
   `agent_ops` には op=revive、args.restart=1 の 1 行で、依頼者・停止と復活の結果・session が変わらなかったか・所要秒を残す。再開したが最初の指示を確認できないときは終了コード 10
-- **判定フラグ(killable)**: `yes|no|unknown`。付けられるのは判定役(`roles/sweeper.md`、軽いモデル。`TB_SWEEPER_PATTERN`、既定 `sweeper*`)と人だけ。
+- **判定フラグ(killable)**: `yes|no|unknown`。付けられるのは判定役(`roles/sweeper.md`、軽いモデル。`TB_SWEEPER_PATTERN`、既定 `sweeper*`)と人、`grants` で `agent:flag` を許された agent だけ(例 `my-judge agent:flag *`)。
   yes を付けた後でその agent が新しい入力を受けたら、または会話が変わったら `stale` になり、停止には使えない(付け直しが要る)。
   解析役(`analyst-A<n>`)は `tb alert-result` を返した時点で tb が yes を付ける。判定役の定期実行は `scheduler/jobs/sweeper.conf.example`
 - **誰が実行できるか**: 人の端末(と Web UI)からはそのまま実行する。agent の pane からは `approvals.conf` の `agent:<op>:<名前>`(op は `new|stop|revive`、既定 `agent:* = ask`)を見て、
@@ -516,7 +516,7 @@ agent 同士の関係は 1 本の木ではなく、`主体 -動詞→ 対象` �
 agent ごとのロールを変える入口は `tb role-set <agent 名> <ロール> [--reason R]` に絞る(台帳の role を書き換え、`role_changes` に記録する)。
 
 - 人の端末からはそのまま実行できる
-- agent から実行できるのは人事役(`@hr`。`TB_ROLE_ADMIN` で変えられる)だけ。`approvals.conf` の `role:change` が allow でなければ終了コード 20 で止まり、人の実行を求める
+- agent から実行できるのは人事役(`@hr`。`TB_ROLE_ADMIN` で変えられる)と、`grants` で `role:change` を許された agent だけ(grants に当たればそれで allow)。人事役は `approvals.conf` の `role:change` が allow でなければ終了コード 20 で止まり、人の実行を求める
 - agent は自分のロールを変えられず、人事役のロールを付けることもできない(権限の自己拡大を防ぐ)
 - `roles/<名前>.md` がある agent は台帳のロールが効かないので拒否する
 - 記録は `tb role-log`。人事役による変更は関係グラフに `role` の辺として出る。会計役(auditor)は提案するだけで、変えない
@@ -643,7 +643,7 @@ tb agent-shed [--count N] [--json]        # 絞る候補の一覧。何も止め
 ## 会計役(定期レビュー)と改善提案
 
 会計役(`roles/auditor.md`)が scheduler の定期プロンプト(`scheduler/jobs/auditor.conf.example`)で、送受信・アラート・報告・承認・定期実行の
-記録を見直し、役割(プロンプト)の改善を設定役(人事 `hr`、`TB_HR_NAME`)に提案する。設定役が `roles/` を直す(`role:change` の承認規則に従う)。
+記録を見直し、役割(プロンプト)の改善を設定役(`projects` の `proposal=<名前>` の行。無ければ `TB_HR_NAME`、既定 `hr`)に提案する。提案を閉じられるのは設定役と人。設定役が `roles/` を直す(`role:change` の承認規則に従う)。
 
 ```bash
 tb review-pack [--since ISO] [--mark]   # レビュー材料。生ログではなく集計と上位だけ(トークン節約)。省略時は前回 --mark より後
@@ -781,7 +781,10 @@ tb が `herdr agent prompt` で送ろうとしたものは、結果にかかわ�
 
 ## 宛先の設定
 
-設定 `projects`(`project=指示役の agent 名` の行。下の「設定」の順で引く)に書く。書いていない project は `conductor` に送る。
+設定 `projects`(`project=指示役の agent 名` の行。下の「設定」の順で引く)に書く。
+
+- `*=<名前>` は既定の宛先。書いていない project と、project に属さない観測(`tb digest` のアラート・spawn・scheduler の観測、アラートの解析結果)はここへ送る。`*` の行も無ければ `conductor` に送る(役割の名前に頼らない構成にするなら `*` を書く)
+- `proposal=<名前>` は改善提案(`tb proposal`)の宛先と、提案チケットの担当。無ければ `TB_HR_NAME`(既定 `hr`)。この名前は指揮官(下の delivery の既定・nudge の除外)には数えない
 
 `report` は宛先の状態を `herdr agent get` で見て、`idle` / `done` のときだけ送る。
 `working` / `blocked` のほか、`unknown` や取得失敗でも送らない(既定は「割り込まずに pending に積む」)。

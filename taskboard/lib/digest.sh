@@ -23,6 +23,7 @@ add_item() {  # $1=target $2=type(comment|task|obs) $3=ref $4=key $5=task_id $6=
 obs_seen() { [[ -n $(sql "SELECT 1 FROM observations WHERE key=$(q "$1");") ]]; }
 
 collect_digest() {
+  local dt; dt=$(default_target)   # project に属さない観測の宛先
   local r tid kind from text dels project id owner summary key m pane sess name list task sby
   # 1. 未配送の報告コメント(kind を問わない。即時送信に失敗したものもここで回収)
   while IFS= read -r r; do
@@ -49,18 +50,18 @@ collect_digest() {
   while IFS=$'\t' read -r id st title; do
     [[ -n $id ]] || continue
     key="alert:$id"; obs_seen "$key" && continue
-    add_item "$DEFAULT_TARGET" obs "A-$id" "$key" "" alert "A-$id アラート / $st" "$title (tb alerts A-$id)"
+    add_item "$dt" obs "A-$id" "$key" "" alert "A-$id アラート / $st" "$title (tb alerts A-$id)"
   done < <(sql -separator $'\t' "SELECT id, status, replace(replace(title, char(10), ' '), char(9), ' ') FROM alerts WHERE status NOT IN ('closed') ORDER BY id;")
   while IFS=$'\t' read -r id sev title summary; do
     [[ -n $id ]] || continue
-    add_item "$DEFAULT_TARGET" alert "A-$id" "" "" "" "A-$id 解析結果 / $sev" "$title — $summary (全文: tb alerts A-$id)"
+    add_item "$dt" alert "A-$id" "" "" "" "A-$id 解析結果 / $sev" "$title — $summary (全文: tb alerts A-$id)"
   done < <(sql -separator $'\t' "SELECT id, severity, replace(replace(title, char(10), ' '), char(9), ' '), replace(replace(result_summary, char(10), ' '), char(9), ' ')
              FROM alerts WHERE status='analyzed' AND result_delivered_at IS NULL ORDER BY id;")
   # 2c. 通知: 秘密らしい値を含むため外へ出さなかったイベント(人に知らせる。同じものは二度出さない)
   while IFS=$'\t' read -r id sev; do
     [[ -n $id ]] || continue
     key="notify-blocked:$id"; obs_seen "$key" && continue
-    add_item "$DEFAULT_TARGET" obs "N-$id" "$key" "" notifyblock "N-$id 通知を止めた" "秘密らしい値($sev)を含むため外へ出していません(file には伏せて残した。tb notify events)"
+    add_item "$dt" obs "N-$id" "$key" "" notifyblock "N-$id 通知を止めた" "秘密らしい値($sev)を含むため外へ出していません(file には伏せて残した。tb notify events)"
   done < <(sql -separator $'\t' "SELECT id, COALESCE(blocked_reason,'') FROM notify_events WHERE blocked=1 AND type!='warning' ORDER BY id;")
   # 2d. 通知の規則(lib/notifyrules.sh)で届け先に conductor を書いたチケットの通知。そのプロジェクトの指揮役へ(同じものは二度出さない)
   while IFS=$'\t' read -r id tid project text; do
@@ -110,7 +111,7 @@ collect_digest() {
   while IFS=$'\t' read -r id owner key m; do
     [[ -n $id ]] || continue
     obs_seen "$key" && continue
-    add_item "$DEFAULT_TARGET" obs "O-$id" "$key" "" queued "O-$id 観測 / $owner" \
+    add_item "$dt" obs "O-$id" "$key" "" queued "O-$id 観測 / $owner" \
       "O-$id が $m 分 queued のまま(宛先に届いていない。tb outbox --status queued で確認、tb flush で再送)"
   done < <(sql -separator $'\t' "SELECT id, target, 'queued:'||id, CAST((julianday('now') - julianday(created_at)) * 1440 AS INTEGER)
              FROM outbox WHERE status='queued' AND (julianday('now') - julianday(created_at)) * 86400 >= $DIGEST_QUEUED_SEC ORDER BY id;")
@@ -140,6 +141,7 @@ collect_digest() {
 #    - 子の数が上限の 1 つ手前以上(全体、または 1 体の親)
 #    - 親のタスクが done / blocked になったのに、子がまだ動いている
 collect_spawn_obs() {
+  local dt; dt=$(default_target)
   [[ -n $(sql "SELECT 1 FROM agents WHERE spawned_by IS NOT NULL AND state='running' LIMIT 1;") ]] || { sql "DELETE FROM main.observations WHERE herdr_session=$SQS AND kind IN ('spawnlimit','spawnorphan');"; return 0; }
   agent_sync 2>/dev/null || true
   load_spawn_policy
@@ -147,14 +149,14 @@ collect_spawn_obs() {
   n=$(sql "SELECT COUNT(*) FROM agents WHERE spawned_by IS NOT NULL AND state='running';")
   if ((SP_TOTAL > 0 && n >= SP_TOTAL - 1)); then
     key="spawnlimit:total:$n"; current+="$(q "$key"),"
-    obs_seen "$key" || add_item "$DEFAULT_TARGET" obs "spawn" "$key" "" spawnlimit "spawn 観測 / 全体" \
+    obs_seen "$key" || add_item "$dt" obs "spawn" "$key" "" spawnlimit "spawn 観測 / 全体" \
       "子 agent が $n 体動いている(上限 ${SP_TOTAL}。tb agents で確認、止めるのは tb agent-stop)"
   fi
   while IFS=$'\t' read -r parent n; do
     [[ -n $parent ]] || continue
     ((SP_PER > 0 && n >= SP_PER - 1)) || continue
     key="spawnlimit:$parent:$n"; current+="$(q "$key"),"
-    obs_seen "$key" || add_item "$DEFAULT_TARGET" obs "spawn" "$key" "" spawnlimit "spawn 観測 / $parent" \
+    obs_seen "$key" || add_item "$dt" obs "spawn" "$key" "" spawnlimit "spawn 観測 / $parent" \
       "$parent の子が $n 体動いている(1 体の親あたりの上限 $SP_PER)"
   done < <(sql -separator $'\t' "SELECT spawned_by, COUNT(*) FROM agents WHERE spawned_by IS NOT NULL AND state='running' GROUP BY spawned_by ORDER BY spawned_by;")
   while IFS=$'\t' read -r id parent task st project; do

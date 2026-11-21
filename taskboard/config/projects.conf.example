@@ -1,5 +1,9 @@
 # project=指示役の agent 名(herdr agent prompt の宛先)
-# 書かれていない project は既定の conductor に送る。
+# *=<名前> は既定の宛先: 書かれていない project と、project に属さない観測(digest・アラートの結果・scheduler の観測)はここへ送る。
+# * の行も無ければ conductor に送る。
+# proposal=<名前> は改善提案(tb proposal)の宛先・担当。無ければ TB_HR_NAME(既定 hr)。この行の名前は指揮官としては扱わない。
 # 例:
+# *=lead
+# proposal=settings-admin
 # project-a=project-a-conductor
 # project-b=project-b-conductor

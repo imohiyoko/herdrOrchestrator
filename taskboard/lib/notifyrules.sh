@@ -6,7 +6,7 @@
 #   条件: type= priority= priority>= label= project= owner= new= old= actor=   すべて満たした行が当たる
 #         label は、label_added / label_removed では付け外したラベルそのもの、ほかのイベントでは「今そのラベルを持っている」。priority>= は優先度の順(highest が一番上)。
 #         actor は変えた者の名前、または human(人の端末)/ system(定期のジョブ)/ agent(それ以外 = agent の pane)
-#   届け先: file stdout slack(notify と同じ)/ webui(Web UI の緊急通知)/ conductor(そのプロジェクトの指揮役への次のまとめ)
+#   届け先: file stdout slack(notify と同じ)/ webui(Web UI の緊急通知)/ lead(そのプロジェクトの指示役 = projects の値への次のまとめ。旧名 conductor も使える)
 # 当たった行の届け先を合わせて、イベント 1 件につき通知 1 件(種別 ticket)。本文は ID・題・優先度・種別・担当・イベントだけ(説明・コメントの本文は載せない)。
 # 秘密の検出・伏せ字・頻度の上限・重複の抑えは notify のまま。notify が off のあいだは何も積まない(on にしたとき、作られてから 60 分を過ぎたイベントには当てない)。
 # 規則を足す前のイベントには当てない(notify が on のあいだは、規則が無くても読み位置を進めている)。
@@ -49,7 +49,8 @@ nrule_parse() {  # $1=本文
     ((bad)) && { err=1; continue; }
     sinks=""
     for s in $rhs; do
-      [[ " $NRULE_SINKS " == *" $s "* ]] || { NRULE_ERR+="$n 行目: 使えない届け先 $s($NRULE_SINKS)"$'\n'; bad=1; continue; }
+      [[ $s == lead ]] && s=conductor   # lead は conductor の別名(役割の名前に頼らない書き方)
+      [[ " $NRULE_SINKS lead " == *" $s "* ]] || { NRULE_ERR+="$n 行目: 使えない届け先 $s($NRULE_SINKS)"$'\n'; bad=1; continue; }
       [[ " $sinks " == *" $s "* ]] || sinks+="$s "
     done
     ((bad)) && { err=1; continue; }

@@ -147,7 +147,7 @@ cmd_alert-result() {
 alert_deliver() {  # $1=id
   local row msg target
   row=$(alert_row "$1"); [[ -n $row && $(jq -r '.result_delivered_at // ""' <<<"$row") == "" ]] || return 0
-  target=$DEFAULT_TARGET
+  target=$(default_target)
   msg="[alert A-$1 analyzed / $(jq -r .severity <<<"$row")] $(oneline "$(jq -r .title <<<"$row")" 80) — $(oneline "$(jq -r .result_summary <<<"$row")" 300) (全文: tb alerts A-$1)"
   herdr_send "$target" "$msg" "A-$1" alert || return $?
   sql "UPDATE main.alerts SET result_delivered_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$1;"

@@ -9,7 +9,7 @@
 # - kind(claude / codex / gemini)ごとの違い(起動の引数・モデル指定・再開)は lib/kinds.sh のアダプタだけが知っている。
 #   ここでは kind_* に聞き、対応していない項目は終了コード 12 で止める(黙って claude の引数を渡さない)
 #   役割は SessionStart hook(tb role-context)が渡す。--role で決めた役割は台帳に残り、復活後も同じものが渡る
-# - 判定フラグ killable = yes|no|unknown。付けるのは人か判定役(TB_SWEEPER_PATTERN、既定 sweeper*)だけ。
+# - 判定フラグ killable = yes|no|unknown。付けるのは人か判定役(TB_SWEEPER_PATTERN、既定 sweeper*)か、grants で agent:flag を許された agent だけ。
 #   yes を付けた後にその agent が新しい入力を受けたら stale(付け直すまで yes として扱わない)
 # - 保護(config の protect): 一致した agent は killable が protected になり、tb agent-stop は --force でも止めない。
 #   agent-shed の候補にも出さない。外すのは人が tb config edit protect で行う(再起動は止めずに戻るので対象外)
@@ -399,7 +399,7 @@ cmd_agent-new() {
   if [[ $kill != unknown ]]; then   # 判定フラグを付けられるのは agent-flag と同じく判定役か人だけ
     requester
     # shellcheck disable=SC2053  # glob として比べる
-    [[ $REQ_BY == human || $REQ_BY == $SWEEPER_PAT ]] || die "agent-new --killable を付けられるのは判定役($SWEEPER_PAT)か人だけです($REQ_BY)"
+    [[ $REQ_BY == human || $REQ_BY == $SWEEPER_PAT ]] || grant_of "$REQ_BY" agent:flag "$name" || die "agent-new --killable を付けられるのは人、判定役($SWEEPER_PAT)、grants で agent:flag を許された agent だけです($REQ_BY)"
   fi
   [[ ${#prompt} -le 4000 ]] || usage "agent-new: --prompt は 4000 字まで"
   [[ -n $cwd ]] || cwd=$AGENT_CWD
@@ -509,7 +509,7 @@ cmd_agent-flag() {
   requester
   if [[ $REQ_BY != human ]]; then
     # shellcheck disable=SC2053  # glob として比べる
-    [[ $REQ_BY == $SWEEPER_PAT ]] || die "判定フラグを付けられるのは判定役($SWEEPER_PAT)か人だけです($REQ_BY)"
+    [[ $REQ_BY == $SWEEPER_PAT ]] || grant_of "$REQ_BY" agent:flag "$name" || die "判定フラグを付けられるのは人、判定役($SWEEPER_PAT)、grants で agent:flag を許された agent だけです($REQ_BY)"
     [[ $REQ_BY != "$name" ]] || die "自分自身の判定は付けられません"
   fi
   agent_sync || die "herdr agent list に失敗しました"

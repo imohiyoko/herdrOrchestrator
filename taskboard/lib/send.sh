@@ -25,21 +25,21 @@ outbox_target_stopped() {  # $1=宛先
 #   coordinator -> assistant : info=hold answer=hold task=now
 #   coordinator -> *
 # 種別を書いていない行(* も無い)は飛ばして次の行を見る。reply は、reply= を明示した行があればそれで決まる(* では決めない)。無ければ種別で決まる。
-# どの行にも当たらなければ、送信者が指揮官(conductor と projects.conf の値)なら now、それ以外は止める(旧 routes.conf が無いときと同じ)。
+# どの行にも当たらなければ、送信者が指揮官(既定の宛先と projects の値。conductor_names)なら now、それ以外は止める(旧 routes.conf が無いときと同じ)。
 # 役割を確かめられない行に当たったら hold に倒す(届けないが、捨てもしない)。
 # 旧 routes キー(routes.conf)が残っていれば互換で読む: その行を先に門として見て(当たらなければ止める)、通ったものだけを delivery の行で決める
 # (delivery の行に当たらなければ now)。delivery の行に移したら routes キーは消してよい(tb config unset routes)。
 # block は宛先に届けず(入力にも inbox にも置かない)、送信者に「止めた。依頼はチケットにして」と返す(送信は拒否 = 終了コード 4)。
 # 判定は tb send の受け付け時(止めるものは承認を求めない)と、届ける直前(outbox_deliver: 承認のあとや flush でも同じ規則)の 2 回。
 
-# 指揮官として扱う名前: 既定の宛先と projects.conf の値
+# 指揮官として扱う名前: 既定の宛先(projects の * の行。無ければ $DEFAULT_TARGET)と projects.conf の値
 conductor_names() {
   local k v
-  printf '%s\n' "$DEFAULT_TARGET"
+  default_target; echo
   config_has projects || return 0
   while IFS='=' read -r k v || [[ -n $k ]]; do
     k=${k//[[:space:]]/}; v=${v//[[:space:]]/}
-    [[ -z $k || $k == \#* || -z $v ]] && continue
+    [[ -z $k || $k == \#* || -z $v || $k == proposal ]] && continue   # proposal は提案の宛先(lib/review.sh)で、指揮官ではない
     printf '%s\n' "$v"
   done < <(config_text projects)
 }
@@ -371,7 +371,7 @@ cmd_inbox-read() {
 # 握っている = 担当(owner_agent)が自分で in_progress のチケット。todo(割り当てだけ)・review・blocked は催促しない。
 # 催促しない(理由つきで飛ばす)もの:
 #   - herdr にいない / herdr の状態が idle・done 以外(working は作業中、blocked は承認ダイアログなど人の操作待ち)
-#   - 指揮役(conductor と projects の値。人と話している)/ 保護(config の protect。定期実行の受け口など)
+#   - 指揮役(既定の宛先と projects の値。人と話している)/ 保護(config の protect。定期実行の受け口など)
 #   - 人の返事待ち(自分が出した question / blocked の報告がまだ対応されていない)
 #   - 先行チケット(blocks)が done になっていない(握っているチケットがすべてそう)
 #   - 活動記録(hook)が無い・turn が終わって NUDGE_IDLE_MIN 分たっていない
