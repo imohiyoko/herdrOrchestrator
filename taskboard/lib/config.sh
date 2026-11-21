@@ -12,7 +12,7 @@
 # 書くのは人だけ。環境変数でファイルを明示しているときはそのファイルを、そうでなければ DB のこのセッションの行(--shared なら共通の行)を書く。
 
 CONFIG_DIR=${TB_CONFIG_DIR:-$TB_ROOT/config}   # checkout の設定ファイルの置き場(テストで差し替え)
-CONFIG_KEYS="projects approvals grants routes delivery limits notify notify-rules compact slash sched-watch spawn-policy role-models conv-routes conv-learn conv-stages protect org labels messages"
+CONFIG_KEYS="projects approvals grants routes delivery limits notify notify-rules compact slash sched-watch spawn-policy role-models conv-routes conv-learn conv-stages protect org labels messages nudge"
 
 # キーの情報: CFG_ENV(上書きの環境変数)、CFG_FILE(checkout のファイル名)、CFG_EXAMPLE(1 なら .example も既定値として読む)
 config_key_info() {
@@ -37,6 +37,7 @@ config_key_info() {
     protect)      CFG_ENV=TB_PROTECT;         CFG_FILE=protect.conf;;   # tb から止めさせない agent(lib/agents.sh)。.example は既定値にしない(無ければ保護なし)
     org)          CFG_ENV=TB_ORG;             CFG_FILE=org.conf;;   # 組織図(上司の線。lib/approvals.sh)。.example は既定値にしない(無ければ誰にも上司はいない)
     labels)       CFG_ENV=TB_LABELS;          CFG_FILE=labels.conf;;
+    nudge)        CFG_ENV=TB_NUDGE;           CFG_FILE=nudge.conf;;   # nudge の除外(ignore <@役割 | agent 名の glob>。lib/send.sh)。.example は既定値にしない(無ければ除外なし)
     messages)     CFG_ENV=TB_MESSAGES;        CFG_FILE=messages.conf;;  # agent に返す文面の上書き(下の msg)。.example は既定値にしない(無ければ組み込みの文面)    # チケットに付けられるラベルの一覧(lib/tasks.sh)。.example は既定値にしない(無ければ自由に付けられる)
     *) return 1;;
   esac

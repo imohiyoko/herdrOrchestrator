@@ -280,9 +280,15 @@ tb nudge --dry-run            # 誰に送るか・なぜ飛ばすかを見るだ
 tb nudge [--idle-min 15] [--max 3] [--json]   # 送る(人の端末か scheduler から。例は scheduler/jobs/nudge.conf.example)
 ```
 
+- **対象**: 既定は全員(固定の除外は無い)。除外は設定 `nudge` に 1 行 1 つ `ignore <@役割の glob | agent 名の glob>` と書く(人だけが `tb config edit nudge`。例は `config/nudge.conf.example`)。**宛先を明示した場合(`tb nudge <agent 名の glob | @役割の glob> ...`)は ignore も適用しない**(指定が意思表示)。ほかの除外条件(下)は常に効く
+- **移行**: 以前は指揮役と保護された agent を固定で除いていた。それらを除きたいときは、有効にする前に ignore へ書く(`--dry-run` で対象を確かめる)
+- **`--pool`**: チケットを握っていない agent に、自分の team ラベル(`team:<x>`。領域の役割 `domain-<x>` から決め、無ければ名前の接尾辞 `-lead` を除いたもの)の担当なし `todo` を、優先度順(highest→lowest、同順位は古い順)の先頭 1 件取りに行かせる
+- **親は選ばない**: epic と、完了していない子を持つチケットは、催促にも `--pool` の候補にもしない
+- 送り手が本人と同じになる場合(自分の project の宛先が本人)は、既定の宛先から送る。それも本人なら送らない
+
 - **握っている**: 担当(`owner_agent`)が自分で、状態が `in_progress` のチケット。割り当てだけの `todo`、`review`・`blocked` は催促しない
 - **休んでいる**: herdr の状態が `idle` / `done` で、最後の turn の終わり(hook の活動記録)から `--idle-min` 分(`TB_NUDGE_IDLE_MIN`、既定 15)たっている
-- **催促しない**(理由つきで出す): herdr にいない・`working`・`blocked`(承認ダイアログなど人の操作待ち)/ 指示役(既定の宛先と `projects` の値)/ 保護(`protect`)/ 人の返事待ち(自分が出した `question`・`blocked` の報告が未対応)/ 握っているチケットがすべて先行チケット(`blocks`)待ち / 活動記録が無い / delivery の規則で指示役 → その agent の `task` が `now` にならない(`hold` は inbox に置かれるだけで催促にならず、`block` は送ってはいけない宛先)
+- **催促しない**(理由つきで出す): herdr にいない・`working`・`blocked`(承認ダイアログなど人の操作待ち)/ 設定 `nudge` の ignore(宛先を明示したときは適用しない)/ 人の返事待ち(自分が出した `question`・`blocked` の報告が未対応)/ 握っているチケットがすべて先行チケット(`blocks`)待ち / 活動記録が無い / delivery の規則で指示役 → その agent の `task` が `now` にならない(`hold` は inbox に置かれるだけで催促にならず、`block` は送ってはいけない宛先)
 - **しつこくしない**: 1 回の休みに 1 通。同じチケットで `--max` 回(`TB_NUDGE_MAX`、既定 3)送ったら止める(その先は `tb digest` の観測で指示役が見る)。届かなかった催促は outbox に `queued` で残さず `denied`(取り下げ)にする(あとで `tb flush` が古い催促を届けないように)
 - **複数のチケット**: タスク agent は 1 枚が原則。複数を握っていれば、先行チケット待ちでない中で優先度が高い(同じなら古い)1 枚を名指しし、ほかは `tb update <ID> --status todo` で戻すか指示役に相談するよう文面に書く。指示役には `tb digest` が「複数チケット」の観測として 1 度だけ知らせる(組み合わせが変わればまた出す)
 - 止めたい agent には delivery で `<指示役> -> <agent> : task=hold`(か `block`)を書く。催促だけを止める別の設定は持たない
