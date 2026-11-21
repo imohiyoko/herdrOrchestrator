@@ -177,7 +177,7 @@ cmd_agent-spawn() {
   requester
   local parent=$REQ_BY
   if [[ $parent == human ]]; then echo "tb: agent-spawn は agent の pane から使います(人は tb agent-new)" >&2; return 4; fi
-  if ! spawn_check "$parent" "$role" "$task"; then echo "tb: agent-spawn を拒否しました: $SPAWN_WHY" >&2; return 4; fi
+  if ! spawn_check "$parent" "$role" "$task"; then msg_err spawn.denied 'agent-spawn を拒否しました: {why}' why="$SPAWN_WHY"; return 4; fi
   local name cwd args prompt
   name=$(spawn_next_name "$parent") || { echo "tb: agent-spawn を拒否しました: 子の名前を決められません" >&2; return 4; }
   [[ $name =~ $AGENT_NAME_RE ]] || { echo "tb: agent-spawn を拒否しました: 子の名前 $name が長すぎます(32 字まで)" >&2; return 4; }

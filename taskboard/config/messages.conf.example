@@ -1,0 +1,19 @@
+# messages: agent に返す文面の上書き(tb config set messages / tb config edit messages。書くのは人だけ)。
+# この .example は既定値にしない(書かなければ組み込みの文面)。役割の名前に頼らない構成では、ここで案内の文面を自分の言葉にする。
+# 1 行 1 つ: <識別子> = <文面>。# で始まる行は注釈。後に書いた行が勝つ。{名前} は値に置き換わる(使えない {名前} は書けない)。
+# stderr に出す拒否は「tb: [<識別子>] <文面>」の形になる(識別子で見分けられる。終了コードは今までどおり)。
+#
+# 識別子                       使える {名前}              どこで出るか
+# send.denied.default          {sender}                  delivery のどの行にも当たらず、送信者が指揮官でないときの拒否の理由(outbox の reason)
+# send.blocked.notice          {id} {target} {kind} {rule}  delivery の block で止めたとき、送信者に返す知らせ
+# nudge.text                   {task} {title} {minutes}  tb nudge の催促の本文
+# nudge.multi                  {task} {others}           催促の本文の後ろ(in_progress を複数握っているとき)
+# alert.analyze                {id}                      アラートの解析を頼む agent への最初の依頼
+# spawn.denied                 {why}                     tb agent-spawn を規則で断ったとき(終了コード 4)
+# role.change.needs-approval   {rule} {command}          役割の変更に人の承認が要るとき(終了コード 20)
+# identity.no-pane             なし                      HERDR_PANE_ID が無く、報告者を特定できないとき(終了コード 3)
+# identity.herdr-failed        なし                      herdr agent list に失敗し、報告者を特定できないとき(終了コード 3)
+#
+# 例:
+# send.denied.default = {sender} からは直接送れません。仕事の依頼は tb add でチケットに、報告は tb comment で。
+# nudge.text = [催促] {task}「{title}」が {minutes} 分止まっています。続けるか、tb block {task} -m <理由> で止まった理由を書いてください。

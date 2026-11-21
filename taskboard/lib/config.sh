@@ -12,7 +12,7 @@
 # 書くのは人だけ。環境変数でファイルを明示しているときはそのファイルを、そうでなければ DB のこのセッションの行(--shared なら共通の行)を書く。
 
 CONFIG_DIR=${TB_CONFIG_DIR:-$TB_ROOT/config}   # checkout の設定ファイルの置き場(テストで差し替え)
-CONFIG_KEYS="projects approvals grants routes delivery limits notify notify-rules compact slash sched-watch spawn-policy role-models conv-routes conv-learn conv-stages protect labels"
+CONFIG_KEYS="projects approvals grants routes delivery limits notify notify-rules compact slash sched-watch spawn-policy role-models conv-routes conv-learn conv-stages protect labels messages"
 
 # キーの情報: CFG_ENV(上書きの環境変数)、CFG_FILE(checkout のファイル名)、CFG_EXAMPLE(1 なら .example も既定値として読む)
 config_key_info() {
@@ -35,7 +35,8 @@ config_key_info() {
     conv-learn)   CFG_ENV=TB_CONV_LEARN;      CFG_FILE=conv-learn.conf; CFG_EXAMPLE=1;;
     conv-stages)  CFG_ENV=TB_CONV_STAGES;     CFG_FILE=conv-stages.conf; CFG_EXAMPLE=1;;
     protect)      CFG_ENV=TB_PROTECT;         CFG_FILE=protect.conf;;   # tb から止めさせない agent(lib/agents.sh)。.example は既定値にしない(無ければ保護なし)
-    labels)       CFG_ENV=TB_LABELS;          CFG_FILE=labels.conf;;    # チケットに付けられるラベルの一覧(lib/tasks.sh)。.example は既定値にしない(無ければ自由に付けられる)
+    labels)       CFG_ENV=TB_LABELS;          CFG_FILE=labels.conf;;
+    messages)     CFG_ENV=TB_MESSAGES;        CFG_FILE=messages.conf;;  # agent に返す文面の上書き(下の msg)。.example は既定値にしない(無ければ組み込みの文面)    # チケットに付けられるラベルの一覧(lib/tasks.sh)。.example は既定値にしない(無ければ自由に付けられる)
     *) return 1;;
   esac
 }
@@ -76,6 +77,56 @@ config_lookup() {
   [[ $CFG_SRC != none ]]
 }
 config_forget() { unset "CFGC_${1//-/_}" "CFGS_${1//-/_}"; }
+
+# ---------- agent に返す文面(設定 messages)----------
+# 拒否・催促・依頼など、agent の次の動きを導く文面には識別子(コード)を付け、設定 messages の行で差し替えられるようにする。
+# 行: <識別子> = <文面>(# で始まる行は注釈。後に書いた行が勝つ)。文面の {名前} は呼び出し側が渡す値に置き換わる。
+# 書かなければ組み込みの文面。識別子の一覧と使える {名前} は MSG_VARS(config/messages.conf.example にも同じ一覧)。
+# 識別子は安定させる(名前を変えない)。stderr に出す拒否は「tb: [<識別子>] <文面>」の形で、識別子で機械的にも見分けられる。
+declare -A MSG_VARS=(
+  [send.denied.default]="sender"
+  [send.blocked.notice]="id target kind rule"
+  [nudge.text]="task title minutes"
+  [nudge.multi]="task others"
+  [alert.analyze]="id"
+  [spawn.denied]="why"
+  [role.change.needs-approval]="rule command"
+  [identity.no-pane]=""
+  [identity.herdr-failed]=""
+)
+# msg <識別子> <既定の文面> [名前=値 ...] → 文面(改行なし)
+msg() {
+  local code=$1 t=$2 kv k line; shift 2
+  if config_lookup messages 2>/dev/null; then
+    while IFS= read -r line || [[ -n $line ]]; do
+      [[ $line == *=* && $(trim "$line") != \#* ]] || continue
+      [[ $(trim "${line%%=*}") == "$code" ]] && t=$(trim "${line#*=}")
+    done <<<"$CFG_BODY"
+  fi
+  for kv; do k=${kv%%=*}; t=${t//"{$k}"/${kv#*=}}; done
+  printf '%s' "$t"
+}
+# 拒否の 1 行を stderr に出す(tb: [<識別子>] <文面>)
+msg_err() { local c=$1; echo "tb: [$c] $(msg "$@")" >&2; }
+# 設定 messages の検査(tb config set / edit のとき): 知らない識別子・知らない {名前}・空の文面は書かない
+config_validate_messages() {  # $1=本文
+  local line code text n=0 bad="" v
+  while IFS= read -r line || [[ -n $line ]]; do
+    n=$((n + 1))
+    line=$(trim "$line"); [[ -z $line || $line == \#* ]] && continue
+    if [[ $line != *=* ]]; then bad+="${n} 行目: <識別子> = <文面> の形ではありません"$'\n'; continue; fi
+    code=$(trim "${line%%=*}"); text=$(trim "${line#*=}")
+    if [[ -z ${MSG_VARS[$code]+x} ]]; then bad+="${n} 行目: 知らない識別子です: $code(使えるのは: ${!MSG_VARS[*]})"$'\n'; continue; fi
+    [[ -n $text ]] || bad+="${n} 行目: 文面が空です: $code"$'\n'
+    while [[ $text =~ \{([A-Za-z_]+)\} ]]; do
+      v=${BASH_REMATCH[1]}
+      [[ " ${MSG_VARS[$code]} " == *" $v "* ]] || bad+="${n} 行目: $code では {$v} は使えません(使えるのは: ${MSG_VARS[$code]:-なし})"$'\n'
+      text=${text//"{$v}"/}
+    done
+  done <<<"$1"
+  [[ -z $bad ]] && return 0
+  printf '%s' "$bad" >&2; return 1
+}
 
 # 本文を出す(1 行ずつ読む側のため、空でなければ末尾に改行を付ける)。無ければ 1
 config_text() { config_lookup "$1" || return 1; [[ -z $CFG_BODY ]] || printf '%s\n' "$CFG_BODY"; }

@@ -238,7 +238,7 @@ role_admin_check() {
     if grant_of "$REQ_BY" role:change "$1"; then APPROVAL_VALUE=allow; APPROVAL_RULE=$GRANT_RULE; else approval_of "role:change"; fi
   fi
   if [[ $APPROVAL_VALUE != allow ]]; then
-    echo "tb: role:change は人の承認が要ります($APPROVAL_RULE)。人が自分の端末で実行してください: $2" >&2
+    msg_err role.change.needs-approval 'role:change は人の承認が要ります({rule})。人が自分の端末で実行してください: {command}' rule="$APPROVAL_RULE" command="$2"
     return 20
   fi
 }
