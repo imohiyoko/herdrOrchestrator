@@ -2,7 +2,7 @@
 # scheduler の見張り(tb digest の観測)。bin/tb から source される。単体では実行しない。
 #
 # scheduler のログ(scheduler/logs/<job>.log、1 行 1 JSON)と、ジョブの実効設定(scheduler/bin/show.sh)を読むだけ。
-# launchd・scheduler の設定・ログは変更しない。次の 3 つを digest の観測として出す(宛先は DEFAULT_TARGET)。
+# launchd・scheduler の設定・ログは変更しない。次の 3 つを digest の観測として出す(宛先は既定の宛先。projects の * の行、無ければ DEFAULT_TARGET)。
 #   schedoff   : ENABLED=0 のまま disabled_min 分以上、skipped_disabled が続いているジョブ
 #   schedstale : 見張り系ジョブで、有効で窓の中なのに、ran が watch_stale_min 分以上無い。
 #                「実行された」= ran(COMMAND 型)または sent(PROMPT 型)。failed は数えない。
@@ -116,6 +116,7 @@ sw_command_value() {
 collect_sched_obs() {
   [[ $(sw_cfg enabled 1) == 1 ]] || return 0
   [[ -d $SW_DIR/logs && -f $SW_SHOW ]] || return 0
+  local dt; dt=$(default_target)   # 観測の宛先
   local off_min stale_min fail_win fail_runs fail_pct wait_max
   off_min=$(sw_cfg disabled_min 30); stale_min=$(sw_cfg watch_stale_min 20)
   fail_win=$(sw_cfg fail_window_min 60); fail_runs=$(sw_cfg fail_min_runs 5); fail_pct=$(sw_cfg fail_rate_pct 50)
@@ -153,7 +154,7 @@ collect_sched_obs() {
       start=$(jq -r '.streak_start // empty' <<<"$sum"); [[ -n $start ]] || continue
       ((now - start >= off_min * 60)) || continue
       key="schedwatch:off:$job:$start"; cur+="$(q "$key"),"
-      obs_seen "$key" || add_item "$DEFAULT_TARGET" obs "sched" "$key" "" schedoff "scheduler 観測 / $job" \
+      obs_seen "$key" || add_item "$dt" obs "sched" "$key" "" schedoff "scheduler 観測 / $job" \
         "ジョブ $job が ENABLED=0 のまま $(((now - start) / 60)) 分(skipped_disabled $(jq -r .streak_count <<<"$sum") 回、その間の実行 0 回)$( ((is_watch)) && echo '。見張り系のジョブで、見回りが動いていない' )。有効にするのは人(scheduler の settings か conf)"
       continue
     fi
@@ -168,7 +169,7 @@ collect_sched_obs() {
         ref=$(jq -r '.last_ran // .enabled_since // empty' <<<"$sum")
         if [[ -n $ref ]] && ((now - ref >= stale_min * 60)); then
           key="schedwatch:stale:$job:$ref"; cur+="$(q "$key"),"
-          obs_seen "$key" || add_item "$DEFAULT_TARGET" obs "sched" "$key" "" schedstale "scheduler 観測 / $job" \
+          obs_seen "$key" || add_item "$dt" obs "sched" "$key" "" schedstale "scheduler 観測 / $job" \
             "見張り系ジョブ $job の ran が $(((now - ref) / 60)) 分無い($( [[ $(jq -r '.last_ran // empty' <<<"$sum") == "$ref" ]] && echo '最後の ran から' || echo '有効になってから ran が 1 回も無く、' )。直近の記録は $(jq -r .last_action <<<"$sum")。scheduler/logs/$job.log を確認)"
         fi
       fi
@@ -178,14 +179,14 @@ collect_sched_obs() {
     failed=$(jq -r .failed_w <<<"$sum"); rans=$(( $(jq -r .ran_w <<<"$sum") + failed )); waits=$(jq -r .wait_w <<<"$sum")
     if ((rans > 0 && rans >= fail_runs && failed * 100 >= fail_pct * rans)); then
       key="schedwatch:fail:$job"; cur+="$(q "$key"),"
-      obs_seen "$key" || add_item "$DEFAULT_TARGET" obs "sched" "$key" "" schedfail "scheduler 観測 / $job" \
+      obs_seen "$key" || add_item "$dt" obs "sched" "$key" "" schedfail "scheduler 観測 / $job" \
         "ジョブ $job の失敗が多い(直近 $fail_win 分で $rans 回実行して failed $failed 回 = $((failed * 100 / rans))%。しきい値 ${fail_pct}%$( ((waits > 0)) && echo "。ほかに宛先の作業中で待った回(exit 10)が $waits 回あり、これは数えていない" )。scheduler/logs/$job.log を確認)"
     fi
     # 4. 宛先の作業中(exit 10)で待ったままの時間が長い
     wstart=$(jq -r '.wait_start // empty' <<<"$sum")
     if ((wait_max > 0)) && [[ -n $wstart ]] && ((now - wstart >= wait_max * 60)); then
       key="schedwatch:wait:$job:$wstart"; cur+="$(q "$key"),"
-      obs_seen "$key" || add_item "$DEFAULT_TARGET" obs "sched" "$key" "" schedwait "scheduler 観測 / $job" \
+      obs_seen "$key" || add_item "$dt" obs "sched" "$key" "" schedwait "scheduler 観測 / $job" \
         "ジョブ $job が、宛先の作業中(exit 10)で $(((now - wstart) / 60)) 分送れていない(その間 $(jq -r .wait_count <<<"$sum") 回とも待ち)。宛先が止まっていないか確認。scheduler/logs/$job.log を確認"
     fi
   done 3< <( { sql "SELECT DISTINCT substr(key, 11) FROM main.config WHERE key LIKE 'sched-job:%' AND herdr_session IN ($SQS, '*');"

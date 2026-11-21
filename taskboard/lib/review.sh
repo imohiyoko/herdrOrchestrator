@@ -4,6 +4,17 @@
 
 # ---------- 会計役(定期レビュー)→ 設定役(人事)へのプロンプト改善提案 ----------
 HR_NAME=${TB_HR_NAME:-hr}
+# 提案(project proposal のチケット)の宛先・担当: projects の proposal=<名前> の行。無ければ HR_NAME(TB_HR_NAME、既定 hr)
+proposal_target() {
+  local k v t=$HR_NAME
+  if config_has projects; then
+    while IFS='=' read -r k v || [[ -n $k ]]; do
+      k=${k//[[:space:]]/}; v=${v//[[:space:]]/}
+      [[ $k == proposal && -n $v ]] && t=$v
+    done < <(config_text projects)
+  fi
+  printf '%s' "$t"
+}
 SCHED_LOGS_DIR=${TB_SCHED_LOGS:-$TB_ROOT/../scheduler/logs}
 
 # 会計役に渡すレビュー材料。生ログではなく集計と上位だけを出す(トークン節約)。--since 省略時は前回 --mark 以降(初回は 24 時間)
@@ -108,7 +119,7 @@ cmd_proposal() {
   # ビュー経由では last_insert_rowid() が使えないので、同じトランザクションで振った番号を読む。チケットの担当は設定役
   local id; id=$(sql "BEGIN IMMEDIATE; INSERT INTO main.proposals (herdr_session, role_file, title, text, status, by_name, created_at) VALUES
     ($SQS, $(q "$role"), $(q "$title"), $(q "$text"), 'open', $(q "$LABEL_NAME"), $(q "$(now)"));
-    UPDATE main.tasks SET owner_agent=$(q "$HR_NAME") WHERE herdr_session=$SQS AND id=(SELECT task_id FROM main.proposal_details WHERE proposal_no=(SELECT MAX(proposal_no) FROM main.proposal_details));
+    UPDATE main.tasks SET owner_agent=$(q "$(proposal_target)") WHERE herdr_session=$SQS AND id=(SELECT task_id FROM main.proposal_details WHERE proposal_no=(SELECT MAX(proposal_no) FROM main.proposal_details));
     SELECT MAX(proposal_no) FROM main.proposal_details; COMMIT;")
   local r=0; proposal_deliver "$id" >/dev/null 2>&1 || r=$?
   echo "P-$id $([[ $r == 0 ]] && echo delivered || echo saved-undelivered)"
@@ -119,7 +130,7 @@ proposal_deliver() {  # $1=id
   row=$(session_row proposals id "$1")
   [[ -n $row && $(jq -r '.delivered_at // ""' <<<"$row") == "" ]] || return 0
   msg="[from: tb / proposal / P-$1 / info] $(jq -r .by_name <<<"$row") から roles/$(jq -r .role_file <<<"$row") の改善提案: $(oneline "$(jq -r .title <<<"$row")" 120) (全文: tb proposals P-$1。対応後に tb proposal-resolve P-$1)"
-  herdr_send "$HR_NAME" "$msg" "P-$1" proposal || return $?
+  herdr_send "$(proposal_target)" "$msg" "P-$1" proposal || return $?
   sql "UPDATE main.proposals SET delivered_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$1;"
 }
 
@@ -149,7 +160,8 @@ cmd_proposal-resolve() {
   [[ $st == applied || $st == rejected ]] || usage "proposal-resolve: --status は applied|rejected"
   if [[ -n ${HERDR_PANE_ID:-} ]]; then
     resolve_label || return 3
-    [[ $LABEL_NAME == "$HR_NAME" ]] || die "提案を閉じられるのは設定役($HR_NAME)か人だけです"
+    local pt; pt=$(proposal_target)
+    [[ $LABEL_NAME == "$pt" ]] || die "提案を閉じられるのは設定役(${pt}。projects の proposal の行)か人だけです"
   fi
   [[ $(sql "SELECT status FROM proposals WHERE id=$id;") == open ]] || die "P-$id は open ではありません"
   sql "UPDATE main.proposals SET status=$(q "$st"), note=NULLIF($(q "$note"),''), resolved_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$id;"

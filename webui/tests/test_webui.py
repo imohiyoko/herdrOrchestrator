@@ -2030,6 +2030,10 @@ try:
     open(os.environ["TB_CONFIG"], "w").write("pj = file-cond\n")
     with _rc.use("sa", "sa"):
         check("config: 環境変数で明示したファイルが DB より先", _g3.target_for("pj") == "file-cond")
+    open(os.environ["TB_CONFIG"], "w").write("pj = file-cond\n* = star-lead\n")
+    with _rc.use("sa", "sa"):
+        check("config: projects の * の行は既定の宛先で、project の行が優先(core.sh と同じ)",
+              (_g3.target_for("pj"), _g3.target_for("other")) == ("file-cond", "star-lead"))
     # 役割の定義も DB から(role:<名前> / role-map)。このセッションの行 > 共通の行 > roles/ のファイル
     _c = sqlite3.connect(_sdb)
     _c.execute("INSERT INTO config VALUES ('sa','role:zrole','z の役割','human','t'), ('*','role-map','z* = zrole','human','t')")

@@ -124,8 +124,8 @@ def name_matches(name, pat, reg_role=None):
 
 
 def target_for(project, path=None):
-    """project → 指揮官(core.sh の target_for と同じ。後に書いた行が勝つ)。"""
-    t = DEFAULT_TARGET
+    """project → 指揮官(core.sh の target_for と同じ。後に書いた行が勝つ。* の行は既定の宛先で、project の行が優先)。"""
+    star = exact = None
     if path:
         lines = _read_lines(path)
     else:   # 設定は DB のこのセッションの行 → 共通の行 → checkout のファイル(app/data.config_text)
@@ -134,9 +134,12 @@ def target_for(project, path=None):
     for line in lines:
         k, sep, v = line.partition("=")
         k, v = re.sub(r"\s", "", k), re.sub(r"\s", "", v)
-        if sep and k and not k.startswith("#") and v and k == project:
-            t = v
-    return t
+        if sep and k and not k.startswith("#") and v:
+            if k == "*":
+                star = v
+            if k == project:
+                exact = v
+    return exact or star or DEFAULT_TARGET
 
 
 def edge_sql():

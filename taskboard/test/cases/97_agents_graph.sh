@@ -80,7 +80,7 @@ printf '* = ask\n' >"$TB_APPROVALS"
 export FAKE_AGENTS="[$(ag conductor),$(ag worker1),$(ag worker2),$(ag hr1),$(ag watcher)]"
 $TB agents >/dev/null 2>&1
 eq "role-set: unknown role → 2" "$(rc $TB role-set worker1 nosuch)" "2"
-eq "role-set: not from a non-hr agent" "$(HERDR_PANE_ID=wworker1:p1 $TB role-set worker2 watcher 2>&1 | grep -c '人と人事役')" "1"
+eq "role-set: not from a non-hr agent" "$(HERDR_PANE_ID=wworker1:p1 $TB role-set worker2 watcher 2>&1 | grep -c '人事役(@hr)、grants で role:change')" "1"
 eq "role-set: hr needs role:change = allow (20)" "$(HERDR_PANE_ID=whr1:p1 rc $TB role-set worker2 watcher)" "20"
 printf 'role:change = allow\n* = ask\n' >"$TB_APPROVALS"
 eq "role-set: hr cannot change itself or grant hr" "$(HERDR_PANE_ID=whr1:p1 rc $TB role-set hr1 worker) $(HERDR_PANE_ID=whr1:p1 rc $TB role-set worker2 hr)" "1 1"

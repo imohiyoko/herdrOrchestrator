@@ -48,14 +48,20 @@ task_row() {  # $1=id → JSON 1 行(なければ空)
 }
 require_task() { local r; r=$(task_row "$1"); [[ -n $r ]] || die "タスクが見つかりません: $1"; printf '%s' "$r"; }
 
-target_for() {  # $1=project → 指示役の名前
-  local t=$DEFAULT_TARGET k v
+# projects の行: <project>=<指示役>。* の行(*=<名前>)は既定の宛先で、書かれていない project と、
+# project に属さない観測(digest・アラートの結果・scheduler の観測)の宛先になる。* の行も無ければ $DEFAULT_TARGET
+target_for() {  # $1=project(* なら既定の宛先)→ 指示役の名前
+  local t=$DEFAULT_TARGET star="" exact="" k v
   if config_has projects; then
     while IFS='=' read -r k v || [[ -n $k ]]; do
       k=${k//[[:space:]]/}; v=${v//[[:space:]]/}
-      [[ -z $k || $k == \#* ]] && continue
-      [[ $k == "$1" && -n $v ]] && t=$v
+      [[ -z $k || $k == \#* || -z $v ]] && continue
+      [[ $k == '*' ]] && star=$v
+      [[ $k == "$1" ]] && exact=$v
     done < <(config_text projects)
   fi
+  [[ -n $star ]] && t=$star
+  [[ -n $exact ]] && t=$exact
   printf '%s' "$t"
 }
+default_target() { target_for '*'; }
