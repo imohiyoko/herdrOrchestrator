@@ -2,7 +2,9 @@
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
 # --- 組織図(設定 org): 上司の線、grants / delivery の ~report ~subordinate ~manager ~superior ~peer、tb org(全員が見る)、tb can
 _saved_pane=${HERDR_PANE_ID-}; unset HERDR_PANE_ID
-_saved_appr=${TB_APPROVALS-}; _saved_roles=${TB_ROLES-}
+# 変える環境変数は、設定の有無ごと覚えて最後に戻す
+_org_vars="TB_DB TB_APPROVALS TB_ROLES TB_GRANTS TB_ORG TB_DELIVERY TB_PROTECT"
+for _v in $_org_vars; do if [[ -n ${!_v+x} ]]; then printf -v "_org_saved_$_v" '%s' "${!_v}"; printf -v "_org_set_$_v" 1; else printf -v "_org_set_$_v" 0; fi; done
 export TB_DB=$TMP/org.db TB_APPROVALS=$TMP/org-appr.conf TB_ROLES=$TMP/org-roles TB_GRANTS=$TMP/org-grants.conf
 export TB_ORG=$TMP/org.conf TB_DELIVERY=$TMP/org-delivery.conf TB_PROTECT=$TMP/org-protect.conf
 mkdir -p "$TB_ROLES"; for r in lead worker hr; do echo "ROLE-$r" >"$TB_ROLES/$r.md"; done
@@ -70,7 +72,11 @@ cat >"$TB_DELIVERY" <<'D'
 @lead   -> ~report  : task=now info=hold
 D
 eq "org delivery: to one's own manager / to another lead" "$($TB can w1 send:task lead1 | head -1) $($TB can w1 send:task lead2 | head -1)" "ask deny"
-eq "org delivery: hold to a report, a non-report falls to the default block" "$($TB can lead1 send:info w1 | head -1) $(rc $TB can lead1 send:task w3)" "hold 4"
+eq "org delivery: hold to a report (approvals still ask), a non-report falls to the default block" "$($TB can lead1 send:info w1 | head -1) $(rc $TB can lead1 send:task w3)" "ask 4"
+printf 'send:info:w1 = allow\n* = ask\n' >"$TB_APPROVALS"
+eq "org can: hold with approvals allow is hold (exit 21)" "$($TB can lead1 send:info w1 | head -1) $(rc $TB can lead1 send:info w1)" "hold 21"
+printf 'send:info:w1 = ask\nsend:task:* = allow\n* = ask\n' >"$TB_APPROVALS"
+eq "org can: hold with approvals ask is ask" "$($TB can lead1 send:info w1 | head -1) $(rc $TB can lead1 send:info w1)" "ask 20"
 printf 'send:task:* = allow\n* = ask\n' >"$TB_APPROVALS"
 eq "org can: delivery now + approvals allow = allow (exit 0)" "$(rc $TB can w1 send:task lead1) $($TB can w1 send:task lead1 | sed -n 2p)" "0 rule: delivery: @worker -> ~manager : task=now"
 printf '* = ask\n' >"$TB_APPROVALS"
@@ -85,12 +91,17 @@ eq "org can: role:change by the HR role needs approval, others are refused" "$($
 printf 'boss role:change ~subordinate\n' >>"$TB_GRANTS"
 eq "org can: role:change through an org grant" "$($TB can boss role:change w2 | head -1) $($TB can boss role:change loner | head -1)" "allow allow"
 eq "org can: without a subject it is the calling agent" "$(HERDR_PANE_ID=wboss:p1 $TB can agent:stop w1 | head -1) $(HERDR_PANE_ID=wlead1:p1 $TB can agent:stop w2 | head -1) $($TB can agent:stop w1 | head -1)" "allow ask allow"
+eq "org can: role:change on an agent with its own role file is refused even with a grant" "$(echo X >"$TB_ROLES/w2.md"; $TB can boss role:change w2 | head -1) $($TB can human role:change w2 | head -1)" "deny deny"
+rm -f "$TB_ROLES/w2.md"
 eq "org can: usage" "$(rc $TB can w1)" "2"
 
+printf '* = allow\n' >"$TMP/org-allow.conf"
 # 役割を確かめられなければ関係は当たらない(許可側に倒さない)。delivery は hold
 sqlite3 "$TB_DB" "ALTER TABLE agents RENAME COLUMN role TO role_x;"
 eq "org: an unreadable role grants nothing" "$($TB approval agent:read:w1 --by lead1 2>/dev/null | head -1)" "ask"
 sqlite3 "$TB_DB" "ALTER TABLE agents RENAME COLUMN role_x TO role;"
+eq "org delivery: an unreadable parent holds instead of skipping a block line" "$(printf '* -> ~manager : *=block\n* -> * : *=now\n' >"$TB_DELIVERY"; printf 'kid -> ~parent\n' >"$TB_ORG"; sqlite3 "$TB_DB" "ALTER TABLE agents RENAME COLUMN spawned_by TO sb_x;"; TB_APPROVALS=$TMP/org-allow.conf $TB can kid send:task w1 2>/dev/null | head -1; sqlite3 "$TB_DB" "ALTER TABLE agents RENAME COLUMN sb_x TO spawned_by;")" "hold"
+eq "spawn relation: an unreadable parent holds a delivery line too" "$(printf '* -> ~parent : *=block\n* -> * : *=now\n' >"$TB_DELIVERY"; sqlite3 "$TB_DB" "ALTER TABLE agents RENAME COLUMN spawned_by TO sb_x;"; TB_APPROVALS=$TMP/org-allow.conf $TB can kid send:task w1 2>/dev/null | head -1; sqlite3 "$TB_DB" "ALTER TABLE agents RENAME COLUMN sb_x TO spawned_by;")" "hold"
 
 # 検査(tb config set のとき)
 eq "org validate: a glob or @role as the manager is refused" "$(unset TB_ORG; printf 'w1 -> lead*\n' | rc $TB config set org 2>/dev/null)" "1"
@@ -102,7 +113,5 @@ printf 'lead1 -> w1\nw1 -> lead1\n' >"$TB_ORG"
 eq "org: a cycle is reported, not looped" "$($TB org | tail -1)" "循環していて木にできない: lead1 w1"
 eq "org: ~subordinate stops on a cycle" "$($TB approval agent:stop:lead1 --by boss | head -1)" "ask"
 
-unset TB_GRANTS TB_ORG TB_DELIVERY TB_PROTECT
-export TB_APPROVALS=$_saved_appr
-if [[ -n $_saved_roles ]]; then export TB_ROLES=$_saved_roles; else unset TB_ROLES; fi
+for _v in $_org_vars; do _s="_org_set_$_v"; _o="_org_saved_$_v"; if [[ ${!_s} == 1 ]]; then export "$_v=${!_o}"; else unset "$_v"; fi; done
 unset FAKE_AGENTS; export HERDR_PANE_ID=$_saved_pane

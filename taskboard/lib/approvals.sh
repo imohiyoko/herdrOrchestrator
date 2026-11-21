@@ -20,15 +20,15 @@ GRANT_RULE=""
 grant_parent_of() {  # $1=agent 名 → spawned_by(同じセッションの agent だけ)。読めなければ 1
   sql "SELECT COALESCE(spawned_by,'') FROM agents WHERE name=$(q "$1");"
 }
-grant_relation() {  # $1=主体 $2=対象 $3=~関係 → 当たれば 0、当たらなければ 1、組織図の役割を確かめられなければ 2
+grant_relation() {  # $1=主体 $2=対象 $3=~関係 → 当たれば 0、当たらなければ 1、台帳(親・役割)を読めず確かめられなければ 2(delivery は hold、grants は使わない)
   local p x i
   case $3 in
-    '~child')      p=$(grant_parent_of "$2") || return 1; [[ -n $p && $p == "$1" ]];;
-    '~parent')     p=$(grant_parent_of "$1") || return 1; [[ -n $p && $p == "$2" ]];;
-    '~sibling')    p=$(grant_parent_of "$1") || return 1; x=$(grant_parent_of "$2") || return 1; [[ -n $p && $p == "$x" && $1 != "$2" ]];;
+    '~child')      p=$(grant_parent_of "$2") || return 2; [[ -n $p && $p == "$1" ]];;
+    '~parent')     p=$(grant_parent_of "$1") || return 2; [[ -n $p && $p == "$2" ]];;
+    '~sibling')    p=$(grant_parent_of "$1") || return 2; x=$(grant_parent_of "$2") || return 2; [[ -n $p && $p == "$x" && $1 != "$2" ]];;
     '~descendant') x=$2
                    for ((i = 0; i < 16; i++)); do   # 上へたどる(循環しても 16 段で止める)
-                     x=$(grant_parent_of "$x") || return 1; [[ -n $x ]] || return 1
+                     x=$(grant_parent_of "$x") || return 2; [[ -n $x ]] || return 1
                      [[ $x == "$1" ]] && return 0
                    done; return 1;;
     '~report'|'~subordinate'|'~manager'|'~superior'|'~peer') org_relation "$1" "$2" "$3";;
@@ -43,7 +43,7 @@ grant_relation() {  # $1=主体 $2=対象 $3=~関係 → 当たれば 0、当た
 # 自分自身を上司にする行は飛ばす。設定が無ければ誰にも上司はいない(中立。関係 ~report などはどれにも当たらない)
 # 組織図そのものは全員が見られる(tb org)。できることを決めるのは grants / delivery / approvals / protect の行
 ORG_DEPTH=16   # 上へたどる段数の上限(循環しても止まる)
-# org_manager_of <agent> → 上司の名前を出して 0。上司がいなければ 1、役割を確かめられない行に先に当たったら 2
+# org_manager_of <agent> → 上司の名前を出して 0。上司がいなければ 1、役割や親を確かめられない行に先に当たったら 2
 org_manager_of() {
   local who=$1 line l r m
   config_has org || return 1
@@ -54,7 +54,7 @@ org_manager_of() {
     m=0; name_matches "$who" "$l" || m=$?
     ((m == 2)) && return 2
     ((m == 0)) || continue
-    if [[ $r == '~parent' ]]; then r=$(grant_parent_of "$who") || return 1; [[ -n $r ]] || continue; fi
+    if [[ $r == '~parent' ]]; then r=$(grant_parent_of "$who") || return 2; [[ -n $r ]] || continue; fi
     [[ $r != "$who" ]] || continue
     printf '%s' "$r"; return 0
   done < <(config_text org)

@@ -815,6 +815,8 @@ cmd_can() {
   valid_agent_name "$target"
   valid_action "$op"
   _can_out() { printf '%s\n' "$verdict"; printf 'rule: %s\n' "${@}"; case $verdict in allow) return 0;; ask) return 20;; hold) return 21;; *) return 4;; esac; }
+  # tb role-set は、対象の名前の役割定義(roles/<名前>.md)があれば人でも止める(台帳のロールが効かない)
+  if [[ $op == role:change ]] && role_exists "$target"; then verdict=deny; _can_out "役割 $target の定義があるため、台帳のロールは効かない(tb role-set は止まる)"; return; fi
   if [[ $who == human ]]; then
     if [[ $op == send:* ]]; then verdict=deny; _can_out "tb send は agent の pane から使う(人の端末には送信者がいない。人は herdr で直接話す)"; return; fi
     if [[ $op == agent:stop ]] && p=$(protect_reason "$target"); then verdict=deny; _can_out "protect: $p(人が設定 protect から外すまで止められない)"; return; fi
@@ -825,13 +827,12 @@ cmd_can() {
   case $op in
     send:task|send:info|send:answer)
       delivery_mode "$who" "$target" "${op#send:}"
-      case $DELIVERY_MODE in
-        block) verdict=deny; _can_out "$DELIVERY_RULE"; return;;
-        hold)  verdict=hold; _can_out "$DELIVERY_RULE(届けず宛先の inbox に置く)"; return;;
-      esac
+      [[ $DELIVERY_MODE != block ]] || { verdict=deny; _can_out "$DELIVERY_RULE"; return; }
+      # tb send と同じく、hold でも先に approvals を見る(ask なら承認待ち。承認のあとで inbox に置かれる)
       approval_of "$op:$target" "$who"
-      [[ $APPROVAL_VALUE == allow ]] || verdict=ask
-      _can_out "$DELIVERY_RULE" "approvals: $APPROVAL_RULE";;
+      if [[ $APPROVAL_VALUE != allow ]]; then verdict=ask
+      elif [[ $DELIVERY_MODE == hold ]]; then verdict=hold; fi
+      _can_out "$DELIVERY_RULE$([[ $DELIVERY_MODE == hold ]] && printf '(届けず宛先の inbox に置く)')" "approvals: $APPROVAL_RULE";;
     agent:stop)
       if p=$(protect_reason "$target"); then verdict=deny; _can_out "protect: $p"; return; fi
       approval_of "$op:$target" "$who"; [[ $APPROVAL_VALUE == allow ]] || verdict=ask
