@@ -18,7 +18,7 @@ eq "session roles: roles/sessions/s2/ replaces roles/ in s2 (map.conf there)" "$
 # 台帳はセッションごと: default の worker1 は s2 の台帳に無いので、s2 では未登録の名前と同じく s2 の map.conf で決まる(default の台帳の役割は使わない)
 eq "session roles: an agent of another session is unknown here (the session's map.conf decides)" "$(HERDR_SESSION=s2 $TB approval agent:stop:worker1 | sed -n 2p)" "rule: agent:stop:@auditor = allow"
 ctx=$(HERDR_SESSION=s2 HERDR_PANE_ID=wworker7:p1 FAKE_AGENTS="[$(rs_ worker7)]" $TB role-context --source startup --session-id s-w7 | jq -r .hookSpecificOutput.additionalContext)
-eq "session roles: role-context hands the session's own files" "$(grep -c '^S2-COMMON$\|^S2-auditor$' <<<"$ctx") $(grep -c 'ROLE-worker\|^COMMON$' <<<"$ctx")" "2 0"
+eq "session roles: role-context hands the session's own files" "$(grep -cE '^(S2-COMMON|S2-auditor)$' <<<"$ctx") $(grep -cE 'ROLE-worker|^COMMON$' <<<"$ctx")" "2 0"
 printf 'role:change = allow\n* = ask\n' >"$TB_APPROVALS"
 eq "role-set: refuses an agent of another session" "$(HERDR_SESSION=s2 FAKE_AGENTS="[]" $TB role-set worker1 auditor 2>&1 | grep -c "セッション 'default'") $(HERDR_SESSION=s2 FAKE_AGENTS="[]" rc $TB role-set worker1 auditor)" "1 1"
 eq "role-set: records the session" "$($TB role-set worker1 worker >/dev/null; sqlite3 "$TB_DB" "SELECT herdr_session FROM role_changes ORDER BY id DESC LIMIT 1;")" "default"
