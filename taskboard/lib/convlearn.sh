@@ -242,7 +242,8 @@ cmd_conv-candidate-add() {
     conv_ledger_put "$kind" "$(awk -F'\t' -v OFS='\t' -v t="$(now)" '{ $3=1; $11=t; print }' <<<"$row")"
   fi
   ef=$(conv_evidence_file "$kind")
-  if [[ -f $ef ]] && awk -F'\t' -v d="$dir" -v s="$src" '$1==d && $3==s {f=1} END{exit !f}' "$ef"; then
+  # 文字列の比較はバイト単位にする(macOS の awk は UTF-8 ロケールで照合順序の比較をし、別の日本語の文を「同じ」と見なすことがある)
+  if [[ -f $ef ]] && LC_ALL=C awk -F'\t' -v d="$dir" -v s="$src" '$1==d && $3==s {f=1} END{exit !f}' "$ef"; then
     echo "同じ証拠は記録済みです($dir $src)" >&2
   else
     ( umask 077; printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$dir" "$ev" "$src" "$skey" "$(now)" "$by" >>"$ef" )
