@@ -92,8 +92,11 @@ collect_digest() {
     obs_seen "$key" && continue
     add_item "$(target_for "$project")" obs "${list%%,*}" "$key" "${list%%,*}" multi "$owner 観測 / 複数チケット" \
       "in_progress のチケットを $(tr ',' '\n' <<<"$list" | grep -c .) 枚握っている(${list//,/ })。1 枚に絞るか、ほかを todo に戻すか、別の agent に回す"
-  done < <(sql -separator $'\t' "SELECT owner_agent, group_concat(id, ','), MIN(project) FROM (SELECT owner_agent, id, project FROM tasks
-             WHERE status='in_progress' AND owner_agent IS NOT NULL AND owner_agent!='' ORDER BY id) GROUP BY owner_agent HAVING COUNT(*) > 1 ORDER BY owner_agent;")
+  #     tb nudge と同じく、epic と完了していない子を持つ親は数えない(取りまとめ役が親と子を 1 枚ずつ持つのは普通)
+  done < <(sql -separator $'\t' "SELECT owner_agent, group_concat(id, ','), MIN(project) FROM (SELECT t.owner_agent, t.id, t.project FROM tasks t
+             WHERE t.status='in_progress' AND t.owner_agent IS NOT NULL AND t.owner_agent!='' AND t.type!='epic'
+               AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id=t.id AND c.status NOT IN ('done','cancelled')) ORDER BY t.id)
+             GROUP BY owner_agent HAVING COUNT(*) > 1 ORDER BY owner_agent;")
   sql "DELETE FROM main.observations WHERE herdr_session=$SQS AND kind='multi' AND key NOT IN (${multi}'');"
   # 4. 観測: DIGEST_STUCK_MIN 分以上 working のまま
   while IFS=$'\t' read -r id project owner key m; do

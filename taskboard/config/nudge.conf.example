@@ -1,0 +1,6 @@
+# nudge(tb nudge)の除外。人だけが編集する(tb config edit nudge)。1 行 1 つ:
+#   ignore <@役割の glob | agent 名の glob>      # 以降は注釈
+# 既定は全員が対象で、ここに書いたものだけ外す。宛先を明示した tb nudge <宛先> には適用しない。無い・空なら除外なし。
+# 例(架空の名前):
+# ignore @role-a
+# ignore agent-a*

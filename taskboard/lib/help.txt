@@ -38,7 +38,7 @@ tb proxy-check <id>   1 行目が allow(自動代行可)か human(人に回す)�
 
 agent の活動記録(hook から。bin/tb-hook 経由が基本):
 tb db-import <旧 DB> [--session <名前>] [--dry-run]   旧形式(checkout ごと)の DB を、共有の DB の 1 セッション(既定は今のセッション)の行として取り込む。人の端末だけ。元の DB は読むだけ
-tb config [list]   設定(projects / approvals / grants / routes / delivery / limits / notify / compact / slash / sched-watch / spawn-policy / role-models / conv-routes / conv-learn / conv-stages / protect / org)の出どころを出す。引く順: 環境変数で明示したファイル > DB のこのセッションの行 > DB の共通の行(*) > checkout の taskboard/config/<名前> > .example
+tb config [list]   設定(projects / approvals / grants / routes / delivery / limits / notify / compact / slash / sched-watch / spawn-policy / nudge / role-models / conv-routes / conv-learn / conv-stages / protect / org)の出どころを出す。引く順: 環境変数で明示したファイル > DB のこのセッションの行 > DB の共通の行(*) > checkout の taskboard/config/<名前> > .example
 tb config show <キー> | history <キー>   今効いている本文 / 変更の履歴
 tb config set <キー> [--shared] < 本文 | edit <キー> [--shared] | unset <キー> [--shared]   DB のこのセッションの行(--shared なら全セッション共通の行)を書く・消す。人の端末だけ
 tb config import [--dry-run]   checkout の taskboard/config/*.conf を、全セッション共通の行として DB に取り込む(共通の行が既にあるキーは飛ばす)。人の端末だけ
@@ -72,8 +72,10 @@ tb send <宛先 agent 名> --text T [--task T-..] [--kind task|info|answer] [--r
          --reply-to O-<n>: 自分宛てに届いた O-<n> への返信。tb が DB で確かめ(O-<n> が宛先 → 自分で、届いていて、未返信)、認めれば reply= の規則で届ける
          終了コード 0=送信済み 10=宛先使用中で outbox に積んだ 11=送信失敗で積んだ 4=ルールで拒否・止めた 20=人の承認待ち 3=送信者を特定できず未保存 12=保留に失敗して積んだ
 tb flush            積まれた送信を届ける(tb digest も最初に呼ぶ)
-tb nudge [--dry-run] [--idle-min N(既定 15)] [--max N(既定 3)] [--json]   チケット(in_progress)を握ったまま休んでいる agent に、指揮役から「続けて」と送る(tb send と同じ outbox と delivery)。人の端末か scheduler から
-         飛ばす: working / blocked・指揮役・保護(protect)・人の返事待ち(未対応の question/blocked)・先行チケット待ち・delivery が now でない・この休みで催促済み・同じチケットで --max 回催促済み
+tb nudge [<宛先> ...] [--pool] [--dry-run] [--idle-min N(既定 15)] [--max N(既定 3)] [--json]   チケット(in_progress)を握ったまま休んでいる agent に、指揮役から「続けて」と送る(tb send と同じ outbox と delivery)。人の端末か scheduler から
+         <宛先>: agent 名の glob か @役割の glob(複数は和集合)。明示した宛先には ignore を適用しない。当たる agent がいなければ skip の行を出す
+         --pool: チケットを握っておらず、担当の todo/review/blocked も無い agent に、自分の team ラベル(team:<x>)の担当なし todo を優先度順に 1 件取りに行かせる(同じ回で同じ候補は 1 人だけ)
+         飛ばす: working / blocked・設定 nudge の ignore・人の返事待ち(未対応の question/blocked)・先行チケット待ち・delivery が now でない・この休みで催促済み・同じチケットで --max 回催促済み
          複数を握っていれば優先度の高い 1 枚を名指しし、ほかは todo に戻すよう書く。出力は agent チケット 結果(sent|would|skip|held|blocked) 理由
 tb outbox [--status pending|queued|sent|denied] [--json]
 tb inbox [--unread] [--json]   自分宛てに保留された送信(delivery の設定で hold になったもの)の一覧。読めるのは自分宛てだけ

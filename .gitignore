@@ -33,3 +33,5 @@ taskboard/config/conv-learn.conf
 taskboard/config/conv-stages.conf
 taskboard/config/deadlines.conf
 dist/
+
+taskboard/config/nudge.conf

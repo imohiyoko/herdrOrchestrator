@@ -1,10 +1,13 @@
 # shellcheck shell=bash
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
 # --- nudge(チケットを握ったまま休んでいる agent に「続けて」と送る。経路は tb send と同じ outbox + delivery)
+_ng_nudge_set=${TB_NUDGE+x}; _ng_nudge=${TB_NUDGE-}   # 設定 nudge は、開始時に退避して専用の空設定にし、終了時に戻す(未設定なら未設定)
+_ng_roles_set=${TB_ROLES+x}; _ng_roles=${TB_ROLES-}
 _ng_saved=("${TB_CONFIG-}" "${TB_ROUTES-}" "${TB_APPROVALS-}" "${TB_DELIVERY-}" "${TB_PROTECT-}" "${HERDR_PANE_ID-}")
 export TB_DB=$TMP/nudge.db TB_CONFIG=$TMP/nudge-projects.conf TB_PROTECT=$TMP/nudge-protect.conf
 unset TB_ROUTES TB_DELIVERY TB_APPROVALS HERDR_PANE_ID
 printf 'ng=coord\n' >"$TB_CONFIG"; : >"$TB_PROTECT"
+export TB_NUDGE=$TMP/nudge-ignore.conf; : >"$TB_NUDGE"
 : >"$FAKE_LOG"
 nsql() { sqlite3 "$TB_DB" "$@"; }
 ag() { printf '{"pane_id":"%s","name":"%s","agent_status":"%s","agent_session":{"value":"%s"}}' "$1" "$2" "$3" "$4"; }
@@ -56,10 +59,25 @@ HERDR_PANE_ID=w1:p1 FAKE_AGENTS="[$(ag w1:p1 w1 idle s1),$(ag wC:p1 coord workin
 eq "nudge: 未対応の question → skip" "$($TB nudge --dry-run | grep -P '^w1\t' | grep -c '人の返事待ち')" "1"
 $TB resolve "$(nsql "SELECT 'C-'||id FROM comments WHERE task_id='$t1';")" >/dev/null
 eq "nudge: 対応済みにしたら → would" "$(out=$($TB nudge --dry-run); row w1)" "$t1 would"
-# 保護
+# 保護の設定(protect)は nudge の対象を変えない(固定の skip は無い。除外は設定 nudge の ignore)
 printf 'w1 = 定期実行の受け口\n' >"$TB_PROTECT"
-eq "nudge: 保護 → skip" "$($TB nudge --dry-run | grep -P '^w1\t' | grep -c '保護(定期実行の受け口)')" "1"
+eq "nudge: protect だけでは除外されない" "$(out=$($TB nudge --dry-run); row w1)" "$t1 would"
 : >"$TB_PROTECT"
+# 設定 nudge の ignore(agent 名の glob と @役割)。宛先を明示すると適用しない
+printf '# 注釈\nignore w1   # 名前\nignore @no-such-role\n' >"$TB_NUDGE"
+eq "nudge: ignore(名前)→ 走査しない" "$($TB nudge --dry-run | grep -c '^w1')" "0"
+eq "nudge: 宛先を明示すると ignore を適用しない" "$($TB nudge w1 --dry-run | grep -P '^w1\t' | cut -f3)" "would"
+eq "nudge: 宛先の glob は一致したものだけ" "$($TB nudge 'w[12]' --dry-run | cut -f1 | tr '\n' ' ')" "w1 w2 "
+printf 'ignore w?\n' >"$TB_NUDGE"
+eq "nudge: ignore(glob)" "$($TB nudge --dry-run | grep -c '^w[0-9]')" "0"
+printf 'ignore a b\n' >"$TB_NUDGE"
+eq "nudge: 不正な ignore の行はエラー" "$(rc $TB nudge --dry-run)" "1"
+: >"$TB_NUDGE"
+# 不正な行は tb config set nudge の時点で断る(実行のたびに失敗する設定を書かない)
+eq "config set nudge: 不正な行は書かない" "$(printf 'ignore a b\n' | rc $TB config set nudge) $(wc -c <"$TB_NUDGE" | tr -d ' ')" "1 0"
+eq "config set nudge: ignore 以外の語も断る" "$(printf 'skip w1\n' | rc $TB config set nudge)" "1"
+# 明示した宛先に当たる agent がいなければ、黙って終わらずに skip の行を出す
+eq "nudge: 当たらない宛先 → skip の行" "$($TB nudge no-such-agent --dry-run | cut -f1-3 | tr '\t' ' ')" "no-such-agent - skip"
 # 先行チケット待ち
 tb0=$($TB add -p ng -t '先行'); $TB link "$tb0" blocks "$t1" >/dev/null
 eq "nudge: 先行チケット待ち → skip" "$($TB nudge --dry-run | grep -P '^w1\t' | grep -c '先行チケット')" "1"
@@ -73,15 +91,63 @@ eq "nudge: delivery block → skip" "$($TB nudge --dry-run | grep -P '^w1\t' | g
 unset TB_DELIVERY
 # 届かなかった催促は後で届けない
 eq "nudge: 送信失敗 → 取り下げ(queued に残さない)" "$(FAKE_PROMPT_RC=1 $TB nudge | grep -P '^w1\t' | grep -c '取り下げ') $(nsql "SELECT status FROM outbox WHERE target='w1' ORDER BY id DESC LIMIT 1;")" "1 denied"
-# 指揮役は催促しない
+# 送り手と同じ agent(既定の宛先が本人)は送らない。ほかの指揮役は対象
 tc=$(claim coord '指揮役の仕事'); rest sc 30
-eq "nudge: 指揮役 → skip" "$($TB nudge --dry-run | grep -P '^coord\t' | cut -f3-4 | tr '\t' ' ')" "skip 指揮役"
+eq "nudge: 指揮役も既定で対象(送り手が別なら would)" "$($TB nudge --dry-run | grep -P '^coord\t' | cut -f3 | tr '\t' ' ')" "would"
+printf 'ng=conductor\n' >"$TB_CONFIG"
+t7=$(claim conductor '既定の宛先自身の仕事'); rest sconductor 30
+export FAKE_AGENTS="${FAKE_AGENTS%]},$(ag wX:p1 conductor idle sconductor)]"
+eq "nudge: 送り手が本人と同じ → skip" "$($TB nudge --dry-run | grep -P '^conductor\t' | cut -f3-4 | tr '\t' ' ')" "skip 送り手が本人と同じ"
+printf 'ng=coord\n' >"$TB_CONFIG"
 eq "nudge: --json" "$($TB nudge --dry-run --json | jq -r 'select(.agent=="w2") | .result')" "skip"
 eq "nudge: tb list の列は変えない" "$($TB list | grep -P "^$t1\t" | cut -f1-3 | tr '\t' ' ')" "$t1 in_progress w1"
+# --pool: 担当なし todo を優先度順に 1 件(team ラベルは領域の役割 → 無ければ名前の接尾辞を除く)。epic・未完了の子を持つ親は除く
+export FAKE_AGENTS="[$(ag wC:p1 coord idle sc),$(ag wm:p1 team-a-lead idle sm),$(ag wn:p1 solo idle sn)]"
+rest sm 30; rest sn 30
+pl=$($TB add -p ng -t '低' -l team:team-a --priority low); ph1=$($TB add -p ng -t '高・古い' -l team:team-a --priority high); sleep 1
+ph2=$($TB add -p ng -t '高・新しい' -l team:team-a --priority high)
+po=$($TB add -p ng -t '別 team' -l team:other --priority highest)
+pe=$($TB add -p ng -t '親 epic' --type epic -l team:team-a --priority highest)
+pp=$($TB add -p ng -t '子を持つ親' -l team:team-a --priority highest); $TB add -p ng -t '未完了の子' --parent "$pp" >/dev/null
+out=$($TB nudge 'team-a-lead' --pool --dry-run)
+eq "nudge --pool: 最も高い優先度の古い方を名指し" "$(row team-a-lead)" "$ph1 would"
+# 役割 domain-<x> から team を決める。同じ回では、同じ候補を 2 人に案内しない
+export TB_ROLES=$TMP/nudge-roles; mkdir -p "$TB_ROLES"; printf 'team-a 担当\n' >"$TB_ROLES/domain-team-a.md"
+printf 'team-a-2 = domain-team-a\n' >"$TB_ROLES/map.conf"
+export FAKE_AGENTS="${FAKE_AGENTS%]},$(ag wq:p1 team-a-2 idle sq)]"; rest sq 30
+out=$($TB nudge 'team-a-*' --pool --dry-run)
+eq "nudge --pool: 役割 domain-<x> から team を決め、同じ回では別の候補" "$(row team-a-2) / $(row team-a-lead)" "$ph1 would / $ph2 would"
+# ignore @役割 は役割の glob で外す
+printf 'ignore @domain-*\n' >"$TB_NUDGE"
+eq "nudge: ignore @役割の glob → 走査しない" "$($TB nudge --pool --dry-run | grep -c '^team-a-2')" "0"
+: >"$TB_NUDGE"
+# 自分が担当の todo(割り当て)があれば、--pool で別の仕事を取りに行かせない
+pa=$($TB add -p ng -t 'team-a-2 に割り当て' --owner team-a-2)
+eq "nudge --pool: 担当の todo がある → skip" "$($TB nudge team-a-2 --pool --dry-run | grep -P '^team-a-2\t' | cut -f3-4 | tr '\t' ' ')" "skip 担当のチケットがある($pa。--pool では取りに行かせない)"
+$TB cancel "$pa" -m 'テストの片付け' >/dev/null 2>&1 || nsql "UPDATE tasks SET status='cancelled' WHERE id='$pa';"
+eq "nudge --pool: 宛先なし・--pool なしの既定では取りに行かせない" "$($TB nudge --dry-run | grep -c '^team-a-lead')" "0"
+eq "nudge --pool: team を決められない agent は skip" "$($TB nudge solo --pool --dry-run | grep -P '^solo\t' | cut -f3-4 | tr '\t' ' ')" "skip team を決められない(--pool)"
+$TB nudge 'team-a-lead' --pool >/dev/null
+eq "nudge --pool: 取りまとめ役への送信は task・文面に候補" "$(nsql "SELECT kind||' '||task_id||' '||status FROM outbox WHERE target='team-a-lead';")" "task $ph1 sent"
+eq "nudge --pool: 文面" "$(grep '^prompt team-a-lead' "$FAKE_LOG" | grep -c '優先度の高い順(highest→lowest、同順位は古い順)に 1 件 claim')" "1"
+eq "nudge --pool: 文面の claim に本人の名前と session" "$(grep '^prompt team-a-lead' "$FAKE_LOG" | grep -c "tb claim $ph1 --owner team-a-lead --session sm")" "1"
+eq "nudge --pool: 同じ休みでは二度送らない" "$($TB nudge 'team-a-lead' --pool --dry-run | grep -P '^team-a-lead\t' | grep -c '催促済み')" "1"
+# 握っているのが親(epic)だけなら催促しない(--pool なし)
+pg=$($TB add -p ng -t '親だけ握る' --type epic --owner team-a-lead); $TB update "$pg" --status in_progress >/dev/null
+nsql "DELETE FROM outbox WHERE target='team-a-lead';"; rest sm 30
+eq "nudge: 親(epic)だけ握っている → 催促しない" "$($TB nudge 'team-a-lead' --dry-run | grep -P '^team-a-lead\t' | cut -f3-4 | tr '\t' ' ')" "skip 握っているのは親(epic など)だけ"
 # digest: 複数チケットを握っている agent を指揮役に知らせる(同じ組み合わせは一度だけ)
 eq "digest: 複数チケットの観測" "$($TB digest --dry-run | grep -c "w3 観測 / 複数チケット] in_progress のチケットを 2 枚握っている($t3 $t4)")" "1"
 $TB digest >/dev/null
 eq "digest: 同じ組み合わせは二度出さない" "$($TB digest --dry-run | grep -c '複数チケット')" "0"
+# 親(epic)と子を 1 枚ずつ握っているのは「複数チケット」に数えない(nudge と同じ数え方)
+pc=$($TB add -p ng -t '親の下の子' --parent "$pg" --owner team-a-lead); $TB update "$pc" --status in_progress >/dev/null
+eq "digest: 親と子は複数チケットに数えない" "$($TB digest --dry-run | grep -c 'team-a-lead 観測 / 複数チケット')" "0"
+# 設定 messages で nudge.pool を差し替えられる({agent} {session} も使える)
+eq "config set messages: nudge.pool を受け付ける" "$(printf 'nudge.pool = {task} {title} {agent} {session}\n' | rc $TB config set messages)" "0"
+$TB config unset messages >/dev/null
 export TB_CONFIG=${_ng_saved[0]} TB_ROUTES=${_ng_saved[1]} TB_APPROVALS=${_ng_saved[2]} TB_DELIVERY=${_ng_saved[3]} TB_PROTECT=${_ng_saved[4]} HERDR_PANE_ID=${_ng_saved[5]}
 for _v in TB_CONFIG TB_ROUTES TB_APPROVALS TB_DELIVERY TB_PROTECT HERDR_PANE_ID; do [[ -n ${!_v} ]] || unset "$_v"; done
-unset FAKE_AGENTS _ng_saved _v
+if [[ -n $_ng_nudge_set ]]; then export TB_NUDGE=$_ng_nudge; else unset TB_NUDGE; fi
+if [[ -n $_ng_roles_set ]]; then export TB_ROLES=$_ng_roles; else unset TB_ROLES; fi
+unset FAKE_AGENTS _ng_saved _v _ng_nudge _ng_nudge_set _ng_roles _ng_roles_set
