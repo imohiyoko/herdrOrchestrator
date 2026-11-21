@@ -90,6 +90,7 @@ declare -A MSG_VARS=(
   [send.blocked.notice]="id target kind rule"
   [nudge.text]="task title minutes"
   [nudge.multi]="task others"
+  [nudge.pool]="task title agent session"
   [alert.analyze]="id"
   [spawn.denied]="why"
   [role.change.needs-approval]="rule command"

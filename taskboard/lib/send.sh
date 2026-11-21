@@ -390,22 +390,32 @@ NUDGE_MAX=${TB_NUDGE_MAX:-3}
 
 # 設定 nudge: 1 行 1 つ「ignore <@役割の glob | agent 名の glob>」(# 以降は注釈)。無ければ除外なし
 NUDGE_IGNORES=()
+# nudge_parse <本文>: 正しければ NUDGE_IGNORES に入れて 0。不正な行は stderr に出して 1
+nudge_parse() {
+  local line k v n=0 bad=""
+  NUDGE_IGNORES=()
+  while IFS= read -r line || [[ -n $line ]]; do
+    n=$((n + 1))
+    line=$(trim "${line%%#*}"); [[ -n $line ]] || continue
+    k=${line%%[[:space:]]*}; v=$(trim "${line#"$k"}")
+    if [[ $k == ignore && -n $v && $v != *[[:space:]]* && $v != @ ]]; then NUDGE_IGNORES+=("$v")
+    else bad+="${n} 行目: ignore <@役割の glob | agent 名の glob> の形ではありません: $line"$'\n'; fi
+  done <<<"$1"
+  [[ -z $bad ]] && return 0
+  printf '%s' "$bad" >&2; return 1
+}
+# tb config set / edit nudge の検査(不正な行があれば書かない。実行のたびに失敗する設定を DB に入れない)
+config_validate_nudge() { nudge_parse "$1"; }
 nudge_load_config() {
   NUDGE_IGNORES=()
   config_has nudge || return 0
-  local line k v
-  while IFS= read -r line || [[ -n $line ]]; do
-    line=$(trim "${line%%#*}"); [[ -n $line ]] || continue
-    k=${line%%[[:space:]]*}; v=$(trim "${line#"$k"}")
-    [[ $k == ignore && -n $v && $v != *[[:space:]]* ]] || die "nudge: 設定 nudge の行が不正です(ignore <@役割の glob | agent 名の glob>): $line"
-    NUDGE_IGNORES+=("$v")
-  done < <(config_text nudge)
+  nudge_parse "$(config_text nudge)" || die "nudge: 設定 nudge に不正な行があります(tb config edit nudge で直す)"
 }
-# nudge_match <agent> <パターン>: agent 名の glob か @役割の glob に当たれば 0
+# nudge_match <agent> <パターン>: agent 名の glob か @役割の glob に当たれば 0、当たらなければ 1、役割を確かめられなければ 2
 nudge_match() {
   local a=$1 pat=$2 roles r
   if [[ $pat == @* ]]; then
-    roles=$(role_name_of "$a" 2>/dev/null) || return 1
+    roles=$(role_name_of "$a" 2>/dev/null) || return 2
     local -a have=(); IFS=, read -ra have <<<"$roles"
     for r in ${have[@]+"${have[@]}"}; do
       r=${r%.md}
@@ -438,9 +448,9 @@ nudge_text() {  # $1=今やるチケット $2=題 $3=分 $4=握っているほ�
   printf '%s' "$t"
 }
 
-nudge_pool_text() {  # $1=候補のチケット $2=題
-  msg nudge.pool '[取りに行って] 自分の team ラベルの担当なし todo のうち、優先度の高い順(highest→lowest、同順位は古い順)に 1 件 claim して進めてください。1 件ずつです。候補: {task}「{title}」。tb claim {task} --owner <自分の名前> で着手してください。' \
-    task="$1" title="$2"
+nudge_pool_text() {  # $1=候補のチケット $2=題 $3=agent 名 $4=session id
+  msg nudge.pool '[取りに行って] 自分の team ラベルの担当なし todo のうち、優先度の高い順(highest→lowest、同順位は古い順)に 1 件 claim して進めてください。1 件ずつです。候補: {task}「{title}」。tb claim {task} --owner {agent} --session {session} で着手してください(先に取られていたら、tb list で次の候補を見てください)。' \
+    task="$1" title="$2" agent="$3" session="$4"
 }
 
 NUDGE_OUT=""
@@ -466,16 +476,26 @@ cmd_nudge() {
   ((dry)) || require_human "tb nudge"
   load_live || { echo "tb: nudge: herdr agent list に失敗しました(何も送っていません)" >&2; return 11; }
   NUDGE_OUT=""
-  local owner rows n live st sess act stop_at prompt_at mins w pick ptitle project others sender oid rc text team mode t pat hit
+  local owner rows n live st sess act stop_at prompt_at mins w pick ptitle project others sender oid rc text team mode t pat hit i mrc
+  local offered=""   # --pool: この回で案内した候補(同じ team の複数の agent に同じ todo を案内しない)
+  local -a target_hit=()
   nudge_load_config
   while IFS= read -r owner; do
     [[ -n $owner ]] || continue
     # 宛先: 指定があれば一致するものだけ(ignore は適用しない)。無ければ全員から ignore を除く
     if ((${#targets[@]})); then
-      hit=0; for pat in "${targets[@]}"; do nudge_match "$owner" "$pat" && { hit=1; break; }; done
+      hit=0
+      for i in "${!targets[@]}"; do nudge_match "$owner" "${targets[i]}" && { hit=1; target_hit[i]=1; }; done
       ((hit)) || continue
     else
-      hit=0; for pat in ${NUDGE_IGNORES[@]+"${NUDGE_IGNORES[@]}"}; do nudge_match "$owner" "$pat" && { hit=1; break; }; done
+      hit=0
+      for pat in ${NUDGE_IGNORES[@]+"${NUDGE_IGNORES[@]}"}; do
+        mrc=0; nudge_match "$owner" "$pat" || mrc=$?
+        ((mrc == 1)) && continue
+        hit=1; ((mrc == 2)) && hit=2; break
+      done
+      # 役割を確かめられないときは、送る側に倒さない(組織図と同じく、分からなければ許さない)
+      ((hit == 2)) && { nudge_row "$owner" "-" skip "役割を確かめられない(設定 nudge の ignore $pat)"; continue; }
       ((hit == 0)) || continue
     fi
     mode=hold
@@ -498,8 +518,14 @@ cmd_nudge() {
     if [[ -z $pick ]]; then
       if ((n > 0)); then nudge_row "$owner" "$(jq -r '.[0].id' <<<"$rows")" skip "先行チケット(blocks)待ち"; continue; fi
       ((pool)) || { nudge_row "$owner" "-" skip "握っているのは親(epic など)だけ"; continue; }
+      # 自分が担当の todo(割り当て)・review・blocked があれば、新しい仕事を取りに行かせない(親は数えない)
+      w=$(sql "SELECT group_concat(t.id, ' ') FROM tasks t WHERE t.owner_agent=$(q "$owner") AND t.status IN ('todo','review','blocked') AND t.type!='epic'
+            AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id=t.id AND c.status NOT IN ('done','cancelled'));")
+      [[ -z $w ]] || { nudge_row "$owner" "-" skip "担当のチケットがある(${w}。--pool では取りに行かせない)"; continue; }
       team=$(nudge_team_of "$owner") || { nudge_row "$owner" "-" skip "team を決められない(--pool)"; continue; }
       pick=$(sql "SELECT t.id FROM tasks t WHERE t.status='todo' AND (t.owner_agent IS NULL OR t.owner_agent='') AND t.type!='epic'
+          AND t.id NOT IN (SELECT value FROM json_each($(q "[${offered%,}]")))
+          AND NOT EXISTS (SELECT 1 FROM alert_details a WHERE a.task_id=t.id) AND NOT EXISTS (SELECT 1 FROM proposal_details p WHERE p.task_id=t.id)
           AND EXISTS (SELECT 1 FROM json_each(t.labels) WHERE value=$(q "team:$team"))
           AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id=t.id AND c.status NOT IN ('done','cancelled'))
           AND NOT EXISTS (SELECT 1 FROM task_links l JOIN tasks b ON b.id=l.from_id WHERE l.to_id=t.id AND l.link_type='blocks' AND b.status NOT IN ('done','cancelled'))
@@ -530,7 +556,10 @@ cmd_nudge() {
     [[ $sender != "$owner" ]] || { nudge_row "$owner" "$pick" skip "送り手が本人と同じ"; continue; }
     delivery_mode "$sender" "$owner" task
     [[ $DELIVERY_MODE == now ]] || { nudge_row "$owner" "$pick" skip "delivery が $DELIVERY_MODE(${DELIVERY_RULE})"; continue; }
-    if [[ $mode == pool ]]; then text=$(nudge_pool_text "$pick" "$(oneline "$ptitle" 80)"); else text=$(nudge_text "$pick" "$(oneline "$ptitle" 80)" "$mins" "$others"); fi
+    if [[ $mode == pool ]]; then
+      offered+="\"$pick\","   # dry-run でも同じ選び方になるよう、ここで印を付ける(候補の ID は T-... で引用符を含まない)
+      text=$(nudge_pool_text "$pick" "$(oneline "$ptitle" 80)" "$owner" "$sess")
+    else text=$(nudge_text "$pick" "$(oneline "$ptitle" 80)" "$mins" "$others"); fi
     ((n > 1)) && w=" / in_progress $n 枚" || w=""
     if ((dry)); then nudge_row "$owner" "$pick" would "休んで $mins 分 / $sender から$w"; continue; fi
     oid=$(sql "INSERT INTO main.outbox (herdr_session, from_name, from_pane, from_session, target, kind, task_id, text, status, reason, created_at)
@@ -549,6 +578,10 @@ cmd_nudge() {
   done < <({ sql "SELECT DISTINCT owner_agent FROM tasks WHERE status='in_progress' AND owner_agent IS NOT NULL AND owner_agent!='';"
              # --pool: チケットを握っていない agent も候補にする(herdr にいるもの)
              ((pool)) && jq -r '.[].name // empty' <<<"$LIVE_AGENTS"; } | sort -u)
+  # 明示した宛先で、どの agent にも当たらなかったもの(打ち間違い・チケットを握っていない・herdr にいない)を黙って捨てない
+  ((${#targets[@]} == 0)) || for i in "${!targets[@]}"; do
+    [[ -n ${target_hit[i]:-} ]] || nudge_row "${targets[i]}" "-" skip "宛先に当たる agent がいない(in_progress を握っていない・--pool なら herdr にいない)"
+  done
   if ((json)); then printf '%s' "$NUDGE_OUT" | jq -c .
   else printf '%s' "$NUDGE_OUT" | jq -r '[.agent, .task, .result, .reason] | join("\t")'; fi
   return 0
