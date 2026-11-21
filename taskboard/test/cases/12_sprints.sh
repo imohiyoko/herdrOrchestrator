@@ -74,5 +74,5 @@ eq "sprints: close twice fails" "$($TB sprint-close "$c1" >/dev/null; rc $TB spr
 # 履歴(task_events)にスプリントとポイントの変化が残る
 h1=$($TB sprint-add -p sp -n hist); ht=$($TB add -p sp -t hist-task)
 $TB update "$ht" --sprint "$h1" --points 3 >/dev/null; $TB update "$ht" --sprint '' >/dev/null
-eq "sprints(history): sprint into and out" "$($TB history "$ht" --json | jq -r 'select(.kind=="sprint") | "\(.old // "-")>\(.new // "-")"' | paste -sd' ')" "->$h1 $h1>-"
+eq "sprints(history): sprint into and out" "$($TB history "$ht" --json | jq -r 'select(.kind=="sprint") | "\(.old // "-")>\(.new // "-")"' | paste -sd' ' -)" "->$h1 $h1>-"
 eq "sprints(history): points" "$($TB history "$ht" --json | jq -r 'select(.kind=="points") | .new')" "3"
