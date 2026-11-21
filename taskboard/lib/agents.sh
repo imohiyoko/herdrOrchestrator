@@ -700,3 +700,155 @@ cmd_agent-reject() {
   sql "UPDATE main.agent_ops SET status='rejected', result=COALESCE(result,'')||' / 人が却下', decided_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$id;"
   echo "L-$id rejected"
 }
+
+# ---------- 組織図(設定 org)を見る / 誰が誰に何をできるか ----------
+# 組織図は全員が見られる(人も agent も。読むだけ)。上司の線は設定 org(lib/approvals.sh の org_manager_of)で決まり、
+# できることは grants / delivery / approvals / protect の行が ~report などの関係を使って決める。
+# tb org [--json]             台帳の agent と、設定 org に書かれた上司を木で出す
+# tb org <agent 名> [--json]  その agent の上司・上の全員・直属の部下・同じ上司
+# tb org --me [--json]        叩いた agent(pane から tb が決める。自己申告にしない)について同じもの
+cmd_org() {
+  local json=0 who="" n m rc
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --json) json=1; shift;;
+      --me) [[ -z $who ]] || usage "org: agent 名か --me のどちらか 1 つ"
+            requester; [[ $REQ_BY != human ]] || usage "org: --me は agent の pane から使う(人の端末には上司がいない。tb org <agent 名> で見る)"
+            who=$REQ_BY; shift;;
+      -*) usage "org: 不明な引数 $1";;
+      *) [[ -z $who ]] || usage "org: agent 名は 1 つだけ"; who=$1; shift;;
+    esac
+  done
+  [[ -z $who ]] || valid_agent_name "$who"
+  local -A mgr=() st=() seen=()
+  local -a names=()
+  while IFS=$'\t' read -r n m; do [[ -n $n ]] && { names+=("$n"); st[$n]=$m; }; done \
+    < <(sql -separator $'\t' "SELECT name, state FROM agents ORDER BY name;")
+  [[ -z $who || -n ${st[$who]:-} ]] || { names+=("$who"); st[$who]=-; }
+  if config_has org; then
+    for n in "${names[@]}"; do
+      rc=0; m=$(org_manager_of "$n") || rc=$?
+      if ((rc == 0)); then mgr[$n]=$m; elif ((rc == 2)); then mgr[$n]='?'; fi
+    done
+  fi
+  # 上司として書かれているが台帳にいない名前も出す(上司の上司もたどる)
+  local added=1
+  while ((added)); do
+    added=0
+    for n in "${names[@]}"; do
+      m=${mgr[$n]:-}
+      if [[ -n $m && $m != '?' && -z ${st[$m]:-} ]]; then
+        names+=("$m"); st[$m]=-; added=1
+        rc=0; m=$(org_manager_of "$m") || rc=$?
+        ((rc == 0)) && mgr[${names[-1]}]=$m
+      fi
+    done
+  done
+  if [[ -n $who ]]; then
+    local chain reports="" peers="" x
+    chain=$(org_chain "$who" 2>/dev/null) || chain='?'
+    for x in "${names[@]}"; do
+      [[ $x != "$who" ]] || continue
+      [[ ${mgr[$x]:-} == "$who" ]] && reports+="$x "
+      [[ -n ${mgr[$who]:-} && ${mgr[$who]} != '?' && ${mgr[$x]:-} == "${mgr[$who]}" ]] && peers+="$x "
+    done
+    if ((json)); then
+      jq -nc --arg n "$who" --arg m "${mgr[$who]:-}" --arg c "$chain" --arg r "$reports" --arg p "$peers" --arg s "${st[$who]:--}" \
+        '{name:$n, state:$s, manager:(if $m=="" then null else $m end), superiors:($c|split("\n")|map(select(.!=""))),
+          reports:($r|split(" ")|map(select(.!=""))), peers:($p|split(" ")|map(select(.!="")))}'
+      return 0
+    fi
+    [[ -n $reports ]] || reports=-; [[ -n $peers ]] || peers=-
+    printf 'agent: %s\n上司: %s\n上の全員: %s\n直属の部下: %s\n同じ上司: %s\n' "$who" "${mgr[$who]:--}" \
+      "$( [[ -n $chain ]] && tr '\n' ' ' <<<"$chain" | sed 's/ $//' || echo -)" "${reports% }" "${peers% }"
+    return 0
+  fi
+  if ((json)); then
+    for n in "${names[@]}"; do printf '%s\t%s\t%s\n' "$n" "${st[$n]}" "${mgr[$n]:-}"; done \
+      | jq -Rsc --arg src "$(config_lookup org && printf '%s' "$CFG_SRC" || echo none)" \
+          '{source:$src, agents:(split("\n")|map(select(.!="")|split("\t")|{name:.[0], state:.[1], manager:(if .[2]=="" then null else .[2] end)}))}'
+    return 0
+  fi
+  if ! config_has org; then
+    echo "組織図は未設定です(設定 org。人が tb config set org で書く。例: setup/examples/org.conf)。誰にも上司はいません"
+    return 0
+  fi
+  echo "組織図(設定 org: $CFG_SRC)"
+  _org_print() {  # $1=名前 $2=字下げ
+    seen[$1]=1
+    local c tag=""
+    [[ ${st[$1]} == stopped ]] && tag="  (停止中)"
+    [[ ${st[$1]} == - ]] && tag="  (台帳にいない)"
+    printf '%s%s%s\n' "$2" "$1" "$tag"
+    for c in "${names[@]}"; do
+      [[ ${mgr[$c]:-} == "$1" && -z ${seen[$c]:-} ]] && _org_print "$c" "$2  "
+    done
+    return 0
+  }
+  ((${#names[@]})) || { echo "(台帳に agent がいません)"; return 0; }
+  local -a sorted
+  mapfile -t sorted < <(printf '%s\n' "${names[@]}" | sort -u)
+  names=("${sorted[@]}")
+  for n in "${names[@]}"; do
+    m=${mgr[$n]:-}
+    [[ -z $m || $m == '?' ]] && [[ -z ${seen[$n]:-} ]] && _org_print "$n" ""
+  done
+  local rest="" unk=""
+  for n in "${names[@]}"; do
+    [[ ${mgr[$n]:-} == '?' ]] && unk+="$n "
+    [[ -z ${seen[$n]:-} ]] && rest+="$n "
+  done
+  [[ -z $unk ]] || echo "役割を確かめられず上司が決まらない: ${unk% }"
+  [[ -z $rest ]] || echo "循環していて木にできない: ${rest% }"
+  return 0
+}
+
+# tb can <主体> <操作> <対象>: 主体が対象にその操作をできるかを、実際の判定と同じ規則で 1 つに決めて出す(読むだけ。何もしない)
+# 1 行目 allow|ask|hold|deny、続けて rule: 行。終了コード 0=allow 20=ask(人の承認待ちになる)21=hold(inbox に置かれる)4=deny
+# 主体 human は人(pane のない端末)。操作: send:task / send:info / send:answer / agent:stop / role:change / agent:flag / そのほか approvals の操作名
+# tb can <操作> <対象> は主体を叩いた agent(pane から決める。人の端末なら human)にする
+cmd_can() {
+  [[ $# -eq 2 || $# -eq 3 ]] || usage "can [<主体>] <操作> <対象>(例: tb can w1 send:task lead1、主体を省くと自分: tb can agent:stop w1)"
+  if [[ $# -eq 2 ]]; then requester; set -- "$REQ_BY" "$@"; fi
+  local who=$1 op=$2 target=$3 verdict=allow rule="" p
+  [[ $who == human ]] || valid_agent_name "$who"
+  valid_agent_name "$target"
+  valid_action "$op"
+  _can_out() { printf '%s\n' "$verdict"; printf 'rule: %s\n' "${@}"; case $verdict in allow) return 0;; ask) return 20;; hold) return 21;; *) return 4;; esac; }
+  if [[ $who == human ]]; then
+    if [[ $op == send:* ]]; then verdict=deny; _can_out "tb send は agent の pane から使う(人の端末には送信者がいない。人は herdr で直接話す)"; return; fi
+    if [[ $op == agent:stop ]] && p=$(protect_reason "$target"); then verdict=deny; _can_out "protect: $p(人が設定 protect から外すまで止められない)"; return; fi
+    _can_out "人の端末からはそのまま実行できる"; return
+  fi
+  if [[ $who == "$target" && ( $op == send:* || $op == role:change ) ]]; then verdict=deny; _can_out "自分自身には使えない"; return; fi
+  if [[ $who == "$target" && $op == agent:read ]]; then _can_out "本人はそのまま読める(tb peek)"; return; fi
+  case $op in
+    send:task|send:info|send:answer)
+      delivery_mode "$who" "$target" "${op#send:}"
+      case $DELIVERY_MODE in
+        block) verdict=deny; _can_out "$DELIVERY_RULE"; return;;
+        hold)  verdict=hold; _can_out "$DELIVERY_RULE(届けず宛先の inbox に置く)"; return;;
+      esac
+      approval_of "$op:$target" "$who"
+      [[ $APPROVAL_VALUE == allow ]] || verdict=ask
+      _can_out "$DELIVERY_RULE" "approvals: $APPROVAL_RULE";;
+    agent:stop)
+      if p=$(protect_reason "$target"); then verdict=deny; _can_out "protect: $p"; return; fi
+      approval_of "$op:$target" "$who"; [[ $APPROVAL_VALUE == allow ]] || verdict=ask
+      _can_out "$APPROVAL_RULE";;
+    agent:flag)
+      # shellcheck disable=SC2053  # glob として比べる
+      if [[ $who == $SWEEPER_PAT ]]; then _can_out "判定役($SWEEPER_PAT)"
+      elif grant_of "$who" agent:flag "$target"; then _can_out "$GRANT_RULE"
+      else verdict=deny; _can_out "判定役でなく、grants に agent:flag の行もない"; fi;;
+    role:change)
+      if grant_of "$who" role:change "$target"; then _can_out "$GRANT_RULE"
+      elif name_matches "$who" "@$ROLE_ADMIN"; then
+        approval_of role:change; [[ $APPROVAL_VALUE == allow ]] || verdict=ask
+        _can_out "人事役(@$ROLE_ADMIN)/ approvals: $APPROVAL_RULE"
+      else verdict=deny; _can_out "人事役(@$ROLE_ADMIN)でなく、grants に role:change の行もない"; fi;;
+    *)
+      approval_of "$op:$target" "$who"; [[ $APPROVAL_VALUE == allow ]] || verdict=ask
+      _can_out "$APPROVAL_RULE";;
+  esac
+}
