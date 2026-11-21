@@ -793,7 +793,7 @@ tb が `herdr agent prompt` で送ろうとしたものは、結果にかかわ�
 ## 設定(`tb config`)
 
 運用の設定は DB の `config` 表に置き、キーで引く(schema/013)。シングルポート・マルチセッションでも、セッションごとに違う設定を持てる。
-本文は今までの conf ファイルの中身そのまま(書式は各節のとおり)。キーは `projects` / `approvals` / `grants` / `routes` / `delivery` / `limits` / `notify` / `compact` / `slash` / `sched-watch` / `spawn-policy` / `role-models` / `protect`(tb から止めさせない agent)/ `labels`(チケットに付けられるラベル)/ `conv-routes`(会話の振り分け表。書くのは `tb conv-routes-set` だけ)。
+本文は今までの conf ファイルの中身そのまま(書式は各節のとおり)。キーは `projects` / `approvals` / `grants` / `routes` / `delivery` / `limits` / `notify` / `compact` / `slash` / `sched-watch` / `spawn-policy` / `role-models` / `protect`(tb から止めさせない agent)/ `labels`(チケットに付けられるラベル)/ `messages`(agent に返す文面の上書き。下の「agent に返す文面」)/ `conv-routes`(会話の振り分け表。書くのは `tb conv-routes-set` だけ)。
 
 引く順(最初に見つかったもの):
 
@@ -820,6 +820,15 @@ tb config history approvals        # 変更の履歴(config_changes)
   念のため `permissions.deny` に `Read(//<ORCH_DIR>/taskboard/config/*.conf)` を入れておくとよい
 - ファイルに残す設定: この Mac 全体を守るもの(gate 系・risk-rules・pr-queue・proxy-allowlist・repos.md・spawn-rules)と、コードと版を合わせる既定値(`approvals-catalog.conf`・`*.example`)。役割(roles/)は今は `roles/sessions/<セッション>/` で分ける
 - Web UI も同じ順で引く(`webui/app/data.py` の `config_text`。今は projects と approvals)
+
+### agent に返す文面(`messages`)
+
+拒否・催促・依頼など、agent の次の動きを導く文面には識別子が付いていて、設定 `messages` の `<識別子> = <文面>` の行で差し替えられる(書かなければ組み込みの文面)。
+使い方の案内を自分の構成の言葉にしたいとき(役割の名前を出したくない、報告の手順を変えたい など)に使う。識別子と使える `{名前}` の一覧は [config/messages.conf.example](config/messages.conf.example)。
+
+- stderr に出す拒否は `tb: [<識別子>] <文面>` の形(例 `tb: [spawn.denied] agent-spawn を拒否しました: ...`)。終了コードは今までどおり
+- `tb config set messages` は、知らない識別子・その識別子で使えない `{名前}`・空の文面を断る(何も書かない)
+- 識別子の名前は変えない(差し替えの行が効かなくなるため)。対象は agent が読む文面だけで、使い方の誤り(終了コード 2)などは含まない
 
 ## ファイルの構成
 

@@ -82,7 +82,7 @@ delivery_mode() {
     DELIVERY_RULE="$ROUTE_REASON / delivery: 一致する行がない(now)"
   else
     DELIVERY_MODE=block; DELIVERY_GATE=1
-    DELIVERY_RULE="default: $1 は指揮官ではない(worker からの報告は tb comment、依頼はチケットを使う)"
+    DELIVERY_RULE="default: $(msg send.denied.default '{sender} は指揮官ではない(worker からの報告は tb comment、依頼はチケットを使う)' sender="$1")"
     while IFS= read -r n; do
       [[ $1 == "$n" ]] && { DELIVERY_MODE=now; DELIVERY_GATE=0; DELIVERY_RULE="default: conductor $n"; break; }
     done < <(conductor_names)
@@ -150,8 +150,8 @@ outbox_hold() {  # $1=outbox.id $2=送信者 $3=宛先 $4=種別 $5=task(空可)
 # 送信者への知らせの文は BLOCK_NOTICE に入る(届け方は呼び出し側: tb send はその場で stderr、承認・flush のあとは送信者の pane に送る)
 BLOCK_NOTICE=""
 block_notice() {  # $1=outbox.id $2=宛先 $3=種別 $4=規則
-  printf '[tb: blocked / O-%s] %s への送信 O-%s(%s)は %s の受信設定で止められました(%s)。%s には届けていません。依頼や相談はチケットにしてください(tb add -p <project> -t <題> --desc <内容>。進み具合は tb comment で返ってきます)' \
-    "$1" "$2" "$1" "$3" "$2" "$4" "$2"
+  printf '[tb: blocked / O-%s] %s' "$1" "$(msg send.blocked.notice '{target} への送信 O-{id}({kind})は {target} の受信設定で止められました({rule})。{target} には届けていません。依頼や相談はチケットにしてください(tb add -p <project> -t <題> --desc <内容>。進み具合は tb comment で返ってきます)' \
+    id="$1" target="$2" kind="$3" rule="$4")"
 }
 outbox_block() {  # $1=outbox.id $2=送信者 $3=宛先 $4=種別 $5=規則 $6=記録用の 1 行
   local oid=$1 n
@@ -383,10 +383,12 @@ NUDGE_IDLE_MIN=${TB_NUDGE_IDLE_MIN:-15}
 NUDGE_MAX=${TB_NUDGE_MAX:-3}
 
 nudge_text() {  # $1=今やるチケット $2=題 $3=分 $4=握っているほかのチケット(空白区切り。空可)
-  local t="[催促] $1「$2」が in_progress のまま、turn が終わって $3 分止まっています。続きを進めてください。"
-  t+="終わったら tb done $1 -d <成果物> -m <要約> と tb report $1、進められない理由があれば tb block $1 -m <理由> か tb comment $1 --kind question --text <聞きたいこと> で知らせてください。"
+  local t
+  t=$(msg nudge.text '[催促] {task}「{title}」が in_progress のまま、turn が終わって {minutes} 分止まっています。続きを進めてください。終わったら tb done {task} -d <成果物> -m <要約> と tb report {task}、進められない理由があれば tb block {task} -m <理由> か tb comment {task} --kind question --text <聞きたいこと> で知らせてください。' \
+    task="$1" title="$2" minutes="$3")
   if [[ -n $4 ]]; then
-    t+="あなたは in_progress のチケットをほかにも持っています($4)。1 枚ずつ進めるのが原則なので、まず $1 を進め、今やっていないものは tb update <ID> --status todo で戻すか、tb comment で指示役に相談してください。"
+    t+=$(msg nudge.multi 'あなたは in_progress のチケットをほかにも持っています({others})。1 枚ずつ進めるのが原則なので、まず {task} を進め、今やっていないものは tb update <ID> --status todo で戻すか、tb comment で指示役に相談してください。' \
+      task="$1" others="$4")
   fi
   printf '%s' "$t"
 }

@@ -7,8 +7,8 @@ LABEL_NAME=""; LABEL_PANE=""; LABEL_SESSION=""
 # 報告者ラベルは herdr から引く(自己申告にしない)。引けなければ 1 を返す(理由は stderr)
 resolve_label() {
   local pane=${HERDR_PANE_ID:-} out row
-  [[ -n $pane ]] || { echo "tb: HERDR_PANE_ID がありません。報告者を特定できないため保存しません" >&2; return 1; }
-  out=$(herdr_call agent list 2>/dev/null) || { echo "tb: herdr agent list に失敗。報告者を特定できないため保存しません" >&2; return 1; }
+  [[ -n $pane ]] || { msg_err identity.no-pane 'HERDR_PANE_ID がありません。報告者を特定できないため保存しません'; return 1; }
+  out=$(herdr_call agent list 2>/dev/null) || { msg_err identity.herdr-failed 'herdr agent list に失敗。報告者を特定できないため保存しません'; return 1; }
   row=$(jq -c --arg p "$pane" '[.result.agents[]? | select(.pane_id==$p)][0] // empty' <<<"$out" 2>/dev/null) || row=""
   [[ -n $row ]] || { echo "tb: pane $pane に該当する agent がありません。保存しません" >&2; return 1; }
   LABEL_NAME=$(jq -r '.name // ""' <<<"$row"); LABEL_SESSION=$(jq -r '.agent_session.value // ""' <<<"$row"); LABEL_PANE=$pane
