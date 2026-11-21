@@ -1,10 +1,12 @@
 # shellcheck shell=bash
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
 # --- nudge(チケットを握ったまま休んでいる agent に「続けて」と送る。経路は tb send と同じ outbox + delivery)
+_ng_nudge_set=${TB_NUDGE+x}; _ng_nudge=${TB_NUDGE-}   # 設定 nudge は、開始時に退避して専用の空設定にし、終了時に戻す(未設定なら未設定)
 _ng_saved=("${TB_CONFIG-}" "${TB_ROUTES-}" "${TB_APPROVALS-}" "${TB_DELIVERY-}" "${TB_PROTECT-}" "${HERDR_PANE_ID-}")
 export TB_DB=$TMP/nudge.db TB_CONFIG=$TMP/nudge-projects.conf TB_PROTECT=$TMP/nudge-protect.conf
 unset TB_ROUTES TB_DELIVERY TB_APPROVALS HERDR_PANE_ID
 printf 'ng=coord\n' >"$TB_CONFIG"; : >"$TB_PROTECT"
+export TB_NUDGE=$TMP/nudge-ignore.conf; : >"$TB_NUDGE"
 : >"$FAKE_LOG"
 nsql() { sqlite3 "$TB_DB" "$@"; }
 ag() { printf '{"pane_id":"%s","name":"%s","agent_status":"%s","agent_session":{"value":"%s"}}' "$1" "$2" "$3" "$4"; }
@@ -61,7 +63,6 @@ printf 'w1 = 定期実行の受け口\n' >"$TB_PROTECT"
 eq "nudge: protect だけでは除外されない" "$(out=$($TB nudge --dry-run); row w1)" "$t1 would"
 : >"$TB_PROTECT"
 # 設定 nudge の ignore(agent 名の glob と @役割)。宛先を明示すると適用しない
-export TB_NUDGE=$TMP/nudge-ignore.conf
 printf '# 注釈\nignore w1   # 名前\nignore @no-such-role\n' >"$TB_NUDGE"
 eq "nudge: ignore(名前)→ 走査しない" "$($TB nudge --dry-run | grep -c '^w1')" "0"
 eq "nudge: 宛先を明示すると ignore を適用しない" "$($TB nudge w1 --dry-run | grep -P '^w1\t' | cut -f3)" "would"
@@ -70,7 +71,7 @@ printf 'ignore w?\n' >"$TB_NUDGE"
 eq "nudge: ignore(glob)" "$($TB nudge --dry-run | grep -c '^w[0-9]')" "0"
 printf 'ignore a b\n' >"$TB_NUDGE"
 eq "nudge: 不正な ignore の行はエラー" "$(rc $TB nudge --dry-run)" "1"
-unset TB_NUDGE
+: >"$TB_NUDGE"
 # 担当を持つ agent どうし: 送り手が本人と同じなら既定の宛先から送る(親と取りまとめ役の例)
 # 先行チケット待ち
 tb0=$($TB add -p ng -t '先行'); $TB link "$tb0" blocks "$t1" >/dev/null
@@ -121,4 +122,5 @@ $TB digest >/dev/null
 eq "digest: 同じ組み合わせは二度出さない" "$($TB digest --dry-run | grep -c '複数チケット')" "0"
 export TB_CONFIG=${_ng_saved[0]} TB_ROUTES=${_ng_saved[1]} TB_APPROVALS=${_ng_saved[2]} TB_DELIVERY=${_ng_saved[3]} TB_PROTECT=${_ng_saved[4]} HERDR_PANE_ID=${_ng_saved[5]}
 for _v in TB_CONFIG TB_ROUTES TB_APPROVALS TB_DELIVERY TB_PROTECT HERDR_PANE_ID; do [[ -n ${!_v} ]] || unset "$_v"; done
-unset FAKE_AGENTS _ng_saved _v
+if [[ -n $_ng_nudge_set ]]; then export TB_NUDGE=$_ng_nudge; else unset TB_NUDGE; fi
+unset FAKE_AGENTS _ng_saved _v _ng_nudge _ng_nudge_set

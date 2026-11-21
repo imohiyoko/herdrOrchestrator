@@ -526,7 +526,7 @@ cmd_nudge() {
     ptitle=$(jq -r --arg p "$pick" '.[] | select(.id == $p) | .title' <<<"$rows")
     sender=$(target_for "$project")
     # 送り手が本人と同じ(例: team の取りまとめ役が自分の project の宛先)なら、既定の宛先から送る。それも本人なら送らない
-    if [[ $sender == "$owner" ]]; then sender=$DEFAULT_TARGET; fi
+    if [[ $sender == "$owner" ]]; then sender=$(default_target); fi
     [[ $sender != "$owner" ]] || { nudge_row "$owner" "$pick" skip "送り手が本人と同じ"; continue; }
     delivery_mode "$sender" "$owner" task
     [[ $DELIVERY_MODE == now ]] || { nudge_row "$owner" "$pick" skip "delivery が $DELIVERY_MODE(${DELIVERY_RULE})"; continue; }
