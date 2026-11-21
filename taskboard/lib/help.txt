@@ -152,7 +152,7 @@ tb agent-approve L-<n> [--always]   承認待ちの操作を実行(--always で 
 tb agent-reject L-<n>
 
 規則つきの子 agent 作成(agent の pane から。自動承認は LLM ではなく tb の規則。config/spawn-policy.conf は人だけが編集):
-tb agent-spawn <役割> --task <task-id> --brief <依頼の本文(2000 字まで)>
+tb agent-spawn <役割|-> --task <task-id> --brief <依頼の本文(2000 字まで)>
          子の名前は tb が <親>-s<連番> で付け、プロンプトも tb がテンプレートで組む(依頼は役割の指示を上書きできない)。
          親は動いていて、--task が親の in_progress のタスクであること。許可する役割・子の数・深さは spawn-policy.conf
          (既定: worker だけ、親 1 体あたり 2、全体 6、深さ 1、モデル sonnet。denied_parents に当たる親は不可)

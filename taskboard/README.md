@@ -564,13 +564,14 @@ tb を通らない直読みを防ぐため、agent の Claude Code 設定で her
 agent が自分の仕事の一部を子 agent に任せる入口。自動承認は LLM ではなく tb の決定的な規則で、自由な `agent-new`(`agent:new:*` は ask のまま)とは別の操作名 `agent:spawn:<子の名前>` で動く。
 
 ```bash
-tb agent-spawn <役割> --task <task-id> --brief <依頼の本文(2000 字まで)>   # agent の pane から
+tb agent-spawn <役割|-> --task <task-id> --brief <依頼の本文(2000 字まで)>   # agent の pane から(- は役割なし)
 tb spawn-freeze / tb spawn-unfreeze                                        # 人だけ。凍結中は全部、人の承認待ち
 ```
 
 - 呼び出し側が渡せるのは役割・`--task`・`--brief` だけ。名前は tb が `<親>-s<連番>` で付け、作業場所は親と同じ、モデルは規則の既定(呼び出し側は選べない)。
   プロンプトは tb がテンプレートで組み立てる(役割ファイルの場所、タスク、報告は `tb comment`、子は子を立てられない、`config/spawn-rules.txt` に書いた環境ごとの決まり、秘密の値を書かない、読み取り以外の変更をしない)。
   `--brief` は「依頼者が書いたデータ」として最後に囲んで入れるので、役割の指示を上書きできない
+- 役割 `-` は役割なしの子(台帳の役割は空。役割の文面は `_common.md` だけ)。`allowed_roles` に `-` を書いたときだけ使える。プロンプトは役割に触れず、上の規則と依頼だけで動く文面になる
 - 規則は `config/spawn-policy.conf`(人だけが編集。無ければ `spawn-policy.conf.example` の既定値): 許可する役割(既定 `worker` だけ)、親 1 体あたり 2、全体 6、深さ 1、モデル sonnet。
   追加の固定の条件: 親は herdr で動いていて、`--task` が親の持つ in_progress のタスクであること。`denied_parents`(glob)に当たる親は子を立てられない
 - 判定: 規則に合い、`approvals.conf` の `agent:spawn:<子の名前>` が `allow` → 人の承認なしで作る(`agent-new` と同じ経路。`agent_ops` に requested_by=親・result に policy)。

@@ -70,6 +70,14 @@ printf 'allowed_roles = worker, auditor\nmax_children_per_parent = 5\nmax_childr
 out=$(TB_SPAWN_POLICY=$TMP/spawn-wide.conf HERDR_PANE_ID=wQ:p1 $TB agent-spawn auditor --task "$T2" --brief x)
 eq "agent-spawn: policy file decides roles and model" "$(cut -d' ' -f1-2 <<<"$out") $(spsql "SELECT role||' '||model FROM agents WHERE name='parent2-s1';")" "parent2-s1 started auditor haiku"
 
+# 役割なしの子(-): allowed_roles に - があるときだけ
+eq "agent-spawn -: refused when allowed_roles has no -" "$(HERDR_PANE_ID=wQ:p1 rc $TB agent-spawn - --task "$T2" --brief x)" "4"
+printf 'allowed_roles = -\nmax_children_per_parent = 5\nmax_children_total = 9\n' >"$TMP/spawn-norole.conf"
+out=$(TB_SPAWN_POLICY=$TMP/spawn-norole.conf HERDR_PANE_ID=wQ:p1 $TB agent-spawn - --task "$T2" --brief 'README を読む')
+eq "agent-spawn -: created with an empty role" "$(cut -d' ' -f1-2 <<<"$out") $(spsql "SELECT COALESCE(role,'(none)') FROM agents WHERE name='parent2-s2';")" "parent2-s2 started (none)"
+np=$(spsql "SELECT json_extract(args,'\$.prompt') FROM agent_ops WHERE target='parent2-s2';")
+eq "agent-spawn -: the prompt does not mention a role and stands on its own" "$(grep -c '役割' <<<"$np") $(grep -c '下の規則と依頼に従ってください' <<<"$np") $(grep -c 'README を読む' <<<"$np")" "0 1 1"
+
 # 深さ(子は子を立てられない)
 CT=$(sp_task parent1-s1 in_progress)
 eq "agent-spawn: a child cannot spawn (depth) → 4" "$(HERDR_PANE_ID=wA:p1 $TB agent-spawn worker --task "$CT" --brief x 2>&1 >/dev/null | grep -c '深さ') $(HERDR_PANE_ID=wA:p1 rc $TB agent-spawn worker --task "$CT" --brief x)" "1 4"

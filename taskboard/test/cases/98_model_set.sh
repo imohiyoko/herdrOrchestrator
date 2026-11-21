@@ -123,6 +123,15 @@ eq "after --reset the role default applies" "$(grep -c '^start hr3 .* --model so
 printf 'hr = sonnet\n* = haiku\n' >"$TB_ROLE_MODELS"
 ms_reset; $TB agent-new cx1 --kind codex --cwd "$TMP" >/dev/null 2>&1
 eq "role default is not passed to kinds without model support" "$(grep -c '^start cx1 --kind codex --pane wA:p1$' "$FAKE_LOG")" "1"
+# name:<agent 名の glob> の行: 役割の無い agent にも効く。上から最初に当たった行
+printf 'name:solo* = haiku\nhr = sonnet\n' >"$TB_ROLE_MODELS"
+ms_reset; $TB agent-new solo1 --cwd "$TMP" >/dev/null 2>&1
+eq "role-models name: line applies to an agent without a role" "$(grep -c '^start solo1 --kind claude --pane wA:p1 -- --model haiku$' "$FAKE_LOG")" "1"
+ms_reset; $TB agent-new hr9 --role hr --cwd "$TMP" >/dev/null 2>&1
+eq "role-models: role lines still apply below a name: line" "$(grep -c '^start hr9 .* --model sonnet$' "$FAKE_LOG")" "1"
+_saved_rm=$TB_ROLE_MODELS; unset TB_ROLE_MODELS
+eq "config set role-models: name: lines are accepted, a bad glob is refused" "$(printf 'name:watch* = haiku\n' | rc $TB config set role-models) $(printf 'name:a/b = haiku\n' | rc $TB config set role-models)" "0 1"
+$TB config unset role-models >/dev/null; export TB_ROLE_MODELS=$_saved_rm
 : >"$TB_ROLE_MODELS"
 
 unset FAKE_AGENTS FAKE_DYNAMIC TB_ROLE_MODELS TB_LIMITS MS_HOME; export TB_APPROVALS=$TMP/appr.conf; export HERDR_PANE_ID=$_saved_pane
