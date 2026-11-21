@@ -257,7 +257,7 @@ def page_agents(qs, ctx=None):
         ["名前", "状態", "workspace", "いま何を", "最終入力 / 停止", "警告", "止めてよいか", "操作"], rows)
     body += ('<h2 id="roles">ロール別</h2>' + role_groups_html(agents, reg) +
              '<p class=note>誰が誰に何をしたか(spawn・指揮・依頼・報告・解析)は <a href="/agent-graph">関係グラフ</a> で見られます。</p>')
-    body += ('<p class=note>「止めてよいか」は判定役(roles/sweeper.md)か人が付けます。止めてよい印があり、未完了タスクが無いものは「停止」、'
+    body += ('<p class=note>「止めてよいか」は判定役(grants の agent:flag)か人が付けます。止めてよい印があり、未完了タスクが無いものは「停止」、'
              'それ以外は確認つきの「強制停止」。止めても台帳に会話が残り、下から同じ会話で復活できます。 '
              '<a href="/agent-new">新しい agent を作る</a></p>')
     pend = agent_ops("pending", 50)

@@ -273,7 +273,7 @@ herdr は `tests/fake/herdr`(疑似)、DB・ログ・ログイン情報の置き
 `/agents` から、`/mcp` や herdr を手で触らずに agent を止める・復活させる・作る。Web UI からの操作は人の操作として扱い
 (`HERDR_PANE_ID` を外して `tb` を呼ぶ)、実体は `tb agent-*` が行う(詳細は `taskboard/README.md` の「agent の停止・復活・新規作成」)。
 
-- **停止**: 判定役(`roles/sweeper.md`)か人が「止めてよい」印を付け、未完了タスクが無い agent には「停止」ボタン。
+- **停止**: 判定役(`grants` の `agent:flag`。利用例は `setup/examples/roles/sweeper.md`)か人が「止めてよい」印を付け、未完了タスクが無い agent には「停止」ボタン。
   それ以外は「強制停止」で、確認のチェックを入れないと送れない。止めても台帳に会話(session)と cwd が残る
 - **復活**: 「停止中の agent」から「同じ会話で復活」(`claude --resume <session>`)か「新しい会話で復活」
 - **新規作成**: `/agent-new`。専用の workspace で claude を起動する。役割は `roles/` から選べ、起動時に SessionStart hook が渡す

@@ -20,7 +20,8 @@ conductor  <--- reports ---  workers (herdr panes)
 | [`presets/`](presets/example.conf) | Example workspace presets for `herdr-up.sh` |
 | [`herdr-up.sh`](herdr-up.sh) | Creates workspaces and starts agents from a preset |
 | [`conductor/`](conductor/README.md) | Description of the conductor role |
-| [`roles/`](roles/README.md) | Role files handed to each agent on startup / after compact (SessionStart hook), maintained by the HR agent |
+| [`roles/`](roles/README.md) | Text handed to each agent on startup / after compact (SessionStart hook). By default only the rules shared by every agent (`_common.md`); no roles are assumed |
+| [`setup/examples/`](setup/examples/README.md) | Usage example of a setup with roles (conductor, HR, watcher, sweeper, auditor ...): role texts, name → role map and a preset. Installed with `tb role-write` (see `setup/CLAUDE.md`) |
 | [`cmd/herdrctl/`](cmd/herdrctl/main.go) | 1 つのバイナリ `herdrctl`(仮称)。bash と Python の部品を順に移していく先([ADR 0002](docs/adr/0002-services-and-binary-distribution.md))。今は `version`、`db status` / `db migrate`(tasks.db を tb と同じスキーマにする。Windows の既定の置き場所は `%LOCALAPPDATA%\herdr\state\tasks.db`)、`tb list`(`TB_IMPL=go` のとき `bin/tb` が渡す。既定は bash のまま) (Go) |
 | [`lib/`](lib/herdr-env.sh) | Defaults shared by every component (repo root, DB path, herdr binary, schema dir), in bash and Python |
 | [`setup/`](setup/README.md) | Setup agent (`./herdr-up.sh setup`) that walks you through the setup and asks before writing any settings, plus a read-only doctor `setup/check.sh` |

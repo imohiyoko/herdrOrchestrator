@@ -296,7 +296,7 @@ role_put() {  # $1=役割名|@map $2=本文 $3=how $4=shared
     local sh=""; (($4)) && sh=" --shared"
     role_admin_check "$1" "tb role-write $1$sh < 本文" || return $?
   fi
-  blank "$2" && die "本文が空です(消すときは人が tb config で行を消す)"
+  blank "$2" && die "本文が空です(消すときは人が tb role-unset $1 で行を消す)"
   config_db_put "$key" "$2" "$3" "$4" "$REQ_BY"
   role_forget "$1"
   role_lookup "$1"; echo "$1: ${RB_SRC}。動いている agent に配るには: tb role-broadcast"
@@ -314,6 +314,15 @@ cmd_role-edit() {
   "${VISUAL:-${EDITOR:-vi}}" "$tmp" || { rm -f "$tmp"; die "編集を中止しました"; }
   body=$(cat "$tmp"); rm -f "$tmp"
   role_put "$RW_NAME" "$body" role-edit "$RW_SHARED"
+}
+# tb role-unset <役割名|@map> [--shared]: DB の行を消す(人だけ)。消した後は共通の行、無ければ roles/ のファイルが使われる
+cmd_role-unset() {
+  role_write_args "$@"
+  require_human "tb role-unset"
+  local key; key=$(role_key_of "$RW_NAME")
+  config_unset "$key" "$RW_SHARED"
+  role_forget "$RW_NAME"
+  if role_lookup "$RW_NAME"; then echo "$RW_NAME: ${RB_SRC}"; else echo "$RW_NAME: なし"; fi
 }
 cmd_role-set() {
   [[ $# -ge 2 ]] || usage "role-set <agent 名> <ロール[,ロール...]> [--reason R]"

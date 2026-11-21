@@ -9,7 +9,7 @@
 # - agent_ops には op=new で残す(requested_by=親、result に policy)。args の spawn に親とタスクを持つ
 
 SPAWN_POLICY=${TB_SPAWN_POLICY:-$TB_ROOT/config/spawn-policy.conf}
-SP_ROLES="worker"; SP_PER=2; SP_TOTAL=6; SP_DEPTH=1; SP_MODEL=sonnet; SP_DENY_PARENTS=""
+SP_ROLES="-"; SP_PER=2; SP_TOTAL=6; SP_DEPTH=1; SP_MODEL=sonnet; SP_DENY_PARENTS=""
 # 子の最初の指示に足す、その環境だけの決まり(1 行 1 つ。人が管理する。無ければ足さない)
 SPAWN_RULES=${TB_SPAWN_RULES:-$TB_ROOT/config/spawn-rules.txt}
 BRIEF_MAX=2000

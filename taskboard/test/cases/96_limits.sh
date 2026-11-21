@@ -5,7 +5,7 @@ _saved_pane=${HERDR_PANE_ID-}; unset HERDR_PANE_ID
 _saved_am=${TB_ANALYST_MAX-}; unset TB_ANALYST_MAX
 export TB_DB=$TMP/limits.db TB_APPROVALS=$TMP/appr-lim.conf TB_SPAWN_RETRY_SEC=0 TB_AGENT_CWD=$TMP TB_ANALYST_RETRY_SEC=0
 export TB_LIMITS=$TMP/lim.conf TB_HANDOFF_DIR=$TMP/handoff TB_ROUTES=$TMP/lim-routes.conf
-unset TB_SPAWN_POLICY
+printf 'allowed_roles = worker\n' >"$TMP/lim-spawn-default.conf"; export TB_SPAWN_POLICY=$TMP/lim-spawn-default.conf   # 役割の利用例(worker)を子に許す
 printf 'agent:spawn:* = allow\nagent:* = ask\nsend:*:* = allow\nalert:analyze = allow\n* = ask\n' >"$TB_APPROVALS"
 printf 'conductor -> *\n' >"$TB_ROUTES"
 lg_ag() { printf '{"pane_id":"%s","name":"%s","agent_status":"%s","agent_session":{"value":"s-%s"},"cwd":"%s"}' "$2" "$1" "${3:-idle}" "$1" "$TMP"; }
@@ -117,7 +117,7 @@ printf 'max_running_agents = 3\n' >"$TB_LIMITS"
 eq "agent-spawn: below the limit passes" "$(HERDR_PANE_ID=wP:p1 $TB agent-spawn worker --task "$LT" --brief x | cut -d' ' -f1-2)" "parent1-s1 started"
 # spawn-policy.conf は limits.conf が spawn キーを持たない限りそのまま効く
 rm -f "$TB_LIMITS"; FAKE_AGENTS="[$LG_C,$(lg_ag parent1 wP:p1),$(lg_ag parent1-s1 wA:p1)]"
-printf 'max_children_per_parent = 5\nmax_children_total = 1\n' >"$TMP/lim-spawn-old.conf"
+printf 'allowed_roles = worker\nmax_children_per_parent = 5\nmax_children_total = 1\n' >"$TMP/lim-spawn-old.conf"
 eq "spawn-policy.conf alone still decides (total 1 reached → 4)" "$(TB_SPAWN_POLICY=$TMP/lim-spawn-old.conf HERDR_PANE_ID=wP:p1 $TB agent-spawn worker --task "$LT" --brief x 2>&1 >/dev/null | grep -c '全体の子の数が上限(1)') $(TB_SPAWN_POLICY=$TMP/lim-spawn-old.conf HERDR_PANE_ID=wP:p1 rc $TB agent-spawn worker --task "$LT" --brief x)" "1 4"
 eq "limits.conf spawn_max_total overrides it (raised to 9 → passes)" "$(TB_LIMIT_SPAWN_MAX_TOTAL=9 TB_SPAWN_POLICY=$TMP/lim-spawn-old.conf HERDR_PANE_ID=wP:p1 $TB agent-spawn worker --task "$LT" --brief x | cut -d' ' -f1-2)" "parent1-s2 started"
 printf 'spawn_max_per_parent = 1\n' >"$TB_LIMITS"
@@ -169,7 +169,7 @@ rm -f "$TB_LIMITS"
 eq "sessions: agent-shed offers nothing from another session (killable, analyst, orphan rows)" "$($TB agent-shed | wc -l | tr -d ' ')" "0"
 eq "sessions: the foreign rows are untouched (still running, none stopped)" "$(lgsql "SELECT COUNT(*) FROM agents WHERE herdr_session='other-sess' AND state='running';") $(grep -c '^pane-close' "$FAKE_LOG")" "4 0"
 # agent-spawn / digest の「子の数」も現在のセッションだけ
-printf 'max_children_per_parent = 5\nmax_children_total = 1\n' >"$TMP/lim-spawn-sess.conf"
+printf 'allowed_roles = worker\nmax_children_per_parent = 5\nmax_children_total = 1\n' >"$TMP/lim-spawn-sess.conf"
 FAKE_AGENTS="[$LG_C,$(lg_ag parent1 wP:p1)]"
 ST=$($TB add -p ss -t 'work of parent1' --owner parent1); $TB update "$ST" --status in_progress >/dev/null
 eq "sessions: agent-spawn total ignores another session's children (foreign-kid does not fill the quota)" "$(TB_SPAWN_POLICY=$TMP/lim-spawn-sess.conf HERDR_PANE_ID=wP:p1 $TB agent-spawn worker --task "$ST" --brief x | cut -d' ' -f1-2)" "parent1-s1 started"
@@ -226,4 +226,4 @@ eq "limits: new commands are in help.txt" "$(for c in limits agent-shed handoff;
 eq "limits: limits.conf.example lists every key" "$(for k in max_running_agents max_working_agents incident_max_open incident_roles analyst_max spawn_max_per_parent spawn_max_total watchers human_handoff; do grep -cE "^#? *$k = " "$HERE/../config/limits.conf.example"; done | tr '\n' ' ')" "1 1 1 1 1 1 1 1 1 "
 [[ -z $_saved_pane ]] || export HERDR_PANE_ID=$_saved_pane
 [[ -z $_saved_am ]] || export TB_ANALYST_MAX=$_saved_am
-unset TB_LIMITS TB_HANDOFF_DIR FAKE_WORKSPACES
+unset TB_LIMITS TB_HANDOFF_DIR FAKE_WORKSPACES TB_SPAWN_POLICY

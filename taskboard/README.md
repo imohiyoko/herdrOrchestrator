@@ -364,7 +364,7 @@ tb reject O-<n>
 
 ## アラート(見張り役 → 解析役)
 
-見張り役(`roles/watcher.md`、軽いモデル)が scheduler の定期プロンプトで見回り、異常を見つけたら登録する。tb が解析役の agent を
+見張り役(利用例は `setup/examples/roles/watcher.md`、軽いモデル)が scheduler の定期プロンプトで見回り、異常を見つけたら登録する。tb が解析役の agent を
 1 件ごとに起動し、解析役が緊急度と結果を返す。**緊急度は見張り役ではなく解析役が決める。**
 
 ```bash
@@ -433,7 +433,7 @@ tb agent-approve L-<n> [--always] / tb agent-reject L-<n>      # 人だけ
   `--prompt` が無ければ「MCP を再接続した。前の作業を続け、MCP のツールが使えることを確かめ、まだなら tb comment で報告」という既定の一文を送る(準備完了を待ち、受け付けられたかも確かめる)。
   復活に失敗したら停止のまま残し、`tb agent-revive <名前> [--fresh]` を出して 0 以外で終わる(新しい会話は勝手に作らない)。
   `agent_ops` には op=revive、args.restart=1 の 1 行で、依頼者・停止と復活の結果・session が変わらなかったか・所要秒を残す。再開したが最初の指示を確認できないときは終了コード 10
-- **判定フラグ(killable)**: `yes|no|unknown`。付けられるのは判定役(`roles/sweeper.md`、軽いモデル。`TB_SWEEPER_PATTERN`、既定 `sweeper*`)と人、`grants` で `agent:flag` を許された agent だけ(例 `my-judge agent:flag *`)。
+- **判定フラグ(killable)**: `yes|no|unknown`。付けられるのは判定役(利用例は `setup/examples/roles/sweeper.md`、軽いモデル。`TB_SWEEPER_PATTERN`、既定 `sweeper*`)と人、`grants` で `agent:flag` を許された agent だけ(例 `my-judge agent:flag *`)。
   yes を付けた後でその agent が新しい入力を受けたら、または会話が変わったら `stale` になり、停止には使えない(付け直しが要る)。
   解析役(`analyst-A<n>`)は `tb alert-result` を返した時点で tb が yes を付ける。判定役の定期実行は `scheduler/jobs/sweeper.conf.example`
 - **誰が実行できるか**: 人の端末(と Web UI)からはそのまま実行する。agent の pane からは `approvals.conf` の `agent:<op>:<名前>`(op は `new|stop|revive`、既定 `agent:* = ask`)を見て、
@@ -571,7 +571,7 @@ tb spawn-freeze / tb spawn-unfreeze                                        # 人
 - 呼び出し側が渡せるのは役割・`--task`・`--brief` だけ。名前は tb が `<親>-s<連番>` で付け、作業場所は親と同じ、モデルは規則の既定(呼び出し側は選べない)。
   プロンプトは tb がテンプレートで組み立てる(役割ファイルの場所、タスク、報告は `tb comment`、子は子を立てられない、`config/spawn-rules.txt` に書いた環境ごとの決まり、秘密の値を書かない、読み取り以外の変更をしない)。
   `--brief` は「依頼者が書いたデータ」として最後に囲んで入れるので、役割の指示を上書きできない
-- 役割 `-` は役割なしの子(台帳の役割は空。役割の文面は `_common.md` だけ)。`allowed_roles` に `-` を書いたときだけ使える。プロンプトは役割に触れず、上の規則と依頼だけで動く文面になる
+- 役割 `-` は役割なしの子(台帳の役割は空。役割の文面は `_common.md` だけ)。`allowed_roles` に `-` を書いたときだけ使える(既定の `.example` は `-` だけ。役割の利用例を入れたら worker などを足す)。プロンプトは役割に触れず、上の規則と依頼だけで動く文面になる
 - 規則は `config/spawn-policy.conf`(人だけが編集。無ければ `spawn-policy.conf.example` の既定値): 許可する役割(既定 `worker` だけ)、親 1 体あたり 2、全体 6、深さ 1、モデル sonnet。
   追加の固定の条件: 親は herdr で動いていて、`--task` が親の持つ in_progress のタスクであること。`denied_parents`(glob)に当たる親は子を立てられない
 - 判定: 規則に合い、`approvals.conf` の `agent:spawn:<子の名前>` が `allow` → 人の承認なしで作る(`agent-new` と同じ経路。`agent_ops` に requested_by=親・result に policy)。
@@ -643,7 +643,7 @@ tb agent-shed [--count N] [--json]        # 絞る候補の一覧。何も止め
 
 ## 会計役(定期レビュー)と改善提案
 
-会計役(`roles/auditor.md`)が scheduler の定期プロンプト(`scheduler/jobs/auditor.conf.example`)で、送受信・アラート・報告・承認・定期実行の
+会計役(利用例は `setup/examples/roles/auditor.md`)が scheduler の定期プロンプト(`scheduler/jobs/auditor.conf.example`)で、送受信・アラート・報告・承認・定期実行の
 記録を見直し、役割(プロンプト)の改善を設定役(`projects` の `proposal=<名前>` の行。無ければ `TB_HR_NAME`、既定 `hr`)に提案する。提案を閉じられるのは設定役と人。設定役が `roles/` を直す(`role:change` の承認規則に従う)。
 
 ```bash

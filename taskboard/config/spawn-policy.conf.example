@@ -5,7 +5,7 @@
 # (人が tb allow 'agent:spawn:*' を実行する)。規則に合わなければ作らず拒否(終了コード 4)。
 # tb spawn-freeze 中は、規則に合うものも全部、人の承認待ちになる。
 
-allowed_roles = worker      # 子に使える役割(roles/<名前>.md)。空白かカンマ区切り。- は役割なしの子(tb agent-spawn -)。止血・修正・障害 workspace の役は入れない
+allowed_roles = -           # 子に使える役割(roles/<名前>.md)。空白かカンマ区切り。- は役割なしの子(tb agent-spawn -)。役割の利用例を入れたら worker などを足す。止血・修正・障害 workspace の役は入れない
 max_children_per_parent = 2 # 1 体の親が同時に持てる子の数
 max_children_total = 6      # 全体の子の数
 max_depth = 1               # 1 = 子は子を立てられない

@@ -99,7 +99,7 @@ printf 'agent:new:@worker = allow\n* = ask\n' >"$TB_APPROVALS"
 export FAKE_AGENTS="[$(ag conductor),$(ag worker1)]"
 out=$(HERDR_PANE_ID=wconductor:p1 $TB agent-new worker9 --role watcher 2>&1; echo "rc=$?")
 eq "agent-new: @worker approval does not cover a worker-named agent asking for another role" "$(tail -1 <<<"$out") $(grep -c 'pending' <<<"$out")" "rc=20 1"
-rm -rf "$TMP/roles97"; cp -r "$HERE/../../roles" "$TMP/roles97"; printf 'x\n' >"$TMP/roles97/watcher2.md"
+rm -rf "$TMP/roles97"; cp -r "$TB_ROLES" "$TMP/roles97"; printf 'x\n' >"$TMP/roles97/watcher2.md"
 eq "agent-new: --role cannot differ from the name's own roles file" "$(TB_ROLES=$TMP/roles97 rc $TB agent-new watcher2 --role worker) $(TB_ROLES=$TMP/roles97 $TB agent-new watcher2 --role worker 2>&1 | grep -c '役割 watcher2 の定義があるため')" "2 1"
 _lid=$(sqlite3 "$TB_DB" "SELECT 'L-'||id FROM agent_ops WHERE op='new' AND target='worker9' AND status='pending' ORDER BY id DESC LIMIT 1;")
 cp "$TMP/roles97/watcher.md" "$TMP/roles97/worker9.md"

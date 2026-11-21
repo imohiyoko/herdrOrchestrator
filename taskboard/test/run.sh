@@ -25,6 +25,9 @@ if [[ ${1-} == --unit ]]; then
   export TB_DB=$TMP/tasks.db TB_CONFIG=$TMP/projects.conf TB_LIMITS=$TMP/limits-default.conf
   unset HERDR_SOCKET_PATH   # 実行する pane の socket に左右されない(HSESS は HERDR_SOCKET_PATH を HERDR_SESSION より優先する)
   export HERDR_BIN=$HERE/fake-herdr FAKE_LOG=$TMP/herdr.log
+  # 役割の既定(roles/)は _common.md だけ。テストは setup の利用例(setup/examples/roles)を入れた状態で流す
+  mkdir -p "$TMP/roles"; cp "$HERE/../../roles/_common.md" "$HERE/../../setup/examples/roles/"* "$TMP/roles/"
+  export TB_ROLES=$TMP/roles
   # scheduler のジョブをファイル(jobs/*.conf)に置くケースがあるので、DB の後にファイルも読ませる。既定(DB だけ)は 53_sched_jobs で確かめる
   export SCHED_FILE_FALLBACK=1
   TB=$HERE/../bin/tb

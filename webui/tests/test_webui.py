@@ -88,6 +88,12 @@ def make_env(name, **extra):
         XDG_CONFIG_HOME=os.path.join(d, "xdg"), HERDR_SESSION_FILE=os.path.join(d, "no-herdr-session"),
         TB_PROTECT=os.path.join(d, "protect.conf"), TB_LABELS=os.path.join(d, "labels.conf"),
         SCHED_FILE_FALLBACK="1")   # ジョブはファイル(jobs/*.conf)に置いて試す。既定(DB だけ)は「既定は DB だけ」のところで確かめる
+    # 役割の既定(roles/)は _common.md だけ。setup の利用例(setup/examples/roles)を入れた状態で試す
+    rd = os.path.join(d, "roles")
+    if not os.path.isdir(rd):
+        shutil.copytree(os.path.join(HERE, "..", "..", "setup", "examples", "roles"), rd)
+        shutil.copy(os.path.join(HERE, "..", "..", "roles", "_common.md"), rd)
+    env["TB_ROLES"] = rd
     env.update(extra)
     env.setdefault("TB_UI_GATEWAY_PORT", str(free_range(1)))
     return env, d

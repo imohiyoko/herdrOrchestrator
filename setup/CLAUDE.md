@@ -41,9 +41,31 @@ worker のプロジェクトが presets に書かれていないときは `bash 
 (パッケージマネージャを勝手に動かさない)。herdr と Claude Code は各配布元の手順に従う。
 
 ### 2. 自分用のプリセット(`presets`)
-`presets/example.conf` を見せながら、指揮官(conductor)と worker の workspace をどう並べたいかを聞いて
-`presets/<名前>.conf` の案を作る。書式は `label|agent数|プロンプト|作業ディレクトリ|モデル`。承認後に書く。
+`presets/example.conf` を見せながら、どんな agent の workspace をどう並べたいかを聞いて
+`presets/<名前>.conf` の案を作る。役割(指揮官・人事など)を使うなら、先に「2b. 役割の利用例」を済ませ、
+`setup/examples/presets/roles.conf` を元にする。書式は `label|agent数|プロンプト|作業ディレクトリ|モデル`。承認後に書く。
 起動は利用者が `./herdr-up.sh <名前>` で行う(herdr を起動するのは利用者の判断)。
+
+### 2b. 役割の利用例(任意)
+tb は役職を前提にしない。既定で agent に渡るのは `roles/_common.md`(全員に共通の決まり)だけで、誰が何をするかは
+agent の名前・プロンプト・権限(approvals / grants / routes / delivery)・返す文面(messages)で決める。
+役割の文面を渡したいときだけ、利用者に `setup/examples/` を見せて、使うものを選んでもらう(全部入れなくてよい。自分で書いてもよい)。
+
+- 役割の文面: `setup/examples/roles/<役割>.md`(conductor / hr / worker / watcher / analyst / sweeper / auditor / drafter)。
+  承認後に `bash taskboard/bin/tb role-write <役割> --shared < setup/examples/roles/<役割>.md` で DB に書く
+  (`--shared` は全セッション共通。このセッションだけなら外す)。agent 名が役割名と違うときは
+  `bash taskboard/bin/tb role-write @map --shared < setup/examples/roles/map.conf`(agent 名のパターン = 役割)。
+  入れた後、動いている agent には `tb role-broadcast` で知らせる。戻すときは `bash taskboard/bin/tb role-unset <役割|@map> --shared`。
+- 役割に合わせた設定(どれも `tb config edit <キー>` か `tb config set <キー> < 本文`。書く前に差分を見せる):
+  - `projects`: 報告の宛先。`*=<指揮役の agent 名>`(既定の宛先)、`<project>=<名前>`、提案の受け手は `proposal=<名前>`。
+    `*` の行が無いと、宛先は `conductor` という名前の agent になる。
+  - `grants`: 役割の名前に頼らず、特定の agent に操作を許す。例 `sweeper agent:flag *`(止めてよいかの印)、
+    `hr role:change *`(ロールの付け替え)。
+  - `spawn-policy`: 子 agent に使わせる役割。既定は役割なしの子だけ(`allowed_roles = -`)。worker を入れたら `allowed_roles = -, worker`。
+  - `role-models`: 役割ごとの既定モデル(`<役割> = haiku`、名前で決めるなら `name:<glob> = haiku`)。
+  - `messages`: agent に返す文面の差し替え(例は `taskboard/config/messages.conf.example`)。役割の名前を出したいときはここで書く。
+- 定期実行で役割を使うもの(`scheduler/jobs/watch.conf.example` / `sweeper.conf.example` / `auditor.conf.example`)は、
+  対応する役割を入れた後に「4. scheduler のジョブ」で設定する。
 
 ### 3. tb-hook(`hook:*`)
 `taskboard/docs/hook-install.md` を読み、agent の活動記録の仕組みと「prompt 本文は保存しない」ことを説明する。

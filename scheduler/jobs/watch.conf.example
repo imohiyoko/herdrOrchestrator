@@ -1,4 +1,4 @@
-# 定期監視。見張り役(roles/watcher.md、軽いモデル)に 5 分ごとに見回りを依頼する(09:00-21:00、両端を含む)。
+# 定期監視。見張り役(利用例は setup/examples/roles/watcher.md、軽いモデル)に 5 分ごとに見回りを依頼する(09:00-21:00、両端を含む)。
 # 異常は見張り役が tb alert で登録し、tb が解析役を起動する。送信は tb を通る(messages に記録)。
 TARGET=watch
 # 見張りを絞れるようにするには(tb limits の watchers。人が tb limits set watchers '...' で変える): プロンプト型は agent に本文を
