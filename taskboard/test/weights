@@ -45,6 +45,7 @@
 97_agents.sh 19
 97_agents_graph.sh 15
 97_grants.sh 4
+97_org.sh 17
 97_kind_adapter.sh 22
 97_peek.sh 2
 97_roles_db.sh 5

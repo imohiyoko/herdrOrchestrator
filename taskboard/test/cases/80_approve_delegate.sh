@@ -40,6 +40,8 @@ eq "approve: a missing O-<n> from an agent pane is refused as a human-only comma
 eq "approve: the human still approves anything" "$($TB approve O-4)" "O-4 approved and sent to w2"
 eq "approve: a role that cannot be read grants nothing" "$(as w1 $TB send w2 --text third >/dev/null 2>&1; dsql "ALTER TABLE agents RENAME COLUMN role TO role_x;"; as lead1 rc $TB approve O-5 2>/dev/null; dsql "ALTER TABLE agents RENAME COLUMN role_x TO role;")" "1"
 
+eq "can: approve is decided by grants only (allow / deny / self)" "$($TB can lead1 approve:send:task:w2 w1 | head -1) $($TB can lead1 approve:send:info:w2 w1 | head -1) $(rc $TB can w1 approve:send:task:w2 w1)" "allow deny 4"
+
 # ---- agent の操作(L-<n>)
 dsql "UPDATE agents SET killable='yes', killable_at='2000-01-01T00:00:00.000Z';"
 dsql "INSERT INTO agent_activity (herdr_session, session_id, pane_id, last_prompt_at, last_stop_at, cwd, updated_at) VALUES ('default','s-w2','ww2:p1','2000-01-01T00:00:00.000Z','2000-01-01T00:01:00.000Z','$TMP','x');"

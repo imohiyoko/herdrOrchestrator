@@ -542,10 +542,26 @@ agent ごとのロールを変える入口は `tb role-set <agent 名> <ロー�
 lead1    agent:stop @worker       # lead1 は worker を承認なしで止められる(個別の付与)
 ```
 
-- 主体は agent 名の glob か `@<役割>`。対象は agent 名の glob、`@<役割>`、または `tb agent-spawn` の親子関係による相対指定 `~child` / `~descendant` / `~parent` / `~sibling`(同じセッションの台帳で引く)
+- 主体は agent 名の glob か `@<役割>`。対象は agent 名の glob、`@<役割>`、または `tb agent-spawn` の親子関係による相対指定 `~child` / `~descendant` / `~parent` / `~sibling`(同じセッションの台帳で引く)、組織図(下の設定 `org`)の `~report` / `~subordinate` / `~manager` / `~superior` / `~peer`
 - どれかの行に当たれば allow。当たらなければ従来どおり `approvals.conf` が決める。許可を足すだけで、`delivery`(旧 `routes.conf`)の拒否などは外さない
 - 使う場所: `tb peek`(`agent:read`)、承認待ちの承認(`approve:<操作>`。下の節)、`tb send`(`send:<kind>`)、`tb agent-stop` などの agent 操作、`tb role-set`(`role:change`。grants に行があれば人事役でなくてよい。自分は不可・人事役は付けられない、の制限はそのまま。役割の本文・map を書く `tb role-write` は人事役だけ)、`tb agent-flag` / `agent-new --killable`(`agent:flag`)
 - 役割を確かめられない(台帳を読めない)行は使わない。`tb approval <操作> --by <agent>` で、その agent から見た判定(grants を含む)を確かめられる
+
+#### 組織図(設定 `org`)と `tb can`
+
+上司・部下の線を設定 `org` に書く(書式は `config/org.conf.example`、役割を使う構成の例は `setup/examples/org.conf`)。設定が無ければ誰にも上司はいない(中立)。
+
+```
+# <部下のパターン> -> <上司>   agent ごとに、上から見て最初に当たった行で上司が 1 人に決まる
+@worker -> ~parent             # spawn で立てた子は親の部下(親がいなければ次の行へ)
+@worker -> lead1
+lead*   -> boss
+```
+
+- 組織図は全員が見られる: `tb org`(木)、`tb org <agent>` / `tb org --me`(叩いた agent。pane から tb が決める)で上司・上の全員・直属の部下・同じ上司。`--json` も出せる
+- 線を引くだけでは何も許さない。grants の対象と delivery の宛先に `~report`(直属の部下)/ `~subordinate`(配下の全員)/ `~manager`(上司)/ `~superior`(上の全員)/ `~peer`(同じ上司)と書くと、その行がこの線で判定する(例 `@lead agent:read ~report`、`@worker -> ~manager : *=now`)。行の例は `setup/examples/org-rules.conf`
+- 役割を確かめられない行に先に当たった agent は、上司が決まらない(関係はどれにも当たらない。delivery は hold)
+- `tb can [<主体>] <操作> <対象>` は、誰が誰に何をできるかを実際の判定と同じ順で 1 つに決めて出す(読むだけ)。`send:<kind>` は delivery → approvals、`agent:stop` は protect → approvals、`role:change` / `agent:flag` は各コマンドの決まり、ほかは approvals(grants を含む)。終了コード 0=allow / 20=ask / 21=hold / 4=deny。主体を省くと叩いた agent
 
 #### 承認待ちの承認を agent に任せる(`approve:<操作> <依頼者>`)
 
@@ -562,6 +578,7 @@ reviewer1  approve:send:task:w3   @worker  # worker からの w3 宛ての依頼
 - 当たる agent は、自分の pane から `tb approve O-<n>` / `tb reject O-<n>` / `tb agent-approve L-<n>` / `tb agent-reject L-<n>` を実行できる。当たらなければ従来どおり人だけ
 - 自分の依頼は承認できない。`--always`(今後は承認なしにする規則の書き換え)は人だけ。`tb slash --all` / `tb model-set --all` の承認待ちと spawn-freeze 中の spawn も人だけ。アラート(`tb alert-approve`)と PR キュー(`tb pr-queue approve`)は対象外(人だけ)
 - 誰が承認・却下したかは記録に残る(outbox の reason、`tb agent-ops` の結果に `agent <名前>(grants.conf: …)が承認`)。承認しても `delivery` の止める規則などは外れない
+- `tb can <承認者> approve:<元の操作> <依頼者>`(例 `tb can lead1 approve:send:task:w2 w1`)で、承認できるかを確かめられる(allow か deny)。組織図の関係も書ける(例 `@lead approve:send:task:* ~report`)
 - 承認者には自動では知らせない。依頼した agent が `tb send <承認者> --kind info --text 'O-12 の確認をお願いします'` のように頼む
 
 #### agent の中身を読むのは `tb peek` だけ
@@ -810,7 +827,7 @@ tb が `herdr agent prompt` で送ろうとしたものは、結果にかかわ�
 ## 設定(`tb config`)
 
 運用の設定は DB の `config` 表に置き、キーで引く(schema/013)。シングルポート・マルチセッションでも、セッションごとに違う設定を持てる。
-本文は今までの conf ファイルの中身そのまま(書式は各節のとおり)。キーは `projects` / `approvals` / `grants` / `routes` / `delivery` / `limits` / `notify` / `compact` / `slash` / `sched-watch` / `spawn-policy` / `role-models` / `protect`(tb から止めさせない agent)/ `labels`(チケットに付けられるラベル)/ `messages`(agent に返す文面の上書き。下の「agent に返す文面」)/ `conv-routes`(会話の振り分け表。書くのは `tb conv-routes-set` だけ)。
+本文は今までの conf ファイルの中身そのまま(書式は各節のとおり)。キーは `projects` / `approvals` / `grants` / `routes` / `delivery` / `limits` / `notify` / `compact` / `slash` / `sched-watch` / `spawn-policy` / `role-models` / `protect`(tb から止めさせない agent)/ `org`(組織図。上の「組織図」)/ `labels`(チケットに付けられるラベル)/ `messages`(agent に返す文面の上書き。下の「agent に返す文面」)/ `conv-routes`(会話の振り分け表。書くのは `tb conv-routes-set` だけ)。
 
 引く順(最初に見つかったもの):
 

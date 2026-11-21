@@ -61,6 +61,11 @@ agent の名前・プロンプト・権限(approvals / grants / routes / deliver
     `*` の行が無いと、宛先は `conductor` という名前の agent になる。
   - `grants`: 役割の名前に頼らず、特定の agent に操作を許す。例 `sweeper agent:flag *`(止めてよいかの印)、
     `hr role:change *`(ロールの付け替え)。
+  - `org`: 組織図(誰の上司は誰か)。例は `setup/examples/org.conf`(指揮役の名前を実際の名前に直す)。承認後に
+    `bash taskboard/bin/tb config set org --shared < <本文>`。組織図は全員が `tb org` で見られるが、線を引くだけでは何も許さない。
+    できることは grants の対象・delivery の宛先に `~report`(直属の部下)/ `~subordinate`(配下)/ `~manager`(上司)/
+    `~superior`(上の全員)/ `~peer`(同じ上司)と書いて決める(例は `setup/examples/org-rules.conf`)。入れた後は
+    `bash taskboard/bin/tb can <主体> <操作> <対象>` で、誰が誰に何をできるかを利用者と一緒に確かめる。
   - `spawn-policy`: 子 agent に使わせる役割。既定は役割なしの子だけ(`allowed_roles = -`)。worker を入れたら `allowed_roles = -, worker`。
   - `role-models`: 役割ごとの既定モデル(`<役割> = haiku`、名前で決めるなら `name:<glob> = haiku`)。
   - `messages`: agent に返す文面の差し替え(例は `taskboard/config/messages.conf.example`)。役割の名前を出したいときはここで書く。
