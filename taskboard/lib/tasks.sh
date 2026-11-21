@@ -307,8 +307,16 @@ cmd_claim() {
   changed=$(sql "UPDATE main.tasks SET status=$(q "$(st_main active)"), owner_agent=$(q "$owner"),
       session_id=COALESCE(NULLIF($(q "$session"),''), session_id),
       account=COALESCE(NULLIF($(q "$account"),''), account), updated_at=$(q "$(now)")
-    WHERE herdr_session=$SQS AND id=$(q "$id") AND status IN ($ST_TODO_SQL); SELECT changes();")
-  [[ $changed == 1 ]] || die "claim できません(status が $(st_names todo | sed 's/ / \/ /g') ではない): $id"
+    WHERE herdr_session=$SQS AND id=$(q "$id") AND status IN ($ST_TODO_SQL)
+      AND (owner_agent IS NULL OR owner_agent='' OR owner_agent=$(q "$owner")); SELECT changes();")
+  if [[ $changed != 1 ]]; then
+    # 0 件の理由を分ける: todo の分類の状態のまま別の担当に割り当て済みか、状態が todo の分類ではないか(状態名ではなく分類で見る)
+    local cur; cur=$(sql "SELECT COALESCE(owner_agent,'') FROM tasks WHERE herdr_session=$SQS AND id=$(q "$id") AND status IN ($ST_TODO_SQL);")
+    if [[ -n $cur ]]; then
+      die "claim できません($cur に割り当て済み。付け替えは tb update $id --owner <名前>。次の候補は tb list で探す): $id"
+    fi
+    die "claim できません(status が $(st_names todo | sed 's/ / \/ /g') ではない): $id"
+  fi
   notify_rules_hook
   echo "$id claimed by $owner"
 }

@@ -31,7 +31,7 @@ tb report T-<project>-NNN
 ### 作業の始め方(任意)
 
 ```bash
-tb claim T-<project>-NNN --owner <自分の agent 名> [--session <session id>] [--account <max|enterprise>]
+tb claim T-<project>-NNN --owner <自分の agent 名> [--session <session id>] [--account <max|enterprise>]   # 担当が空か自分の todo だけ。別の担当に割り当て済みのものは失敗(付け替えは tb update --owner)
 tb update T-<project>-NNN --status review     # todo|in_progress|review|blocked
 tb block  T-<project>-NNN -m "詰まっている理由"
 ```

@@ -22,7 +22,7 @@ tb sprints [-p project] [--state planned|active|closed] [--json]   件数・完�
 tb board [S-n | -p project] [-l ラベル] [--json]   状態ごとの列(-p だけならその project の active なスプリント。列は分類の順)
   状態は設定 statuses(1 行「<状態> <分類> [= 説明]」。分類は todo / active / review / blocked / done / cancelled)で足したり名前を変えたりできる。
   無ければ todo in_progress review done blocked cancelled。下のコマンドが書く状態は、その分類で最初に書いた状態
-tb claim <id> --owner <name> [--session S] [--account A]    todo → in_progress(分類 todo → 分類 active の先頭。todo の分類以外は失敗)
+tb claim <id> --owner <name> [--session S] [--account A]    todo → in_progress(分類 todo → 分類 active の先頭。todo の分類以外、別の担当に割り当て済みの todo は失敗。担当が空か --owner と同じなら通る。付け替えは tb update --owner)
 tb update <id> [--status 状態(分類 todo / active / review / blocked のもの)] [--title T] [--owner N] [--session S] [--account A] [--parent ID]
            [--type T] [--priority P] [--desc D] [--due YYYY-MM-DD(''で外す)] [--label L ...(置き換え。'' で全部外す)] [--add-label L] [--remove-label L] [--add-ref [種類=]URL] [--remove-ref URL] [--sprint S-n|''] [--points N|'']
 tb done <id> -d <成果物> [-d ...] -m <要約>                  成果物と要約が必須。reported_at は空のまま
