@@ -1,6 +1,6 @@
 # pr-queue の実行者の認証(gh ラッパー)
 
-`tb pr-queue run` / `scan` が呼ぶ `gh` は、**人が用意した専用のラッパー**にします。agent のセッションには書き込みの認証を持たせません。
+`tb pr queue run` / `scan` が呼ぶ `gh` は、**人が用意した専用のラッパー**にします。agent のセッションには書き込みの認証を持たせません。
 
 ## 指定の仕方(必須)
 
@@ -55,7 +55,7 @@ exit "$rc"
 
 ## failed から戻す
 
-`tb pr-queue retry <PQ-n>`(**人だけ**。agent の pane からは拒否)。`failed` の行を `approved` に戻し、attempts を 0 にします。ガードは次の `run` でかけ直します。`failed` 以外は戻せません。
+`tb pr queue retry <PQ-n>`(**人だけ**。agent の pane からは拒否)。`failed` の行を `approved` に戻し、attempts を 0 にします。ガードは次の `run` でかけ直します。`failed` 以外は戻せません。
 
 ## 差分のガード(必須)
 

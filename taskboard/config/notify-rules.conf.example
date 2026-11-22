@@ -4,7 +4,7 @@
 #
 # 1 行 1 つ: <イベントの種類|*> [条件 ...] -> <届け先 ...>
 #   種類: created status title type priority owner due parent description label_added label_removed ref_added ref_removed link unlink comment
-#         overdue due_soon(tb reminder scan)、pr_opened pr_approved pr_changes pr_merged(tb pr-watch。PR の URL を外部リンクに持つチケット)
+#         overdue due_soon(tb reminder scan)、pr_opened pr_approved pr_changes pr_merged(tb pr watch。PR の URL を外部リンクに持つチケット)
 #   条件: type= priority= priority>= label= project= owner= new= old= actor=(名前 / human / system / agent)。すべて満たした行が当たる
 #         label= は label_added / label_removed では付け外したラベルそのもの、ほかでは「今そのラベルを持っている」
 #   届け先: file stdout slack webui(Web UI の緊急通知) lead(指示役 = projects の値への次のまとめ。旧名 conductor も可)

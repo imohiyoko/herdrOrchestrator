@@ -282,7 +282,7 @@ tb reminder publish       # まとめを出し、記録を更新する
 - **材料**(すべて読むだけ): 未対応の質問・ブロック報告(未完了のタスク)/ 承認待ち(送信 `O-` / agent 操作 `L-` / 代行依頼 / 解析役の起動 `A-`)/
   レビュー待ちの PR(許可リスト `taskboard/config/repos.md` のリポジトリで、開いていて draft でなく、承認も変更依頼もないもの。`gh pr list` で読むだけ)/
   停滞したタスク(`in_progress` のまま `TB_REMINDERS_STALE_HOURS`(既定 24)時間動きがない。動きは更新と履歴 `task_events`(報告のコメントも入る))/
-  変更依頼が付いたままの PR(`tb pr-watch` がチケットの履歴に残した、その PR の最後の出来事が `pr_changes`。担当の番)/
+  変更依頼が付いたままの PR(`tb pr watch` がチケットの履歴に残した、その PR の最後の出来事が `pr_changes`。担当の番)/
   宛先に届いていない送信(`queued` のまま `TB_DIGEST_QUEUED_SEC` 秒)/ 未読の保留メッセージ(`inbox` 表があれば。宛先と送り手と種別だけ)/ 期限(`tasks.due`。`tb list --overdue` / `--due-within` と同じ「今日」。タスクにしない期限は
   `taskboard/config/deadlines.conf` に `deadline = YYYY-MM-DD | 題` の行で書く。`TB_REMINDERS_DEADLINES` で場所を変えられる)
 - **期限ファイルをチケットにする**: `tb deadlines-import [-p project(既定 deadline)] [--dry-run]`(人だけ)で、期限ファイルの行を担当なし・期日つき・ラベル `deadline` のチケットにする。
@@ -650,7 +650,7 @@ reviewer1  approve:send:task:w3   @worker  # worker からの w3 宛ての依頼
 
 - 操作は `approve:` のあとに、承認待ちになった元の操作名(`send:<kind>:<宛先>`、`agent:<op>:<対象>`、`agent:spawn:<子>`、`agent:model:<名前>`、`agent:slash:<コマンド>:<宛先>`)。対象は依頼した agent(spawn は親)で、ほかの grants と同じく名前の glob・`@<役割>`・`~child` などの関係が書ける
 - 当たる agent は、自分の pane から `tb approval approve O-<n>` / `tb approval reject O-<n>` / `tb agent-approve L-<n>` / `tb agent-reject L-<n>` を実行できる。当たらなければ従来どおり人だけ
-- 自分の依頼は承認できない。`--always`(今後は承認なしにする規則の書き換え)は人だけ。`tb slash --all` / `tb model-set --all` の承認待ちと spawn-freeze 中の spawn も人だけ。アラート(`tb alert-approve`)と PR キュー(`tb pr-queue approve`)は対象外(人だけ)
+- 自分の依頼は承認できない。`--always`(今後は承認なしにする規則の書き換え)は人だけ。`tb slash --all` / `tb model-set --all` の承認待ちと spawn-freeze 中の spawn も人だけ。アラート(`tb alert-approve`)と PR キュー(`tb pr queue approve`)は対象外(人だけ)
 - 同じ承認待ちを 2 人(人と agent でも)が同時に承認しても、実行・送信は 1 回だけ。実行の途中で止まった `L-<n>` は承認し直せないので、人が `tb agent-reject` で片付けて頼み直す
 - 誰が承認・却下したかは記録に残る(outbox の reason、`tb agent-ops` の結果に `agent <名前>(grants.conf: …)が承認`)。承認しても `delivery` の止める規則などは外れない
 - `tb can <承認者> approve:<元の操作> <依頼者>`(例 `tb can lead1 approve:send:task:w2 w1`)で、承認できるかを確かめられる(allow か deny)。組織図の関係も書ける(例 `@lead approve:send:task:* ~report`)
@@ -798,8 +798,8 @@ tb comment / alert / done / 障害の開閉 / pr-watch / 定期 ──▶ notify
 ```
 
 - **既定は off。** 使うには `config/notify.conf.example` を `config/notify.conf`(gitignore 済み・任意)にコピーして編集し、`tb notify on`(人の端末から)。優先は 環境変数 `TB_NOTIFY_<キー大文字>` > `notify.conf` > 既定
-- イベント: アラート登録 / アラートの調査結果 / PR の作成・approve・変更依頼・マージ(`tb pr-watch`) / question・blocked / done(成果物つき) / 障害の開・閉 / 承認待ち(L-/O- の番号と件数だけ) / 定期まとめ。progress と見回りの差分は積まない
-- **PR をチケットに結ぶ**: `tb pr-watch` が見つけた PR の作成・approve・変更依頼・マージは、その PR の URL(`https://github.com/<repo>/pull/<n>`)を外部リンク(`--ref`)に持つチケットと、PR の題に書かれたチケット ID の履歴にも残る(`pr_opened` / `pr_approved` / `pr_changes` / `pr_merged`、変えた者 `system`)。チケットの状態は変えない(マージで done にするかは人か担当が決める)。通知の規則(`pr_merged label=release -> slack` など)の材料になる
+- イベント: アラート登録 / アラートの調査結果 / PR の作成・approve・変更依頼・マージ(`tb pr watch`) / question・blocked / done(成果物つき) / 障害の開・閉 / 承認待ち(L-/O- の番号と件数だけ) / 定期まとめ。progress と見回りの差分は積まない
+- **PR をチケットに結ぶ**: `tb pr watch` が見つけた PR の作成・approve・変更依頼・マージは、その PR の URL(`https://github.com/<repo>/pull/<n>`)を外部リンク(`--ref`)に持つチケットと、PR の題に書かれたチケット ID の履歴にも残る(`pr_opened` / `pr_approved` / `pr_changes` / `pr_merged`、変えた者 `system`)。チケットの状態は変えない(マージで done にするかは人か担当が決める)。通知の規則(`pr_merged label=release -> slack` など)の材料になる
 - 本文は 1 行の短い日本語(タスク ID・重大度・要約・成果物のパス)。制御文字を除き、`@here` `@channel` と `<...>` は無効化、リンクは文字列のまま。生ログ・コードの囲みは落とす(`strip_raw_logs`)
 - **秘密の値は常に止める(設定で変えられない)**: トークン・AWS のキー ID・秘密鍵のヘッダ・`key=value` 形式の秘密・長い base64/16 進を含むイベントは、slack にも webhook にも出さない。`data/notify/<日付>.md` に伏せた形だけを残し、`tb digest` で指揮官(人)に知らせる
 - 伏せ字(`mask_*`): メールは既定で伏せる。リポジトリ名・IP・アカウント ID・ホスト名は、人の決定で既定は**伏せない**(必要なら on)
@@ -818,10 +818,10 @@ tb notify tail [-n N] [-f]         # stdout sink
 tb notify events [--status S] [--json]
 tb notify flush                    # 人の端末か scheduler から
 tb notify ack N-<n> <hash> [--id X]   # notifier が結果を返す
-tb pr-watch                        # 許可リストの PR を gh の読み取りだけで見る(scheduler の COMMAND ジョブ)
+tb pr watch                        # 許可リストの PR を gh の読み取りだけで見る(scheduler の COMMAND ジョブ)
 ```
 
-`tb pr-watch` は許可リスト `taskboard/config/repos.md`(`TB_REPOS_FILE` で変更可。git 管理外)の `- <org>/<repo>` の行のリポジトリだけを、`gh pr list` で読む。許可リストが無い・空、または notify が off なら何もせず終了コード 0。初めて見るリポジトリは基準線の記録だけで、既存の PR をイベントにしない。PR の題(短く)と状態だけを使い、本文・レビューのコメント・差分は読まない。ジョブの例は `scheduler/jobs/pr-watch.conf.example` と `notify-flush.conf.example`。
+`tb pr watch` は許可リスト `taskboard/config/repos.md`(`TB_REPOS_FILE` で変更可。git 管理外)の `- <org>/<repo>` の行のリポジトリだけを、`gh pr list` で読む。許可リストが無い・空、または notify が off なら何もせず終了コード 0。初めて見るリポジトリは基準線の記録だけで、既存の PR をイベントにしない。PR の題(短く)と状態だけを使い、本文・レビューのコメント・差分は読まない。ジョブの例は `scheduler/jobs/pr-watch.conf.example` と `notify-flush.conf.example`。
 
 ### 通知の規則(notify-rules。チケットのイベントで通知する)
 
@@ -842,7 +842,7 @@ label_added label=urgent actor=human -> slack           # 人が付けたとき�
 comment new=question                -> webui
 ```
 
-- **イベントの種類**: `tb history` の種類(created / status / label_added / priority / comment など。`tb reminder scan` の overdue / due_soon、`tb pr-watch` の pr_opened / pr_approved / pr_changes / pr_merged も)か `*`。
+- **イベントの種類**: `tb history` の種類(created / status / label_added / priority / comment など。`tb reminder scan` の overdue / due_soon、`tb pr watch` の pr_opened / pr_approved / pr_changes / pr_merged も)か `*`。
 - **条件**: `type=` `priority=` `priority>=` `label=` `project=` `owner=` `new=` `old=` `actor=`。すべて満たした行が当たる。`label=` は、label_added / label_removed では付け外したラベルそのもの、ほかのイベントでは「今そのラベルを持っている」。`actor=` は名前か `human` / `system` / `agent`。
 - **届け先**: `file` `stdout` `slack`(ほかの通知と同じ経路)、`webui`(Web UI の緊急通知と Chrome 通知に 24 時間出す)、`conductor`(そのプロジェクトの指揮役への次のまとめ = `tb digest`)。当たった行の届け先を合わせ、イベント 1 件につき通知 1 件(種別 `ticket`)。
 - **本文**: `[チケット] T-web-012 ログイン画面 — ラベル +notify / high / bug / 担当 worker-2`。ID・題・イベント・優先度・種別・担当だけで、説明やコメントの本文は載せない。秘密の検出・伏せ字・頻度の上限は他の通知と同じく必ず通る。
@@ -852,21 +852,21 @@ comment new=question                -> webui
 
 ## draft PR の作成キュー(pr-queue)
 
-agent のセッションに `gh` の書き込み権限を持たせないための仕組み。agent は PR を作らず、キューに置くだけ。PR を作るのは、人の端末で動く scheduler の COMMAND ジョブ(`tb pr-queue scan` → `tb pr-queue run`)。
+agent のセッションに `gh` の書き込み権限を持たせないための仕組み。agent は PR を作らず、キューに置くだけ。PR を作るのは、人の端末で動く scheduler の COMMAND ジョブ(`tb pr queue scan` → `tb pr queue run`)。
 
 ```
-tb pr-queue add --branch agent/<名> --body-file <本文> --title <題> [--repo <org/repo>] [--task T-…] [--base <ブランチ> | --depends-on PQ-<m>]   # agent。pending
-tb pr-queue approve PQ-<n> / reject PQ-<n> [-m 理由]                                                  # 人だけ
-tb pr-queue retry PQ-<n>                                                                              # 人だけ。failed を approved に戻す(attempts を 0 に)
-tb pr-queue run [--dry-run]                                                                           # approved だけを gh pr create --draft
-tb pr-queue scan [--dry-run] [--repo <org/repo>]                                                      # origin の <branch_prefix>* から積む
+tb pr queue add --branch agent/<名> --body-file <本文> --title <題> [--repo <org/repo>] [--task T-…] [--base <ブランチ> | --depends-on PQ-<m>]   # agent。pending
+tb pr queue approve PQ-<n> / reject PQ-<n> [-m 理由]                                                  # 人だけ
+tb pr queue retry PQ-<n>                                                                              # 人だけ。failed を approved に戻す(attempts を 0 に)
+tb pr queue run [--dry-run]                                                                           # approved だけを gh pr create --draft
+tb pr queue scan [--dry-run] [--repo <org/repo>]                                                      # origin の <branch_prefix>* から積む
 ```
 
 - ガードは run のたびにかけ直す: ブランチが `branch_prefixes`(無ければ `branch_prefix`)のどれかで始まる・base は登録時に決めた値(下を参照)・draft だけ・本文は `body_root` の中の実ファイル(シンボリックリンク不可)で、置いた(承認した)ときから変わっていない・1 行目が `body_first_line` に合う(設定したときだけ)・本文と題に秘密らしい値が無い・同じ head の PR が無い・リポジトリが許可リスト(`config/repos.md`)にある。
 - `PR_QUEUE_REPO_DIR`(ローカルの clone)で差分も見る(**必須**。空・存在しない・git でないときは approve も run も scan も通さない)。CI 設定(`.github/workflows`・`.github/actions`)の変更、`AdministratorAccess` の追加、秘密らしい値は作らずに人に回す。
 - マージ・approve・ready・close は実装していない。draft を ready にするのは人。
 - 書き込み用の認証は、gh のラッパー(人が用意する)に持たせる。`PR_QUEUE_GH`(環境変数)か `config/pr-queue.conf` の `gh`(絶対パス)で指定する。**未指定・不正なら run / scan は警告して止まる**(PATH 上の gh には落ちない。fail-closed)。ラッパーの形と置き場は [`docs/pr-queue-gh-wrapper.md`](docs/pr-queue-gh-wrapper.md)。
-- 認証で止まったとき(ラッパーが終了コード 75 を返す。ghtkn が token を返せない)は、attempts を使わず `auth-locked` として残りの行を止め、通知を状態が変わったときだけ 1 回出す。`failed` になったものは `tb pr-queue retry`(人だけ)で戻す。
+- 認証で止まったとき(ラッパーが終了コード 75 を返す。ghtkn が token を返せない)は、attempts を使わず `auth-locked` として残りの行を止め、通知を状態が変わったときだけ 1 回出す。`failed` になったものは `tb pr queue retry`(人だけ)で戻す。
 - 公開前検査(conf の `deny_patterns`。**必須**。未設定・不正なら run は止まる。環境変数では決められない): run が PR を作る前に、origin と同期した上で(追跡参照の SHA が origin と一致しなければ止める)、題・本文・コミットメッセージ(author / committer を含む)・ブランチ名・差分(変更ファイルのパスと足した行)に規則ファイルを掛ける。バイナリの変更は人に回す。ヒットした PR は作らず却下し(attempts は使わない)、規則名と位置だけを通知する(値は出さない)。書式と例外ファイルは [`docs/pr-queue-deny-patterns.md`](docs/pr-queue-deny-patterns.md)。
 - 既知の限界(詳細は [`docs/pr-queue-deny-patterns.md`](docs/pr-queue-deny-patterns.md)): `PR_QUEUE_CONF` で conf を差し替えられる(deny の規則ファイルは固定の conf のキーで決まり、env では差し替えられない)、`auto_approve` を上げると scan が人の approve なしで approved を積める(既定 0)、固定の conf も同一 OS ユーザーなら書ける(OS の権限分離=ADR 0001 の課題)、検査から PR 作成までの短い時間差は完全には閉じられない。
 - `add` は、ブランチが origin に実在すること(`PR_QUEUE_REPO_DIR` の clone で `git ls-remote`)を確かめ、確認できなければ登録しない。登録できる接頭辞は conf の `branch_prefixes`(既定は `agent/` だけ。広げるのは人。例: `agent/ feat/ fix/`)。`scan` が走査するのは先頭の接頭辞だけ。
