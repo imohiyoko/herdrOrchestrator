@@ -120,3 +120,10 @@ func Text(v any) string {
 		return fmt.Sprint(x)
 	}
 }
+
+// Exists はこのセッションにチケット id があるか(core.sh の require_task の判定)。
+func Exists(db *sql.DB, id string) (bool, error) {
+	var n int
+	err := db.QueryRow("SELECT COUNT(*) FROM tasks WHERE id=?", id).Scan(&n)
+	return n > 0, err
+}

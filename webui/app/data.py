@@ -532,7 +532,7 @@ def urgent_items():
             items.append({"id": f"p:{r['id']}", "kind": "proxy_pending", "label": "代行依頼(人の判断待ち)",
                           "title": _short(f"{r['task_id']} {r.get('effect') or ''}", 80),
                           "body": _short(f"{r['cmd']} / 理由: {r['why']}"),
-                          "how": _short(f"agent の代わりに人が実行するか決める。実行したら手元で tb proxy-resolve {r['id']} --status done --result '結果'、断るなら --status denied", 300),
+                          "how": _short(f"agent の代わりに人が実行するか決める。実行したら手元で tb proxy resolve {r['id']} --status done --result '結果'、断るなら --status denied", 300),
                           "href": "/tasks/" + quote(str(r["task_id"]), safe=""), "ts": clean(r.get("updated_at") or "")})
         for al in q("SELECT * FROM alerts WHERE status='analyzed' AND severity IN ('critical','high') ORDER BY id DESC LIMIT 50"):
             items.append({"id": f"r:{al['id']}:{clean(al.get('analyzed_at'))}", "kind": "alert_result",

@@ -21,7 +21,7 @@ import (
 )
 
 // Commands は Go に移し終えたコマンド。bin/tb はこの一覧(herdrctl tb --commands)を見て渡すかを決める。
-var Commands = []string{"activity", "list", "touch"}
+var Commands = []string{"activity", "list", "proxy", "proxy-check", "proxy-list", "proxy-request", "proxy-resolve", "touch"}
 
 // 終了コード(tb と同じ)
 const (
@@ -60,6 +60,16 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	case "activity":
 		err = cmdActivity(args[1:], w, stderr)
+	case "proxy":
+		err = cmdProxy(args[1:], w, stderr)
+	case "proxy-request":
+		err = cmdProxyRequest(args[1:], w, stderr)
+	case "proxy-list":
+		err = cmdProxyList(args[1:], w, stderr)
+	case "proxy-resolve":
+		err = cmdProxyResolve(args[1:], w, stderr)
+	case "proxy-check":
+		err = cmdProxyCheck(args[1:], w, stderr)
 	case "list":
 		err = cmdList(args[1:], w, stderr)
 	default:
@@ -72,6 +82,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	var e *exit
 	if !errors.As(err, &e) {
 		e = &exit{exitErr, err.Error()}
+	}
+	if e.msg == "" { // 使い方を標準出力に出して 2 で終わるとき(tb <サービス> だけ)
+		return e.code
 	}
 	fmt.Fprintf(stderr, "tb: %s\n", e.msg)
 	if e.code == exitUsage {

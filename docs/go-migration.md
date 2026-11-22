@@ -9,13 +9,18 @@
 - **同期**: CI の `tb contract` ジョブが全ケースを `TB_IMPL=go` で流す。移したコマンドを bash 側だけ変えるとこのジョブが落ちる。ケースで確かめていない振る舞いは、移す PR でケースを足して埋める
 - **bash を消す時期**: tb の全サービスが移ったら、まず既定を `TB_IMPL=go` にする PR を出す。setup が herdrctl を必ず入れるようになり、しばらく様子を見てから `taskboard/lib/*.sh` を消し、`tb` を herdrctl を呼ぶだけの shell にする
 
+## コマンドの名前
+
+Go に移すサービスは、`.claude/skills/tb-command-naming` の形(`tb <サービス> <サブコマンド>`)の新しい名前で作る。bash にも同じ名前の `cmd_<サービス>` を足し、古い名前(`tb proxy-request` など)は別名として同じに動かす。role の文面・README・webui などの呼び出し元は、移す PR で新しい名前に直す。
+
 ## 進み具合
 
 | 順 | サービス | コマンド | 状態 |
 | --- | --- | --- | --- |
 | – | ticket(一部) | `list` | 済み |
 | 1 | activity | `touch` `activity` | 済み |
-| 2 | proxy / whoami / handoff / job | `proxy-*` `whoami` `handoff` `sched-job` | まだ |
+| 2 | proxy | `proxy request/list/resolve/check`(古い名前 `proxy-*` も) | 済み |
+| 2 | whoami / handoff / job | `whoami` `handoff` `sched-job` | まだ |
 | 3 | config / approval / alert / review / gate / pr / digest / notify | | まだ |
 | 4 | agent / reminder / message | | まだ(message は `send` / `nudge` の PR の後) |
 | 5 | ticket(残り) / recipe / conv | | まだ(ticket は状態の再設計の後、recipe は ADR 0005 段 3 の後) |
