@@ -402,11 +402,12 @@ tb approval ask <パターン>      # 承認制に戻す
 tb approval approve O-<n> [--always]   # 承認待ちの送信を届ける。--always で send:<kind>:<宛先> を allow に
 tb approval reject O-<n>
 # 古い名前(tb approval <操作> / tb allow / tb ask / tb approve / tb reject)も同じに動く
+# ただし古い形 tb approval <操作> では、サブコマンドと同じ名前の操作(check / allow / ask / approve / reject)は書けない。tb approval check allow のように書く
 ```
 
 - 操作の名前: `send:<kind>:<宛先>`(tb send)、`role:change`(人事の roles/ 変更)、`setup:<step>` など。`proxy:<effect>` は操作名としては定義があるが、**承認判定(`approval_of`)には渡らない**(代行依頼は `proxy_requests` の別の仕組み)ので、approvals.conf の `proxy:*` の行は何も効かない。既定では `send:task:*` が `ask`、`send:info:*` / `send:answer:*` が `allow`
 - `tb send` は `ask` の送信を届けず、`outbox` に `pending`(人の承認待ち)で置く(終了コード 20)。Web UI の緊急通知に出る
-- `tb approval allow` / `ask` / `approve` / `reject` は**人の端末から**だけ実行できる(agent の pane からは拒否)。履歴は `approval_changes`
+- `tb approval allow` / `ask` / `approve` / `reject` は**人の端末から**だけ実行できる(agent の pane からは拒否)。履歴は `approval_changes`。例外: `approve` / `reject` は grants.conf の `approve:<操作>` に当たる agent も実行できる(下の「承認待ちの承認を agent に任せる」)
 - agent には承認ルールを書き換えさせない(DB の `config` 表への直接の書き込みと `tb config` を拒否し、取り込み前のファイルも Claude Code の `permissions.deny` で `Edit(//<ORCH_DIR>/taskboard/config/approvals.conf)` などを拒否し、
   `Bash(tb allow:*)` なども拒否しておくとより確実。権限カタログ `approvals-catalog.conf` も同じ扱いにする: 書き換えられると `/perms` の警告が消える)
 - 操作の候補と性質(種別・副作用・リスク階層・allow の候補・状態)は `config/approvals-catalog.conf` に定義している(判定には使わない。Web UI の `/perms` が approvals.conf と突き合わせて見せる)。状態は active(承認判定に渡す箇所がある)・unwired(操作名はあるが承認判定には渡らない)・reserved(将来用)。

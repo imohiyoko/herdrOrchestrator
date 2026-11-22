@@ -183,11 +183,10 @@ _approval_rules() {
 
 # tb approval <サブコマンド>(サービス approval)。古い名前 tb approval <操作> / allow / ask / approve / reject も同じに動く
 cmd_approval() {
-  local sub=${1:-}
-  case $sub in
-    check|allow|ask|approve|reject) shift; "cmd_approval_$sub" "$@";;
+  if [[ $# -eq 0 ]]; then approval_usage; exit 2; fi   # 空の操作名(tb approval '')は引数なしと分け、check で誤りにする
+  case $1 in
+    check|allow|ask|approve|reject) local sub=$1; shift; "cmd_approval_$sub" "$@";;
     help|-h|--help) approval_usage;;
-    "") approval_usage; exit 2;;
     *) cmd_approval_check "$@";;   # 古い形: tb approval <操作>
   esac
 }

@@ -128,12 +128,13 @@ func loadRisk() (*riskConf, string) {
 	f := RiskRules()
 	st, err := os.Stat(f)
 	if err != nil {
-		if _, lerr := os.Lstat(f); lerr != nil {
-			return c, "" // ファイルなし: 既定だけで動く
-		}
+		return c, "" // ファイルなし([[ -e ]] が偽。リンク切れも): 既定だけで動く
+	}
+	if !st.Mode().IsRegular() { // 読む前に確かめる(FIFO などで待たない)
+		return nil, "規則ファイルを読めません"
 	}
 	data, rerr := os.ReadFile(f)
-	if err != nil || !st.Mode().IsRegular() || rerr != nil {
+	if rerr != nil {
 		return nil, "規則ファイルを読めません"
 	}
 	body := string(data)

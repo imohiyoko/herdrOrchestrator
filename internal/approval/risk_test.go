@@ -63,6 +63,8 @@ R-13 | target.state in (stopped,running) | risk:1 | 宛先の状態
 		"andtrail":   "[rules]\nR-9 | kind in (task) and  | ask | x\n",
 		"strictlow":  "[threshold]\nask-at = 1\n",
 		"directory/": "",
+		"dangling":   "",
+		"fifo":       "",
 	}
 	inputs := [][]string{ // sender.role target.role target.state sender.model text kind(空 = 未設定の印 -)
 		{"worker", "lead", "running", "opus", "please DROP TABLE now, token=abc", "task"},
@@ -73,13 +75,24 @@ R-13 | target.state in (stopped,running) | risk:1 | 宛先の状態
 	for name, body := range files {
 		dir := t.TempDir()
 		conf := filepath.Join(dir, "config")
-		os.MkdirAll(conf, 0o755)
+		if err := os.MkdirAll(conf, 0o755); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
 		f := filepath.Join(conf, "risk-rules.conf")
-		switch {
-		case name == "directory/":
-			os.MkdirAll(f, 0o755)
-		case name != "none":
-			os.WriteFile(f, []byte(body), 0o644)
+		var err error
+		switch name {
+		case "none":
+		case "directory/":
+			err = os.MkdirAll(f, 0o755)
+		case "dangling":
+			err = os.Symlink(filepath.Join(dir, "nowhere"), f)
+		case "fifo":
+			err = exec.Command("mkfifo", f).Run()
+		default:
+			err = os.WriteFile(f, []byte(body), 0o644)
+		}
+		if err != nil {
+			t.Fatalf("%s: 規則ファイルを作れません: %v", name, err)
 		}
 		t.Setenv("TB_ROOT", dir)
 		for _, in := range inputs {
@@ -92,8 +105,9 @@ R-13 | target.state in (stopped,running) | risk:1 | 宛先の状態
 			r := Eval(ri)
 			got := r.Format() + r.Oneline()
 			var sh strings.Builder
-			sh.WriteString("source " + lib + "\nsource " + filepath.Join(filepath.Dir(lib), "notify.sh") + " 2>/dev/null || true\n")
+			sh.WriteString("source " + shq(lib) + "\nsource " + shq(filepath.Join(filepath.Dir(lib), "notify.sh")) + " 2>/dev/null || true\n")
 			sh.WriteString("RISK_RULES=" + shq(f) + "\n")
+			sh.WriteString("unset RISK_IN_SENDER_ROLE RISK_IN_TARGET_ROLE RISK_IN_TARGET_STATE RISK_IN_SENDER_MODEL\n") // 親の環境から入らないように
 			for i, v := range []string{"RISK_IN_SENDER_ROLE", "RISK_IN_TARGET_ROLE", "RISK_IN_TARGET_STATE", "RISK_IN_SENDER_MODEL"} {
 				if in[i] != "-" {
 					sh.WriteString(v + "=" + shq(in[i]) + "\n")

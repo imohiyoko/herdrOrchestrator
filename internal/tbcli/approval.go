@@ -5,7 +5,6 @@ import (
 	"io"
 	"os"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -35,6 +34,11 @@ var (
 	reTo     = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 	reOID    = regexp.MustCompile(`^O-[0-9]+$`)
 )
+
+// inWords は bash の [[ " $LIST " == *" $v "* ]](空白で区切った一覧に含まれるか。"task info" のように続いた語も当たる)。
+func inWords(list []string, v string) bool {
+	return strings.Contains(" "+strings.Join(list, " ")+" ", " "+v+" ")
+}
 
 func validAction(a string) error {
 	if !reAction.MatchString(a) {
@@ -120,7 +124,7 @@ func approvalCheck(db *store.DB, args []string, w, stderr io.Writer) error {
 		if !reTo.MatchString(to) {
 			return usage("approval: --to は agent 名(英数字と . _ -)")
 		}
-		if !slices.Contains(message.SendKinds, kind) {
+		if !inWords(message.SendKinds, kind) {
 			return usage("approval: --kind は %s のどれか", strings.Join(message.SendKinds, " "))
 		}
 	} else if to != "" || haveText {

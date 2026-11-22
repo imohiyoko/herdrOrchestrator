@@ -107,12 +107,13 @@ func Mode(j *approval.Judge, from, to, kind string, reply bool) Delivery {
 		}
 	}
 	if _, _, has := config.Lookup(j.DB, j.Session, "delivery"); has {
+		rules := lines(j.DB, j.Session, "delivery") // 1 回だけ読む(返信と種別の判定で同じ版を見る)
 		if reply {
-			if d, ok := deliveryRules(j, from, to, "reply", true); ok {
+			if d, ok := deliveryRules(j, rules, from, to, "reply", true); ok {
 				return d
 			}
 		}
-		if d, ok := deliveryRules(j, from, to, kind, false); ok {
+		if d, ok := deliveryRules(j, rules, from, to, kind, false); ok {
 			return d
 		}
 	}
@@ -195,8 +196,8 @@ func pick(spec, kind string, exact bool) (string, bool) {
 }
 
 // deliveryRules は _delivery_rules。
-func deliveryRules(j *approval.Judge, from, to, kind string, exact bool) (Delivery, bool) {
-	for _, line := range lines(j.DB, j.Session, "delivery") {
+func deliveryRules(j *approval.Judge, rules []string, from, to, kind string, exact bool) (Delivery, bool) {
+	for _, line := range rules {
 		line = config.Trim(cutHash(line))
 		if !strings.Contains(line, "->") {
 			continue
@@ -316,7 +317,11 @@ func sendMax() int {
 // Deliver は outbox_deliver(queued の行を届ける)。inline なら止めた知らせを送信者の pane に送らない。
 func Deliver(j *approval.Judge, oid int64, inline bool, w, stderr io.Writer) Result {
 	db, sess := j.DB, j.Session
-	o, ok, _ := GetOutbox(db, oid)
+	o, ok, err := GetOutbox(db, oid)
+	if err != nil {
+		fmt.Fprintf(stderr, "tb: outbox を読めません: O-%d: %v\n", oid, err)
+		return Result{Code: 1}
+	}
 	if !ok {
 		fmt.Fprintf(stderr, "tb: outbox が見つかりません: O-%d\n", oid)
 		return Result{Code: 1}
@@ -372,7 +377,11 @@ func Deliver(j *approval.Judge, oid int64, inline bool, w, stderr io.Writer) Res
 	if rc := transport.Send(db, sess, o.Target, msg, id, "send", stderr); rc != transport.Sent {
 		return Result{Code: rc}
 	}
-	_, _ = db.Exec(`UPDATE main.outbox SET status='sent', sent_at=? WHERE herdr_session=? AND id=?`, now(), sess, oid)
+	if _, err := db.Exec(`UPDATE main.outbox SET status='sent', sent_at=? WHERE herdr_session=? AND id=?`, now(), sess, oid); err != nil {
+		// bash の sql が失敗したときと同じく 1(届いてはいるので、queued のまま再送されうることを知らせる)
+		fmt.Fprintf(stderr, "tb: %s は届けましたが outbox を sent にできませんでした(queued のまま。tb flush で重ねて届くことがあります): %v\n", id, err)
+		return Result{Code: 1}
+	}
 	return Result{}
 }
 
