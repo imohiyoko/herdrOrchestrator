@@ -121,6 +121,31 @@ conv-stage-reset         cmd:conv:stage-reset         only-human  allow       in
 conv-stage-log           cmd:conv:stage-log           allow       allow       entry
 conv-incident            cmd:conv:incident            only-human  allow       inner
 conv-gate                cmd:conv:gate                allow       allow       entry
+conv                     cmd:conv:help                allow       allow       entry
+conv.route               cmd:conv:route               allow       allow       entry
+conv.routes-set          cmd:conv:routes-set          only-human  allow       inner
+conv.draft               cmd:conv:draft               allow       allow       entry
+conv.voice               cmd:conv:voice               allow       allow       entry
+conv.voice-check         cmd:conv:voice-check         allow       allow       entry
+conv.length              cmd:conv:length              allow       allow       entry
+conv.kinds               cmd:conv:kinds               allow       allow       entry
+conv.patterns            cmd:conv:patterns            allow       allow       entry
+conv.lint                cmd:conv:lint                allow       allow       entry
+conv.pair-add            cmd:conv:pair-add            only-human  allow       inner
+conv.pairs               cmd:conv:pairs               allow       allow       entry
+conv.pair-show           cmd:conv:pair-show           allow       allow       entry
+conv.candidate-add       cmd:conv:candidate-add       allow       allow       entry
+conv.ledger              cmd:conv:ledger              allow       allow       entry
+conv.candidate-adopt     cmd:conv:candidate-adopt     only-human  allow       inner
+conv.candidate-reject    cmd:conv:candidate-reject    only-human  allow       inner
+conv.scan                cmd:conv:scan                allow       allow       entry
+conv.learn-purge         cmd:conv:learn-purge         only-human  allow       inner
+conv.stage               cmd:conv:stage               allow       allow       entry
+conv.stage-set           cmd:conv:stage-set           only-human  allow       inner
+conv.stage-reset         cmd:conv:stage-reset         only-human  allow       inner
+conv.stage-log           cmd:conv:stage-log           allow       allow       entry
+conv.incident            cmd:conv:incident            only-human  allow       inner
+conv.gate                cmd:conv:gate                allow       allow       entry
 
 # --- digest
 digest                   cmd:digest:run               allow       allow       entry
