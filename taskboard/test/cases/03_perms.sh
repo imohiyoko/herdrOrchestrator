@@ -124,6 +124,8 @@ sqlite3 "$TB_DB" "DROP VIEW config; CREATE TABLE config_gone (key TEXT, herdr_se
 eq "perms: a config view over a missing table → only-human" "$(rc $TB cancel "$t4")" "1"
 sqlite3 "$TB_DB" "DROP VIEW config; CREATE TABLE \"config-gone\" (key TEXT, herdr_session TEXT, body TEXT); CREATE VIEW config AS SELECT * FROM \"config-gone\"; DROP TABLE \"config-gone\";"
 eq "perms: a config view over a missing table named config-… → only-human" "$(rc $TB cancel "$t4")" "1"
+sqlite3 "$TB_DB" "DROP VIEW config; CREATE TABLE \"config gone\" (key TEXT, herdr_session TEXT, body TEXT); CREATE VIEW config AS SELECT * FROM \"config gone\"; DROP TABLE \"config gone\";"
+eq "perms: a config view over a missing table named \"config gone\" → only-human" "$(rc $TB cancel "$t4")" "1"
 export TB_DB=$TMP/perms.db TB_APPROVALS=$TMP/perms.approvals
 
 # 古い herdrctl(権限段階の門が無い)には渡さない

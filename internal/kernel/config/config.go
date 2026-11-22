@@ -8,7 +8,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 )
@@ -85,15 +84,18 @@ func DBRow(db *sql.DB, session, key string) (body string, shared, ok bool) {
 	return
 }
 
-// reNoConfigTable は config 表そのものが無いときの誤り(config が参照する別の表が無いのは失敗として返す)。
-var reNoConfigTable = regexp.MustCompile(`no such table: (main\.)?config(\s|$)`)
+// noConfigTable は config そのものが無い(表がまだ作られていない)か。誤りの文面では見分けず、sqlite_master で確かめる。
+func noConfigTable(db *sql.DB) bool {
+	var n int
+	return db.QueryRow(`SELECT count(*) FROM main.sqlite_master WHERE name='config'`).Scan(&n) == nil && n == 0
+}
 
 // dbRow は DBRow に加えて、問い合わせの失敗(行が無い・表がまだ無いは失敗にしない)を返す。
 func dbRow(db *sql.DB, session, key string) (body string, shared, ok bool, err error) {
 	var hs string
 	err = db.QueryRow(`SELECT herdr_session, body FROM main.config WHERE key=? AND herdr_session IN (?, '*') ORDER BY herdr_session='*' LIMIT 1`, key, session).Scan(&hs, &body)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) || reNoConfigTable.MatchString(err.Error()) {
+		if errors.Is(err, sql.ErrNoRows) || noConfigTable(db) {
 			err = nil
 		}
 		return "", false, false, err

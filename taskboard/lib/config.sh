@@ -51,13 +51,12 @@ config_checkout_file() { config_key_info "$1" && printf '%s' "$CONFIG_DIR/$CFG_F
 # DB の行を読む。DB や表が無くても失敗にしない(空)。書き込みで開かない(読むだけで空の DB を作らない)
 config_db_row() {  # $1=キー → "<s|*>:<本文>"(このセッションの行なら s)
   [[ -f $DB ]] || return 0
-  local err rc
-  { err=$(sqlite3 -readonly -batch -cmd ".timeout ${SQL_TIMEOUT:-5000}" "$DB" \
+  sqlite3 -readonly -batch -cmd ".timeout ${SQL_TIMEOUT:-5000}" "$DB" \
     "SELECT CASE herdr_session WHEN '*' THEN '*' ELSE 's' END || ':' || body FROM config
-       WHERE key=$(q "$1") AND herdr_session IN ($SQS, '*') ORDER BY herdr_session='*' LIMIT 1;" 2>&1 >&3 3>&-); rc=$?; } 3>&1
-  ((rc == 0)) && return 0
-  # 表がまだ無い DB は「行が無い」と同じ。それ以外の失敗(壊れた DB・ロックの待ち切れなど)は 1 を返す(呼ぶ側が CFG_ERR に残す)
-  [[ $err =~ no\ such\ table:\ (main\.)?config([[:space:]]|$) ]] && return 0   # config 自体が無いときだけ(config が参照する表が無いのは失敗)
+       WHERE key=$(q "$1") AND herdr_session IN ($SQS, '*') ORDER BY herdr_session='*' LIMIT 1;" 2>/dev/null && return 0
+  # 表がまだ無い DB は「行が無い」と同じ(config そのものが無いかは sqlite_master で確かめる。誤りの文面では見分けない)。
+  # それ以外の失敗(壊れた DB・ロックの待ち切れ・config が参照する表が無いなど)は 1 を返す(呼ぶ側が CFG_ERR に残す)
+  [[ $(sqlite3 -readonly -batch -cmd ".timeout ${SQL_TIMEOUT:-5000}" "$DB" "SELECT count(*) FROM sqlite_master WHERE name='config';" 2>/dev/null) == 0 ]] && return 0
   return 1
 }
 
