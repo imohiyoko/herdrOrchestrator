@@ -330,9 +330,9 @@ func (e *Env) PairAdd(a []string) error {
 		n, _ := strconv.ParseInt(s, 10, 64)
 		return int(n)
 	}
-	m := obj{{"id", id}, {"kind", kind}, {"situation", s1}, {"intent", s2}, {"recorded_at", now()}, {"posted_by", "human"},
-		{"edit_ratio", jnum(ratio)}, {"draft_chars", jnum(dl)}, {"final_chars", jnum(fl)}, {"human_written", dl == "0"},
-		{"points_offered", pts(po)}, {"points_accepted", pts(pa)}}
+	m := obj{{K: "id", V: id}, {K: "kind", V: kind}, {K: "situation", V: s1}, {K: "intent", V: s2}, {K: "recorded_at", V: now()}, {K: "posted_by", V: "human"},
+		{K: "edit_ratio", V: jnum(ratio)}, {K: "draft_chars", V: jnum(dl)}, {K: "final_chars", V: jnum(fl)}, {K: "human_written", V: dl == "0"},
+		{K: "points_offered", V: pts(po)}, {K: "points_accepted", V: pts(pa)}}
 	if err := os.WriteFile(filepath.Join(d, "meta.json"), []byte(pretty(m)+"\n"), 0o600); err != nil {
 		return die("組の記録を書けません: %s", d)
 	}
@@ -365,7 +365,7 @@ func pairsJSON(kind string) ([]any, error) {
 	}
 	field := func(v any, k string) any {
 		if o, ok := v.(obj); ok {
-			return o.get(k)
+			return o.Get(k)
 		}
 		return nil
 	}
@@ -418,7 +418,7 @@ func (e *Env) Pairs(a []string) error {
 	}
 	for _, v := range vs {
 		o, _ := v.(obj)
-		e.say("%s", tsv(o.get("id"), o.get("kind"), o.get("recorded_at"), scalar(o.get("edit_ratio")), o.get("situation")))
+		e.say("%s", tsv(o.Get("id"), o.Get("kind"), o.Get("recorded_at"), scalar(o.Get("edit_ratio")), o.Get("situation")))
 	}
 	return nil
 }
@@ -582,7 +582,7 @@ func metaStr(m obj, k string) string {
 	if m == nil {
 		return ""
 	}
-	return scalar(m.get(k))
+	return scalar(m.Get(k))
 }
 
 func readMeta(f string) obj {
@@ -648,12 +648,12 @@ func (e *Env) CandidateAdd(a []string) error {
 		if metaStr(m, "posted_by") != "human" {
 			return die("組 %s は人が送った記録ではありません", pair)
 		}
-		hw := m.get("human_written")
+		hw := m.Get("human_written")
 		if ev == "human-edit" {
-			r, _ := num(m.get("edit_ratio"))
+			r, _ := num(m.Get("edit_ratio"))
 			gt := r > 0
-			if _, isNum := num(m.get("edit_ratio")); !isNum {
-				gt = jqLess(m.get("edit_ratio"), 0) > 0
+			if _, isNum := num(m.Get("edit_ratio")); !isNum {
+				gt = jqLess(m.Get("edit_ratio"), 0) > 0
 			}
 			if !(gt && !truthy(hw)) {
 				return die("組 %s には人の手直しがありません(下書きのまま、または一から書いたもの。一から書いたものは human-written)", pair)
@@ -749,11 +749,11 @@ func (e *Env) ledgerObjs(kind string) []any {
 			if pid == "-" {
 				pid = nil
 			}
-			out = append(out, obj{{"kind", k}, {"direction", F[0]}, {"state", col(F, 1)}, {"permissive", col(F, 2) == "1"},
-				{"counted", c.counted}, {"threshold", th},
-				{"evidence", obj{{"human-edit", c.he}, {"human-written", c.hw}, {"other-source", c.os}, {"agent-generated", c.ag}}},
-				{"situation", col(F, 3)}, {"intent", col(F, 4)}, {"ending", col(F, 5)}, {"conclusion", col(F, 6)}, {"avoid", col(F, 7)},
-				{"desc", col(F, 8)}, {"updated_at", col(F, 10)}, {"pattern_id", pid}})
+			out = append(out, obj{{K: "kind", V: k}, {K: "direction", V: F[0]}, {K: "state", V: col(F, 1)}, {K: "permissive", V: col(F, 2) == "1"},
+				{K: "counted", V: c.counted}, {K: "threshold", V: th},
+				{K: "evidence", V: obj{{K: "human-edit", V: c.he}, {K: "human-written", V: c.hw}, {K: "other-source", V: c.os}, {K: "agent-generated", V: c.ag}}},
+				{K: "situation", V: col(F, 3)}, {K: "intent", V: col(F, 4)}, {K: "ending", V: col(F, 5)}, {K: "conclusion", V: col(F, 6)}, {K: "avoid", V: col(F, 7)},
+				{K: "desc", V: col(F, 8)}, {K: "updated_at", V: col(F, 10)}, {K: "pattern_id", V: pid}})
 		}
 	}
 	return out
@@ -788,13 +788,13 @@ func (e *Env) Ledger(a []string) error {
 	}
 	for _, r := range rows {
 		o := r.(obj)
-		ev := o.get("evidence").(obj)
+		ev := o.Get("evidence").(obj)
 		p := "-"
-		if o.get("permissive") == true {
+		if o.Get("permissive") == true {
 			p = "permissive"
 		}
-		e.say("%s", tsv(o.get("kind"), o.get("direction"), o.get("state"), fmt.Sprintf("%d/%d", o.get("counted"), o.get("threshold")),
-			ev.get("human-edit"), ev.get("human-written"), ev.get("other-source"), ev.get("agent-generated"), p, o.get("desc")))
+		e.say("%s", tsv(o.Get("kind"), o.Get("direction"), o.Get("state"), fmt.Sprintf("%d/%d", o.Get("counted"), o.Get("threshold")),
+			ev.Get("human-edit"), ev.Get("human-written"), ev.Get("other-source"), ev.Get("agent-generated"), p, o.Get("desc")))
 	}
 	return nil
 }

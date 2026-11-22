@@ -117,9 +117,9 @@ var reMin = regexp.MustCompile(`^[0-9]+$`)
 // ValidMinutes は --stuck-min の値(act_select と同じ: 数字だけ)。
 func ValidMinutes(s string) bool { return reMin.MatchString(s) }
 
-// selectSQL は act_select と同じ: working の推定と、stuckMin 分以上の滞留を付けた SELECT。
+// SelectSQL は act_select と同じ: working の推定と、stuckMin 分以上の滞留を付けた SELECT。
 // stuckMin は ValidMinutes で確かめた数字の並び(bash と同じく SQL にそのまま埋める)。
-func selectSQL(stuckMin string) string {
+func SelectSQL(stuckMin string) string {
 	w := "last_prompt_at IS NOT NULL AND (last_stop_at IS NULL OR last_prompt_at > last_stop_at)"
 	return fmt.Sprintf(`SELECT session_id, pane_id, tab_id, workspace_id, cwd, last_prompt_id, last_prompt_at, last_stop_at, updated_at,
     CASE WHEN %[1]s THEN 1 ELSE 0 END AS working,
@@ -131,10 +131,10 @@ func selectSQL(stuckMin string) string {
 
 // List は session の行を新しい順に返す。full=false なら tb activity の表の列(null は "-")だけ。
 func List(db *sql.DB, session, stuckMin string, full bool, row func(cols []string, vals []any) error) error {
-	q := selectSQL(stuckMin) + " WHERE herdr_session=? ORDER BY updated_at DESC"
+	q := SelectSQL(stuckMin) + " WHERE herdr_session=? ORDER BY updated_at DESC"
 	if !full {
 		q = "SELECT session_id, COALESCE(pane_id,'-'), working, stuck, last_prompt_at, last_stop_at, COALESCE(cwd,'-') FROM (" +
-			selectSQL(stuckMin) + " WHERE herdr_session=?) ORDER BY updated_at DESC"
+			SelectSQL(stuckMin) + " WHERE herdr_session=?) ORDER BY updated_at DESC"
 	}
 	rows, err := db.Query(q, session)
 	if err != nil {
