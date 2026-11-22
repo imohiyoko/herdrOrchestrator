@@ -153,9 +153,11 @@ tb job history <job> [--settings]                    変更の履歴
 
 会計役(定期レビュー)→ 設定役(人事。TB_HR_NAME、既定 hr):
 tb review-pack [--since ISO] [--mark]      生ログではなく集計と上位だけのレビュー材料。省略時は前回 --mark 以降
-tb proposal --role <roles のファイル|-> --title T (--text X|--text-file F)   改善提案を設定役へ送る
-tb proposals [P-<n>] [--status open|applied|rejected]
-tb proposal-resolve P-<n> --status applied|rejected [--note N]   設定役か人だけ
+tb proposal add --role <roles のファイル|-> --title T (--text X|--text-file F)   改善提案を設定役へ送る
+tb proposal list [--status open|applied|rejected]
+tb proposal show P-<n>
+tb proposal resolve P-<n> --status applied|rejected [--note N]   設定役か人だけ
+  別名(古い名前。同じに動く): tb proposal --role ... tb proposals tb proposal-resolve
   (提案は project proposal のチケット T-proposal-NNN でもある。担当は設定役)
 
 agent の停止・復活・新規作成(台帳 agents。人の端末からはそのまま、agent の pane からは approvals の agent:<op>:<名前>):

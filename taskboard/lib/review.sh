@@ -97,8 +97,32 @@ cmd_review-pack() {
   return 0
 }
 
-# 会計役 → 設定役(人事)への提案。保存してから送る(使用中なら tb digest が再送)
+# 提案のサービス: tb proposal add|list|show|resolve。古い名前(tb proposal --role ... / tb proposals / tb proposal-resolve)も同じに動く
 cmd_proposal() {
+  local sub=${1:-}
+  if [[ $sub == --* && $sub != --help ]]; then proposal_add "$@"; return; fi   # 古い形: tb proposal --role ...
+  shift || true
+  case $sub in
+    add) proposal_add "$@";;
+    list) [[ $# -eq 0 || ${1:-} == --status ]] || usage "proposal list: 不明な引数 $1"; cmd_proposals "$@";;
+    show) [[ $# -eq 1 && $1 =~ ^P-[0-9]+$ ]] || usage "proposal show P-<n>"; cmd_proposals "$1";;
+    resolve) cmd_proposal-resolve "$@";;
+    ""|-h|--help|help) proposal_usage; [[ -n $sub ]] || exit 2;;
+    *) usage "proposal: 不明なサブコマンド $sub(add / list / show / resolve)";;
+  esac
+}
+proposal_usage() {
+  cat <<'USAGE'
+tb proposal add --role <roles のファイル|-> --title T (--text X|--text-file F)   改善提案を設定役へ送る
+tb proposal list [--status open|applied|rejected]
+tb proposal show P-<n>
+tb proposal resolve P-<n> --status applied|rejected [--note N]   設定役か人だけ
+(古い名前 tb proposal --role ... / tb proposals / tb proposal-resolve も同じに使える)
+USAGE
+}
+
+# 会計役 → 設定役(人事)への提案。保存してから送る(使用中なら tb digest が再送)
+proposal_add() {
   local role="" title="" text="" tfile=""
   while [[ $# -gt 0 ]]; do
     case $1 in
@@ -129,7 +153,7 @@ proposal_deliver() {  # $1=id
   local row msg
   row=$(session_row proposals id "$1")
   [[ -n $row && $(jq -r '.delivered_at // ""' <<<"$row") == "" ]] || return 0
-  msg="[from: tb / proposal / P-$1 / info] $(jq -r .by_name <<<"$row") から roles/$(jq -r .role_file <<<"$row") の改善提案: $(oneline "$(jq -r .title <<<"$row")" 120) (全文: tb proposals P-$1。対応後に tb proposal-resolve P-$1)"
+  msg="[from: tb / proposal / P-$1 / info] $(jq -r .by_name <<<"$row") から roles/$(jq -r .role_file <<<"$row") の改善提案: $(oneline "$(jq -r .title <<<"$row")" 120) (全文: tb proposal show P-$1。対応後に tb proposal resolve P-$1)"
   herdr_send "$(proposal_target)" "$msg" "P-$1" proposal || return $?
   sql "UPDATE main.proposals SET delivered_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$1;"
 }

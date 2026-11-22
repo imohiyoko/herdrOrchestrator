@@ -54,7 +54,8 @@ ADR 0002(サービスの境界)と ADR 0004(3 つの層とモジュール)から
 | `digest` | 機能 | まとめ送り | digest / `digest` `digests` |
 | `agent` | 機能 | agent の作成・停止・復活・上限・モデル・役割 | agents, spawn, limits, models, roles, shed / `agent-*` `role-*` `model-set` `limits` |
 | `alert` | 機能 | アラート | alerts / `alert` `alert-*` `alerts` |
-| `review` | 機能 | 提案・レビュー | review / `proposal*` `review-*` |
+| `review` | 機能 | 会計役のレビュー材料・レビューの提出 | review, gate / `review-pack` `review-submit`(gate と一緒に移す) |
+| `proposal` | 機能 | 会計役 → 設定役の改善提案(project proposal のチケット) | review / `proposal add/list/show/resolve`(古い名前 `proposal --role ...` `proposals` `proposal-resolve`) |
 | `pr` | 機能 | PR キュー・PR の見張り | prqueue / `pr-queue` `pr-watch` |
 | `gate` | 機能 | ゲート | gate / `gate` |
 | `approval` | 土台(authz) | 承認・人だけの判定 | approvals, risk / `approve` `reject` `approval` `allow` |

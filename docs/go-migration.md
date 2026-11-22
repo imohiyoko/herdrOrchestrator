@@ -24,11 +24,12 @@ Go に移すサービスは、`.claude/skills/tb-command-naming` の形(`tb <サ
 | 2 | handoff | `handoff write`(古い形 `handoff <id>` も) | 済み |
 | 2 | whoami | `whoami` | まだ(`bin/tb` の入口を作り直すときに一緒に) |
 | 3 | config | `config list/show/set/edit/unset/import/history`(9 種類の設定の検査も Go に) | 済み |
+| 3 | proposal | `proposal add/list/show/resolve`(古い名前 `proposal --role ...` `proposals` `proposal-resolve` も) | 済み |
 | 3 | approval / alert / review / gate / pr / digest / notify | | まだ |
 | 4 | agent / reminder / message | | まだ(message は `send` / `nudge` の PR の後) |
 | 5 | ticket(残り) / recipe / conv | | まだ(ticket は状態の再設計の後、recipe は ADR 0005 段 3 の後) |
 | 6 | scheduler の起動器 / webui | | まだ(ADR 0002 の手順 4・5) |
 
-土台(`internal/kernel`)は、移すサービスが使う分だけ足していく: store(DB)、env(既定の置き場所)、config(設定を引く・書く)、herdr(herdr アダプタ)、identity(人か agent か)。
+土台(`internal/kernel`)は、移すサービスが使う分だけ足していく: store(DB)、env(既定の置き場所)、config(設定を引く・書く)、herdr(herdr アダプタ)、identity(人か agent か。報告者の名前 `resolve_label` も)、transport(herdr への送信 `herdr_send` と messages への記録)、util(`oneline` など)。
 
 `touch` は hook から毎回呼ばれるので、`TB_IMPL=go` でも herdrctl が無い・持たないときは何も出さずに bash で続ける(`bin/tb` の `tb_go_quiet`)。
