@@ -245,18 +245,25 @@ recipe_parse() {  # $1=本文
         ((${#toks[@]} >= 1)) || { err+="${n} 行目: step <部品> [<名前>=<値> ...]"$'\n'; continue; }
         part=${toks[0]}
         part_exists "$part" || { err+="${n} 行目: 部品の一覧にありません: $part(tb parts)"$'\n'; continue; }
-        ok=1
+        ok=1; local seen_k=" "
         for kv in "${toks[@]:1}"; do
           [[ $kv == *=* ]] || { err+="${n} 行目: 引数は <名前>=<値>: $kv"$'\n'; ok=0; continue; }
-          k=${kv%%=*}; v=${kv#*=}; pt=""
-          for spec in ${PART_ARGS[$part]}; do [[ ${spec%%:*} == "$k" || ${spec%%:*} == "$k?" ]] && pt=${spec#*:}; done
+          k=${kv%%=*}; v=${kv#*=}; pt=""; local popt=0
+          [[ $seen_k != *" $k "* ]] || { err+="${n} 行目: 引数 $k が 2 回あります"$'\n'; ok=0; continue; }
+          seen_k+="$k "
+          for spec in ${PART_ARGS[$part]}; do
+            [[ ${spec%%:*} == "$k" ]] && pt=${spec#*:}
+            [[ ${spec%%:*} == "$k?" ]] && { pt=${spec#*:}; popt=1; }
+          done
           [[ -n $pt ]] || { err+="${n} 行目: 部品 $part に引数 $k はありません(使えるのは: ${PART_ARGS[$part]:-なし})"$'\n'; ok=0; continue; }
           if [[ $v == \$* ]]; then
             case ${v#\$} in
               requester|target) [[ $pt == agent ]] || { err+="${n} 行目: $v は agent 型の引数にだけ使えます($part の $k は $pt)"$'\n'; ok=0; };;
               *) t=${RCP_ARGT[${v#\$}]:-}
                  if [[ -z $t ]]; then err+="${n} 行目: $v は宣言されていません(arg の行は step より前に書きます)"$'\n'; ok=0
-                 elif [[ ${t%%:*} != "${pt%%:*}" ]]; then err+="${n} 行目: $v の型 $t は $part の $k の型 $pt と合いません"$'\n'; ok=0; fi;;
+                 elif [[ ${t%%:*} != "${pt%%:*}" ]]; then err+="${n} 行目: $v の型 $t は $part の $k の型 $pt と合いません"$'\n'; ok=0
+                 elif ((popt == 0)) && [[ " ${RCP_ARGN[*]} " == *" ${v#\$}? "* ]]; then
+                   err+="${n} 行目: 省略できる引数 $v を、省略できない $part の $k に渡せません"$'\n'; ok=0; fi;;
             esac
           else
             [[ $v != *\$* ]] || { err+="${n} 行目: 値の中に \$ は書けません(\$<名前> は 1 語だけ): $v"$'\n'; ok=0; continue; }

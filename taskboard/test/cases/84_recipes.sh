@@ -49,7 +49,10 @@ eq "recipe-set: step は 16 個まで" "$(_bad b12 "$(for i in $(seq 17); do ech
 eq "recipe-set: 予約の引数名(requester / target)は宣言できない" "$(_bad b13 $'arg target agent\nstep agent-status target=$target')" "2:0"
 eq "recipe-set: 不正な宣言 risk" "$(_bad b14 $'risk none\nstep agent-status target=w1')" "2:0"
 eq "recipe-set: 引数の名前が 2 回" "$(_bad b15 $'arg a agent\narg a agent\nstep agent-status target=$a')" "2:0"
-eq "recipe-set: 検査を通らないと履歴も残らない" "$(rsql "SELECT count(*) FROM recipe_changes WHERE name LIKE 'b%';")" "0"
+eq "recipe-set: step の中で同じ引数が 2 回" "$(_bad b17 'step agent-status target=w1 target=w2')" "2:0"
+eq "recipe-set: 省略できる引数を、省略できない部品の引数に渡せない" "$(_bad b18 $'arg who? agent\nstep agent-status target=$who')" "2:0"
+eq "recipe-set: 省略できる引数を、省略できる部品の引数には渡せる" "$($TB recipe-set b19 <<<$'arg note? text:10\nstep agent-revive target=w1 prompt=$note' >/dev/null; rsql "SELECT count(*) FROM recipes WHERE name='b19';"; $TB recipe-rm b19 >/dev/null)" "1"
+eq "recipe-set: 検査を通らないと履歴も残らない" "$(rsql "SELECT count(*) FROM recipe_changes WHERE name LIKE 'b%' AND name != 'b19';")" "0"
 eq "recipe-set: 理由を行ごとに出す" "$(printf 'step no-such-part\nfoo\n' | $TB recipe-set b16 2>&1 | grep -c '行目')" "2"
 
 # --- 一覧・中身・履歴(だれでも読める)
