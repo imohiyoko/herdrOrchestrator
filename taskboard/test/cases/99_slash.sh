@@ -123,6 +123,13 @@ sed -i.bak 's/^compact |  | allow/compact |  | deny/' "$TB_SLASH_CONF"
 : >"$FAKE_LOG"
 eq "slash: list changed to deny while pending → not sent" "$(rc $TB agent-approve "$lid") $(sl_all) $(slsql "SELECT status FROM agent_ops WHERE id=${lid#L-};")" "1 0 failed"
 
+# ---- 許可リストの読み方(コメント・同名の行は最初の行・説明の # 以降)と宛先の重複・役割の不一致
+printf '  # c\ncompact | | | | | note # x | extra\ncompact | y | allow\n' >"$TMP/slash2.conf"
+out=$(TB_SLASH_CONF=$TMP/slash2.conf $TB slash --apply --list)
+eq "slash: --list uses the first line of a name, note cut at #" "$(grep -c $'^/compact\t\tallow\tbusy\tnote$' <<<"$out")" "2"
+eq "slash: role with no agent is reported" "$(TB_SLASH_CONF=$TMP/slash2.conf $TB slash compact @nobody 2>&1)" "@nobody skip(no agent with this role)"
+eq "slash: a target named twice is listed once" "$(TB_SLASH_CONF=$TMP/slash2.conf $TB slash compact worker1 worker1 2>&1)" "worker1 would-send(dry-run)"
+
 # ---- 許可リストが無ければ何も送らない(.example も無い場所)
 eq "slash: no allow-list → unlisted" "$(TB_SLASH_CONF=$TMP/none.conf rc $TB slash compact worker1 --apply) $(sl_all)" "1 0"
 
