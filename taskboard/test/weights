@@ -27,6 +27,7 @@
 68_review_gate_contract.sh 4
 69_pr_contract.sh 4
 70_roles.sh 4
+71_conv_contract.sh 4
 72_conv_learn.sh 14
 80_approval_contract.sh 6
 80_approvals.sh 8
