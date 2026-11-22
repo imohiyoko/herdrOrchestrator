@@ -122,7 +122,7 @@ tb config unset statuses --shared        # 組み込みに戻す
 - 分類で決まる振る舞い: nudge が催促するのは active を握っている agent(設定 `nudge` の `wake` で分類・状態を選べる)、`--pool` の候補は担当なしの todo。digest の「turn が終わったのに作業中」「複数握っている」は active。agent-shed・agent-kill・Web UI の未完了タスクは active / review / blocked。期限切れ・先行チケット待ち・人の返事待ちは閉じていないもの。`tb report` と完了報告は done、スプリントの件数とポイントは cancelled を除く。ボード(`tb board` と Web UI)の列は分類の順。
 - 組み込みの名前は、設定から外しても組み込みの分類として数える(アラート・提案のチケットは DB のトリガーがこの名前で書くため)。外した状態には `tb update --status` で新しく変えられないが、既にその状態のチケットはボードと Web UI の件数の後ろに出る(黙って見えなくしない)。
 - DB の `status` 列は値の一覧を持たない(スキーマ 024 で CHECK を外し、空でない 30 文字までだけを残した)。一覧は tb と Web UI が設定から読み、書く前に確かめる。
-- agent への文面(`nudge.text` など)は `{active}` / `{todo}` で今の状態の名前を、`nudge.text` は `{status}` で名指ししたチケットの状態を出せる(設定 `messages`)。
+- agent への文面(`nudge.text` など)は `{active}` / `{todo}` で今の状態の名前を、`nudge.text` は `{status}` で名指ししたチケットの状態を出せる。着手前(todo の分類)のチケットの催促は `nudge.start`(`tb claim` で着手するよう書く)(設定 `messages`)。
 - 手で壊した本文(ファイルを直接書いた・DB を直接書いた)は、警告を出して組み込みの 6 つで動く(`tb config edit statuses` で直す)。
 
 tb 自身が付ける・探すラベルの名前は設定 `system-labels` で変えられる(1 行 1 つ `<用途> = <ラベル>`。例は [config/system-labels.conf.example](config/system-labels.conf.example))。`deadline`(`tb deadlines-import` が付ける。既定 `deadline`)と `team`(`tb nudge --pool` が探す team のラベルの形。`{team}` が team の名前。既定 `team:{team}`)。アラート・提案のラベル(`alert` / `proposal` / `rejected` / `role:*`)は DB のトリガーが付けるので固定。
@@ -303,7 +303,7 @@ tb nudge [--idle-min 15] [--max 3] [--json]   # 送る(人の端末か scheduler
 
 - **対象**: 既定は全員(固定の除外は無い)。除外は設定 `nudge` に 1 行 1 つ `ignore <@役割の glob | agent 名の glob>` と書く(人だけが `tb config edit nudge`。例は `config/nudge.conf.example`)。**宛先を明示した場合(`tb nudge <agent 名の glob | @役割の glob> ...`)は ignore も適用しない**(指定が意思表示)。ほかの除外条件(下)は常に効く
 - **移行**: 設定 `nudge` が無い(ファイルも DB の行も無い)あいだは、以前の既定の除外(指揮役 = 既定の宛先と `projects` の値、保護 `protect`)をそのまま保つ。設定 `nudge` を置けば(空でも)全員が対象になり、除外は `ignore` の行だけで決まる。指揮役や保護された agent も除きたいときは、それらを `ignore` に書いてから置く(`--dry-run` で対象を確かめる)
-- **催促する状態(`wake`)**: 設定 `nudge` に `wake <分類 | 状態> ...` と書くと、その状態のチケットを握っている agent も催促する(複数行は足し合わせる)。分類の名前(`todo` / `active` / `review` / `blocked`)ならその分類の状態すべて、ほかは状態の名前(設定 `statuses`)。`wake` を書かなければ `active` だけ(今までどおり)。`wake` を書くなら `active` も書かないと作業中は催促しない。閉じた分類(`done` / `cancelled`)は書けない。例: `wake active todo review blocked`
+- **催促する状態(`wake`)**: 設定 `nudge` に `wake <分類 | 状態> ...` と書くと、その状態のチケットを握っている agent も催促する(複数行は足し合わせる)。分類の名前(`todo` / `active` / `review` / `blocked`)ならその分類の状態すべて、ほかは状態の名前(設定 `statuses`)。`wake` を書かなければ `active` だけ(今までどおり)。`wake` を書くなら `active` も書かないと作業中は催促しない。閉じた分類(`done` / `cancelled`)は書けない。例: `wake active todo review blocked`。着手前(todo の分類)のチケットには「止まっています・続きを」ではなく、`tb claim` で着手するよう促す文面(設定 `messages` の `nudge.start`)を送る
 - **設定の検査**: `tb config set nudge` / `edit nudge` は、`ignore <パターン>` / `wake <名前> ...` の形でない行、閉じた状態、今の分類にも状態にも無い名前があれば書かない(あとで設定 `statuses` から外した名前は、実行時に当たらないだけで止めない)。`@役割` の ignore で役割を確かめられない agent は、送らずに skip する
 - **`--pool`**: チケットを握っていない agent に、自分の team ラベル(`team:<x>`。領域の役割 `domain-<x>` から決め、無ければ名前の接尾辞 `-lead` を除いたもの。本人から決まらなければ組織図(設定 `org`)で上司をたどり、最初に team が決まる上司のもの)の担当なし `todo` を、優先度順(highest→lowest、同順位は古い順)の先頭 1 件取りに行かせる。文面には `tb claim <ID> --owner <本人> --session <本人の session>` を入れる。同じ回で同じ候補を案内するのは 1 人だけ。自分が担当の `todo`・`review`・`blocked`(と、`wake` に無くても active)がある agent、アラート・提案のチケット、先行チケット待ちの todo は対象にしない
 - **親は選ばない**: epic と、完了していない子を持つチケットは、催促にも `--pool` の候補にもしない
