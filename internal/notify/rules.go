@@ -23,8 +23,24 @@ var (
 	reComment = regexp.MustCompile(`[ \t\n\v\f\r]#`)
 )
 
+// Rule は効いている規則 1 行(nrule_parse の NRULE_OUT の 1 行)。
+type Rule struct {
+	Line  int
+	Kind  string   // イベントの種類か *
+	Conds []string // <キー>=<値> / priority>=<値>
+	Sinks []string // 届け先(lead は conductor に直してある)
+}
+
 // ValidateRules は nrule_parse の検査(tb config set notify-rules)。誤りの本文は「notify-rules: 」で始まる。
 func ValidateRules(body string) string {
+	if _, bad := ParseRules(body); bad != "" {
+		return "notify-rules: " + bad
+	}
+	return ""
+}
+
+// ParseRules は nrule_parse: 誤りの無い行の規則と、誤り(1 行ずつ)。
+func ParseRules(body string) (rules []Rule, errs string) {
 	var bad strings.Builder
 	for i, line := range config.Lines(body) {
 		n := i + 1
@@ -55,6 +71,7 @@ func ValidateRules(body string) string {
 			continue
 		}
 		rowBad := false
+		var conds []string
 		for _, tok := range f[1:] {
 			m := reCond.FindStringSubmatch(tok)
 			if m == nil {
@@ -77,6 +94,7 @@ func ValidateRules(body string) string {
 			case k == "project" && !reProject.MatchString(v):
 				fmt.Fprintf(&bad, "%d 行目: project は英数字と _: %s\n", n, v)
 			default:
+				conds = append(conds, tok)
 				continue
 			}
 			rowBad = true
@@ -103,10 +121,9 @@ func ValidateRules(body string) string {
 		}
 		if len(sinks) == 0 {
 			fmt.Fprintf(&bad, "%d 行目: 届け先がありません\n", n)
+			continue
 		}
+		rules = append(rules, Rule{n, kind, conds, sinks})
 	}
-	if bad.Len() == 0 {
-		return ""
-	}
-	return "notify-rules: " + bad.String()
+	return rules, bad.String()
 }

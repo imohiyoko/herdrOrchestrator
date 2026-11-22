@@ -6,44 +6,13 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/util"
 	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
 )
 
-// jqString は jq -c と同じ書き方の JSON 文字列(< > & や非 ASCII はそのまま、制御文字と DEL だけ \u で書く)。
-func jqString(s string) string {
-	var b strings.Builder
-	b.WriteByte('"')
-	for _, r := range s {
-		switch r {
-		case '"':
-			b.WriteString(`\"`)
-		case '\\':
-			b.WriteString(`\\`)
-		case '\n':
-			b.WriteString(`\n`)
-		case '\r':
-			b.WriteString(`\r`)
-		case '\t':
-			b.WriteString(`\t`)
-		case '\b':
-			b.WriteString(`\b`)
-		case '\f':
-			b.WriteString(`\f`)
-		case utf8.RuneError:
-			b.WriteString(`�`)
-		default:
-			if r < 0x20 || r == 0x7f {
-				fmt.Fprintf(&b, `\u%04x`, r)
-			} else {
-				b.WriteRune(r)
-			}
-		}
-	}
-	b.WriteByte('"')
-	return b.String()
-}
+// jqString は jq -c と同じ書き方の JSON 文字列(util.JQString)。
+func jqString(s string) string { return util.JQString(s) }
 
 // jqValue は JSON の値を jq -c と同じ形に書き直す(キーの順は保つ)。
 func jqValue(dec *json.Decoder, b *strings.Builder) error {
