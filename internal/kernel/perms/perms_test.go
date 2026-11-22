@@ -1,6 +1,7 @@
 package perms_test
 
 import (
+	"database/sql"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -10,6 +11,8 @@ import (
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/perms"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/util"
 	"github.com/imohiyoko/herdrorchestrator/internal/tbcli"
+
+	_ "modernc.org/sqlite"
 )
 
 // herdrctl に移したコマンドは、どれも表に 1 語の行がある(コマンドを足したら表に行を足さないと落ちる)。
@@ -108,5 +111,53 @@ func TestEnforceHumanPassesWithoutHerdr(t *testing.T) {
 	t.Setenv("HERDR_PANE_ID", "")
 	if err := perms.Enforce("cmd:x:y", "only-human", "", "tb x"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// 設定 approvals を読めない(DB の問い合わせの失敗)ときは、設定が無いのとは分けて only-human(fail-closed)。
+// 行が無い・表がまだ無い DB は「設定が無い」なので既定のまま。
+func TestTierFailsClosedOnUnreadableConfig(t *testing.T) {
+	t.Setenv("TB_APPROVALS", "")
+	t.Setenv("TB_CONFIG_DIR", t.TempDir())
+	tb := perms.Parse("a cmd:x:a allow allow entry\n")
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "x.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tier, rule := tb.Tier(db, "s", "cmd:x:a"); tier != "allow" {
+		t.Errorf("表の無い DB = %s %s, want allow", tier, rule)
+	}
+	if _, err := db.Exec(`CREATE TABLE config (key TEXT, herdr_session TEXT, body TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	if tier, rule := tb.Tier(db, "s", "cmd:x:a"); tier != "allow" {
+		t.Errorf("行の無い DB = %s %s, want allow", tier, rule)
+	}
+	db.Close()
+	if tier, rule := tb.Tier(db, "s", "cmd:x:a"); tier != "only-human" || !strings.Contains(rule, "読めない") {
+		t.Errorf("問い合わせに失敗した DB = %s %s, want only-human", tier, rule)
+	}
+}
+
+// 設定の値は表の下限より緩められない(下限に丸め、根拠に書く)。下限 only-human の操作は設定を読まない。
+func TestTierClampsToFloor(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "approvals")
+	if err := os.WriteFile(f, []byte("cmd:x:* = allow\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TB_APPROVALS", f)
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "x.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	tb := perms.Parse("a cmd:x:a only-human allow inner\nb cmd:x:b only-human ask-human inner\nc cmd:x:c only-human only-human inner\n")
+	for op, want := range map[string]string{"cmd:x:a": "allow", "cmd:x:b": "ask-human", "cmd:x:c": "only-human"} {
+		if tier, rule := tb.Tier(db, "s", op); tier != want {
+			t.Errorf("%s = %s %s, want %s", op, tier, rule, want)
+		}
+	}
+	if _, rule := tb.Tier(db, "s", "cmd:x:b"); !strings.Contains(rule, "下限 ask-human より緩いので ask-human") {
+		t.Errorf("丸めの根拠が無い: %s", rule)
 	}
 }

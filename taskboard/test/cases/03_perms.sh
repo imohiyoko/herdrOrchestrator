@@ -83,20 +83,32 @@ if [[ $(id -u) != 0 ]]; then
   chmod 644 "$TB_APPROVALS"
 fi
 
-# 下限より緩められない。require_human の中の確かめも表で決まる
-printf 'cmd:config:* = allow\ncmd:ticket:resolve = allow\n' >"$TB_APPROVALS"
-eq "perms: config set stays only-human (floor)" "$($TB config set approvals </dev/null 2>&1 >/dev/null)" \
-  "tb: tb config set は人が自分の端末で実行します(agent 'pw1' の pane からは実行できません)"
-eq "perms: resolve cannot go below ask-human (→ 20, not run)" "$(rc $TB resolve C-1)" "20"
-eq "perms: the clamp is in the message" "$($TB resolve C-1 2>&1 | grep -c '下限 ask-human より緩いので ask-human')" "1"
+# 下限は今はすべて allow(表の下限の列で守りを足せる。下限で丸める処理は internal/kernel/perms のテストで確かめる)
+eq "perms: every floor in the table is allow (the human tunes tiers by config)" "$(pm_rows | awk '$4 != "allow"')" ""
+# require_human の中の確かめも表と設定で決まる。only-human の既定は設定で緩められる
 printf 'cmd:ticket:resolve = ask-human\n' >"$TB_APPROVALS"
-eq "perms: lowering only-human to its floor (ask-human) gives 20 instead of 1" "$(rc $TB resolve C-1)" "20"
+eq "perms: an only-human command loosened to ask-human → 20 instead of 1" "$(rc $TB resolve C-1)" "20"
 eq "perms: reopen is a separate operation (still only-human → 1)" "$(rc $TB reopen C-1)" "1"
+printf 'cmd:ticket:resolve = allow\n' >"$TB_APPROVALS"
+eq "perms: an only-human command loosened to allow → the command itself runs (no gate message)" \
+  "$($TB resolve C-1 2>&1 | grep -cE '人が自分の端末で|承認が要ります' || true)" "0"
 : >"$TB_APPROVALS"
 eq "perms: default require_human is unchanged (1 and the old message)" "$($TB resolve C-1 2>&1 >/dev/null)" \
   "tb: tb resolve は人が自分の端末で実行します(agent 'pw1' の pane からは実行できません)"
 eq "perms: --dry-run paths that skip require_human still run (nudge --dry-run)" "$(rc $TB nudge --dry-run)" "0"
 eq "perms: herdr failure while checking → 1" "$(FAKE_LIST_FAIL=1 rc $TB resolve C-1)" "1"
+
+# DB の設定を読めない(問い合わせが失敗する)ときは、設定が無いのとは分けて only-human(fail-closed)。表が無い・行が無いのは既定のまま
+unset TB_APPROVALS HERDR_PANE_ID; export TB_DB=$TMP/perms-dberr.db
+t4=$($TB add -p pm -t "権限 4")
+export HERDR_PANE_ID=wW:p1
+eq "perms: no approvals row in the DB → default allow" "$(rc $TB list -p pm)" "0"
+# 読むと実行時に失敗する config(整数のあふれ)に差し替える
+sqlite3 "$TB_DB" "ALTER TABLE config RENAME TO config_real; CREATE VIEW config AS SELECT * FROM config_real WHERE abs(-9223372036854775808) IS NOT NULL;"
+eq "perms: a failed DB read of approvals → only-human (not the default)" "$(rc $TB cancel "$t4")" "1"
+eq "perms: a failed DB read also stops commands moved to herdrctl (tb list)" "$(rc $TB list -p pm)" "1"
+eq "perms: nothing was done" "$(env -u HERDR_PANE_ID $TB show "$t4" | jq -r .status)" "todo"
+export TB_DB=$TMP/perms.db TB_APPROVALS=$TMP/perms.approvals
 
 # 古い herdrctl(権限段階の門が無い)には渡さない
 mkdir -p "$TMP/perms-oldhc"; printf '#!/bin/sh\n[ "$2" = --commands ] && echo list && exit 0\nexit 2\n' >"$TMP/perms-oldhc/herdrctl"; chmod +x "$TMP/perms-oldhc/herdrctl"

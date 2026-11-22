@@ -50,9 +50,10 @@ perm_tier() {
   def=${PERM_OP_DEF[$op]}; floor=${PERM_OP_FLOOR[$op]}
   PERM_TIER=$def; PERM_RULE="(既定 $def)"
   [[ $floor != only-human ]] || { PERM_TIER=only-human; PERM_RULE="(下限 only-human)"; return 0; }   # 設定では変わらない(設定を読まない)
-  if config_has approvals; then
-    # ファイルはあるのに読めない(権限など)ときは、設定が無いのとは分けて only-human(fail-closed)
-    case $CFG_SRC in file:*|example:*) [[ -r ${CFG_SRC#*:} ]] || { PERM_TIER=only-human; PERM_RULE="(設定 approvals を読めない: ${CFG_SRC#*:})"; return 0; };; esac
+  local found=0; config_lookup approvals || found=$?
+  # 設定を読めない(ファイルの読み取りや DB の問い合わせが失敗した)ときは、設定が無いのとは分けて only-human(fail-closed)
+  if [[ -n $CFG_ERR ]]; then PERM_TIER=only-human; PERM_RULE="(設定 approvals を読めない: $CFG_ERR)"; return 0; fi
+  if ((found == 0)); then
     while IFS= read -r line || [[ -n $line ]]; do
       line=$(trim "${line%%#*}"); [[ $line == cmd:*=* ]] || continue
       k=$(trim "${line%%=*}"); v=$(trim "${line#*=}")
@@ -61,7 +62,7 @@ perm_tier() {
       # shellcheck disable=SC2053  # glob として比べる
       [[ $op == $k ]] || continue
       PERM_TIER=$v; PERM_RULE="approvals: $k = $v"; break
-    done < <(config_text approvals)
+    done <<<"$CFG_BODY"
   fi
   if (($(perm_rank "$PERM_TIER") < $(perm_rank "$floor"))); then
     PERM_RULE+="(下限 $floor より緩いので $floor)"; PERM_TIER=$floor

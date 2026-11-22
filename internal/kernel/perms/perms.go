@@ -90,14 +90,12 @@ func (t *Table) Tier(db *sql.DB, session, op string) (tier, rule string) {
 		return "only-human", "(下限 only-human)"
 	}
 	if db != nil {
-		if body, src, ok := config.Lookup(db, session, "approvals"); ok {
-			// ファイルはあるのに読めない(権限など)ときは、設定が無いのとは分けて only-human(fail-closed)
-			if p, isFile := strings.CutPrefix(src, "file:"); isFile && !readable(p) {
-				return "only-human", "(設定 approvals を読めない: " + p + ")"
-			}
-			if p, isEx := strings.CutPrefix(src, "example:"); isEx && !readable(p) {
-				return "only-human", "(設定 approvals を読めない: " + p + ")"
-			}
+		body, _, ok, readErr := config.LookupStrict(db, session, "approvals")
+		// 設定を読めない(ファイルの読み取りや DB の問い合わせが失敗した)ときは、設定が無いのとは分けて only-human(fail-closed)
+		if readErr != "" {
+			return "only-human", "(設定 approvals を読めない: " + readErr + ")"
+		}
+		if ok {
 			for _, line := range strings.Split(body, "\n") {
 				if i := strings.IndexByte(line, '#'); i >= 0 {
 					line = line[:i]
@@ -124,15 +122,6 @@ func (t *Table) Tier(db *sql.DB, session, op string) (tier, rule string) {
 		tier = r.Floor
 	}
 	return tier, rule
-}
-
-func readable(p string) bool {
-	f, err := os.Open(p)
-	if err != nil {
-		return false
-	}
-	f.Close()
-	return true
 }
 
 func valid(v string) bool {
