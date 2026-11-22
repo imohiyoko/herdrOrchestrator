@@ -2,6 +2,7 @@
 # 状態を設定で差し替える(設定 statuses と system-labels、024 の CHECK 外し)。tb のコマンドは名前ではなく分類で判断する。
 # project は st / st2 だけを使う。設定はファイル(TB_STATUSES / TB_SYSTEM_LABELS)で渡し、最後に戻す
 _st_saved_env=${TB_STATUSES-__unset__} _st_saved_db=$TB_DB
+_st_saved_today=${TB_TODAY-__unset__} _st_saved_labels=${TB_LABELS-__unset__} _st_saved_sl=${TB_SYSTEM_LABELS-__unset__}
 export TB_DB=$TMP/statuses.db; rm -f "$TB_DB"
 export TB_STATUSES=$TMP/statuses.conf TB_TODAY=2026-04-10
 rm -f "$TB_STATUSES"
@@ -88,8 +89,13 @@ eq "system-labels: ok" "$(printf 'deadline = 期限\nteam = squad/{team}\n' | rc
 export TB_LABELS=$TMP/st-labels.conf; printf 'ui\n' >"$TB_LABELS"
 eq "system-labels: configured deadline label is a system label" "$(rc $TB add -p st -t 期限つき -l 期限)" "0"
 eq "system-labels: old deadline name is no longer a system label" "$(rc $TB add -p st -t 期限つき -l deadline)" "2"
-unset TB_LABELS TB_SYSTEM_LABELS
-
-if [[ $_st_saved_env == __unset__ ]]; then unset TB_STATUSES; else export TB_STATUSES=$_st_saved_env; fi
+_st_restore() { # 1:変数名 2:保存した値(__unset__ は元から無かった)
+  if [[ $2 == __unset__ ]]; then unset "$1"; else export "$1=$2"; fi
+}
+_st_restore TB_STATUSES "$_st_saved_env"
+_st_restore TB_TODAY "$_st_saved_today"
+_st_restore TB_LABELS "$_st_saved_labels"
+_st_restore TB_SYSTEM_LABELS "$_st_saved_sl"
+unset -f _st_restore
 export TB_DB=$_st_saved_db
-unset TB_TODAY _st_saved_env _st_saved_db a b1 b2 c d k o o2 s
+unset _st_saved_env _st_saved_db _st_saved_today _st_saved_labels _st_saved_sl a b1 b2 c d k o o2 s
