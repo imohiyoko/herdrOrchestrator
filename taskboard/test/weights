@@ -42,6 +42,7 @@
 93_prqueue.sh 107
 94_fullwidth_vars.sh 1
 94_notify.sh 36
+94_notify_contract.sh 8
 94_notify_rules.sh 15
 95_review.sh 4
 95_review_governance.sh 1

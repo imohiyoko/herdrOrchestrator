@@ -269,7 +269,7 @@ notify_enqueue() {
   if [[ $type != test ]] && notify_secret_scan "$all"; then
     blocked=1; reason=$NOTIFY_HIT_KINDS
     ra=$(notify_redact "$ra"); rb=$(notify_redact "$rb"); rc=$(notify_redact "$rc"); rd=$(notify_redact "$rd")
-    ref=$(notify_redact "$ref")
+    ref=$(notify_redact "$ref"); sev=$(notify_redact "$sev")   # 重大度も本文に入るので伏せる
   fi
   a=$(nfield "$ra" 120); b=$(nfield "$rb" 200); c=$(nfield "$rc" 200); d=$(nfield "$rd" 120)
   text=$(notify_finish "$(notify_compose "$type" "$ref" "$sev" "$a" "$b" "$c" "$d")")

@@ -2,9 +2,11 @@
 package util
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // ws は jq(Oniguruma)の \s と同じ(Unicode の White_Space)
@@ -34,4 +36,38 @@ func Oneline(s string, n int) string {
 		s = string(r[:n])
 	}
 	return s
+}
+
+// JQString は jq -c と同じ書き方の JSON 文字列(< > & や非 ASCII はそのまま、制御文字と DEL だけ \u で書く)。
+func JQString(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '"':
+			b.WriteString(`\"`)
+		case '\\':
+			b.WriteString(`\\`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\r':
+			b.WriteString(`\r`)
+		case '\t':
+			b.WriteString(`\t`)
+		case '\b':
+			b.WriteString(`\b`)
+		case '\f':
+			b.WriteString(`\f`)
+		case utf8.RuneError:
+			b.WriteString("\uFFFD")
+		default:
+			if r < 0x20 || r == 0x7f {
+				fmt.Fprintf(&b, `\u%04x`, r)
+			} else {
+				b.WriteRune(r)
+			}
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
 }
