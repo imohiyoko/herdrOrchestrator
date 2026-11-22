@@ -72,10 +72,13 @@ func IsLink(p string) bool {
 	return err == nil && st.Mode()&os.ModeSymlink != 0
 }
 
-// ReadBody は $(cat f)(末尾の改行を落とす)。
-func ReadBody(p string) string {
-	b, _ := os.ReadFile(p)
-	return strings.TrimRight(string(b), "\n")
+// ReadBody は $(cat f)(末尾の改行を落とす)。読めなければ err(空のファイルとは区別する。bash は cat の失敗で止まる)。
+func ReadBody(p string) (string, error) {
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(string(b), "\n"), nil
 }
 
 // Lookup は sj_lookup と同じ: DB のこのセッションの行 > 共通の行 > (SCHED_FILE_FALLBACK=1 のときだけ)ファイル。
@@ -97,7 +100,11 @@ func (e Env) Lookup(db *sql.DB, session, job string, settings bool) (body, src s
 	if !IsRegular(f) || IsLink(f) {
 		return "", "none", false
 	}
-	return ReadBody(f), "file:" + f, true
+	b, err := ReadBody(f)
+	if err != nil { // 読めないファイルは無いものとする(空の本文として使わない)
+		return "", "none", false
+	}
+	return b, "file:" + f, true
 }
 
 // FileJobs は jobs/*.conf のジョブ名(名前の順)。

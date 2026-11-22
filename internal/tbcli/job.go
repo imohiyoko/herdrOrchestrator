@@ -190,7 +190,11 @@ func editBody(cur string, has bool) (string, error) {
 	if err := cmd.Run(); err != nil {
 		return "", die("編集を中止しました")
 	}
-	return jobs.ReadBody(f.Name()), nil
+	b, err := jobs.ReadBody(f.Name())
+	if err != nil {
+		return "", die("編集した本文を読めません: %s", f.Name())
+	}
+	return b, nil
 }
 
 func jobChange(db *store.DB, e jobs.Env, sub string, args []string, w, stderr io.Writer) error {
@@ -311,10 +315,15 @@ func jobImport(db *store.DB, e jobs.Env, args []string, w, stderr io.Writer) err
 			fmt.Fprintf(w, "%s: settings/%s.settings がシンボリックリンクなので飛ばします\n", j, j)
 			continue
 		}
-		conf, settings := jobs.ReadBody(f), ""
-		sfExists := jobs.IsRegular(sf)
+		conf, err := jobs.ReadBody(f)
+		if err != nil {
+			return die("読めません: %s", f)
+		}
+		settings, sfExists := "", jobs.IsRegular(sf)
 		if sfExists {
-			settings = jobs.ReadBody(sf)
+			if settings, err = jobs.ReadBody(sf); err != nil {
+				return die("読めません: %s", sf) // 読めない上書き設定(ENABLED=0 など)を落として取り込まない
+			}
 		}
 		ok, last, err := e.Check(j, conf, settings)
 		if err != nil {
