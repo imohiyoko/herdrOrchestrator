@@ -399,7 +399,13 @@ tb reject O-<n>
 tb parts [--json]                        # 部品の一覧
 tb part-check <部品> [<名前>=<値> ...]    # 引数の型・リスク階層・判定の操作名を確かめる(実行しない)
 tb part-risk <部品> ...                   # 部品の並びのリスク階層(中の最大)
+tb recipe-set <名前> [--file F]          # レシピ(部品の並び)を登録する(人だけ)。recipe-rm / recipe-list / recipe-show / recipe-history
+tb recipe-run <名前> [--target A] [k=v]  # 汎用の入口。recipe:<名前>:<対象> を approvals / grants で判定し、続けて部品ごとに判定する
 ```
+
+- 登録されていないレシピ名は ask ではなく実行しない。レシピの許可は、中の部品の判定の代わりにならない
+- 段 2 で実行するのは読み取りの部品だけ。副作用のある部品は判定まで行い、実行しない(段 3 で pane の外の実行役が行う)
+- 記録はチケットの履歴(`tb events --kind recipe_run` など)
 
 詳しくは [docs/recipes.md](docs/recipes.md)。
 
@@ -918,7 +924,7 @@ tb config history approvals        # 変更の履歴(config_changes)
 | `lib/transport.sh` | herdr との境界。herdr を実行するのはここの `herdr_call` だけ。送信と `messages` への記録(`herdr_send`)、`system-send` |
 | `lib/tasks.sh` | add / list / show / claim / update / done / block / report / pending |
 | `lib/conv.sh` | 会話チーム: 振り分け表(`tb conv-route` / `conv-routes-set`)・下書きの指示(`conv-draft`)・声の役(`conv-voice` / `conv-voice-check`)・パターンの台帳 |
-| `lib/recipes.sh` | 部品(ADR 0005): 部品の一覧・引数の型・リスク階層(`tb parts` / `part-check` / `part-risk`) |
+| `lib/recipes.sh` | 部品とレシピ(ADR 0005): 部品の一覧・引数の型・リスク階層(`tb parts` など)、レシピの登録(`tb recipe-set` など)と汎用の入口(`tb recipe-run`) |
 | `lib/proxy.sh` / `activity.sh` / `comments.sh` / `digest.sh` / `send.sh` / `roles.sh` / `approvals.sh` / `alerts.sh` / `review.sh` / `agents.sh` / `spawn.sh` / `limits.sh` / `shed.sh` / `handoff.sh` / `dbimport.sh` | 各節のコマンド |
 
 agent への送信も DB への書き込みも、すべて `tb` を通る。後で MCP サーバーなど別の経路を足すときは、`tb` のコマンドを呼ぶか `lib/transport.sh` を差し替えればよい。
@@ -976,6 +982,7 @@ HERDR_SESSION=<その checkout のセッション> tb db-import /path/to/checkou
 `comments(id, task_id, kind, text, deliverables, from_name, from_pane, from_session, delivered_at, created_at)`
 `agent_activity(session_id PK, pane_id, tab_id, workspace_id, cwd, last_prompt_id, last_prompt_at, last_stop_at, updated_at)`
 `messages(id, kind, ref, target, body, result, created_at)` / `alerts(id, fingerprint, severity, title, body, source, source_pane, status, count, analyst, note, result_*, first_seen, last_seen, analysis_started_at, analyzed_at, closed_at)` / `proposals(id, role_file, title, text, status, by_name, note, delivered_at, resolved_at, created_at)` / `reviews(id, since_at, until_at, created_at)` / `approval_changes(id, pattern, value, created_at)` / `role_briefings(id, session_id, agent, role_file, hash, source, via, created_at)` / `outbox(id, from_name, from_pane, from_session, target, kind, task_id, text, status, reason, sent_at, created_at)` / `digests(id, target, item_count, body, created_at)` / `observations((herdr_session, key) PK, kind, task_id, text, digest_id, created_at)` / `agents((herdr_session, name) PK, kind, cwd, model, role, session_id, pane_id, herdr_session, state, killable, killable_reason, killable_by, killable_at, killable_session, created_by, created_at, updated_at, stopped_at)` / `agent_ops(id, op, target, args, requested_by, status, result, created_at, decided_at)`
+`recipes((herdr_session, name) PK, body, risk, steps, updated_by, updated_at)` / `recipe_changes(id, name, how, old_body, new_body, risk, changed_by, changed_at)`(025。ADR 0005 のレシピ。書くのは人だけ)
 `tasks.status` は `todo|in_progress|review|done|blocked|cancelled`(`cancelled` は 023 で追加)。`summary`(done の要約)と `note`(block の理由)は設計メモの最小案への追加。
 時刻は UTC の ISO 8601。
 

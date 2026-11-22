@@ -37,7 +37,7 @@ _cat_problems() {
     f_allow=$(_ct "$f_allow"); f_state=$(_ct "$f_state"); f_desc=$(_ct "$f_desc")
     why=""
     [[ $f_pat =~ ^[A-Za-z0-9._:*?-]{1,128}$ ]] || why="パターンの文字集合"
-    case $f_kind in send|agent|alert|proxy|role|gate|setup) ;; *) why="種別";; esac
+    case $f_kind in send|agent|alert|proxy|role|gate|setup|recipe) ;; *) why="種別";; esac
     [[ ${f_pat%%:*} == "$f_kind" ]] || why="種別がパターンの先頭と違う"
     case $f_side in none|local-write|external-send|external-write) ;; *) why="副作用";; esac
     case $f_risk in low|mid|high|human-only) ;; *) why="リスク階層";; esac
@@ -70,6 +70,7 @@ _cat_problems() {
   for op in $EXP_GATE_ACTIONS; do _need "gate:$op" reserved; done
   _need "role:change" active
   _need "alert:analyze" active
+  _need "recipe:example:example" active
 
   # (a) コードが承認判定に渡す操作名が、カタログのどれかと重なる(双方向の glob)
   while IFS= read -r op; do

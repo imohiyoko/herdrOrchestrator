@@ -145,7 +145,7 @@ def conf_path_label():
 
 
 # ---- 権限カタログ(taskboard/config/approvals-catalog.conf。操作の定義。判定には使わない)
-KINDS = ("send", "agent", "alert", "proxy", "role", "gate", "setup")
+KINDS = ("send", "agent", "alert", "proxy", "role", "gate", "setup", "recipe")
 SIDE = ("none", "local-write", "external-send", "external-write")
 RISK = ("low", "mid", "high", "human-only")
 ALLOWOK = ("yes", "no", "conditional")
