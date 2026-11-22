@@ -50,7 +50,7 @@ ADR 0002(サービスの境界)と ADR 0004(3 つの層とモジュール)から
 | `ticket` | チケットの通り道 | チケットの作成・変更・状態・リンク・コメント・履歴・スプリント・ボード・状態の設定 | tasks, comments, core(statuses)/ `add` `list` `show` `claim` `done` `link` `sprint-*` `board` `history` |
 | `team` | チケットの通り道 | チーム(受付・指揮役・メンバー・チームごとの上書き) | まだ無い(ADR 0004 の案では `team-set` `team-show`) |
 | `notify` | チケットの通り道 | 通知の規則、イベントからの通知 | notify, notifyrules / `notify` |
-| `message` | 機能 | agent への連絡・保留・inbox・送信の履歴 | send, transport(の外向き), digest / `send` `report` `inbox` `outbox` `pending` `flush` |
+| `message` | 機能 | agent への連絡・保留・inbox・送信の履歴 | send, transport(の外向き), digest / `message send/flush/outbox/inbox/read`(古い名前 `send` `flush` `outbox` `inbox` `inbox-read`)。`report` `pending` はまだ古い名前だけ |
 | `digest` | 機能 | まとめ送り | digest / `digest` `digests` |
 | `agent` | 機能 | agent の作成・停止・復活・上限・モデル・役割 | agents, spawn, limits, models, roles, shed / `agent-*` `role-*` `model-set` `limits` |
 | `alert` | 機能 | アラート | alerts / `alert` `alert-*` `alerts` |

@@ -6,7 +6,7 @@
 # 書き換えるのは人だけ: tb approval allow <操作> / tb approval ask <操作>(agent の pane からは実行できない)。手で編集してもよい。
 #
 # 操作の名前:
-#   send:<kind>:<宛先>     tb send(kind は task|info|answer)。ask なら outbox で人の承認待ちになり、tb approval approve O-<n> で届く
+#   send:<kind>:<宛先>     tb message send(kind は task|info|answer)。ask なら outbox で人の承認待ちになり、tb approval approve O-<n> で届く
 #   role:change            人事エージェントが roles/ を書き換える
 #   proxy:<effect>         代行依頼(read-only|write|external)。read-only は proxy check の allow 判定も必要
 #   setup:<step>           セットアップ agent の書き込み(hooks|scheduler|webui|launchctl など)

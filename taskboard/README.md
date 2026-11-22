@@ -296,26 +296,26 @@ tb reminders --publish     # まとめを出し、記録を更新する
 
 ## 指揮官 → worker の送信(send)
 
-agent 同士は `herdr agent prompt` を直接打たず、`tb send` を通す。tb が送信者を特定し、ルールを当て、記録してから送る。
+agent 同士は `herdr agent prompt` を直接打たず、`tb message send` を通す。tb が送信者を特定し、ルールを当て、記録してから送る。
 
 ```bash
-tb send <宛先 agent 名> --text '本文' [--task T-<project>-NNN] [--kind task|info|answer] [--reply-to O-<n>] [--json]
-tb flush                                   # 宛先が使用中で積まれたものを届ける(tb digest も最初に呼ぶ)
-tb outbox [--status queued|sent|denied] [--json]
+tb message send <宛先 agent 名> --text '本文' [--task T-<project>-NNN] [--kind task|info|answer] [--reply-to O-<n>] [--json]
+tb message flush                                   # 宛先が使用中で積まれたものを届ける(tb digest も最初に呼ぶ)
+tb message outbox [--status queued|sent|denied] [--json]
 ```
 
 - 送信者は `HERDR_PANE_ID` + `herdr agent list` から決まる(`--from` などはエラー)。宛先は herdr にいる agent 名だけ
 - 届けるか・保留するか・止めるかは設定 `delivery` の 1 つの表で決まる(次の節)。どの行にも当たらなければ「指揮官(既定の宛先と `projects` の値。`proposal` の行を除く)→ 誰にでも」だけ届け、ほかは止める
 - 旧 `routes`(`routes.conf`)は互換で読む(残っていれば先にその行で経路を決める)。行はそのまま `delivery` に移せるので、移したら `tb config unset routes`
 - 届く文面は `[from: <名前> / <pane> / <task-id か -> / <kind> / O-<n>] <本文>`(確かめた返信は `/ O-<n> re O-<元>`)(1 行化、`[from:` の偽装は無効化、`TB_SEND_MAX` 字まで)
-- 宛先が `idle` / `done` 以外なら `outbox` に積み、`tb flush` で古い順に届ける(同じ宛先の後続は追い越さない)
+- 宛先が `idle` / `done` 以外なら `outbox` に積み、`tb message flush` で古い順に届ける(同じ宛先の後続は追い越さない)
 - 拒否したものも `outbox` に `denied` と根拠(`reason`)つきで残る
 - 終了コード: 0 送信済み(または保留した)/ 10 宛先使用中で積んだ / 11 送信失敗で積んだ / 12 保留に失敗して積んだ / 4 ルールで拒否 / 20 人の承認待ち(approvals)/ 3 送信者を特定できず未保存
 - agent に `herdr agent prompt` を直接打たせないようにするには、その agent の Claude Code 設定で拒否する(`conductor/README.md`)
 
 ### 休んでいる担当への催促(`tb nudge`)
 
-チケットを握ったまま(担当で `in_progress`。設定 `nudge` の `wake` で選べる)turn が終わって止まっている agent に、そのチケットの指示役から「続けて」と送る。新しい送り方は作らず、指示役が `tb send <担当> --kind task --task <チケット>` したのと同じ outbox と delivery の規則で届く(文面のラベルの pane が `nudge`: `[from: <指示役> / nudge / T-x / task / O-n] [催促] ...`)。
+チケットを握ったまま(担当で `in_progress`。設定 `nudge` の `wake` で選べる)turn が終わって止まっている agent に、そのチケットの指示役から「続けて」と送る。新しい送り方は作らず、指示役が `tb message send <担当> --kind task --task <チケット>` したのと同じ outbox と delivery の規則で届く(文面のラベルの pane が `nudge`: `[from: <指示役> / nudge / T-x / task / O-n] [催促] ...`)。
 
 ```bash
 tb nudge --dry-run            # 誰に送るか・なぜ飛ばすかを見るだけ(agent の pane からも読める)
@@ -333,7 +333,7 @@ tb nudge [--idle-min 15] [--max 3] [--json]   # 送る(人の端末か scheduler
 - **握っている**: 担当(`owner_agent`)が自分で、状態が `wake` のどれか(既定は active の分類 = `in_progress`)のチケット。既定では割り当てだけの `todo`、`review`・`blocked` は催促しない
 - **休んでいる**: herdr の状態が `idle` / `done` で、最後の turn の終わり(hook の活動記録)から `--idle-min` 分(`TB_NUDGE_IDLE_MIN`、既定 15)たっている
 - **催促しない**(理由つきで出す): herdr にいない・`working`・`blocked`(承認ダイアログなど人の操作待ち)/ 設定 `nudge` の ignore(宛先を明示したときは適用しない)/ 人の返事待ち(自分が出した `question`・`blocked` の報告が未対応)/ 握っているチケットがすべて先行チケット(`blocks`)待ち / 活動記録が無い / delivery の規則で指示役 → その agent の `task` が `now` にならない(`hold` は inbox に置かれるだけで催促にならず、`block` は送ってはいけない宛先)
-- **しつこくしない**: 1 回の休みに 1 通。同じチケットで `--max` 回(`TB_NUDGE_MAX`、既定 3)送ったら止める(その先は `tb digest` の観測で指示役が見る)。届かなかった催促は outbox に `queued` で残さず `denied`(取り下げ)にする(あとで `tb flush` が古い催促を届けないように)
+- **しつこくしない**: 1 回の休みに 1 通。同じチケットで `--max` 回(`TB_NUDGE_MAX`、既定 3)送ったら止める(その先は `tb digest` の観測で指示役が見る)。届かなかった催促は outbox に `queued` で残さず `denied`(取り下げ)にする(あとで `tb message flush` が古い催促を届けないように)
 - **複数のチケット**: タスク agent は 1 枚が原則。複数を握っていれば、先行チケット待ちでない中で active の分類を先に、優先度が高い(同じなら古い)1 枚を名指しし、ほかの active のチケットは `tb update <ID> --status todo` で戻すか指示役に相談するよう文面に書く。指示役には `tb digest` が「複数チケット」の観測として 1 度だけ知らせる(組み合わせが変わればまた出す。epic と完了していない子を持つ親は数えない)
 - 催促だけを止めたい agent は、設定 `nudge` の `ignore` に書く(人だけが `tb config edit nudge`)。通常の `task` の配送も止めたいときは、delivery で `<指示役> -> <agent> : task=hold`(か `block`)を書く(催促もその規則で届かなくなる)。
 
@@ -355,13 +355,13 @@ coordinator -> assistant : info=hold answer=hold task=now
 - パターンは routes と同じ(glob と `@<役割>`)。種別は `task` / `info` / `answer`、`*` はそれ以外の全部。送信者と宛先が一致し、その種別(無ければ `*`)を書いた最初の行で決まる。どの行にも当たらなければ now
 - `:` の無い行は全種別(reply も)now、行頭 `!` は全種別 block
 - **どの行にも当たらなければ**(キーが無いときも)、送信者が指揮官なら now、ほかは止める(終了コード 4、`O-<n> denied`)。役割を確かめられない行に当たったら hold に倒す
-- 判定は受け付け時(止めるものは承認を求めない)→ approvals → 届ける直前(承認待ちの送信は、承認したあとにこの規則でもう一度決まる。`tb flush` でも同じ)
+- 判定は受け付け時(止めるものは承認を求めない)→ approvals → 届ける直前(承認待ちの送信は、承認したあとにこの規則でもう一度決まる。`tb message flush` でも同じ)
 - hold の送信は宛先の入力に打ち込まず `inbox` 表に置き、送信は成功(終了コード 0、出力は `O-<n> held for <宛先> (I-<m>)`)。outbox の行は `sent` になり、`reason` に `→ inbox I-<m>` が残る。messages には種別 `hold` で残る
-- inbox に書けなかったときは終了コード 12 で送信者に知らせ、outbox は `queued` のまま(次の `tb flush` で再び保留を試す。黙って捨てない)
+- inbox に書けなかったときは終了コード 12 で送信者に知らせ、outbox は `queued` のまま(次の `tb message flush` で再び保留を試す。黙って捨てない)
 
 #### 止める(block)
 
-agent 間の作業の依頼はチケットで行う(tb send では受けない)相手には、`block` で宛先の手前で止める。誰を止めるか・どの種別を止めるかは設定で決める(役割の名前を tb に書き込んでいない)。
+agent 間の作業の依頼はチケットで行う(tb message send では受けない)相手には、`block` で宛先の手前で止める。誰を止めるか・どの種別を止めるかは設定で決める(役割の名前を tb に書き込んでいない)。
 
 ```
 @worker -> reviewer : *=block reply=now     # worker からは届けない。ただし reviewer が聞いたことへの返信は通す
@@ -369,13 +369,13 @@ agent 間の作業の依頼はチケットで行う(tb send では受けない)�
 ```
 
 - 止めた送信は宛先の入力にも inbox にも置かない。outbox の行は `denied` になり、`reason` に `delivery: ... → blocked` が残る。messages には種別 `block` で残る
-- 送信者には「止めた。依頼はチケットにして(`tb add ...`)」と返す。`tb send` ではその場で stderr に出し、終了コード 4、出力は `O-<n> blocked by <宛先>`(`--json` なら `"blocked": true`)
-- 承認待ちや `queued` のあとで止めたとき(`tb approval approve` / `tb flush`)は、送信者の pane にその知らせを打つ(`[tb: blocked / O-<n>] ...`。送信者が使用中で届かなければ stderr に出し、outbox の reason に残る)
+- 送信者には「止めた。依頼はチケットにして(`tb add ...`)」と返す。`tb message send` ではその場で stderr に出し、終了コード 4、出力は `O-<n> blocked by <宛先>`(`--json` なら `"blocked": true`)
+- 承認待ちや `queued` のあとで止めたとき(`tb approval approve` / `tb message flush`)は、送信者の pane にその知らせを打つ(`[tb: blocked / O-<n>] ...`。送信者が使用中で届かなければ stderr に出し、outbox の reason に残る)
 - 止めるものは受け付け時に決まり、承認は求めない。`!` の行や `*=block` は種別ごとに選べ、確かめた返信(`reply=now`)だけを通せる
 
 ```bash
-tb inbox [--unread] [--json]      # 自分宛てに保留された送信の一覧(読み手は pane から決まる)
-tb inbox-read I-<n> [--json]      # 全文を読み、既読にする
+tb message inbox [--unread] [--json]      # 自分宛てに保留された送信の一覧(読み手は pane から決まる)
+tb message read I-<n> [--json]      # 全文を読み、既読にする
 ```
 
 - 読めるのは自分宛てだけ(送信者も、ほかの agent も読めない。ほかの宛ての ID は「見つからない」)
@@ -385,7 +385,7 @@ tb inbox-read I-<n> [--json]      # 全文を読み、既読にする
 
 保留している相手でも、相手が自分で聞いたことへの答えはすぐ届けたい。ただし種別 `answer` を信じると状況報告まで届いてしまうので、返信かどうかは tb が DB で確かめる。
 
-- `tb send <宛先> --reply-to O-<n> ...`: 届いた送信 `O-<n>`(文面のラベルの番号、inbox の `outbox_id`)への返信だと主張する
+- `tb message send <宛先> --reply-to O-<n> ...`: 届いた送信 `O-<n>`(文面のラベルの番号、inbox の `outbox_id`)への返信だと主張する
 - 認める条件(すべて): `O-<n>` がある / `O-<n>` は「この送信の宛先 → この送信の送信者」(組が逆向き)/ `O-<n>` が届いている(`sent`。inbox に保留されたものも含む)/ まだ認めた返信が無い。ルールで拒否された送信は認めない
 - 認めた返信は delivery の `reply=<now|hold|block>` で決まる(`*` には含まれない。`reply=` を書いた行が無ければ種別で決まる)。認めなかったら送信者に理由を出し(stderr)、返信ではない送信として通常の規則で扱う(拒否はしない)
 - 結果は outbox の `reply_to` / `reply_check`(`ok` か、認めなかった理由)に残る。返信の承認を人が却下したら返信済みに数えない
@@ -405,14 +405,14 @@ tb approval reject O-<n>
 # ただし古い形 tb approval <操作> では、サブコマンドと同じ名前の操作(check / allow / ask / approve / reject)は書けない。tb approval check allow のように書く
 ```
 
-- 操作の名前: `send:<kind>:<宛先>`(tb send)、`role:change`(人事の roles/ 変更)、`setup:<step>` など。`proxy:<effect>` は操作名としては定義があるが、**承認判定(`approval_of`)には渡らない**(代行依頼は `proxy_requests` の別の仕組み)ので、approvals.conf の `proxy:*` の行は何も効かない。既定では `send:task:*` が `ask`、`send:info:*` / `send:answer:*` が `allow`
-- `tb send` は `ask` の送信を届けず、`outbox` に `pending`(人の承認待ち)で置く(終了コード 20)。Web UI の緊急通知に出る
+- 操作の名前: `send:<kind>:<宛先>`(tb message send)、`role:change`(人事の roles/ 変更)、`setup:<step>` など。`proxy:<effect>` は操作名としては定義があるが、**承認判定(`approval_of`)には渡らない**(代行依頼は `proxy_requests` の別の仕組み)ので、approvals.conf の `proxy:*` の行は何も効かない。既定では `send:task:*` が `ask`、`send:info:*` / `send:answer:*` が `allow`
+- `tb message send` は `ask` の送信を届けず、`outbox` に `pending`(人の承認待ち)で置く(終了コード 20)。Web UI の緊急通知に出る
 - `tb approval allow` / `ask` / `approve` / `reject` は**人の端末から**だけ実行できる(agent の pane からは拒否)。履歴は `approval_changes`。例外: `approve` / `reject` は grants.conf の `approve:<操作>` に当たる agent も実行できる(下の「承認待ちの承認を agent に任せる」)
 - agent には承認ルールを書き換えさせない(DB の `config` 表への直接の書き込みと `tb config` を拒否し、取り込み前のファイルも Claude Code の `permissions.deny` で `Edit(//<ORCH_DIR>/taskboard/config/approvals.conf)` などを拒否し、
   `Bash(tb allow:*)` なども拒否しておくとより確実。権限カタログ `approvals-catalog.conf` も同じ扱いにする: 書き換えられると `/perms` の警告が消える)
 - 操作の候補と性質(種別・副作用・リスク階層・allow の候補・状態)は `config/approvals-catalog.conf` に定義している(判定には使わない。Web UI の `/perms` が approvals.conf と突き合わせて見せる)。状態は active(承認判定に渡す箇所がある)・unwired(操作名はあるが承認判定には渡らない)・reserved(将来用)。
   tb が承認判定に渡す操作名を増やしたら、カタログにも足す(`test/cases/82_catalog.sh` が、コード中の操作名の載り漏れと、既定の approvals.conf の未知の規則を検出する)
-- tb が強制するのは `tb send` だけ。ほかの操作(役割の変更・セットアップの書き込みなど)は、agent が `tb approval check <操作>` を見て、`ask` なら人に聞く
+- tb が強制するのは `tb message send` だけ。ほかの操作(役割の変更・セットアップの書き込みなど)は、agent が `tb approval check <操作>` を見て、`ask` なら人に聞く
 
 ## 部品とレシピ(ADR 0005)
 
@@ -543,7 +543,7 @@ agent 同士の関係は 1 本の木ではなく、`主体 -動詞→ 対象` �
 |---|---|---|
 | spawn | 台帳 `agents.spawned_by` | 親が `tb agent-spawn` で子を立てた |
 | lead | 未完了タスク(in_progress / review / blocked)の project | その project の指揮官(設定 `projects`)→ 担当 agent |
-| send:task / send:info / send:answer | `tb send` の outbox(直近 7 日) | 依頼・連絡・回答。delivery(旧 routes)で止めた試みは `[denied]` |
+| send:task / send:info / send:answer | `tb message send` の outbox(直近 7 日) | 依頼・連絡・回答。delivery(旧 routes)で止めた試みは `[denied]` |
 | report | `tb comment`(直近 7 日) | 担当 agent → タスクの project の指揮官 |
 | analyze | アラート(直近 7 日) | 報告した見張り役 → 解析役 |
 | role | `tb role-set` の記録(直近 7 日) | 人事役 → ロールを変えられた agent(人の操作は辺にしない) |
@@ -616,7 +616,7 @@ lead1    agent:stop @worker       # lead1 は worker を承認なしで止めら
 
 - 主体は agent 名の glob か `@<役割>`。対象は agent 名の glob、`@<役割>`、または `tb agent-spawn` の親子関係による相対指定 `~child` / `~descendant` / `~parent` / `~sibling`(同じセッションの台帳で引く)、組織図(下の設定 `org`)の `~report` / `~subordinate` / `~manager` / `~superior` / `~peer`
 - どれかの行に当たれば allow。当たらなければ従来どおり `approvals.conf` が決める。許可を足すだけで、`delivery`(旧 `routes.conf`)の拒否などは外さない
-- 使う場所: `tb peek`(`agent:read`)、承認待ちの承認(`approve:<操作>`。下の節)、`tb send`(`send:<kind>`)、`tb agent-stop` などの agent 操作、`tb role-set`(`role:change`。grants に行があれば人事役でなくてよい。自分は不可・人事役は付けられない、の制限はそのまま。役割の本文・map を書く `tb role-write` は人事役だけ)、`tb agent-flag` / `agent-new --killable`(`agent:flag`)
+- 使う場所: `tb peek`(`agent:read`)、承認待ちの承認(`approve:<操作>`。下の節)、`tb message send`(`send:<kind>`)、`tb agent-stop` などの agent 操作、`tb role-set`(`role:change`。grants に行があれば人事役でなくてよい。自分は不可・人事役は付けられない、の制限はそのまま。役割の本文・map を書く `tb role-write` は人事役だけ)、`tb agent-flag` / `agent-new --killable`(`agent:flag`)
 - 役割を確かめられない(台帳を読めない)行は使わない。`tb approval check <操作> --by <agent>` で、その agent から見た判定(grants を含む)を確かめられる
 
 #### 組織図(設定 `org`)と `tb can`
@@ -652,7 +652,7 @@ reviewer1  approve:send:task:w3   @worker  # worker からの w3 宛ての依頼
 - 同じ承認待ちを 2 人(人と agent でも)が同時に承認しても、実行・送信は 1 回だけ。実行の途中で止まった `L-<n>` は承認し直せないので、人が `tb agent-reject` で片付けて頼み直す
 - 誰が承認・却下したかは記録に残る(outbox の reason、`tb agent-ops` の結果に `agent <名前>(grants.conf: …)が承認`)。承認しても `delivery` の止める規則などは外れない
 - `tb can <承認者> approve:<元の操作> <依頼者>`(例 `tb can lead1 approve:send:task:w2 w1`)で、承認できるかを確かめられる(allow か deny)。組織図の関係も書ける(例 `@lead approve:send:task:* ~report`)
-- 承認者には自動では知らせない。依頼した agent が `tb send <承認者> --kind info --text 'O-12 の確認をお願いします'` のように頼む
+- 承認者には自動では知らせない。依頼した agent が `tb message send <承認者> --kind info --text 'O-12 の確認をお願いします'` のように頼む
 
 #### agent の中身を読むのは `tb peek` だけ
 
@@ -714,7 +714,7 @@ tb slash mcp --all --apply              # 全 agent。L-<n> を積むだけで�
 | キー | 既定 | 意味 |
 |---|---|---|
 | `max_running_agents` | 30 | 動作中(停止中は数えない)の agent の総数。超えるときは、`agent-new` / `agent-revive` / `agent-spawn` / 障害 workspace / 解析役のどれも、作らずに理由を出す(終了コード 4) |
-| `max_working_agents` | 0(無制限) | 同時に working の agent の数。超えたら、working でない宛先への `tb send` は outbox で待たせる(終了コード 10。`tb flush` で再送) |
+| `max_working_agents` | 0(無制限) | 同時に working の agent の数。超えたら、working でない宛先への `tb message send` は outbox で待たせる(終了コード 10。`tb message flush` で再送) |
 | `incident_max_open` | 2 | 同時に開く障害 workspace(herdr の `inc-<3 桁>`)の数 |
 | `incident_roles` | investigator containment fixer lateral verifier | 障害を開いたとき、すぐ起動する役。残りは、必要になったら指揮官が `tb agent-new inc<ID>-<役> --role <役>` で起動する |
 | `analyst_max` | 2 | 解析役の同時数。**limits で設定したときだけ** `TB_ANALYST_MAX` より優先 |
@@ -742,7 +742,7 @@ tb agent-shed [--count N] [--json]        # 絞る候補の一覧。何も止め
   ③解析役(解析中を除く)と、親のタスクが done または親が動いていない子 の順に出し、各行に実行する `tb agent-stop <名前>` を添える(止めてよい判定が無いものには `--force` が付く。`--force` は人だけ)。止めるのは人。復活は `tb agent-revive`
 - **強制する場所**: `agent-new`・`agent-revive`・`agent-spawn`(`max_running_agents`。承認待ちの `agent-approve` でも再検査し、超えていれば承認待ちのまま残す)、障害対応の workspace をまとめて開くスクリプト(何かを作る前に `tb limits check incident-open` を呼ぶ。
   動作中 + 起動する役の数が `max_running_agents` を超える、または開いている障害が `incident_max_open` 以上なら、何も作らず終了コード 4)、解析役の起動(`analyst_max` と `max_running_agents`。超えるときは `queued` のまま)、
-  `tb send` / `tb flush`(`max_working_agents`)。見回りのジョブは COMMAND 型で `tb limits watcher-enabled <名前> || exit 0` と書けばガードできる(`scheduler/jobs/watch.conf.example`)。scheduler のコードは変えない
+  `tb message send` / `tb message flush`(`max_working_agents`)。見回りのジョブは COMMAND 型で `tb limits watcher-enabled <名前> || exit 0` と書けばガードできる(`scheduler/jobs/watch.conf.example`)。scheduler のコードは変えない
 - **`tb handoff <task-id>`**: `human_handoff` が on のときだけ、人が貼る依頼文(目的・必要なアクセス・期限・成果物の返し先)を `data/handoff/<task-id>.md`(`TB_HANDOFF_DIR` で変更)に書く。何も送らない
   (文面にも「agent は誰にも連絡しません」と書く)。題名・要約に秘密らしい文字列(トークン、AWS のアクセスキー、秘密鍵のヘッダなど)が含まれるときは書かずに終了コード 4。既にある文面は上書きしない
 
@@ -764,7 +764,7 @@ tb proposal resolve P-<n> --status applied|rejected [--note N]   # 設定役か�
 **提案はチケット**(ADR 0003)。1 件ごとに project `proposal`・ラベル `proposal` と `role:<ファイル名>`(全体なら `role:-`)のチケット(`T-proposal-NNN`)ができ、担当は設定役。
 `open` は `todo`、`applied` / `rejected` は `done`(要約に「適用」/「見送り」、見送りはラベル `rejected` も付く)。状態は `tb proposal resolve` だけが変える。
 
-`review-pack` の中身: 送信の種類別件数と平均文字数、送れなかった宛先、長い送信、tb send の拒否・承認待ち、何度も人が承認した操作、
+`review-pack` の中身: 送信の種類別件数と平均文字数、送れなかった宛先、長い送信、tb message send の拒否・承認待ち、何度も人が承認した操作、
 報告の種類と質問の例、digest の大きさ、アラートの状態・重複・low 判定・解析時間、観測、役割の配布(compact 回数)、定期実行の action 別件数、提案の状況。
 
 ## 役割の配布(roles)

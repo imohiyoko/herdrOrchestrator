@@ -1042,6 +1042,9 @@ _jd("COMMAND='cd /x && HERDR_SESSION=default bin/tb notify flush; bin/tb digest'
 check("説明: コメントが無ければ tb のサブコマンドから推す(notify flush は flush と取り違えない)",
       [c for c, _ in _jv.command_summary(_jv.job_defs("unit")["COMMAND"])] == ["tb notify flush", "tb digest"]
       and "通知" in _jv.job_summary("unit", {"kind": "command"}))
+_jd("COMMAND='cd /x && bin/tb message flush; bin/tb flush'\n")
+check("説明: tb message flush と古い名前 tb flush は同じ説明",
+      [c for c, _ in _jv.command_summary(_jv.job_defs("unit")["COMMAND"])] == ["tb message flush"])
 os.remove(os.path.join(_J, "unit.conf"))
 # 既定は DB だけ(scheduler と同じ): SCHED_FILE_FALLBACK が無ければ jobs/*.conf のジョブは一覧に出さず、「未取り込み」として知らせる
 import app.jobs as _jobs  # noqa: E402

@@ -942,7 +942,7 @@ def reminders_html():
 
 
 def held_html():
-    """保留した送信(受け手が後で tb inbox で読むもの)。行が無ければ何も出さない。本文は一覧に出さない。"""
+    """保留した送信(受け手が後で tb message inbox で読むもの)。行が無ければ何も出さない。本文は一覧に出さない。"""
     rows = held_messages()
     if not rows:
         return ""
@@ -952,7 +952,7 @@ def held_html():
           tlink(r["task_id"]) if r["task_id"] else "-", e(r["created_at"]),
           "未読" if not r["read_at"] else f"既読 {e(r['read_at'])}",
           f'<a href="/inbox?held={r["id"]}#held-body">本文を見る</a>'] for r in rows])
-        + "<p class=note>宛先の入力に打ち込まず保留した送信です。受け手は人に頼まれたときに tb inbox で読みます。"
+        + "<p class=note>宛先の入力に打ち込まず保留した送信です。受け手は人に頼まれたときに tb message inbox で読みます。"
           "この画面は読むだけで、既読にも送信にもしません。</p>")
 
 
@@ -1147,7 +1147,7 @@ def _job_overview(name, info):
     appr = ("scheduler からの送信(<code>tb system-send</code>)は approvals.conf を見ず、人の承認待ちにはなりません。"
             "上の条件を満たせば自動で送られます。" if is_prompt else "COMMAND 型の実行は approvals.conf の対象外です(承認待ちにならず、時刻になれば実行されます)。")
     if d:
-        appr += f' <span class=note>参考: 通常の <code>tb send</code> の <code>send:task:{e(info["target"])}</code> は現在 {e(d)}(この job には適用されません)。</span>'
+        appr += f' <span class=note>参考: 通常の <code>tb message send</code> の <code>send:task:{e(info["target"])}</code> は現在 {e(d)}(この job には適用されません)。</span>'
     rows.append(("承認の扱い", appr))
     html_rows = "".join(f"<tr><th style='text-align:left;vertical-align:top;white-space:nowrap'>{e(k)}</th><td>{v}</td></tr>" for k, v in rows)
     return (f'<h2>このジョブが行うこと</h2><table>{html_rows}</table>'
@@ -1468,7 +1468,7 @@ def age_label(sec):
 
 
 def page_outbox(_qs):
-    """tb send の一覧(読み取り専用)。承認・却下・送信の操作は置かない(承認は手元の tb approval approve)。"""
+    """tb message send の一覧(読み取り専用)。承認・却下・送信の操作は置かない(承認は手元の tb approval approve)。"""
     rows = []
     for o in outbox_rows():
         st = f'<span class=warn>{e(o["status"])}</span>' if o["stuck"] else e(o["status"])

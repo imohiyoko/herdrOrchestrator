@@ -201,6 +201,28 @@ outbox_deliver() {  # $1=outbox.id [$2=inline: 止めた知らせを送信者の
   sql "UPDATE main.outbox SET status='sent', sent_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$oid;"
 }
 
+# tb message <サブコマンド>(サービス message)。古い名前 tb send / flush / outbox / inbox / inbox-read も同じに動く
+cmd_message() {
+  if [[ $# -eq 0 ]]; then message_usage; exit 2; fi   # 空のサブコマンド(tb message '')は引数なしと分ける
+  local sub=$1; shift
+  case $sub in
+    send|flush|outbox|inbox) "cmd_$sub" "$@";;
+    read) cmd_inbox-read "$@";;
+    help|-h|--help) message_usage;;
+    *) usage "message: 不明なサブコマンド $sub(send / flush / outbox / inbox / read)";;
+  esac
+}
+message_usage() {
+  cat <<'USAGE'
+tb message send <宛先 agent 名> --text T [--task T-..] [--kind task|info|answer] [--reply-to O-<n>] [--json]
+tb message flush                     積まれた送信(outbox の queued)を届ける
+tb message outbox [--status pending|queued|sent|denied] [--json]
+tb message inbox [--unread] [--json]  自分宛てに保留された送信の一覧
+tb message read I-<n> [--json]        1 件を全文で読み、既読にする
+(古い名前 tb send / tb flush / tb outbox / tb inbox / tb inbox-read も同じに使える)
+USAGE
+}
+
 # 終了コード: 0 送信済み(または delivery の設定で inbox に保留した)/ 10 宛先使用中で outbox に積んだ / 11 送信失敗で outbox に積んだ
 #             12 保留しようとして inbox に書けなかった(outbox に積んだまま)/ 4 ルールで拒否(記録のみ。delivery の block も 4)
 #             20 人の承認待ち(approvals.conf が ask。人が tb approve O-<n>) / 3 送信者を特定できず未保存
@@ -219,7 +241,7 @@ cmd_send() {
     esac
   done
   [[ $target =~ ^[A-Za-z0-9._-]{1,64}$ ]] || usage "send: 宛先は agent 名(英数字と . _ -): $target"
-  [[ " $SEND_KINDS " == *" $kind "* ]] || usage "send: --kind は $SEND_KINDS のどれか"
+  [[ $kind != *" "* && " $SEND_KINDS " == *" $kind "* ]] || usage "send: --kind は $SEND_KINDS のどれか"   # 'task info' のような 2 語は通さない(outbox の CHECK で落ちていた)
   blank "$text" && usage "send: --text が必要です"
   [[ -z $reply || $reply =~ ^O-[0-9]{1,18}$ ]] || usage "send: --reply-to は O-<n>(返信する元の送信): $reply"
   [[ -z $tid ]] || { valid_id "$tid"; require_task "$tid" >/dev/null; }

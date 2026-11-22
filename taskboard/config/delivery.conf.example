@@ -1,13 +1,13 @@
-# tb send の規則(tb config set delivery < このファイル で使う)。届ける(now)/ 保留する(hold)/ 止める(block)と、経路の許可・拒否をこの 1 つの表で決める。
+# tb message send の規則(tb config set delivery < このファイル で使う)。届ける(now)/ 保留する(hold)/ 止める(block)と、経路の許可・拒否をこの 1 つの表で決める。
 # 1 行 1 ルール。上から見て、送信者と宛先が一致し、その種別(無ければ *)を書いた最初の行で決まる:
 #   <送信者のパターン> -> <宛先のパターン> : <種別>=<now|hold|block> ...
 #   <送信者のパターン> -> <宛先のパターン>          全種別 now(reply も)
 #   ! <送信者のパターン> -> <宛先のパターン>        全種別 block(reply も)
 # パターンは agent 名の glob(* と ?)か @<役割の glob>。宛先には送信者から見た関係も書ける(spawn の ~child ~parent など、組織図の ~manager ~report など。config/org.conf.example)。種別は task / info / answer、* はそれ以外の全部。
-# reply は tb が確かめた返信(tb send --reply-to O-<n>。* には含まれない。reply= を書いた行が無ければ種別で決まる)。
+# reply は tb が確かめた返信(tb message send --reply-to O-<n>。* には含まれない。reply= を書いた行が無ければ種別で決まる)。
 # どの行にも当たらなければ、送信者が指揮官(conductor と projects の値)なら now、ほかは止める(キーが無いときも同じ)。
-# hold の送信は宛先の入力に打ち込まず inbox に置く(送信は成功。宛先は人に頼まれたときに tb inbox / tb inbox-read で読む)。
-# block は宛先に届けず(入力にも inbox にも置かない)、送信者に「止めた。依頼はチケットにして」と返す(tb send は終了コード 4。承認は求めない)。
+# hold の送信は宛先の入力に打ち込まず inbox に置く(送信は成功。宛先は人に頼まれたときに tb message inbox / tb message read で読む)。
+# block は宛先に届けず(入力にも inbox にも置かない)、送信者に「止めた。依頼はチケットにして」と返す(tb message send は終了コード 4。承認は求めない)。
 # 判定は受け付け時 → approvals → 届ける直前(承認待ちの送信は、承認したあとにこの規則でもう一度決まる)。役割を確かめられない行に当たったら hold に倒す。
 # 旧 routes キー(routes.conf)が残っていれば、その行を先に門として見る。行はそのままここへ移せる(移したら tb config unset routes)。
 ! conductor -> setup*

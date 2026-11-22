@@ -12,10 +12,10 @@ The conductor is a Claude agent running in a herdr pane. Its job is coordination
 The conductor sends through the task board, never with `herdr agent prompt` directly:
 
 ```bash
-tb send <agent> --task T-<project>-NNN --text '<full prompt>'      # exit 0 sent / 10 queued / 4 denied or blocked by the delivery rules
+tb message send <agent> --task T-<project>-NNN --text '<full prompt>'      # exit 0 sent / 10 queued / 4 denied or blocked by the delivery rules
 ```
 
-`tb` identifies the sender from `HERDR_PANE_ID`, checks the `delivery` rules (`tb config show delivery`; the legacy `routes` key is still read), records every attempt (`tb outbox`, `messages`), and queues the message if the target is busy (`tb flush`, also run by `tb digest`). Reports from workers arrive batched every 10 minutes by `tb digest`, except `question` / `blocked`, which arrive immediately.
+`tb` identifies the sender from `HERDR_PANE_ID`, checks the `delivery` rules (`tb config show delivery`; the legacy `routes` key is still read), records every attempt (`tb message outbox`, `messages`), and queues the message if the target is busy (`tb message flush`, also run by `tb digest`). Reports from workers arrive batched every 10 minutes by `tb digest`, except `question` / `blocked`, which arrive immediately.
 
 To make the rule hold even if the agent tries the direct route, deny it in the conductor's Claude Code settings (`<project>/.claude/settings.json`):
 
