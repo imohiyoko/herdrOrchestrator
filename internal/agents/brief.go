@@ -52,10 +52,12 @@ func (r *Roles) LoadRole(name string) (Role, bool) {
 	}
 	sum := sha256.Sum256([]byte(body))
 	ro.Hash = hex.EncodeToString(sum[:])
-	if max := roleMax(); len(body) > max {
-		cut := max
-		for cut > 0 && !utf8.RuneStart(body[cut]) { // 文字の途中では切らない
-			cut--
+	if max := roleMax(); utf8.RuneCountInString(body) > max { // 数えるのも切るのも文字の単位(UTF-8 のロケールの bash と同じ)
+		cut, n := 0, 0
+		for cut < len(body) && n < max {
+			_, sz := utf8.DecodeRuneInString(body[cut:])
+			cut += sz
+			n++
 		}
 		body = body[:cut] + "\n\n(長すぎるため途中で切りました。全文は tb role-show で読んでください)"
 	}
