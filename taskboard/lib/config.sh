@@ -57,7 +57,7 @@ config_db_row() {  # $1=キー → "<s|*>:<本文>"(このセッションの行�
        WHERE key=$(q "$1") AND herdr_session IN ($SQS, '*') ORDER BY herdr_session='*' LIMIT 1;" 2>&1 >&3 3>&-); rc=$?; } 3>&1
   ((rc == 0)) && return 0
   # 表がまだ無い DB は「行が無い」と同じ。それ以外の失敗(壊れた DB・ロックの待ち切れなど)は 1 を返す(呼ぶ側が CFG_ERR に残す)
-  [[ $err =~ no\ such\ table:\ (main\.)?config([^A-Za-z0-9_]|$) ]] && return 0   # config 自体が無いときだけ(config が参照する表が無いのは失敗)
+  [[ $err =~ no\ such\ table:\ (main\.)?config([[:space:]]|$) ]] && return 0   # config 自体が無いときだけ(config が参照する表が無いのは失敗)
   return 1
 }
 

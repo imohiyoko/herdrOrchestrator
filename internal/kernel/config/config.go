@@ -86,7 +86,7 @@ func DBRow(db *sql.DB, session, key string) (body string, shared, ok bool) {
 }
 
 // reNoConfigTable は config 表そのものが無いときの誤り(config が参照する別の表が無いのは失敗として返す)。
-var reNoConfigTable = regexp.MustCompile(`no such table: (main\.)?config\b`)
+var reNoConfigTable = regexp.MustCompile(`no such table: (main\.)?config(\s|$)`)
 
 // dbRow は DBRow に加えて、問い合わせの失敗(行が無い・表がまだ無いは失敗にしない)を返す。
 func dbRow(db *sql.DB, session, key string) (body string, shared, ok bool, err error) {
