@@ -390,6 +390,19 @@ tb reject O-<n>
   tb が承認判定に渡す操作名を増やしたら、カタログにも足す(`test/cases/82_catalog.sh` が、コード中の操作名の載り漏れと、既定の approvals.conf の未知の規則を検出する)
 - tb が強制するのは `tb send` だけ。ほかの操作(役割の変更・セットアップの書き込みなど)は、agent が `tb approval <操作>` を見て、`ask` なら人に聞く
 
+## 部品とレシピ(ADR 0005)
+
+新しい使い道を、専用のコマンドを足す代わりに「部品の並び(レシピ)」で作れるようにする(段階的に実装中)。部品の一覧・引数の型・リスク階層は
+`lib/recipes.sh` にコードで固定し、設定・DB では増やせず緩められない。人だけの部品はリスク階層 `human-only` で、承認の設定で緩まない。
+
+```bash
+tb parts [--json]                        # 部品の一覧
+tb part-check <部品> [<名前>=<値> ...]    # 引数の型・リスク階層・判定の操作名を確かめる(実行しない)
+tb part-risk <部品> ...                   # 部品の並びのリスク階層(中の最大)
+```
+
+詳しくは [docs/recipes.md](docs/recipes.md)。
+
 ## アラート(見張り役 → 解析役)
 
 見張り役(利用例は `setup/examples/roles/watcher.md`、軽いモデル)が scheduler の定期プロンプトで見回り、異常を見つけたら登録する。tb が解析役の agent を
@@ -905,6 +918,7 @@ tb config history approvals        # 変更の履歴(config_changes)
 | `lib/transport.sh` | herdr との境界。herdr を実行するのはここの `herdr_call` だけ。送信と `messages` への記録(`herdr_send`)、`system-send` |
 | `lib/tasks.sh` | add / list / show / claim / update / done / block / report / pending |
 | `lib/conv.sh` | 会話チーム: 振り分け表(`tb conv-route` / `conv-routes-set`)・下書きの指示(`conv-draft`)・声の役(`conv-voice` / `conv-voice-check`)・パターンの台帳 |
+| `lib/recipes.sh` | 部品(ADR 0005): 部品の一覧・引数の型・リスク階層(`tb parts` / `part-check` / `part-risk`) |
 | `lib/proxy.sh` / `activity.sh` / `comments.sh` / `digest.sh` / `send.sh` / `roles.sh` / `approvals.sh` / `alerts.sh` / `review.sh` / `agents.sh` / `spawn.sh` / `limits.sh` / `shed.sh` / `handoff.sh` / `dbimport.sh` | 各節のコマンド |
 
 agent への送信も DB への書き込みも、すべて `tb` を通る。後で MCP サーバーなど別の経路を足すときは、`tb` のコマンドを呼ぶか `lib/transport.sh` を差し替えればよい。
