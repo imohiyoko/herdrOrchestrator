@@ -12,8 +12,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/env"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/perms"
@@ -22,7 +20,7 @@ import (
 )
 
 // Commands は Go に移し終えたコマンド。bin/tb はこの一覧(herdrctl tb --commands)を見て渡すかを決める。
-var Commands = []string{"activity", "allow", "approval", "approve", "ask", "block", "board", "cancel", "claim", "config", "conv", "conv-candidate-add", "conv-candidate-adopt", "conv-candidate-reject", "conv-draft", "conv-gate", "conv-incident", "conv-kinds", "conv-learn-purge", "conv-ledger", "conv-length", "conv-lint", "conv-pair-add", "conv-pair-show", "conv-pairs", "conv-patterns", "conv-route", "conv-routes-set", "conv-scan", "conv-stage", "conv-stage-log", "conv-stage-reset", "conv-stage-set", "conv-voice", "conv-voice-check", "done", "due-scan", "events", "flush", "gate", "handoff", "history", "inbox", "inbox-read", "job", "labels", "link", "list", "message", "notify", "nudge", "outbox", "pr", "pr-queue", "pr-watch", "proposal", "proposal-resolve", "proposals", "proxy", "proxy-check", "proxy-list", "proxy-request", "proxy-resolve", "reject", "reminder", "reminders", "review", "review-pack", "review-submit", "sched-job", "send", "show", "sprint-add", "sprint-close", "sprint-start", "sprints", "touch", "tree", "unlink"}
+var Commands = []string{"activity", "add", "allow", "approval", "approve", "ask", "block", "board", "cancel", "claim", "config", "conv", "conv-candidate-add", "conv-candidate-adopt", "conv-candidate-reject", "conv-draft", "conv-gate", "conv-incident", "conv-kinds", "conv-learn-purge", "conv-ledger", "conv-length", "conv-lint", "conv-pair-add", "conv-pair-show", "conv-pairs", "conv-patterns", "conv-route", "conv-routes-set", "conv-scan", "conv-stage", "conv-stage-log", "conv-stage-reset", "conv-stage-set", "conv-voice", "conv-voice-check", "done", "due-scan", "events", "flush", "gate", "handoff", "history", "inbox", "inbox-read", "job", "labels", "link", "list", "message", "notify", "nudge", "outbox", "pr", "pr-queue", "pr-watch", "proposal", "proposal-resolve", "proposals", "proxy", "proxy-check", "proxy-list", "proxy-request", "proxy-resolve", "reject", "reminder", "reminders", "review", "review-pack", "review-submit", "sched-job", "send", "show", "sprint-add", "sprint-close", "sprint-start", "sprints", "touch", "tree", "unlink", "update"}
 
 // Features は bin/tb が渡す前に確かめる機能(perms = 権限段階の門。ADR 0006)。
 var Features = []string{"perms"}
@@ -124,6 +122,10 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		err = cmdHistory(args[1:], w, stderr)
 	case "events":
 		err = cmdEvents(args[1:], w, stderr)
+	case "add":
+		err = cmdAdd(args[1:], w, stderr)
+	case "update":
+		err = cmdUpdate(args[1:], w, stderr)
 	case "claim":
 		err = cmdClaim(args[1:], w, stderr)
 	case "done":
@@ -234,24 +236,8 @@ func today() (string, error) {
 	return time.Now().Format("2006-01-02"), nil
 }
 
-// labels は tasks.sh の labels_json と同じ: カンマで分け、前後の空白を落とし、検査する。
-func labels(arg string) ([]string, error) {
-	var out []string
-	for _, p := range strings.Split(arg, ",") {
-		p = strings.TrimFunc(p, unicode.IsSpace)
-		if p == "" {
-			continue
-		}
-		if n := utf8.RuneCountInString(p); n < 1 || n > 40 || strings.ContainsFunc(p, func(r rune) bool {
-			return unicode.IsSpace(r) || r == ',' || r == '"' || r == '\''
-		}) {
-			return nil, usage("ラベルは 1〜40 文字で、空白・カンマ・引用符を含まない: %s", p)
-		}
-		out = append(out, p)
-	}
-	slices.Sort(out)
-	return slices.Compact(out), nil
-}
+// labels は tasks.sh の labels_json と同じ(list -l も add / update と同じ検査。labelsJSON)。
+func labels(arg string) ([]string, error) { return labelsJSON([]string{arg}) }
 
 // openCmd は bin/tb の main がコマンドの前にすること(init_db と statuses_load)をする。
 // 設定 statuses が壊れていれば、どのコマンドでも bash と同じ警告を標準エラーに出す。
