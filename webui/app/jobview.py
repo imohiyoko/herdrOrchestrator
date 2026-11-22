@@ -154,7 +154,7 @@ TB_CMDS = (
     (r"\btb\s+compact-check\b", "tb compact-check", "文脈が大きくなった待機中の agent に /compact を送る"),
     (r"\btb\s+pending\b", "tb pending", "未報告のタスクと未配送の報告(C-<n>)を一覧する(再送は続く tb report が行う)"),
     (r"\btb\s+system-send\b", "tb system-send", "agent に本文を送る(scheduler からの送信)"),
-    (r"\btb\s+review-pack\b", "tb review-pack", "レビュー用の集計を作る"),
+    (r"\btb\s+review(?:-|\s+)pack\b", "tb review pack", "レビュー用の集計を作る"),
 )
 
 

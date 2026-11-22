@@ -63,6 +63,11 @@ func NewRoles(db *sql.DB, session string) *Roles {
 	return &Roles{DB: db, Session: session, Dir: RolesDir(session), bodies: map[string]roleBody{}, names: map[string]roleNames{}}
 }
 
+// NewRolesIn は役割のファイルの置き場を固定した引き方(review-submit は env の TB_ROLES やセッションの置き場を見ない)。DB の役割の行は見る。
+func NewRolesIn(db *sql.DB, session, dir string) *Roles {
+	return &Roles{DB: db, Session: session, Dir: dir, bodies: map[string]roleBody{}, names: map[string]roleNames{}}
+}
+
 // Lookup は role_lookup(@map は役割の対応)。
 func (r *Roles) Lookup(name string) (string, bool) {
 	if b, ok := r.bodies[name]; ok {
