@@ -272,3 +272,30 @@ func Inspect(path string) (Status, error) {
 	err = db.QueryRow("PRAGMA journal_mode").Scan(&st.JournalMode)
 	return st, err
 }
+
+// Each は q の結果を 1 行ずつ fn に渡す(列名と値。値は NULL なら nil)。
+func Each(db *sql.DB, q string, args []any, fn func(cols []string, vals []any) error) error {
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	cols, err := rows.Columns()
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		vals := make([]any, len(cols))
+		ptrs := make([]any, len(cols))
+		for i := range vals {
+			ptrs[i] = &vals[i]
+		}
+		if err := rows.Scan(ptrs...); err != nil {
+			return err
+		}
+		if err := fn(cols, vals); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}

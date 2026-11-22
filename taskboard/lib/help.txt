@@ -40,10 +40,11 @@ tb report <id>      完了の報告を done の報告コメント(C-<n>)にし�
 tb pending [--json|--ids]   done なのに未報告のタスク
 
 代行依頼(判定と記録だけ。cmd は tb が実行しない):
-tb proxy-request <task-id> --cmd C --why W --effect read-only|write|external [--expect E]   → "<id> <status>"
-tb proxy-list [--status open|done|pending-human|denied] [--json]
-tb proxy-resolve <id> --status done|pending-human|denied [--result <本文かファイルパス>]
-tb proxy-check <id>   1 行目が allow(自動代行可)か human(人に回す)。mismatch: があれば申告の食い違い
+tb proxy request <task-id> --cmd C --why W --effect read-only|write|external [--expect E]   → "<id> <status>"
+tb proxy list [--status open|done|pending-human|denied] [--json]
+tb proxy resolve <id> --status done|pending-human|denied [--result <本文かファイルパス>]
+tb proxy check <id>   1 行目が allow(自動代行可)か human(人に回す)。mismatch: があれば申告の食い違い
+  別名(古い名前。同じに動く): tb proxy-request tb proxy-list tb proxy-resolve tb proxy-check
 
 agent の活動記録(hook から。bin/tb-hook 経由が基本):
 tb db-import <旧 DB> [--session <名前>] [--dry-run]   旧形式(checkout ごと)の DB を、共有の DB の 1 セッション(既定は今のセッション)の行として取り込む。人の端末だけ。元の DB は読むだけ

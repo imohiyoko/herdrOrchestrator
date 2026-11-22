@@ -187,16 +187,16 @@ tb events --since E-120         # E-120 より後のもの(通知の規則など
 
 ```bash
 # worker: 依頼を出す(effect 必須。迷ったら write。read-only|write|external 以外は拒否)
-tb proxy-request T-<project>-NNN --cmd 'gh pr view 12' --why '目的' --effect read-only --expect '期待する出力'
+tb proxy request T-<project>-NNN --cmd 'gh pr view 12' --why '目的' --effect read-only --expect '期待する出力'
 #   → "<id> open"。同じ cmd が denied 済みなら "<id> denied" で即登録される(出し直さず別の方法を提案する)
 
 # 指揮官
-tb proxy-list [--status open] [--json]
-tb proxy-check <id>      # 1 行目: allow(自動代行可) / human(人に回す)。続けて reason: / mismatch: 行
-tb proxy-resolve <id> --status done|pending-human|denied [--result '<本文 or ファイルパス>']
+tb proxy list [--status open] [--json]
+tb proxy check <id>      # 1 行目: allow(自動代行可) / human(人に回す)。続けて reason: / mismatch: 行
+tb proxy resolve <id> --status done|pending-human|denied [--result '<本文 or ファイルパス>']
 ```
 
-`proxy-check` の判定(`allow` になるのは、次の 3 つをすべて満たすときだけ):
+`proxy check` の判定(`allow` になるのは、次の 3 つをすべて満たすときだけ):
 1. 申告 effect が `read-only`
 2. cmd が `config/proxy-allowlist.txt`(読むだけ。`TB_ALLOWLIST` で差し替え可)のいずれかに先頭一致。語の境界で比べる(`git log` は `git log -5` に一致、`git logx` には一致しない)
 3. 危険な構文を含まない: `> < | ; &`(`&&` `||` を含む)・`$`(`$()` を含む)・バッククォート・改行、`-X|--request|--method` の POST/PUT/DELETE/PATCH、`--approve` `--merge` `--body` `--add`(`--body-file` `--add-label` も)、`--output`
@@ -205,7 +205,7 @@ tb proxy-resolve <id> --status done|pending-human|denied [--result '<本文 or �
 - 申告が `read-only` なのに危険な構文を含むときは `mismatch:` 行を足す(申告の食い違い)
 - 許可リストを読めないときは `human`
 - `--output` は仕様にない追加(`git diff --output=file` が許可リストの `git diff` からファイルを書けるため)
-- `proxy-resolve` の `--result` は渡された文字列をそのまま保存する(ファイルは読まない)。`done` / `denied` になった依頼は変更できない(`open` と `pending-human` のみ解決できる)
+- `proxy resolve` の `--result` は渡された文字列をそのまま保存する(ファイルは読まない)。`done` / `denied` になった依頼は変更できない(`open` と `pending-human` のみ解決できる)
 - 結果を worker へ返す `herdr agent prompt` と、`dispatch.jsonl` への `action: proxy` の追記は指揮官の作業で、tb は行わない
 
 ## agent の活動記録(hook)
