@@ -29,6 +29,7 @@
 81_risk.sh 7
 82_catalog.sh 6
 83_parts.sh 12
+84_recipes.sh 25
 85_schema.sh 2
 86_alert_migrate.sh 2
 86_whoami.sh 2
