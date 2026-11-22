@@ -39,7 +39,7 @@ tb_go() {
 }
 tb_go_exec() {  # $1=herdrctl, 残り=tb のコマンドと引数
   local hc=$1; shift
-  TB_DB=$DB TB_CONFIG_DIR=$CONFIG_DIR HERDR_SESSION=$(herdr_session_name) HERDR_SOCKET_PATH='' exec "$hc" tb "$@"   # TB_CONFIG_DIR: checkout の設定ファイル(statuses.conf など)
+  TB_ROOT=$TB_ROOT TB_DB=$DB TB_CONFIG_DIR=$CONFIG_DIR HERDR_SESSION=$(herdr_session_name) HERDR_SOCKET_PATH='' exec "$hc" tb "$@"   # TB_ROOT: checkout の taskboard(scheduler の場所など)。TB_CONFIG_DIR: checkout の設定ファイル(statuses.conf など)
 }
 # hook 用(touch): 何も出さず、herdrctl が無い・持たないときは bash のまま続ける(die しない)
 tb_go_quiet() {

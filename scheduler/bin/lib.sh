@@ -16,9 +16,9 @@ export HERDR_BIN_PATH="${HERDR_BIN_PATH:-$HERDR}"
 die() { echo "error: $*" >&2; exit 2; }
 
 # ジョブ定義・上書き設定の DB(taskboard と同じ DB の config 表)。キー: sched-job:<job>(conf の本文)/ sched-settings:<job>(settings の本文)。
-# 読むのは DB だけ: このセッションの行 > 全セッション共通の行(*)。書くのは人だけ(tb sched-job)。ここは読むだけで、DB を書き込みで開かない。
+# 読むのは DB だけ: このセッションの行 > 全セッション共通の行(*)。書くのは人だけ(tb job)。ここは読むだけで、DB を書き込みで開かない。
 # ファイル(jobs/<job>.conf・settings/<job>.settings)は DB へ取り込む前の置き場所で、SCHED_FILE_FALLBACK=1 のときだけ DB の後に読む
-# (tb sched-job が書く前の検査と、テスト用)。既定では読まないので、取り込んでいない conf のジョブは動かない(tick.sh が failed を記録する)
+# (tb job が書く前の検査と、テスト用)。既定では読まないので、取り込んでいない conf のジョブは動かない(tick.sh が failed を記録する)
 SCHED_DB="${TB_DB:-$HERDR_DEFAULT_TB_DB}"
 sched_files_ok() { [ "${SCHED_FILE_FALLBACK:-0}" = 1 ]; }
 sched_db_body() {  # $1=キー。見つかれば本文を出して 0、無ければ 1
@@ -45,7 +45,7 @@ sched_job_names() {
   { sched_db_jobs; local f; if sched_files_ok; then for f in "$JOBS_DIR"/*.conf; do [ -f "$f" ] && basename "$f" .conf; done; fi; } \
     | grep -E '^[A-Za-z0-9][A-Za-z0-9_-]*$' | sort -u
 }
-# DB に取り込んでいない jobs/*.conf のジョブ名(1 行 1 つ)。既定では動かないジョブ。setup/check.sh と tb sched-job list が知らせる
+# DB に取り込んでいない jobs/*.conf のジョブ名(1 行 1 つ)。既定では動かないジョブ。setup/check.sh と tb job list が知らせる
 sched_unimported_jobs() {
   local db f j; db=$(sched_db_jobs)
   for f in "$JOBS_DIR"/*.conf; do
@@ -59,7 +59,7 @@ sched_missing_msg() {
   local m="ジョブ定義が DB に無い: sched-job:$1(セッション $(herdr_session_name))"
   if ! command -v sqlite3 >/dev/null 2>&1; then m="${m}。sqlite3 が無い"
   elif [ ! -f "$SCHED_DB" ]; then m="${m}。DB が無い: $SCHED_DB"; fi
-  [ -f "$JOBS_DIR/$1.conf" ] && m="${m}。jobs/$1.conf は DB に取り込むまで使われない: taskboard/bin/tb sched-job import $1"
+  [ -f "$JOBS_DIR/$1.conf" ] && m="${m}。jobs/$1.conf は DB に取り込むまで使われない: taskboard/bin/tb job import $1"
   printf '%s\n' "$m"
 }
 
@@ -141,7 +141,7 @@ load_job() {
   fi
   unset TARGET PROMPT PROMPT_FILE PROMPT_RULES PROMPT_CMD PROMPT_CMD_TIMEOUT PROMPT_VARS PROMPT_VAR_TIMEOUT COMMAND COMMAND_TIMEOUT GATE GATE_TIMEOUT WINDOW START END INTERVAL_MIN INTERVAL_SEC DAYS SKIP_IF TZ ENABLED WATCHER
   if [ "$JOB_SRC" = db ]; then
-    eval "$job_body"   # 本文は conf と同じ(bash の変数代入)。人が tb sched-job で書いたもの
+    eval "$job_body"   # 本文は conf と同じ(bash の変数代入)。人が tb job で書いたもの
   else
     # shellcheck disable=SC1090
     source "$JOB_CONF"

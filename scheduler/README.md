@@ -6,8 +6,8 @@ launchd が `bin/tick.sh <job>` を毎分起動し、時間帯・曜日・間隔
 
 ## ジョブの足し方
 
-ジョブの定義(bash の変数代入)を DB に置く: `taskboard/bin/tb sched-job set <name> < 本文のファイル`(下の「ジョブ定義は DB に置く」)。
-本文の例は `jobs/watch.conf.example`(パスを直してから `set` に渡す)。**定期実行は DB の定義だけで動く。`jobs/<name>.conf` を置いただけでは動かない**(`tb sched-job import` で取り込む)。
+ジョブの定義(bash の変数代入)を DB に置く: `taskboard/bin/tb job set <name> < 本文のファイル`(下の「ジョブ定義は DB に置く」)。
+本文の例は `jobs/watch.conf.example`(パスを直してから `set` に渡す)。**定期実行は DB の定義だけで動く。`jobs/<name>.conf` を置いただけでは動かない**(`tb job import` で取り込む)。
 
 | 変数 | 意味 |
 |---|---|
@@ -75,7 +75,7 @@ PROMPT='定期の見回りをお願いします。'   # どの行にも合わな
 - 値は 数(`00`)/ 範囲(`9-12`)/ 刻み(`*/15`)/ それらのカンマ区切り(`00,30`)。`days` は `DAYS` と同じ語をカンマで(`days=mon,wed` / `days=weekdays`)
 - 本文は 1 行。複数行の本文は `file:<パス>` で書く(そのファイルの中身を送る。`PROMPT_FILE` と同じく絶対パスで)。差し込んだ値は複数行でもよい
 - 時刻は「この回の予定時刻」(ジョブの `TZ`)。launchd の起動が数秒遅れても判定は変わらない
-- 定義の誤り(範囲外の数・知らない key・`|` が無い行など)は読み込みでエラー(`show.sh` / `tb sched-job set` で弾かれる)
+- 定義の誤り(範囲外の数・知らない key・`|` が無い行など)は読み込みでエラー(`show.sh` / `tb job set` で弾かれる)
 
 **差し込み(`{{名前}}`)**: 選んだ本文の中の `{{名前}}` を、送る直前に置き換える。検索結果や外部のデータを本文に入れるのに使う。
 
@@ -102,40 +102,40 @@ PROMPT='新しい bug の issue です。優先度をつけてください:
 
 **注意**
 
-- `PROMPT_CMD` / `PROMPT_VARS` は `COMMAND` と同じく `bash -c` で実行する。conf(または `tb sched-job`)にだけ書け、settings・Web UI からは変えられない。外部入力をコマンドに埋め込まないこと
+- `PROMPT_CMD` / `PROMPT_VARS` は `COMMAND` と同じく `bash -c` で実行する。conf(または `tb job`)にだけ書け、settings・Web UI からは変えられない。外部入力をコマンドに埋め込まないこと
 - 差し込んだ出力(検索結果など)はそのまま agent に送られ、taskboard の `messages` にも残る。秘密を出すコマンドを使わないこと。外部の文章は agent への指示として読まれうる
 - `DRY_RUN=1` でも `PROMPT_CMD` / `PROMPT_VARS` は実行する(本文を確かめるため)。副作用のないコマンドにする。
   `DRY_RUN=1` の出力には、送るはずの本文(`text`)と出どころ(`prompt`: `cmd` / `rule:<i>` / `default`)が出る。通常の実行のログには `prompt` だけを残し、本文は残さない
 - `COMMAND` 型のジョブには書けない(エラー)。`bin/show.sh` は `prompt_rules`(ルールの数)/ `prompt_cmd`(有無)/ `prompt_vars`(数)を出す
 
-## ジョブ定義は DB に置く(`tb sched-job`)
+## ジョブ定義は DB に置く(`tb job`)
 
 ジョブ定義(conf の本文)と上書き設定(settings の本文)は、taskboard の DB の `config` 表に置く。
 キーは `sched-job:<job>` と `sched-settings:<job>`、本文の書式はファイルと同じ。変更の履歴は `config_changes` に残る(`tb config` と同じ仕組み)。
 
 - 読む順: DB の**このセッション**の行 > DB の共通の行(`*`)。DB は読み取り専用で開く。
   **ファイル(`jobs/<job>.conf`・`settings/<job>.settings`)は読まない**。DB に定義が無いジョブは動かさず、`tick.sh` が `failed`
-  (理由: DB に定義が無い。conf があれば `tb sched-job import <job>` で取り込む)を記録する(同じ理由が続く間は 1 行だけ)。
+  (理由: DB に定義が無い。conf があれば `tb job import <job>` で取り込む)を記録する(同じ理由が続く間は 1 行だけ)。
   Web UI の一覧と `setup/check.sh` も、取り込んでいない conf を知らせる
-- `SCHED_FILE_FALLBACK=1` のときだけ、DB に無いジョブ・設定をファイルから読む(`tb sched-job` が書く前の検査とテスト用。普段は付けない)
+- `SCHED_FILE_FALLBACK=1` のときだけ、DB に無いジョブ・設定をファイルから読む(`tb job` が書く前の検査とテスト用。普段は付けない)
 - セッションごとに別の定義を持てる(`HERDR_SESSION`、checkout の `herdr-session` ファイル。tb と同じ決まり方)
-- 書くのは人だけ: `tb sched-job set <job> < 本文` / `edit` / `unset`(`--settings` で上書き設定、`--shared` で共通の行)。
+- 書くのは人だけ: `tb job set <job> < 本文` / `edit` / `unset`(`--settings` で上書き設定、`--shared` で共通の行)。
   書く前に、scheduler 自身(`bin/show.sh`)がその本文を読めるかを一時のディレクトリで確かめる(読めなければ書かない)
-- 取り込み: `tb sched-job import --dry-run` で確かめてから `tb sched-job import [<job> ...]`。`jobs/*.conf` と `settings/*.settings` を
+- 取り込み: `tb job import --dry-run` で確かめてから `tb job import [<job> ...]`。`jobs/*.conf` と `settings/*.settings` を
   このセッションの行(`--shared` なら共通の行)に取り込み、取り込んだファイルは `$HERDR_STATE_DIR/sched-imported/<日時>/` へ退かす。
   既に行があるジョブは飛ばす。取り込みの前後で、判定の結果(`tick.sh` の dry-run)と実際に効く設定(`show.sh`)は変わらない(`tests/run.sh` が確かめる)
-- 一覧: `bin/jobs.sh`(DB とファイルの和)、`tb sched-job list`(出どころつき)。`bin/show.sh` は `source` / `settings_source`(`db` / `file` / `none`)も出す
-- Web UI: 上書き設定は定義の置き場所(DB / ファイル)によらず、`tb sched-job set <job> --settings` を通して DB のこのセッションの行に書く(ファイルは書かない)。
+- 一覧: `bin/jobs.sh`(DB とファイルの和)、`tb job list`(出どころつき)。`bin/show.sh` は `source` / `settings_source`(`db` / `file` / `none`)も出す
+- Web UI: 上書き設定は定義の置き場所(DB / ファイル)によらず、`tb job set <job> --settings` を通して DB のこのセッションの行に書く(ファイルは書かない)。
   残っている `settings/<job>.settings` は保存・戻すときに消す(置き場所を DB の 1 つにする)。
-  「conf の値に戻す」はこのセッションの行を消す。共通の行は人が `tb sched-job unset <job> --settings --shared` で消す。
+  「conf の値に戻す」はこのセッションの行を消す。共通の行は人が `tb job unset <job> --settings --shared` で消す。
   保存・戻したあと、`show.sh` の値が書いた値になったかを確かめ、違えばエラーにする
 - plist(`gen-plist.sh`)はジョブ名だけを持つので、取り込んだあとも作り直さなくてよい
-- DB の本文も `COMMAND` と同じく bash として評価される。`tb sched-job` は人の端末からだけ書ける(agent の pane からは断る)
+- DB の本文も `COMMAND` と同じく bash として評価される。`tb job` は人の端末からだけ書ける(agent の pane からは断る)
 
 ## Web UI からの変更(settings)
 
 間隔・時間帯・曜日・一時停止は、Web UI の `/jobs/<job>` から変えられる。保存先は DB の `sched-settings:<job>`(上の「ジョブ定義は DB に置く」)。
-`settings/<job>.settings` は DB に移す前の置き場所で、scheduler は読まない(残っていれば `tb sched-job import` で定義と一緒に取り込む)。
+`settings/<job>.settings` は DB に移す前の置き場所で、scheduler は読まない(残っていれば `tb job import` で定義と一緒に取り込む)。
 
 - launchd は**毎分** `tick.sh` を起動し、実行するかどうか(曜日・時間帯・`INTERVAL_MIN` の刻み・一時停止)は `tick.sh` が実行時に判定する。
   なので設定を変えても plist の作り直し・再登録は要らない(次の分から反映)。対象外の回はログを書かない
