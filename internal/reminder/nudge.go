@@ -186,43 +186,7 @@ func (n *Nudge) teamOf(a string) (string, bool) {
 }
 
 // protectReason は protect_reason(保護されていれば理由と true)。
-func (n *Nudge) protectReason(a string) (string, bool) {
-	body, _, ok := config.Lookup(n.DB, n.Session, "protect")
-	if !ok {
-		return "", false
-	}
-	var have []string
-	loaded := false
-	for _, line := range config.Lines(body) {
-		line = config.Trim(config.StripComment(line))
-		if line == "" {
-			continue
-		}
-		k, v, has := strings.Cut(line, "=")
-		k = config.Trim(k)
-		if has {
-			v = config.Trim(v)
-		}
-		why := v
-		if why == "" {
-			why = "protect: " + k
-		}
-		if strings.HasPrefix(k, "role:") {
-			if !loaded {
-				loaded = true
-				have, _ = n.roleNames(a)
-			}
-			for _, r := range have {
-				if util.Glob(k[len("role:"):], r) {
-					return why, true
-				}
-			}
-		} else if util.Glob(k, a) {
-			return why, true
-		}
-	}
-	return "", false
-}
+func (n *Nudge) protectReason(a string) (string, bool) { return n.roles.ProtectReason(a) }
 
 // msg は msg <識別子> <既定の文面> 名前=値 ...(kv は 名前, 値 の組の並び)。
 func (n *Nudge) msg(code, def string, kv ...string) string {
