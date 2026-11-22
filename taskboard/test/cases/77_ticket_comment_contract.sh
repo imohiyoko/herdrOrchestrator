@@ -76,6 +76,7 @@ eq "reopen: row and event" "$(tcrow "$q"; sqlite3 "$TB_DB" "SELECT kind, actor, 
 # ---- pending / report
 eq "pending: unknown" "$(tcerr $TB pending --bogus)" $'tb: pending: 不明な引数 --bogus\n(tb help で使い方)\nrc=2'
 eq "pending: tsv" "$(tcerr $TB pending | grep -E 'tcm|rc=' | tcmask)" $'C-N\ttcm\tconductor\t[progress] 途中\nC-N\ttcm\tconductor\t[done] 終わり\nC-N\ttcm\tconductor\t[blocked] 止まった\nC-N\ttcm\tconductor\t[question] 送れない\nC-N\ttcm2\tconductor\t[progress] json\nrc=0'
+eq "pending: ids exit 0" "$(rc $TB pending --ids)" "0"
 eq "pending: ids" "$(diff <($TB pending --ids | grep -Fx -f <(sqlite3 "$TB_DB" "SELECT 'C-'||id FROM comments WHERE task_id LIKE 'T-tcm%' UNION SELECT id FROM tasks WHERE id LIKE 'T-tcm%';")) <(sqlite3 "$TB_DB" "SELECT 'C-'||id FROM comments WHERE task_id LIKE 'T-tcm%' AND text IN ('途中','終わり','止まった','送れない','json') ORDER BY id;") && echo same)" $'same'
 eq "report: no args" "$(tcerr $TB report)" $'tb: report <id>\n(tb help で使い方)\nrc=2'
 eq "report: bad id" "$(tcerr $TB report x)" $'tb: タスク ID は T-<project>-NNN 形式: x\n(tb help で使い方)\nrc=2'
