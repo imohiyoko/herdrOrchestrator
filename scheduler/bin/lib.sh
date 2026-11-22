@@ -99,7 +99,7 @@ load_settings() {
     SETTINGS_SRC=db; f="DB の sched-settings:$JOB"
   else
     sched_files_ok || return 0   # 既定は DB だけ。settings/<job>.settings は読まない
-    [ -e "$f" ] || return 0
+    [ -e "$f" ] || [ -L "$f" ] || return 0   # 先が無いシンボリックリンク(-e は偽)も、読み飛ばさず下で拒否する
     [ -f "$f" ] && [ ! -L "$f" ] || die "$JOB: settings が通常ファイルではない: $f"
     body=$(cat "$f"); SETTINGS_SRC=file
   fi

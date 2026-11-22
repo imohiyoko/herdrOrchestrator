@@ -130,8 +130,11 @@ for bad in 'INTERVAL_MIN=5; rm -rf /' 'COMMAND=echo pwned' 'START=10:00' 'DAYS=$
   printf '%s\n' "$bad" >"$SCHED_SETTINGS_DIR/t.settings"
   DRY_RUN=1 NOW="$THU 09:00" bash bin/tick.sh t >/dev/null 2>&1; ok "settings: 不正な行は拒否(exit 2): $bad" "$?" 2
 done
-ln -sf /etc/hostname "$SCHED_SETTINGS_DIR/sym.settings"; cp "$JOBS_DIR/t.conf" "$JOBS_DIR/sym.conf"
+# 先が実在するシンボリックリンクと、先が無いもの(OS によらず作れる)の両方を拒否する
+: >"$TMP/sym-target"; ln -sf "$TMP/sym-target" "$SCHED_SETTINGS_DIR/sym.settings"; cp "$JOBS_DIR/t.conf" "$JOBS_DIR/sym.conf"
 DRY_RUN=1 NOW="$THU 09:00" bash bin/tick.sh sym >/dev/null 2>&1; ok "settings: シンボリックリンクは拒否" "$?" 2
+ln -sf "$TMP/no-such-file" "$SCHED_SETTINGS_DIR/sym.settings"
+DRY_RUN=1 NOW="$THU 09:00" bash bin/tick.sh sym >/dev/null 2>&1; ok "settings: 先が無いシンボリックリンクも拒否" "$?" 2
 rm -rf "$SCHED_SETTINGS_DIR"; unset SCHED_SETTINGS_DIR
 
 # ---- 秒単位
