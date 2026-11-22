@@ -12,7 +12,8 @@ tb labels [-p project] [--json]    使われているラベルと件数(ラベ�
 tb labels --defined [-p project] [--json]   用意したラベル(設定 labels)を書いた順に(ラベル 未完了 全部 説明)。設定があれば add / update で付けられるのはこれと tb 自身のラベルだけ
 tb history <id> [--json]           チケットの履歴(E-番号 時刻 タスク 種類 前 後 変えた者 元)。作成・状態・題・種別・優先度・担当・期日・親・説明・ラベル・外部リンク・リンク・コメント
 tb events [--since E-n] [--kind K] [-p project] [--limit N(既定 50)] [--json]   このセッションの履歴を古い順に
-tb due-scan [-p project] [--within N(既定 1)]   期限切れ(overdue)・期限間近(due_soon: 今日〜N 日後)のタスクに履歴のイベントを 1 日 1 回ずつ残す(通知の規則の材料。tb notify flush も呼ぶ)
+tb reminder scan [-p project] [--within N(既定 1)]   期限切れ(overdue)・期限間近(due_soon: 今日〜N 日後)のタスクに履歴のイベントを 1 日 1 回ずつ残す(通知の規則の材料。tb notify flush も呼ぶ)
+  別名(古い名前): tb due-scan 
 tb link <from> blocks|relates|duplicates <to>   blocks なら to は from が done になるまで claim できない
 tb unlink <from> <種類> <to>
 tb sprint-add -p <project> -n <名前> [--start YYYY-MM-DD] [--end YYYY-MM-DD] [--goal G]   → S-<n>(planned)
@@ -70,9 +71,10 @@ tb reopen C-<n> [-m 理由]   対応済みにした question/blocked の報告�
 tb digest [--dry-run]   未配送の報告・未報告の done・観測した事象(turn 終了後も in_progress / 長時間 working / blocked)を
                         指揮官ごとに 1 通にまとめて送る。宛先が使用中なら送らず次回へ持ち越す。終了コード 0 / 10 / 11
 tb digests [D-<n>] [--json]   送ったまとめの一覧 / 全文
-tb reminders [--json]   人が忘れているかもしれないもの(期限・質問・承認待ち・レビュー待ちの PR・変更依頼が付いた PR・停滞・届いていない送信・未読の保留メッセージ)を優先度順に出す。何も書かない
-tb reminders --check     出すものがあれば 0、無ければ 3(何も出さず、何も書かない。定期実行で --check || exit 0)
-tb reminders --publish [--json]   まとめを出し、前回の記録(notify_seen の reminders:*)を更新する。同じ項目は「継続(N 日目)」の 1 行。1 日 1 回は全件
+tb reminder list [--json]   人が忘れているかもしれないもの(期限・質問・承認待ち・レビュー待ちの PR・変更依頼が付いた PR・停滞・届いていない送信・未読の保留メッセージ)を優先度順に出す。何も書かない
+tb reminder check     出すものがあれば 0、無ければ 3(何も出さず、何も書かない。定期実行で --check || exit 0)
+tb reminder publish [--json]   まとめを出し、前回の記録(notify_seen の reminders:*)を更新する。同じ項目は「継続(N 日目)」の 1 行。1 日 1 回は全件
+  別名(古い名前): tb reminders [--json] / tb reminders --check / tb reminders --publish [--json] (tb reminder だけでサブコマンドの一覧)
 tb deadlines-import [-p project(既定 deadline)] [--dry-run]   期限ファイル(deadlines.conf)の行を担当なし・期日つきのチケットにする(人だけ。同じ題・期日があれば作らない)
 
 agent 間の送信(herdr agent prompt を直接打たない。送信者は herdr から決まり、設定 delivery の 1 つの表で 届ける / 保留する / 止める が決まる。旧 routes も互換で読む):
@@ -82,11 +84,12 @@ tb message send <宛先 agent 名> --text T [--task T-..] [--kind task|info|answ
          --reply-to O-<n>: 自分宛てに届いた O-<n> への返信。tb が DB で確かめ(O-<n> が宛先 → 自分で、届いていて、未返信)、認めれば reply= の規則で届ける
          終了コード 0=送信済み 10=宛先使用中で outbox に積んだ 11=送信失敗で積んだ 4=ルールで拒否・止めた 20=人の承認待ち 3=送信者を特定できず未保存 12=保留に失敗して積んだ
 tb message flush   積まれた送信を届ける(tb digest も最初に呼ぶ)
-tb nudge [<宛先> ...] [--pool] [--dry-run] [--idle-min N(既定 15)] [--max N(既定 3)] [--json]   チケット(既定は active の分類。設定 nudge の wake で分類・状態の名前を選べる。wake は既定を置き換えるので、active も催促するなら wake active todo のように書く)を握ったまま休んでいる agent に、指揮役から「続けて」と送る(tb message send と同じ outbox と delivery)。人の端末か scheduler から
+tb reminder nudge [<宛先> ...] [--pool] [--dry-run] [--idle-min N(既定 15)] [--max N(既定 3)] [--json]   チケット(既定は active の分類。設定 nudge の wake で分類・状態の名前を選べる。wake は既定を置き換えるので、active も催促するなら wake active todo のように書く)を握ったまま休んでいる agent に、指揮役から「続けて」と送る(tb message send と同じ outbox と delivery)。人の端末か scheduler から
          <宛先>: agent 名の glob か @役割の glob(複数は和集合)。明示した宛先には ignore を適用しない。当たる agent がいなければ skip の行を出す
          --pool: チケットを握っておらず、担当の todo/active/review/blocked も無い agent に、自分の team ラベル(team:<x>。役割 domain-<x> → 名前の -lead → 組織図の上司の順で決める)の担当なし todo を優先度順に 1 件取りに行かせる(同じ回で同じ候補は 1 人だけ)
          飛ばす: working / blocked・設定 nudge の ignore(設定 nudge が無いあいだは以前どおり指揮役・保護 protect)・人の返事待ち(未対応の question/blocked)・先行チケット待ち・delivery が now でない・この休みで催促済み・同じチケットで --max 回催促済み
          複数を握っていれば active を先に、優先度の高い 1 枚を名指しし、ほかの active は todo に戻すよう書く。出力は agent チケット 結果(sent|would|skip|held|blocked) 理由
+  別名(古い名前): tb nudge 
 tb message outbox [--status pending|queued|sent|denied] [--json]
 tb message inbox [--unread] [--json]   自分宛てに保留された送信(delivery の設定で hold になったもの)の一覧。読めるのは自分宛てだけ
 tb message read I-<n> [--json]   保留された送信を全文で読み、既読にする

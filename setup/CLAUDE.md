@@ -73,7 +73,7 @@ agent の名前・プロンプト・権限(approvals / grants / routes / deliver
   - `statuses`: チケットの状態の流れ(既定は todo / in_progress / review / done / blocked / cancelled)。運用に合わせて足す・名前を変えるときだけ。
     例は `setup/examples/statuses.conf`(書式は `taskboard/config/statuses.conf.example`)。tb のコマンドと nudge・digest などは
     状態の名前ではなく分類で動くので、入れた後も役割の文面やジョブは変えなくてよい。承認後に `bash taskboard/bin/tb config set statuses --shared < <本文>`。
-  - `system-labels`: tb 自身が付ける・探すラベルの名前(期限の `deadline`、`tb nudge --pool` の team のラベルの形 `team:{team}`)。
+  - `system-labels`: tb 自身が付ける・探すラベルの名前(期限の `deadline`、`tb reminder nudge --pool` の team のラベルの形 `team:{team}`)。
     team のラベルを別の形で運用しているときだけ(例 `team = squad/{team}`。書式は `taskboard/config/system-labels.conf.example`)。
 - 定期実行で役割を使うもの(`scheduler/jobs/watch.conf.example` / `sweeper.conf.example` / `auditor.conf.example`)は、
   対応する役割を入れた後に「4. scheduler のジョブ」で設定する。
