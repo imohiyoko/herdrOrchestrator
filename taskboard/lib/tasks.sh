@@ -32,7 +32,7 @@ config_validate_labels() {  # $1=本文
     n=$((n + 1))
     line=$(trim "${line%%#*}"); [[ -n $line ]] || continue
     k=$(trim "${line%%=*}")
-    if [[ -z $k || ${#k} -gt 40 || $k =~ [[:space:],\"\'] ]]; then
+    if [[ -z $k ]] || (( $(char_len "$k") > 40 )) || [[ $k =~ [[:space:],\"\'] ]]; then   # 文字数はロケールに頼らない(char_len)
       bad+="${n} 行目: ラベルは 1〜40 文字で、空白・カンマ・引用符を含まない: $k"$'\n'
     elif [[ $seen == *" $k "* ]]; then
       bad+="${n} 行目: ラベルが重複しています: $k"$'\n'

@@ -192,14 +192,14 @@ system_labels_parse() {  # $1=本文 → SYSLABEL_PARSED(用途<TAB>ラベル �
     line=$(trim "${line%%#*}"); [[ -n $line ]] || continue
     [[ $line == *=* ]] || { bad+="${n} 行目: <用途> = <ラベル> の形ではありません: $line"$'\n'; continue; }
     k=$(trim "${line%%=*}"); v=$(trim "${line#*=}")
-    [[ -n ${SYSLABEL_BUILTIN[$k]+x} ]] || { bad+="${n} 行目: 知らない用途です: $k(使えるのは: ${!SYSLABEL_BUILTIN[*]})"$'\n'; continue; }
+    [[ -n ${SYSLABEL_BUILTIN[$k]+x} ]] || { bad+="${n} 行目: 知らない用途です: $k(使えるのは: $(printf '%s\n' "${!SYSLABEL_BUILTIN[@]}" | LC_ALL=C sort | paste -sd' ' -))"$'\n'; continue; }
     [[ $seen != *" $k "* ]] || { bad+="${n} 行目: 用途が重複しています: $k"$'\n'; continue; }
     chk=$v
     if [[ $k == team ]]; then
       [[ $v == *"{team}"* ]] || { bad+="${n} 行目: team のラベルには {team} を含める: $v"$'\n'; continue; }
       chk=${v//"{team}"/x}
     fi
-    if [[ ${#chk} -lt 1 || ${#chk} -gt 40 || $chk =~ [[:space:],\"\'] ]]; then bad+="${n} 行目: ラベルは 1〜40 文字で、空白・カンマ・引用符を含まない: $v"$'\n'; continue; fi
+    if [[ -z $chk ]] || (( $(char_len "$chk") > 40 )) || [[ $chk =~ [[:space:],\"\'] ]]; then bad+="${n} 行目: ラベルは 1〜40 文字で、空白・カンマ・引用符を含まない: $v"$'\n'; continue; fi
     seen+="$k "; SYSLABEL_PARSED+="$k"$'\t'"$v"$'\n'
   done <<<"$1"
   [[ -z $bad ]] && return 0
