@@ -17,7 +17,7 @@ Go に移すサービスは、`.claude/skills/tb-command-naming` の形(`tb <サ
 
 | 順 | サービス | コマンド | 状態 |
 | --- | --- | --- | --- |
-| – | ticket(一部) | `list` `show` `tree` `labels` `sprints` `board` `history` `events` `link` `unlink` `sprint-add` `sprint-start` `sprint-close`(残りの書くものは後で。新しい名前 `tb ticket ...` は書くものと一緒に入れる) | 済み |
+| – | ticket(一部) | `list` `show` `tree` `labels` `sprints` `board` `history` `events` `link` `unlink` `sprint-add` `sprint-start` `sprint-close` `claim` `done` `block` `cancel`(残りの書くものは後で。新しい名前 `tb ticket ...` は書くものと一緒に入れる) | 済み |
 | 1 | activity | `touch` `activity` | 済み |
 | 2 | proxy | `proxy request/list/resolve/check`(古い名前 `proxy-*` も) | 済み |
 | 2 | job | `job list/show/set/edit/unset/import/history`(古い名前 `sched-job` も) | 済み |
@@ -34,7 +34,7 @@ Go に移すサービスは、`.claude/skills/tb-command-naming` の形(`tb <サ
 | 4 | reminder | `reminder list/check/publish/scan/nudge`(古い名前 `reminders [--check / --publish]` `due-scan` `nudge` も) | 済み(`deadlines-import` はチケットを作るので ticket の `add` と一緒に後で。それまでは bash の古い名前だけ) |
 | 4 | agent | | まだ |
 | 5 | conv | `conv route/routes-set/draft/voice/voice-check/length/kinds/patterns/lint`、学習の `conv pair-add/pairs/pair-show/candidate-add/ledger/candidate-adopt/candidate-reject/scan/learn-purge`、段階の `conv stage/stage-set/stage-reset/stage-log/incident/gate`(古い名前 `conv-<サブコマンド>` も)。文字列の一般化と検査(sanitize / scan / ratio)は bash と同じく `lib/convtext.py` を呼ぶ | 済み |
-| 5 | ticket(残り) / recipe | | まだ(ticket の書くもの(add・update・claim・done・block・cancel・コメント・report・pending)は続きの PR、recipe は ADR 0005 段 3 の後) |
+| 5 | ticket(残り) / recipe | | まだ(ticket の書くもの(add・update・コメント・report・pending)は続きの PR、recipe は ADR 0005 段 3 の後) |
 | 6 | scheduler の起動器 / webui | | まだ(ADR 0002 の手順 4・5) |
 
 サービスのコマンドより先に、ほかのサービスが使う部品だけを移すことがある(例: approval の PR で `internal/agents` の役割の引き方と `internal/message` の届け方)。そのサービスのコマンドはまだ bash のままで、移す PR でこの部品を使う。
