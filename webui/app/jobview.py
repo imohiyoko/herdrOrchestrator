@@ -150,11 +150,13 @@ TB_CMDS = (
     (r"\btb\s+notify\s+flush\b", "tb notify flush", "通知のキューを進める(承認待ち・定期まとめを Slack などへ送る。返事の無いものは再送)"),
     (r"\btb\s+(?:message\s+)?flush\b", "tb message flush", "届かなかった送信(宛先が作業中など)を再送する"),
     (r"\btb\s+digest\b", "tb digest", "worker から指揮官への報告をまとめて送る"),
-    (r"\btb\s+pr-watch\b", "tb pr-watch", "許可したリポジトリの PR の動き(新規・approve・変更依頼・マージ)を通知に積む"),
+    (r"\btb\s+pr(?:-|\s+)watch\b", "tb pr watch", "許可したリポジトリの PR の動き(新規・approve・変更依頼・マージ)を通知に積む"),
     (r"\btb\s+compact-check\b", "tb compact-check", "文脈が大きくなった待機中の agent に /compact を送る"),
     (r"\btb\s+pending\b", "tb pending", "未報告のタスクと未配送の報告(C-<n>)を一覧する(再送は続く tb report が行う)"),
     (r"\btb\s+system-send\b", "tb system-send", "agent に本文を送る(scheduler からの送信)"),
     (r"\btb\s+review(?:-|\s+)pack\b", "tb review pack", "レビュー用の集計を作る"),
+    (r"\btb\s+pr(?:-|\s+)queue\s+scan\b", "tb pr queue scan", "origin のブランチを走査し、本文があるものを PR 作成キューに積む"),
+    (r"\btb\s+pr(?:-|\s+)queue\s+run\b", "tb pr queue run", "承認済みの PR 作成キューを、ガードを通して draft PR にする"),
 )
 
 

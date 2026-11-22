@@ -1048,6 +1048,9 @@ check("説明: tb message flush と古い名前 tb flush は同じ説明",
 _jd("COMMAND='cd /x && bin/tb review pack --mark; bin/tb review-pack'\n")
 check("説明: tb review pack と古い名前 tb review-pack は同じ説明",
       [c for c, _ in _jv.command_summary(_jv.job_defs("unit")["COMMAND"])] == ["tb review pack"])
+_jd("COMMAND='cd /x && bin/tb pr watch; bin/tb pr-watch; bin/tb pr queue scan; bin/tb pr-queue run'\n")
+check("説明: tb pr watch / pr queue と古い名前 tb pr-watch / pr-queue は同じ説明",
+      [c for c, _ in _jv.command_summary(_jv.job_defs("unit")["COMMAND"])] == ["tb pr watch", "tb pr queue scan", "tb pr queue run"])
 os.remove(os.path.join(_J, "unit.conf"))
 # 既定は DB だけ(scheduler と同じ): SCHED_FILE_FALLBACK が無ければ jobs/*.conf のジョブは一覧に出さず、「未取り込み」として知らせる
 import app.jobs as _jobs  # noqa: E402

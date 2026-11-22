@@ -79,6 +79,17 @@ func Scan(s string) (kinds string, hits []string) {
 	return strings.Join(ks, ", "), hits
 }
 
+// PatternKinds は pq_patterns_only: 決まった形(長い連なりは見ない)のうち見つかった種類の名前(", " 区切り)。値は返さない。
+func PatternKinds(s string) string {
+	var ks []string
+	for _, p := range secretPatterns {
+		if len(grepO(p.re, s)) > 0 {
+			ks = append(ks, p.name)
+		}
+	}
+	return strings.Join(ks, ", ")
+}
+
 // Redact は notify_redact: 見つけた文字列を長いものから順に [伏せた秘密] にする(sort -rn と同じ順)。
 func Redact(t string, hits []string) string {
 	type h struct {

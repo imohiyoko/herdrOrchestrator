@@ -4,7 +4,7 @@
 # - 読み取り専用。書くのは notify_seen の自分の行(キーが reminders: で始まるもの)だけ
 # - 材料: 未対応の質問・ブロック報告 / 承認待ち(送信・agent 操作・代行依頼・アラートの解析役)/ 宛先に届いていない送信 /
 #         停滞したタスク(最後の動きは更新と履歴 task_events)/ 期限(tasks.due 列があれば。無くても期限ファイル)/ 未読の保留メッセージ(inbox 表があれば)/
-#         変更依頼が付いたままの PR(tb pr-watch がチケットの履歴に残したもの)/
+#         変更依頼が付いたままの PR(tb pr watch がチケットの履歴に残したもの)/
 #         許可リストのリポジトリの、レビュー待ちの PR(gh で読むだけ)
 # - 本文は出さない。題(短い見出し)と参照 ID だけ。出す前に秘密らしい値を探して伏せる(notify と同じ規則)
 # - 出力は stdout と、Web UI が読む行(notify_seen の reminders:last)。agent にも外にも送らない
@@ -55,7 +55,7 @@ reminders_collect_db() {
   fi
   parts+=("SELECT 3, 'stall:'||id, status || ':' || $last, '停滞: ' || id || ' ' || title, COALESCE(owner_agent, '-'), '', id, $last
     FROM tasks WHERE status IN ($ST_ACTIVE_SQL) AND (julianday('now') - julianday($last)) * 24 > $REMINDERS_STALE_HOURS")
-  # 変更依頼が付いたままの PR(tb pr-watch がチケットに残した最後の PR の出来事が pr_changes。ADR 0003 の段 4c)。担当の番
+  # 変更依頼が付いたままの PR(tb pr watch がチケットに残した最後の PR の出来事が pr_changes。ADR 0003 の段 4c)。担当の番
   if reminders_has_col task_events task_id; then
     parts+=("SELECT 2, 'prchg:'||e.task_id||':'||e.new, 'E-'||e.id, '変更依頼の PR: ' || e.new || ' (' || e.task_id || ' ' || t.title || ')',
         COALESCE(t.owner_agent, '人'), '', e.task_id, e.created_at
