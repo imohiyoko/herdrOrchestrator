@@ -2,6 +2,7 @@
 -- read は tb peek で他の agent の中身を読んだ記録(拒否は denied)。role は人事役が tb role-set でロールを変えた記録(人の操作は辺にしない)。
 -- 列: verb, src, dst, project, status, n(件数), last_at
 -- src / dst が NULL の行は project の指揮官(config/projects.conf、無ければ conductor)で埋める(lead は src、report は dst)。
+-- __HELD_STATUSES__ は担当が持っている状態(分類 active / review / blocked。設定 statuses)の一覧で、読む側(tb・Web UI)が SQL のリテラルに置き換える。
 -- status は記録時点の判定(send の denied = routes.conf で拒否された試み)。期間は直近 7 日(lead と spawn は今の状態)
 SELECT 'spawn' AS verb, spawned_by AS src, name AS dst, NULL AS project, 'ok' AS status, 1 AS n, created_at AS last_at
   FROM agents
@@ -10,7 +11,7 @@ SELECT 'spawn' AS verb, spawned_by AS src, name AS dst, NULL AS project, 'ok' AS
 UNION ALL
 SELECT 'lead', NULL, owner_agent, project, 'ok', COUNT(*), MAX(updated_at)
   FROM tasks
-  WHERE owner_agent IS NOT NULL AND owner_agent != '' AND status IN ('in_progress', 'review', 'blocked')
+  WHERE owner_agent IS NOT NULL AND owner_agent != '' AND status IN (__HELD_STATUSES__)
     -- アラート・提案のチケット(020)は指揮官が任せた仕事ではない(解析役は analyze、提案は設定役の担当)
     AND id NOT IN (SELECT task_id FROM alert_details UNION ALL SELECT task_id FROM proposal_details)
   GROUP BY owner_agent, project

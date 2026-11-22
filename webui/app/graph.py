@@ -143,6 +143,7 @@ def target_for(project, path=None):
 
 
 def edge_sql():
+    # __HELD_STATUSES__(担当が持っている状態。設定 statuses)は data.q が実行の前に埋める
     return "\n".join(ln for ln in _read_lines(EDGES_SQL) if not ln.startswith("--"))
 
 

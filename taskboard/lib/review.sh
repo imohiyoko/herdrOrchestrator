@@ -62,7 +62,7 @@ cmd_review-pack() {
   tsv "SELECT a.name, COALESCE(a.role,'-'), p.np, COALESCE(rc.n,0), p.ps
        FROM agents a
        LEFT JOIN (SELECT owner_agent, COUNT(DISTINCT project) AS np, group_concat(DISTINCT project) AS ps FROM tasks
-                  WHERE owner_agent IS NOT NULL AND (status IN ('in_progress','review','blocked') OR updated_at > $(q "$since"))
+                  WHERE owner_agent IS NOT NULL AND (status IN ($ST_HELD_SQL) OR updated_at > $(q "$since"))
                   GROUP BY owner_agent) p ON p.owner_agent=a.name
        LEFT JOIN (SELECT agent, COUNT(*) AS n FROM role_changes WHERE $w GROUP BY agent) rc ON rc.agent=a.name
        WHERE (COALESCE(p.np,0) > 1 OR COALESCE(rc.n,0) > 0) ORDER BY COALESCE(p.np,0) DESC, a.name LIMIT $lim;"

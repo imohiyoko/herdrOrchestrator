@@ -10,6 +10,7 @@ tb は役職(指揮官・人事・見張りなど)を前提にしない。既定
 | `roles/map.conf` | agent 名のパターン → 役割(例 `worker* = worker`) |
 | `org.conf` | 組織図(誰の上司は誰か)の例。`tb config set org` で入れる。全員が `tb org` で見られる |
 | `org-rules.conf` | 組織図の関係(`~report` / `~manager` など)を使う grants と delivery の行の例 |
+| `statuses.conf` | チケットの状態の例(確認を 2 段にし、名前を日本語にする)。`tb config set statuses --shared` で入れる。書式は `taskboard/config/statuses.conf.example` |
 | `presets/roles.conf` | 上の役割で workspace を並べるプリセット(`presets/<名前>.conf` にコピーして使う) |
 
 入れ方(DB に書く。書く前に人の承認を取る)と、役割に合わせて変える設定(projects / org / grants / spawn-policy / role-models / messages)は

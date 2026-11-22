@@ -145,6 +145,12 @@ eq "nudge --pool: 取りまとめ役への送信は task・文面に候補" "$(n
 eq "nudge --pool: 文面" "$(grep '^prompt team-a-lead' "$FAKE_LOG" | grep -c '優先度の高い順(highest→lowest、同順位は古い順)に 1 件 claim')" "1"
 eq "nudge --pool: 文面の claim に本人の名前と session" "$(grep '^prompt team-a-lead' "$FAKE_LOG" | grep -c "tb claim $ph1 --owner team-a-lead --session sm")" "1"
 eq "nudge --pool: 同じ休みでは二度送らない" "$($TB nudge 'team-a-lead' --pool --dry-run | grep "^team-a-lead${TAB}" | grep -c '催促済み')" "1"
+# team のラベルの形は設定 system-labels の team で変えられる({team} が team の名前)
+printf 'solo -> team-a-lead\n' >"$TMP/nudge-org.conf"; printf 'team = squad/{team}\n' >"$TMP/nudge-syslabels.conf"
+eq "nudge --pool: system-labels の team の形で探す(無ければ skip)" "$(TB_ORG=$TMP/nudge-org.conf TB_SYSTEM_LABELS=$TMP/nudge-syslabels.conf $TB nudge solo --pool --dry-run | grep "^solo${TAB}" | cut -f3-4 | tr '\t' ' ')" "skip 担当なしの todo が無い(squad/team-a)"
+psq=$($TB add -p ng -t 'squad の形' -l squad/team-a)
+eq "nudge --pool: system-labels の team の形のチケットを名指し" "$(out=$(TB_ORG=$TMP/nudge-org.conf TB_SYSTEM_LABELS=$TMP/nudge-syslabels.conf $TB nudge solo --pool --dry-run); row solo)" "$psq would"
+$TB cancel "$psq" >/dev/null
 # 握っているのが親(epic)だけなら催促しない(--pool なし)
 pg=$($TB add -p ng -t '親だけ握る' --type epic --owner team-a-lead); $TB update "$pg" --status in_progress >/dev/null
 nsql "DELETE FROM outbox WHERE target='team-a-lead';"; rest sm 30

@@ -1,10 +1,10 @@
 tb add -p <project> -t <title> [--parent ID] [--owner N] [--session S] [--account A]   → ID を表示
        [--type epic|story|task|bug|subtask] [--priority highest|high|medium|low|lowest] [-l ラベル[,ラベル]] ... [--desc 説明] [--ref [種類=]URL ...] [--due YYYY-MM-DD] [--sprint S-n] [--points N]
        既定は task / medium。epic は親なし、subtask は親が必須(親は story/task/bug)、subtask は親になれない
-tb list [-p project] [-s status] [--type T] [--priority P] [-l ラベル ...(すべてを持つもの)] [--owner N] [--parent ID]
+tb list [-p project] [-s 状態(設定 statuses の名前)] [--type T] [--priority P] [-l ラベル ...(すべてを持つもの)] [--owner N] [--parent ID]
         [--overdue] [--due-within N] [--has-due] [--sprint S-n|backlog] [--sort priority|updated|created|id|due] [--long] [--json]
         --long は ID 状態 種別 優先度 担当 作成 更新 ラベル 題 期日 スプリント ポイント(既定は ID 状態 担当 題 優先度。無いものは -)
-        --overdue は期日が今日より前、--due-within N は今日〜N 日後(0 は今日だけ)。どちらも done と期日なしは出さない
+        --overdue は期日が今日より前、--due-within N は今日〜N 日後(0 は今日だけ)。どちらも閉じたもの(分類 done / cancelled)と期日なしは出さない
         「今日」は端末の地方時の日付(TB_TODAY=YYYY-MM-DD で固定できる)
 tb show <id>        labels・refs(外部リンク)と links(blocks / blocked_by / relates / duplicates / duplicated_by)も出す
 tb tree <id> | tree -p <project>   親子を字下げで(ID 種別 優先度 状態 担当 題)
@@ -19,13 +19,15 @@ tb sprint-add -p <project> -n <名前> [--start YYYY-MM-DD] [--end YYYY-MM-DD] [
 tb sprint-start S-n                 planned → active(1 つの project で active は 1 つ)
 tb sprint-close S-n [--carry S-m]   閉じる。終わっていないタスクは S-m(省略時はバックログ)へ
 tb sprints [-p project] [--state planned|active|closed] [--json]   件数・完了・ポイント(cancelled は件数・ポイントに数えない)
-tb board [S-n | -p project] [-l ラベル] [--json]   状態ごとの列(-p だけならその project の active なスプリント)
-tb claim <id> --owner <name> [--session S] [--account A]    todo → in_progress(todo 以外は失敗)
-tb update <id> [--status todo|in_progress|review|blocked] [--title T] [--owner N] [--session S] [--account A] [--parent ID]
+tb board [S-n | -p project] [-l ラベル] [--json]   状態ごとの列(-p だけならその project の active なスプリント。列は分類の順)
+  状態は設定 statuses(1 行「<状態> <分類> [= 説明]」。分類は todo / active / review / blocked / done / cancelled)で足したり名前を変えたりできる。
+  無ければ todo in_progress review done blocked cancelled。下のコマンドが書く状態は、その分類で最初に書いた状態
+tb claim <id> --owner <name> [--session S] [--account A]    todo → in_progress(分類 todo → 分類 active の先頭。todo の分類以外は失敗)
+tb update <id> [--status 状態(分類 todo / active / review / blocked のもの)] [--title T] [--owner N] [--session S] [--account A] [--parent ID]
            [--type T] [--priority P] [--desc D] [--due YYYY-MM-DD(''で外す)] [--label L ...(置き換え。'' で全部外す)] [--add-label L] [--remove-label L] [--add-ref [種類=]URL] [--remove-ref URL] [--sprint S-n|''] [--points N|'']
 tb done <id> -d <成果物> [-d ...] -m <要約>                  成果物と要約が必須。reported_at は空のまま
-tb block <id> [-m <理由>]
-tb cancel <id> [-m <理由>]   やらないと決めたタスクを閉じる(cancelled)。done と同じく閉じた状態で、期限切れ・nudge・先行チケット待ちの対象から外れる。完了報告には出さない
+tb block <id> [-m <理由>]   分類 blocked の先頭へ(既定 blocked)。tb done は分類 done の先頭へ(既定 done)
+tb cancel <id> [-m <理由>]   やらないと決めたタスクを閉じる(分類 cancelled の先頭。既定 cancelled)。done と同じく閉じた状態で、期限切れ・nudge・先行チケット待ちの対象から外れる。完了報告には出さない
 tb report <id>      完了の報告を done の報告コメント(C-<n>)にして指示役へすぐ届ける。届いたときだけ reported_at を埋める(打たなくても tb digest が届ける)
                     終了コード 0=送信済み/報告済み 10=宛先が使用中で未送信 11=送信/状態取得に失敗
 tb pending [--json|--ids]   done なのに未報告のタスク
@@ -38,7 +40,7 @@ tb proxy-check <id>   1 行目が allow(自動代行可)か human(人に回す)�
 
 agent の活動記録(hook から。bin/tb-hook 経由が基本):
 tb db-import <旧 DB> [--session <名前>] [--dry-run]   旧形式(checkout ごと)の DB を、共有の DB の 1 セッション(既定は今のセッション)の行として取り込む。人の端末だけ。元の DB は読むだけ
-tb config [list]   設定(projects / approvals / grants / routes / delivery / limits / notify / compact / slash / sched-watch / spawn-policy / nudge / role-models / conv-routes / conv-learn / conv-stages / protect / org)の出どころを出す。引く順: 環境変数で明示したファイル > DB のこのセッションの行 > DB の共通の行(*) > checkout の taskboard/config/<名前> > .example
+tb config [list]   設定(projects / approvals / grants / routes / delivery / limits / notify / compact / slash / sched-watch / spawn-policy / nudge / role-models / conv-routes / conv-learn / conv-stages / protect / org / labels / messages / statuses / system-labels)の出どころを出す。引く順: 環境変数で明示したファイル > DB のこのセッションの行 > DB の共通の行(*) > checkout の taskboard/config/<名前> > .example
 tb config show <キー> | history <キー>   今効いている本文 / 変更の履歴
 tb config set <キー> [--shared] < 本文 | edit <キー> [--shared] | unset <キー> [--shared]   DB のこのセッションの行(--shared なら全セッション共通の行)を書く・消す。人の端末だけ
 tb config import [--dry-run]   checkout の taskboard/config/*.conf を、全セッション共通の行として DB に取り込む(共通の行が既にあるキーは飛ばす)。人の端末だけ

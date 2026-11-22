@@ -70,6 +70,11 @@ agent の名前・プロンプト・権限(approvals / grants / routes / deliver
   - `spawn-policy`: 子 agent に使わせる役割。既定は役割なしの子だけ(`allowed_roles = -`)。worker を入れたら `allowed_roles = -, worker`。
   - `role-models`: 役割ごとの既定モデル(`<役割> = haiku`、名前で決めるなら `name:<glob> = haiku`)。
   - `messages`: agent に返す文面の差し替え(例は `taskboard/config/messages.conf.example`)。役割の名前を出したいときはここで書く。
+  - `statuses`: チケットの状態の流れ(既定は todo / in_progress / review / done / blocked / cancelled)。運用に合わせて足す・名前を変えるときだけ。
+    例は `setup/examples/statuses.conf`(書式は `taskboard/config/statuses.conf.example`)。tb のコマンドと nudge・digest などは
+    状態の名前ではなく分類で動くので、入れた後も役割の文面やジョブは変えなくてよい。承認後に `bash taskboard/bin/tb config set statuses --shared < <本文>`。
+  - `system-labels`: tb 自身が付ける・探すラベルの名前(期限の `deadline`、`tb nudge --pool` の team のラベルの形 `team:{team}`)。
+    team のラベルを別の形で運用しているときだけ(例 `team = squad/{team}`。書式は `taskboard/config/system-labels.conf.example`)。
 - 定期実行で役割を使うもの(`scheduler/jobs/watch.conf.example` / `sweeper.conf.example` / `auditor.conf.example`)は、
   対応する役割を入れた後に「4. scheduler のジョブ」で設定する。
 

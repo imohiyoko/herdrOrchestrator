@@ -32,7 +32,7 @@ deliver_comment() {  # $1=comments.id → 0 送信済み / 10 / 11
 # done の報告コメントが届いたら、そのタスク(done のもの)を報告済みにする(tb report と digest の両方から)
 comment_marks_reported() {  # $1=comments.id $2=時刻
   sql "UPDATE main.tasks SET reported_at=$(q "$2"), updated_at=$(q "$2")
-         WHERE herdr_session=$SQS AND status='done' AND reported_at IS NULL
+         WHERE herdr_session=$SQS AND status IN ($ST_DONE_SQL) AND reported_at IS NULL
            AND id=(SELECT task_id FROM comments WHERE id=$1 AND kind='done');"
 }
 

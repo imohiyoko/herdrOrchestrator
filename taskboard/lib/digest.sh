@@ -43,7 +43,7 @@ collect_digest() {
     id=$(jq -r .id <<<"$r"); project=$(jq -r .project <<<"$r"); owner=$(jq -r '.owner_agent // "-"' <<<"$r")
     summary=$(jq -r '.summary // ""' <<<"$r"); dels=$(jq -r '.deliverables | fromjson | join(", ")' <<<"$r")
     add_item "$(target_for "$project")" task "$id" "" "$id" "" "$id done / $owner" "$summary / 成果物: $dels"
-  done < <(sql -json "SELECT * FROM tasks WHERE status='done' AND (reported_at IS NULL OR reported_at='')
+  done < <(sql -json "SELECT * FROM tasks WHERE status IN ($ST_DONE_SQL) AND (reported_at IS NULL OR reported_at='')
              AND NOT EXISTS (SELECT 1 FROM comments c WHERE c.task_id=tasks.id AND c.kind='done' AND c.delivered_at IS NULL)
              ORDER BY updated_at, id;" | jq -c '(. // [])[]')   # 未配送の done コメントがあるものは 1. で届く
   # 2b. アラート: 新しく登録されたもの(まだまとめに入れていない)と、届いていない解析結果
@@ -76,11 +76,11 @@ collect_digest() {
     [[ -n $id ]] || continue
     obs_seen "$key" && continue
     add_item "$(target_for "$project")" obs "$id" "$key" "$id" idle "$id 観測 / $owner" \
-      "turn が終わって $m 分たつが、タスクは in_progress のまま(done・報告なし)"
+      "turn が終わって $m 分たつが、タスクは $(st_main active) のまま($(st_main done)・報告なし)"
   done < <(sql -separator $'\t' "SELECT t.id, t.project, COALESCE(t.owner_agent,'-'), 'idle:'||t.id||':'||a.last_stop_at,
              CAST((julianday('now') - julianday(a.last_stop_at)) * 1440 AS INTEGER)
              FROM tasks t JOIN main.agent_activity a ON a.session_id=t.session_id
-             WHERE t.status='in_progress' AND a.last_stop_at IS NOT NULL
+             WHERE t.status IN ($ST_ACTIVE_SQL) AND a.last_stop_at IS NOT NULL
                AND (a.last_prompt_at IS NULL OR a.last_prompt_at <= a.last_stop_at)
                AND (julianday('now') - julianday(a.last_stop_at)) * 1440 >= $DIGEST_IDLE_MIN ORDER BY t.id;")
   # 3b. 観測: 1 体の agent が in_progress のチケットを複数握っている(タスク agent は 1 枚が原則。tb nudge の文面でも本人に知らせる)
@@ -91,11 +91,11 @@ collect_digest() {
     key="multi:$owner:$list"; multi+="$(q "$key"),"
     obs_seen "$key" && continue
     add_item "$(target_for "$project")" obs "${list%%,*}" "$key" "${list%%,*}" multi "$owner 観測 / 複数チケット" \
-      "in_progress のチケットを $(tr ',' '\n' <<<"$list" | grep -c .) 枚握っている(${list//,/ })。1 枚に絞るか、ほかを todo に戻すか、別の agent に回す"
+      "$(st_main active) のチケットを $(tr ',' '\n' <<<"$list" | grep -c .) 枚握っている(${list//,/ })。1 枚に絞るか、ほかを $(st_main todo) に戻すか、別の agent に回す"
   #     tb nudge と同じく、epic と完了していない子を持つ親は数えない(取りまとめ役が親と子を 1 枚ずつ持つのは普通)
   done < <(sql -separator $'\t' "SELECT owner_agent, group_concat(id, ','), MIN(project) FROM (SELECT t.owner_agent, t.id, t.project FROM tasks t
-             WHERE t.status='in_progress' AND t.owner_agent IS NOT NULL AND t.owner_agent!='' AND t.type!='epic'
-               AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id=t.id AND c.status NOT IN ('done','cancelled')) ORDER BY t.id)
+             WHERE t.status IN ($ST_ACTIVE_SQL) AND t.owner_agent IS NOT NULL AND t.owner_agent!='' AND t.type!='epic'
+               AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id=t.id AND c.status NOT IN ($ST_CLOSED_SQL)) ORDER BY t.id)
              GROUP BY owner_agent HAVING COUNT(*) > 1 ORDER BY owner_agent;")
   sql "DELETE FROM main.observations WHERE herdr_session=$SQS AND kind='multi' AND key NOT IN (${multi}'');"
   # 4. 観測: DIGEST_STUCK_MIN 分以上 working のまま
@@ -107,7 +107,7 @@ collect_digest() {
   done < <(sql -separator $'\t' "SELECT t.id, t.project, COALESCE(t.owner_agent,'-'), 'stuck:'||a.session_id||':'||a.last_prompt_at,
              CAST((julianday('now') - julianday(a.last_prompt_at)) * 1440 AS INTEGER)
              FROM tasks t JOIN main.agent_activity a ON a.session_id=t.session_id
-             WHERE t.status IN ('in_progress','review','blocked') AND a.last_prompt_at IS NOT NULL
+             WHERE t.status IN ($ST_HELD_SQL) AND a.last_prompt_at IS NOT NULL
                AND (a.last_stop_at IS NULL OR a.last_prompt_at > a.last_stop_at)
                AND (julianday('now') - julianday(a.last_prompt_at)) * 1440 >= $DIGEST_STUCK_MIN ORDER BY t.id;")
   # 4b. 観測: outbox が DIGEST_QUEUED_SEC 秒以上 queued のまま(宛先に届いていない)。queued が無ければ何も出さない
@@ -125,7 +125,7 @@ collect_digest() {
       [[ -n $pane ]] || continue
       key="blocked:$pane:$sess"; current+="$(q "$key"),"
       obs_seen "$key" && continue
-      task=$(sql -separator $'\t' "SELECT id, project FROM tasks WHERE status NOT IN ('done','cancelled')
+      task=$(sql -separator $'\t' "SELECT id, project FROM tasks WHERE status NOT IN ($ST_CLOSED_SQL)
                AND ((session_id IS NOT NULL AND session_id=$(q "$sess")) OR (owner_agent IS NOT NULL AND owner_agent=$(q "$name")))
                ORDER BY updated_at DESC LIMIT 1;")
       [[ -n $task ]] || continue
@@ -169,7 +169,7 @@ collect_spawn_obs() {
     add_item "$(target_for "$project")" obs "$task" "$key" "$task" spawnorphan "$task 観測 / $parent" \
       "親のタスクが $st になったが、子 $id はまだ動いている(止めるなら tb agent-stop $id)"
   done < <(sql -separator $'\t' "SELECT a.name, a.spawned_by, a.spawn_task, t.status, t.project FROM agents a JOIN tasks t ON t.id=a.spawn_task
-             WHERE a.spawned_by IS NOT NULL AND a.state='running' AND t.status IN ('done','cancelled','blocked') ORDER BY a.name;")
+             WHERE a.spawned_by IS NOT NULL AND a.state='running' AND t.status IN ($ST_CLOSED_SQL,$(st_sql blocked)) ORDER BY a.name;")
   # 条件が外れたものは記録を消す(再び当てはまったら、また送る)
   sql "DELETE FROM main.observations WHERE herdr_session=$SQS AND kind IN ('spawnlimit','spawnorphan') AND key NOT IN (${current}'');"
 }

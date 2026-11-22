@@ -78,7 +78,7 @@ tb whoami --short   # herdr セッション名だけ
 
 ### チケットの構造(種別・優先度・ラベル・説明・リンク)
 
-Jira に近い形でタスクを整理できる。状態(todo / in_progress / review / done / blocked / cancelled)と遷移は変えない。
+Jira に近い形でタスクを整理できる。状態は既定で todo / in_progress / review / done / blocked / cancelled で、設定 `statuses` で足したり名前を変えたりできる(下の「状態を設定で変える」)。
 
 ```bash
 tb add -p web -t "ログイン刷新" --type epic --priority high -l auth,ui
@@ -96,7 +96,7 @@ tb update T-web-002 --add-label frontend --remove-label ui --priority highest
 - **種別** `--type`: `epic` / `story` / `task`(既定)/ `bug` / `subtask`。epic は親を持たない。subtask は親が必須で、親は story / task / bug。subtask は誰の親にもなれない。親子の循環は止める。
 - **優先度** `--priority`: `highest` / `high` / `medium`(既定)/ `low` / `lowest`。`tb list --sort priority` と Web UI の「優先度が高い順」で並ぶ。
 - **ラベル** `-l` / `--label`: 何個でも(繰り返しかカンマ区切り)。1〜40 文字で空白・カンマ・引用符は使えない(日本語は可)。agent は `tb list -l <ラベル>` で自分の分野のチケットだけを見られる。
-- **用意したラベル**(設定 `labels`): 人が `tb config edit labels` で 1 行 1 つ `<ラベル> [= 説明]` を書くと、`tb add -l` / `tb update --label` / `--add-label` で付けられるのはそのラベルと tb 自身が付けるラベル(`alert` / `proposal` / `rejected` / `deadline` / `role:*`)だけになる(ほかは終了コード 2 で断り、使えるラベルを出す。打ち間違いや表記ゆれを防ぐ)。外す・絞り込むのは制限しない。設定が無ければ今までどおり自由に付けられる。例は [config/labels.conf.example](config/labels.conf.example)。`tb labels --defined` で書いた順に件数と説明、Web UI のタスク一覧のラベルの絞り込みにも使われる前から出る。
+- **用意したラベル**(設定 `labels`): 人が `tb config edit labels` で 1 行 1 つ `<ラベル> [= 説明]` を書くと、`tb add -l` / `tb update --label` / `--add-label` で付けられるのはそのラベルと tb 自身が付けるラベル(`alert` / `proposal` / `rejected` / `role:*` と、設定 `system-labels` の `deadline`。既定は `deadline`)だけになる(ほかは終了コード 2 で断り、使えるラベルを出す。打ち間違いや表記ゆれを防ぐ)。外す・絞り込むのは制限しない。設定が無ければ今までどおり自由に付けられる。例は [config/labels.conf.example](config/labels.conf.example)。`tb labels --defined` で書いた順に件数と説明、Web UI のタスク一覧のラベルの絞り込みにも使われる前から出る。
 - **緊急度はラベルではなく優先度**: 優先度(`priority` 列)とラベル(`labels` 列)は別の列。「緊急」は `--priority highest`(または `high`)で表し、ラベルには入れない。アラートの緊急度(critical / high / ...)も優先度に写る。
 - **説明** `--desc`: 本文・受け入れ条件。`tb show` と Web UI の詳細に出る。
 - **外部リンク** `--ref [種類=]URL`: Slack のスレッド・PR・ドキュメントなどの URL を何個でも(`tb update --add-ref` / `--remove-ref <URL>` で付け外し)。種類を省くと URL から `slack` / `github` / `link` を決める。http(s) の URL だけ。`tb show` と Web UI の詳細(押せるリンク)に出る。
@@ -105,6 +105,27 @@ tb update T-web-002 --add-label frontend --remove-label ui --priority highest
 - **リンク** `tb link <from> blocks|relates|duplicates <to>`: `blocks` は claim を止める(先行タスクが done か cancelled になれば claim できる)。blocks の循環は止める。`tb show` は向きつき(`blocks` / `blocked_by` など)で出す。
 - `tb list` の既定の出力は ID 状態 担当 題 優先度。前の 4 列の位置は変えず、優先度を最後に足した(列の位置で読む agent が壊れないように)。ただし `IFS=$'\t' read -r id status owner title` のように最後の変数で題を受けていた読み方では、`title` に題と優先度が入るので `read -r id status owner title prio` にする。題の改行とタブは空白にして出す。種別・作成・更新・ラベル・期日は `--long`(または `--json`)で出る。
 - Web UI のタスク一覧は 種別・優先度・ラベル・作成・更新 の列と、種別・優先度・ラベルの絞り込みを持つ。ラベルを押すとそのラベルで絞り込む。
+
+### 状態を設定で変える(設定 `statuses`)
+
+チケットの状態は設定 `statuses` で足したり、外したり、名前を変えたりできる。tb のコマンドと内部の処理(nudge・digest・reminders・shed・agent-spawn・agent-restart・Web UI・Go 版の `tb list`)は状態の **名前ではなく分類** で判断するので、コードを変えずに流れを変えられる。設定が無ければ今までと同じ 6 つ。
+
+```sh
+tb config show statuses 2>/dev/null || cat taskboard/config/statuses.conf.example   # 今の値 / 書式
+printf '%s\n' '未着手 todo' '作業中 active' 'レビュー待ち review' '検証待ち review' '詰まり blocked' '完了 done' '取り消し cancelled' \
+  | tb config set statuses --shared      # 人だけ。書式に誤りがあれば何も書かない(終了コード 1)
+tb config unset statuses --shared        # 組み込みに戻す
+```
+
+- 書式は 1 行 1 つ `<状態> <分類> [= 説明]`。分類は固定の 6 つ: `todo`(未着手)/ `active`(作業中)/ `review`(確認待ち)/ `blocked`(詰まり)/ `done`(完了)/ `cancelled`(取り消し)。`done` と `cancelled` が閉じた状態。`todo` / `active` / `done` の分類にはそれぞれ 1 つ以上要る。組み込みの名前(`in_progress` など)は組み込みの分類にだけ置ける(別の分類にしたい状態は別の名前にする)。例は [config/statuses.conf.example](config/statuses.conf.example)。
+- tb が状態を書くときは、その分類で **最初に書いた** 状態を使う: `tb add` → todo、`tb claim` → active(元は todo の分類のどれでもよい)、`tb block` → blocked、`tb done` → done、`tb cancel` → cancelled。`tb update --status` で選べるのは、設定に書いた todo / active / review / blocked の分類の状態。
+- 分類で決まる振る舞い: nudge が催促するのは active を握っている agent、`--pool` の候補は担当なしの todo。digest の「turn が終わったのに作業中」「複数握っている」は active。agent-shed・agent-kill・Web UI の未完了タスクは active / review / blocked。期限切れ・先行チケット待ち・人の返事待ちは閉じていないもの。`tb report` と完了報告は done、スプリントの件数とポイントは cancelled を除く。ボード(`tb board` と Web UI)の列は分類の順。
+- 組み込みの名前は、設定から外しても組み込みの分類として数える(アラート・提案のチケットは DB のトリガーがこの名前で書くため)。外した状態には `tb update --status` で新しく変えられないが、既にその状態のチケットはボードと Web UI の件数の後ろに出る(黙って見えなくしない)。
+- DB の `status` 列は値の一覧を持たない(スキーマ 024 で CHECK を外し、空でない 30 文字までだけを残した)。一覧は tb と Web UI が設定から読み、書く前に確かめる。
+- agent への文面(`nudge.text` など)は `{active}` / `{todo}` で今の状態の名前を出せる(設定 `messages`)。
+- 手で壊した本文(ファイルを直接書いた・DB を直接書いた)は、警告を出して組み込みの 6 つで動く(`tb config edit statuses` で直す)。
+
+tb 自身が付ける・探すラベルの名前は設定 `system-labels` で変えられる(1 行 1 つ `<用途> = <ラベル>`。例は [config/system-labels.conf.example](config/system-labels.conf.example))。`deadline`(`tb deadlines-import` が付ける。既定 `deadline`)と `team`(`tb nudge --pool` が探す team のラベルの形。`{team}` が team の名前。既定 `team:{team}`)。アラート・提案のラベル(`alert` / `proposal` / `rejected` / `role:*`)は DB のトリガーが付けるので固定。
 
 ### 期日(期限切れ・期限間近)
 

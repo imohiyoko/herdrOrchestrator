@@ -452,18 +452,18 @@ nudge_team_of() {
 
 nudge_text() {  # $1=今やるチケット $2=題 $3=分 $4=握っているほかのチケット(空白区切り。空可)
   local t
-  t=$(msg nudge.text '[催促] {task}「{title}」が in_progress のまま、turn が終わって {minutes} 分止まっています。続きを進めてください。終わったら tb done {task} -d <成果物> -m <要約> と tb report {task}、進められない理由があれば tb block {task} -m <理由> か tb comment {task} --kind question --text <聞きたいこと> で知らせてください。' \
-    task="$1" title="$2" minutes="$3")
+  t=$(msg nudge.text '[催促] {task}「{title}」が {active} のまま、turn が終わって {minutes} 分止まっています。続きを進めてください。終わったら tb done {task} -d <成果物> -m <要約> と tb report {task}、進められない理由があれば tb block {task} -m <理由> か tb comment {task} --kind question --text <聞きたいこと> で知らせてください。' \
+    task="$1" title="$2" minutes="$3" active="$(st_main active)")
   if [[ -n $4 ]]; then
-    t+=$(msg nudge.multi 'あなたは in_progress のチケットをほかにも持っています({others})。1 枚ずつ進めるのが原則なので、まず {task} を進め、今やっていないものは tb update <ID> --status todo で戻すか、tb comment で指示役に相談してください。' \
-      task="$1" others="$4")
+    t+=$(msg nudge.multi 'あなたは {active} のチケットをほかにも持っています({others})。1 枚ずつ進めるのが原則なので、まず {task} を進め、今やっていないものは tb update <ID> --status {todo} で戻すか、tb comment で指示役に相談してください。' \
+      task="$1" others="$4" active="$(st_main active)" todo="$(st_main todo)")
   fi
   printf '%s' "$t"
 }
 
 nudge_pool_text() {  # $1=候補のチケット $2=題 $3=agent 名 $4=session id
-  msg nudge.pool '[取りに行って] 自分の team ラベルの担当なし todo のうち、優先度の高い順(highest→lowest、同順位は古い順)に 1 件 claim して進めてください。1 件ずつです。候補: {task}「{title}」。tb claim {task} --owner {agent} --session {session} で着手してください(先に取られていたら、tb list で次の候補を見てください)。' \
-    task="$1" title="$2" agent="$3" session="$4"
+  msg nudge.pool '[取りに行って] 自分の team ラベルの担当なし {todo} のうち、優先度の高い順(highest→lowest、同順位は古い順)に 1 件 claim して進めてください。1 件ずつです。候補: {task}「{title}」。tb claim {task} --owner {agent} --session {session} で着手してください(先に取られていたら、tb list で次の候補を見てください)。' \
+    task="$1" title="$2" agent="$3" session="$4" todo="$(st_main todo)"
 }
 
 NUDGE_OUT=""
@@ -522,9 +522,9 @@ cmd_nudge() {
     mode=hold
     # 優先度が高い順、同じなら古い順。各行に「done でない先行チケット」の数を付ける
     rows=$(sql -json "SELECT t.id, t.title, t.project,
-        (SELECT COUNT(*) FROM task_links l JOIN tasks b ON b.id=l.from_id WHERE l.to_id=t.id AND l.link_type='blocks' AND b.status NOT IN ('done','cancelled')) AS blockers
-      FROM tasks t WHERE t.status='in_progress' AND t.owner_agent=$(q "$owner")
-        AND t.type!='epic' AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id=t.id AND c.status NOT IN ('done','cancelled'))
+        (SELECT COUNT(*) FROM task_links l JOIN tasks b ON b.id=l.from_id WHERE l.to_id=t.id AND l.link_type='blocks' AND b.status NOT IN ($ST_CLOSED_SQL)) AS blockers
+      FROM tasks t WHERE t.status IN ($ST_ACTIVE_SQL) AND t.owner_agent=$(q "$owner")
+        AND t.type!='epic' AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id=t.id AND c.status NOT IN ($ST_CLOSED_SQL))
       ORDER BY $PRIORITY_RANK, t.updated_at, t.id;")
     rows=${rows:-[]}; n=$(jq length <<<"$rows")
     pick=$(jq -r '[.[] | select(.blockers == 0)][0].id // empty' <<<"$rows")
@@ -534,24 +534,24 @@ cmd_nudge() {
     st=$(jq -r '.agent_status // ""' <<<"$live"); sess=$(jq -r '.agent_session.value // ""' <<<"$live")
     case $st in idle|done) ;; *) nudge_row "$owner" "${pick:--}" skip "herdr の状態が ${st:-不明}"; continue;; esac
     w=$(sql "SELECT group_concat('C-'||c.id, ' ') FROM comments c LEFT JOIN tasks t ON t.id=c.task_id
-          WHERE c.from_name=$(q "$owner") AND c.kind IN ('question','blocked') AND c.resolved_at IS NULL AND COALESCE(t.status,'') NOT IN ('done','cancelled');")
+          WHERE c.from_name=$(q "$owner") AND c.kind IN ('question','blocked') AND c.resolved_at IS NULL AND COALESCE(t.status,'') NOT IN ($ST_CLOSED_SQL);")
     [[ -z $w ]] || { nudge_row "$owner" "${pick:--}" skip "人の返事待ち($w)"; continue; }
     if [[ -z $pick ]]; then
       if ((n > 0)); then nudge_row "$owner" "$(jq -r '.[0].id' <<<"$rows")" skip "先行チケット(blocks)待ち"; continue; fi
       ((pool)) || { nudge_row "$owner" "-" skip "握っているのは親(epic など)だけ"; continue; }
       # 自分が担当の todo(割り当て)・review・blocked があれば、新しい仕事を取りに行かせない(親は数えない)
-      w=$(sql "SELECT group_concat(t.id, ' ') FROM tasks t WHERE t.owner_agent=$(q "$owner") AND t.status IN ('todo','review','blocked') AND t.type!='epic'
-            AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id=t.id AND c.status NOT IN ('done','cancelled'));")
+      w=$(sql "SELECT group_concat(t.id, ' ') FROM tasks t WHERE t.owner_agent=$(q "$owner") AND t.status IN ($(st_sql todo review blocked)) AND t.type!='epic'
+            AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id=t.id AND c.status NOT IN ($ST_CLOSED_SQL));")
       [[ -z $w ]] || { nudge_row "$owner" "-" skip "担当のチケットがある(${w}。--pool では取りに行かせない)"; continue; }
       team=$(nudge_team_of "$owner") || { nudge_row "$owner" "-" skip "team を決められない(--pool)"; continue; }
-      pick=$(sql "SELECT t.id FROM tasks t WHERE t.status='todo' AND (t.owner_agent IS NULL OR t.owner_agent='') AND t.type!='epic'
+      pick=$(sql "SELECT t.id FROM tasks t WHERE t.status IN ($ST_TODO_SQL) AND (t.owner_agent IS NULL OR t.owner_agent='') AND t.type!='epic'
           AND t.id NOT IN (SELECT value FROM json_each($(q "[${offered%,}]")))
           AND NOT EXISTS (SELECT 1 FROM alert_details a WHERE a.task_id=t.id) AND NOT EXISTS (SELECT 1 FROM proposal_details p WHERE p.task_id=t.id)
-          AND EXISTS (SELECT 1 FROM json_each(t.labels) WHERE value=$(q "team:$team"))
-          AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id=t.id AND c.status NOT IN ('done','cancelled'))
-          AND NOT EXISTS (SELECT 1 FROM task_links l JOIN tasks b ON b.id=l.from_id WHERE l.to_id=t.id AND l.link_type='blocks' AND b.status NOT IN ('done','cancelled'))
+          AND EXISTS (SELECT 1 FROM json_each(t.labels) WHERE value=$(q "$(system_label_of team "$team")"))
+          AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id=t.id AND c.status NOT IN ($ST_CLOSED_SQL))
+          AND NOT EXISTS (SELECT 1 FROM task_links l JOIN tasks b ON b.id=l.from_id WHERE l.to_id=t.id AND l.link_type='blocks' AND b.status NOT IN ($ST_CLOSED_SQL))
           ORDER BY $PRIORITY_RANK, t.created_at, t.id LIMIT 1;")
-      [[ -n $pick ]] || { nudge_row "$owner" "-" skip "担当なしの todo が無い(team:$team)"; continue; }
+      [[ -n $pick ]] || { nudge_row "$owner" "-" skip "担当なしの todo が無い($(system_label_of team "$team"))"; continue; }
       mode=pool; rows=$(sql -json "SELECT id, title, project FROM tasks WHERE id=$(q "$pick");"); n=1; others=""
     fi
     # 区切りは空白でない文字(タブだと空の last_prompt_at が詰められて列がずれる)
@@ -581,7 +581,7 @@ cmd_nudge() {
       offered+="\"$pick\","   # dry-run でも同じ選び方になるよう、ここで印を付ける(候補の ID は T-... で引用符を含まない)
       text=$(nudge_pool_text "$pick" "$(oneline "$ptitle" 80)" "$owner" "$sess")
     else text=$(nudge_text "$pick" "$(oneline "$ptitle" 80)" "$mins" "$others"); fi
-    ((n > 1)) && w=" / in_progress $n 枚" || w=""
+    ((n > 1)) && w=" / $(st_main active) $n 枚" || w=""
     if ((dry)); then nudge_row "$owner" "$pick" would "休んで $mins 分 / $sender から$w"; continue; fi
     oid=$(sql "INSERT INTO main.outbox (herdr_session, from_name, from_pane, from_session, target, kind, task_id, text, status, reason, created_at)
       VALUES ($SQS, $(q "$sender"), 'nudge', '', $(q "$owner"), 'task', $(q "$pick"), $(q "$text"), 'queued',
@@ -596,12 +596,12 @@ cmd_nudge() {
       sql "UPDATE main.outbox SET status='denied', reason=reason||' / nudge: 届かず取り下げ(rc $rc)' WHERE herdr_session=$SQS AND id=$oid AND status='queued';"
       nudge_row "$owner" "$pick" skip "O-$oid 届かず取り下げ(rc $rc)"
     fi
-  done < <({ sql "SELECT DISTINCT owner_agent FROM tasks WHERE status='in_progress' AND owner_agent IS NOT NULL AND owner_agent!='';"
+  done < <({ sql "SELECT DISTINCT owner_agent FROM tasks WHERE status IN ($ST_ACTIVE_SQL) AND owner_agent IS NOT NULL AND owner_agent!='';"
              # --pool: チケットを握っていない agent も候補にする(herdr にいるもの)
              ((pool)) && jq -r '.[].name // empty' <<<"$LIVE_AGENTS"; } | sort -u)
   # 明示した宛先で、どの agent にも当たらなかったもの(打ち間違い・チケットを握っていない・herdr にいない)を黙って捨てない
   ((${#targets[@]} == 0)) || for i in "${!targets[@]}"; do
-    [[ -n ${target_hit[i]:-} ]] || nudge_row "${targets[i]}" "-" skip "宛先に当たる agent がいない(in_progress を握っていない・--pool なら herdr にいない)"
+    [[ -n ${target_hit[i]:-} ]] || nudge_row "${targets[i]}" "-" skip "宛先に当たる agent がいない($(st_main active) を握っていない・--pool なら herdr にいない)"
   done
   if ((json)); then printf '%s' "$NUDGE_OUT" | jq -c .
   else printf '%s' "$NUDGE_OUT" | jq -r '[.agent, .task, .result, .reason] | join("\t")'; fi
