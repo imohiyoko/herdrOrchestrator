@@ -13,7 +13,7 @@ eq "claim ok" "$(rc $TB claim $a1 --owner w1 --session s1)" "0"
 eq "claim twice fails" "$(rc $TB claim $a1 --owner w2)" "1"
 eq "owner kept" "$($TB show $a1 | jq -r '.owner_agent+"/"+.session_id+"/"+.status')" "w1/s1/in_progress"
 eq "update status" "$(rc $TB update $a1 --status review)" "0"
-eq "update to done rejected" "$(rc $TB update $a1 --status done)" "2"
+eq "update to unknown status is a usage error" "$(rc $TB update $a1 --status nope)" "2"
 
 # --- done の必須項目
 eq "done without -d/-m" "$(rc $TB done $a1)" "2"
@@ -60,7 +60,8 @@ eq "parent stored" "$($TB show $b2 | jq -r .parent_id)" "$b1"
 eq "bad parent rejected" "$(rc $TB add -p beta -t x --parent T-beta-999)" "1"
 $TB block $b2 -m "wait" >/dev/null
 eq "block" "$($TB list -p beta -s blocked | cut -f1,2)" "$(printf '%s\tblocked' "$b2")"
-eq "done task can't be blocked" "$(rc $TB block $a1)" "1"
+# done も特別扱いしない: 閉じたタスクも block できる(戻すのも自由。完了報告は済んだまま)
+eq "done task can be blocked (reopen)" "$($TB block $a1 >/dev/null; $TB show $a1 | jq -r '.status+"/"+(.reported_at != null | tostring)')" "blocked/true"
 
 # --- claim の上書き防止: 担当が空か --owner と同じ todo だけ取れる
 cg_state() { $TB show "$1" | jq -r '.status+"/"+(.owner_agent // "")'; }

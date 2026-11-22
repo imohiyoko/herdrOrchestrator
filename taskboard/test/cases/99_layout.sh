@@ -3,7 +3,8 @@
 # --- 構成: コマンドと help の対応、herdr を呼ぶ場所
 LIB=$HERE/../lib
 cmds=$(grep -ohE '^cmd_[a-z-]+\(\)' "$LIB"/*.sh | sed 's/^cmd_//; s/()$//' | sort -u)
-missing=""; for c in $cmds; do grep -qE "^tb $c( |$)" "$LIB/help.txt" || missing+=" $c"; done
+# 古い名前は、新しい名前の下の「  別名(...): tb <古い名前> ...」の行に書けばよい(.claude/skills/tb-command-naming)
+missing=""; for c in $cmds; do grep -qE "^tb $c( |$)" "$LIB/help.txt" || grep -qE "^  別名[^:]*:.* tb $c( |$)" "$LIB/help.txt" || missing+=" $c"; done
 eq "layout: every command is in help.txt" "$missing" ""
 mkdir -p "$TMP/pathbin"; ln -sf "$(cd "$HERE/../bin" && pwd)/tb" "$TMP/pathbin/tb"
 eq "layout: works through a symlink on PATH" "$("$TMP/pathbin/tb" help | head -1 | cut -c1-6)" "tb add"

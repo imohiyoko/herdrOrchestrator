@@ -44,7 +44,7 @@ tb block  T-<project>-NNN -m "詰まっている理由"
 tb cancel T-<project>-NNN -m "取り消す理由"
 ```
 
-- `done` と同じく閉じた状態として扱う: `tb update` / `tb block` / `tb done` / `tb claim` はできない。期限切れ・期限間近(`tb list --overdue` / `--due-within` / `tb due-scan` / Web UI)、`tb nudge`、未対応の報告の数え上げには出ない。
+- `done` と同じく閉じた状態として扱う(状態の移動は制限しない。戻すのは `tb ticket move <id> <状態>`。`tb claim` は todo の分類だけ)。期限切れ・期限間近(`tb list --overdue` / `--due-within` / `tb due-scan` / Web UI)、`tb nudge`、未対応の報告の数え上げには出ない。
 - `blocks` の先行タスクが `cancelled` になれば、後続は claim できる(先行待ちが解ける)。
 - 理由は要約(`summary`)に残る。完了ではないので完了報告(`tb digest` / `tb report` / `tb pending`)には出さない。
 - スプリントの件数・ポイント(`tb sprints` / Web UI のボード)の分母には数えない。`tb board` には `cancelled` の列が最後に出る。
@@ -118,12 +118,33 @@ tb config unset statuses --shared        # 組み込みに戻す
 ```
 
 - 書式は 1 行 1 つ `<状態> <分類> [= 説明]`。分類は固定の 6 つ: `todo`(未着手)/ `active`(作業中)/ `review`(確認待ち)/ `blocked`(詰まり)/ `done`(完了)/ `cancelled`(取り消し)。`done` と `cancelled` が閉じた状態。`todo` / `active` / `done` の分類にはそれぞれ 1 つ以上要る。組み込みの名前(`in_progress` など)は組み込みの分類にだけ置ける(別の分類にしたい状態は別の名前にする)。例は [config/statuses.conf.example](config/statuses.conf.example)。
-- tb が状態を書くときは、その分類で **最初に書いた** 状態を使う: `tb add` → todo、`tb claim` → active(元は todo の分類のどれでもよい)、`tb block` → blocked、`tb done` → done、`tb cancel` → cancelled。`tb update --status` で選べるのは、設定に書いた todo / active / review / blocked の分類の状態。
-- 分類で決まる振る舞い: nudge が催促するのは active を握っている agent、`--pool` の候補は担当なしの todo。digest の「turn が終わったのに作業中」「複数握っている」は active。agent-shed・agent-kill・Web UI の未完了タスクは active / review / blocked。期限切れ・先行チケット待ち・人の返事待ちは閉じていないもの。`tb report` と完了報告は done、スプリントの件数とポイントは cancelled を除く。ボード(`tb board` と Web UI)の列は分類の順。
-- 組み込みの名前は、設定から外しても組み込みの分類として数える(アラート・提案のチケットは DB のトリガーがこの名前で書くため)。外した状態には `tb update --status` で新しく変えられないが、既にその状態のチケットはボードと Web UI の件数の後ろに出る(黙って見えなくしない)。
+- tb が状態を書くときは、その分類で **最初に書いた** 状態を使う: `tb add` → todo、`tb claim` → active(元は todo の分類のどれでもよい)、`tb block` → blocked、`tb done` → done、`tb cancel` → cancelled。`tb ticket move` / `tb update --status` で選べるのは、設定に書いたすべての状態(下の「状態を動かす・足す」)。
+- 分類で決まる振る舞い: nudge が催促するのは active を握っている agent(設定 `nudge` の `wake` で分類・状態を選べる)、`--pool` の候補は担当なしの todo。digest の「turn が終わったのに作業中」「複数握っている」は active。agent-shed・agent-kill・Web UI の未完了タスクは active / review / blocked。期限切れ・先行チケット待ち・人の返事待ちは閉じていないもの。`tb report` と完了報告は done、スプリントの件数とポイントは cancelled を除く。ボード(`tb board` と Web UI)の列は分類の順。
+- 組み込みの名前は、設定から外しても組み込みの分類として数える(アラート・提案のチケットは DB のトリガーがこの名前で書くため)。外した状態には `tb ticket move` / `tb update --status` で新しく変えられないが、既にその状態のチケットはボードと Web UI の件数の後ろに出る(黙って見えなくしない)。
 - DB の `status` 列は値の一覧を持たない(スキーマ 024 で CHECK を外し、空でない 30 文字までだけを残した)。一覧は tb と Web UI が設定から読み、書く前に確かめる。
-- agent への文面(`nudge.text` など)は `{active}` / `{todo}` で今の状態の名前を出せる(設定 `messages`)。
+- agent への文面(`nudge.text` など)は `{active}` / `{todo}` で今の状態の名前を、`nudge.text` は `{status}` で名指ししたチケットの状態を出せる(設定 `messages`)。
 - 手で壊した本文(ファイルを直接書いた・DB を直接書いた)は、警告を出して組み込みの 6 つで動く(`tb config edit statuses` で直す)。
+
+### 状態を動かす・足す(`tb ticket`)
+
+状態は特別扱いしない。done・cancelled も含め、どの状態からどの状態へも動かせる(閉じた状態から戻す再オープンも)。
+「閉じているか」は分類(done / cancelled)で決まるので、先行チケット待ち・子チケット・digest・nudge・期限は今までどおり分類で動く。
+
+```sh
+tb ticket move T-web-012 review                 # 任意の状態へ
+tb ticket move T-web-012 done -d PR#12 -m 済み   # -d / -m は任意(tb done は worker の終了手順なので必須のまま)
+tb ticket move T-web-012 in_progress            # done から戻す。成果物と要約は残る
+tb ticket status                                # 状態・分類・チケットの件数・説明(--json も)
+tb ticket status add 検証待ち review -m "QA が確認" --after review   # 状態を足す(人だけ)
+tb ticket status rm 検証待ち --to review          # 外す。残っているチケットは --to の状態へ移す(人だけ)
+```
+
+- `-m` は閉じた分類(done / cancelled)へ動かすときは要約(`summary`)、それ以外はメモ(`note`)に入る。`-d` は done の分類へ動かすときだけ。
+- done の分類に入ると未報告に戻り、完了報告(`tb pending` / `tb digest` / `tb report`)の対象になる。done の通知も出る。cancelled の分類に入ると報告に出さない(`reported_at` を埋める)。同じ分類の中の移動では報告の扱いを変えない。
+- `tb update --status` も同じ扱い(どの状態へも)。閉じたタスクの題・ラベルなども変えられる。`tb block` / `tb done` / `tb cancel` もどの状態からでも使える(すでにその分類なら断る)。`tb claim` は今までどおり todo の分類だけ。
+- `tb ticket status add` / `rm` は設定 `statuses` を書き換えるだけ(別の置き場は無い)。書く先は今読んでいる行(このセッションの行 / 共通の行 / 環境変数で明示したファイル)で、設定が無ければ組み込みの 6 つから始めて共通の行に書く。`todo` / `active` / `done` の分類の最後の 1 つは外せない。
+- `tb ticket add|list|show|update|claim|done|block|cancel ...` は `tb <それ>` と同じ。
+- アラート・提案のチケットは今までどおり専用のコマンドだけで動かす(DB のトリガーが状態を書くため)。
 
 tb 自身が付ける・探すラベルの名前は設定 `system-labels` で変えられる(1 行 1 つ `<用途> = <ラベル>`。例は [config/system-labels.conf.example](config/system-labels.conf.example))。`deadline`(`tb deadlines-import` が付ける。既定 `deadline`)と `team`(`tb nudge --pool` が探す team のラベルの形。`{team}` が team の名前。既定 `team:{team}`)。アラート・提案のラベル(`alert` / `proposal` / `rejected` / `role:*`)は DB のトリガーが付けるので固定。
 
@@ -166,16 +187,16 @@ tb events --since E-120         # E-120 より後のもの(通知の規則など
 
 ```bash
 # worker: 依頼を出す(effect 必須。迷ったら write。read-only|write|external 以外は拒否)
-tb proxy-request T-<project>-NNN --cmd 'gh pr view 12' --why '目的' --effect read-only --expect '期待する出力'
+tb proxy request T-<project>-NNN --cmd 'gh pr view 12' --why '目的' --effect read-only --expect '期待する出力'
 #   → "<id> open"。同じ cmd が denied 済みなら "<id> denied" で即登録される(出し直さず別の方法を提案する)
 
 # 指揮官
-tb proxy-list [--status open] [--json]
-tb proxy-check <id>      # 1 行目: allow(自動代行可) / human(人に回す)。続けて reason: / mismatch: 行
-tb proxy-resolve <id> --status done|pending-human|denied [--result '<本文 or ファイルパス>']
+tb proxy list [--status open] [--json]
+tb proxy check <id>      # 1 行目: allow(自動代行可) / human(人に回す)。続けて reason: / mismatch: 行
+tb proxy resolve <id> --status done|pending-human|denied [--result '<本文 or ファイルパス>']
 ```
 
-`proxy-check` の判定(`allow` になるのは、次の 3 つをすべて満たすときだけ):
+`proxy check` の判定(`allow` になるのは、次の 3 つをすべて満たすときだけ):
 1. 申告 effect が `read-only`
 2. cmd が `config/proxy-allowlist.txt`(読むだけ。`TB_ALLOWLIST` で差し替え可)のいずれかに先頭一致。語の境界で比べる(`git log` は `git log -5` に一致、`git logx` には一致しない)
 3. 危険な構文を含まない: `> < | ; &`(`&&` `||` を含む)・`$`(`$()` を含む)・バッククォート・改行、`-X|--request|--method` の POST/PUT/DELETE/PATCH、`--approve` `--merge` `--body` `--add`(`--body-file` `--add-label` も)、`--output`
@@ -184,7 +205,7 @@ tb proxy-resolve <id> --status done|pending-human|denied [--result '<本文 or �
 - 申告が `read-only` なのに危険な構文を含むときは `mismatch:` 行を足す(申告の食い違い)
 - 許可リストを読めないときは `human`
 - `--output` は仕様にない追加(`git diff --output=file` が許可リストの `git diff` からファイルを書けるため)
-- `proxy-resolve` の `--result` は渡された文字列をそのまま保存する(ファイルは読まない)。`done` / `denied` になった依頼は変更できない(`open` と `pending-human` のみ解決できる)
+- `proxy resolve` の `--result` は渡された文字列をそのまま保存する(ファイルは読まない)。`done` / `denied` になった依頼は変更できない(`open` と `pending-human` のみ解決できる)
 - 結果を worker へ返す `herdr agent prompt` と、`dispatch.jsonl` への `action: proxy` の追記は指揮官の作業で、tb は行わない
 
 ## agent の活動記録(hook)
@@ -294,7 +315,7 @@ tb outbox [--status queued|sent|denied] [--json]
 
 ### 休んでいる担当への催促(`tb nudge`)
 
-チケットを握ったまま(担当で `in_progress`)turn が終わって止まっている agent に、そのチケットの指示役から「続けて」と送る。新しい送り方は作らず、指示役が `tb send <担当> --kind task --task <チケット>` したのと同じ outbox と delivery の規則で届く(文面のラベルの pane が `nudge`: `[from: <指示役> / nudge / T-x / task / O-n] [催促] ...`)。
+チケットを握ったまま(担当で `in_progress`。設定 `nudge` の `wake` で選べる)turn が終わって止まっている agent に、そのチケットの指示役から「続けて」と送る。新しい送り方は作らず、指示役が `tb send <担当> --kind task --task <チケット>` したのと同じ outbox と delivery の規則で届く(文面のラベルの pane が `nudge`: `[from: <指示役> / nudge / T-x / task / O-n] [催促] ...`)。
 
 ```bash
 tb nudge --dry-run            # 誰に送るか・なぜ飛ばすかを見るだけ(agent の pane からも読める)
@@ -303,16 +324,17 @@ tb nudge [--idle-min 15] [--max 3] [--json]   # 送る(人の端末か scheduler
 
 - **対象**: 既定は全員(固定の除外は無い)。除外は設定 `nudge` に 1 行 1 つ `ignore <@役割の glob | agent 名の glob>` と書く(人だけが `tb config edit nudge`。例は `config/nudge.conf.example`)。**宛先を明示した場合(`tb nudge <agent 名の glob | @役割の glob> ...`)は ignore も適用しない**(指定が意思表示)。ほかの除外条件(下)は常に効く
 - **移行**: 設定 `nudge` が無い(ファイルも DB の行も無い)あいだは、以前の既定の除外(指揮役 = 既定の宛先と `projects` の値、保護 `protect`)をそのまま保つ。設定 `nudge` を置けば(空でも)全員が対象になり、除外は `ignore` の行だけで決まる。指揮役や保護された agent も除きたいときは、それらを `ignore` に書いてから置く(`--dry-run` で対象を確かめる)
-- **設定の検査**: `tb config set nudge` / `edit nudge` は、`ignore <パターン>` の形でない行があれば書かない。`@役割` の ignore で役割を確かめられない agent は、送らずに skip する
-- **`--pool`**: チケットを握っていない agent に、自分の team ラベル(`team:<x>`。領域の役割 `domain-<x>` から決め、無ければ名前の接尾辞 `-lead` を除いたもの。本人から決まらなければ組織図(設定 `org`)で上司をたどり、最初に team が決まる上司のもの)の担当なし `todo` を、優先度順(highest→lowest、同順位は古い順)の先頭 1 件取りに行かせる。文面には `tb claim <ID> --owner <本人> --session <本人の session>` を入れる。同じ回で同じ候補を案内するのは 1 人だけ。自分が担当の `todo`・`review`・`blocked` がある agent、アラート・提案のチケット、先行チケット待ちの todo は対象にしない
+- **催促する状態(`wake`)**: 設定 `nudge` に `wake <分類 | 状態> ...` と書くと、その状態のチケットを握っている agent も催促する(複数行は足し合わせる)。分類の名前(`todo` / `active` / `review` / `blocked`)ならその分類の状態すべて、ほかは状態の名前(設定 `statuses`)。`wake` を書かなければ `active` だけ(今までどおり)。`wake` を書くなら `active` も書かないと作業中は催促しない。閉じた分類(`done` / `cancelled`)は書けない。例: `wake active todo review blocked`
+- **設定の検査**: `tb config set nudge` / `edit nudge` は、`ignore <パターン>` / `wake <名前> ...` の形でない行、閉じた状態、今の分類にも状態にも無い名前があれば書かない(あとで設定 `statuses` から外した名前は、実行時に当たらないだけで止めない)。`@役割` の ignore で役割を確かめられない agent は、送らずに skip する
+- **`--pool`**: チケットを握っていない agent に、自分の team ラベル(`team:<x>`。領域の役割 `domain-<x>` から決め、無ければ名前の接尾辞 `-lead` を除いたもの。本人から決まらなければ組織図(設定 `org`)で上司をたどり、最初に team が決まる上司のもの)の担当なし `todo` を、優先度順(highest→lowest、同順位は古い順)の先頭 1 件取りに行かせる。文面には `tb claim <ID> --owner <本人> --session <本人の session>` を入れる。同じ回で同じ候補を案内するのは 1 人だけ。自分が担当の `todo`・`review`・`blocked`(と、`wake` に無くても active)がある agent、アラート・提案のチケット、先行チケット待ちの todo は対象にしない
 - **親は選ばない**: epic と、完了していない子を持つチケットは、催促にも `--pool` の候補にもしない
 - 送り手が本人と同じになる場合(自分の project の宛先が本人)は、既定の宛先から送る。それも本人なら送らない
 
-- **握っている**: 担当(`owner_agent`)が自分で、状態が `in_progress` のチケット。割り当てだけの `todo`、`review`・`blocked` は催促しない
+- **握っている**: 担当(`owner_agent`)が自分で、状態が `wake` のどれか(既定は active の分類 = `in_progress`)のチケット。既定では割り当てだけの `todo`、`review`・`blocked` は催促しない
 - **休んでいる**: herdr の状態が `idle` / `done` で、最後の turn の終わり(hook の活動記録)から `--idle-min` 分(`TB_NUDGE_IDLE_MIN`、既定 15)たっている
 - **催促しない**(理由つきで出す): herdr にいない・`working`・`blocked`(承認ダイアログなど人の操作待ち)/ 設定 `nudge` の ignore(宛先を明示したときは適用しない)/ 人の返事待ち(自分が出した `question`・`blocked` の報告が未対応)/ 握っているチケットがすべて先行チケット(`blocks`)待ち / 活動記録が無い / delivery の規則で指示役 → その agent の `task` が `now` にならない(`hold` は inbox に置かれるだけで催促にならず、`block` は送ってはいけない宛先)
 - **しつこくしない**: 1 回の休みに 1 通。同じチケットで `--max` 回(`TB_NUDGE_MAX`、既定 3)送ったら止める(その先は `tb digest` の観測で指示役が見る)。届かなかった催促は outbox に `queued` で残さず `denied`(取り下げ)にする(あとで `tb flush` が古い催促を届けないように)
-- **複数のチケット**: タスク agent は 1 枚が原則。複数を握っていれば、先行チケット待ちでない中で優先度が高い(同じなら古い)1 枚を名指しし、ほかは `tb update <ID> --status todo` で戻すか指示役に相談するよう文面に書く。指示役には `tb digest` が「複数チケット」の観測として 1 度だけ知らせる(組み合わせが変わればまた出す。epic と完了していない子を持つ親は数えない)
+- **複数のチケット**: タスク agent は 1 枚が原則。複数を握っていれば、先行チケット待ちでない中で active の分類を先に、優先度が高い(同じなら古い)1 枚を名指しし、ほかの active のチケットは `tb update <ID> --status todo` で戻すか指示役に相談するよう文面に書く。指示役には `tb digest` が「複数チケット」の観測として 1 度だけ知らせる(組み合わせが変わればまた出す。epic と完了していない子を持つ親は数えない)
 - 催促だけを止めたい agent は、設定 `nudge` の `ignore` に書く(人だけが `tb config edit nudge`)。通常の `task` の配送も止めたいときは、delivery で `<指示役> -> <agent> : task=hold`(か `block`)を書く(催促もその規則で届かなくなる)。
 
 ### 送信の規則(delivery): 今届ける / 保留する / 止める と inbox

@@ -14,4 +14,4 @@
   - 新しい agent を立てる: 別の PR、別の project。名前は PR 番号か task の短い名前にする
   - 迷うときは、task の title と、前回までの agent の project を確認する
 - worker からの `question` / `blocked` はすぐ届く。人の判断が要るものは人に回し、代わりに答えない
-- 権限が足りない依頼(`tb proxy-request`)は `tb proxy-check` の判定に従う。`human` は人に回す
+- 権限が足りない依頼(`tb proxy request`)は `tb proxy check` の判定に従う。`human` は人に回す

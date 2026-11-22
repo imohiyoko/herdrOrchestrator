@@ -1,7 +1,12 @@
-# nudge(tb nudge)の除外。人だけが編集する(tb config edit nudge)。1 行 1 つ:
-#   ignore <@役割の glob | agent 名の glob>      # 以降は注釈
-# 既定は全員が対象で、ここに書いたものだけ外す。宛先を明示した tb nudge <宛先> には適用しない。空なら除外なし。
-# この設定が無い(ファイルも DB の行も無い)あいだは、以前どおり指揮役と保護(protect)された agent を除く(移行)。
+# nudge(tb nudge)の対象。人だけが編集する(tb config edit nudge)。1 行 1 つ:
+#   ignore <@役割の glob | agent 名の glob>      催促しない agent
+#   wake <分類 | 状態> [...]                    催促するチケットの状態。分類(todo / active / review / blocked)ならその分類の全部、
+#                                               ほかは状態の名前(設定 statuses)。複数行は足し合わせる。書かなければ active だけ。
+#                                               書くなら active も書く(書かないと作業中は催促しない)。done / cancelled は書けない
+# # 以降は注釈。
+# ignore: 既定は全員が対象で、ここに書いたものだけ外す。宛先を明示した tb nudge <宛先> には適用しない。空なら除外なし。
+# この設定が無い(ファイルも DB の行も無い)あいだは、以前どおり指揮役と保護(protect)された agent を除く(移行)。wake だけを書いて置いても移行は終わる(除外は ignore だけになる)。
 # 例(架空の名前):
 # ignore @role-a
 # ignore agent-a*
+# wake active todo review blocked

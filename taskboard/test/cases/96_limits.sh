@@ -219,6 +219,19 @@ eq "handoff: private key header → 4, not written" "$(lg_secret "-----BEGIN RSA
 eq "handoff: token-like strings → 4, not written" "$(lg_secret "use gh""p_$(printf 'a%.0s' {1..24})") $(lg_secret "token=$(printf 'x%.0s' {1..12})") $(lg_secret "id $(printf 'b%.0s' {1..40})")" "4 none 4 none 4 none"
 errtxt=$(HERDR_PANE_ID= $TB add -p hd -t "pw AK""IA$(printf 'B%.0s' {1..16})" | xargs $TB handoff 2>&1 >/dev/null)
 eq "handoff: tells the human to edit, without printing the secret" "$(grep -c '取り除いてから' <<<"$errtxt") $(grep -c 'AKIABBBB' <<<"$errtxt")" "1 0"
+# 新しい名前 tb handoff write(古い形 tb handoff <id> と同じ)
+HT2=$($TB add -p hd -t "second handoff")
+out=$($TB handoff write "$HT2")
+eq "handoff write: same output as the old form" "$out" "$TMP/handoff/$HT2.md
+(人が内容を確かめて貼る文面です。tb は何も送っていません)"
+eq "handoff write: no summary placeholder" "$(sed -n '/^## 目的/,/^$/p' "$TMP/handoff/$HT2.md")" "## 目的
+second handoff
+(要約はまだありません。人が書いてください)"
+eq "handoff: no args → usage on stdout, exit 2" "$($TB handoff 2>/dev/null | head -1 | cut -d' ' -f1-3; echo "rc=${PIPESTATUS[0]}")" $'tb handoff write\nrc=2'
+eq "handoff help → 0" "$(rc $TB handoff help)" "0"
+eq "handoff write: exists message" "$($TB handoff write "$HT2" 2>&1 | cut -d'(' -f1)" "tb: もう あります: $TMP/handoff/$HT2.md"
+eq "handoff: secret message" "$($TB handoff write "$($TB add -p hd -t "token=$(printf 'y%.0s' {1..12})")" 2>&1 | sed 's/T-hd-[0-9]*/T/')" "tb: 文面に秘密らしい文字列が含まれるため、書きません(検出: キー=値の形の秘密 )。 タスクの題名・要約から取り除いてから、もう一度 tb handoff write T を実行してください(本文は表示しません)"
+eq "handoff: env TB_LIMIT_HUMAN_HANDOFF=off wins" "$(TB_LIMIT_HUMAN_HANDOFF=off $TB handoff write "$HT2" 2>&1; echo "rc=$?")" $'tb: handoff は使えません(human_handoff が off です。使うのは人が tb limits set human_handoff on)。何も書きません\nrc=4'
 $TB limits unset human_handoff >/dev/null; rm -f "$TB_LIMITS"
 
 # ---- 構成: help と README に載っている

@@ -59,8 +59,19 @@ eq "schedwatch: sees a job defined only in the DB" "$(HERDR_SESSION=sjb TB_SCHED
 # 既定(SCHED_FILE_FALLBACK 無し)は DB だけ: 取り込んでいない conf は「未取り込み」と出し、settings を書く先の定義としても使わない
 printf '%s\n' "$J1" >"$TB_SCHED_DIR/jobs/j9.conf"
 eq "default: list marks an unimported conf" "$(SCHED_FILE_FALLBACK=0 SJB sched-job list | grep '^j9' | cut -f2 | cut -d: -f1)" "未取り込み"
-eq "default: show points to import" "$(SCHED_FILE_FALLBACK=0 SJB sched-job show j9 2>&1 | grep -c 'tb sched-job import j9')" "1"
+eq "default: show points to import" "$(SCHED_FILE_FALLBACK=0 SJB sched-job show j9 2>&1 | grep -c 'tb job import j9')" "1"
 eq "default: --settings needs a definition in the DB" "$(printf 'ENABLED=0\n' | SCHED_FILE_FALLBACK=0 rc SJB sched-job set j9 --settings)" "1"
 eq "default: set still checks the body with the scheduler" "$(printf 'TARGET=x\nWINDOW=bad\nINTERVAL_MIN=5\nPROMPT=y\n' | SCHED_FILE_FALLBACK=0 rc SJB sched-job set j9) $(printf '%s\n' "$J1" | SCHED_FILE_FALLBACK=0 rc SJB sched-job set j9)" "1 0"
 rm -f "$TB_SCHED_DIR/jobs/j9.conf"
+# 新しい名前 tb job <サブコマンド>(古い名前 tb sched-job と同じに動く)
+eq "job list: same as sched-job list" "$(SJA job list)" "$(SJA sched-job list)"
+eq "job show: body and source on stderr" "$(SJA job show j1 2>&1 | head -1)" "# sched-job:j1: db:*"
+eq "job history: same as sched-job history" "$(SJA job history j1)" "$(SJA sched-job history j1)"
+eq "job: no subcommand → usage, exit 2" "$(SJA job 2>/dev/null | head -1 | cut -d' ' -f1-3; echo "rc=${PIPESTATUS[0]}")" $'tb job list\nrc=2'
+eq "sched-job: no subcommand → list" "$(SJA sched-job | head -1)" "セッション: sja"
+eq "job: unknown subcommand → 2" "$(rc SJA job bogus)" "2"
+eq "job unset: no row message" "$(SJA job unset j1 2>&1)" "tb: sched-job:j1 の DB の行はありません(このセッションの行)"
+eq "job set: refused body message" "$(printf 'TARGET=x\nWINDOW=bad\nINTERVAL_MIN=5\nPROMPT=y\n' | SJA job set j1 2>&1 | tail -1)" "tb: sched-job:j1 は書きませんでした"
+eq "job set from an agent pane: message" "$(printf '%s\n' "$J1" | FAKE_AGENTS='[{"pane_id":"wW:p1","name":"worker1","agent_session":{"value":"s"}}]' HERDR_PANE_ID=wW:p1 SJA job set j1 2>&1)" "tb: tb job set は人が自分の端末で実行します(agent 'worker1' の pane からは実行できません)"
+eq "job set: herdr fails → refused" "$(printf '%s\n' "$J1" | FAKE_AGENTS='not json' HERDR_PANE_ID=wW:p1 rc SJA job set j1)" "1"
 unset TB_SCHED_DIR; export HERDR_PANE_ID=$_saved_pane

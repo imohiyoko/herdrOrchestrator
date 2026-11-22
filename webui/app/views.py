@@ -41,6 +41,15 @@ pre.mermaid{background:#fff}
 .doc{background:#fff;border:1px solid #d0d7de;padding:8px 24px;overflow-wrap:anywhere}
 .doc table{width:auto}.doc pre{background:#f6f8fa}.doc blockquote{border-left:4px solid #d0d7de;margin:0;padding:0 12px;color:#57606a}
 .card{background:#f6f8fa;border:1px solid #d0d7de;border-radius:4px;padding:4px 6px;margin:0 0 6px}
+.tabs{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:8px 0}.tabs .sep{width:1px;height:20px;background:#d0d7de;margin:0 6px}
+.pill{display:inline-block;padding:1px 10px;border:1px solid #d0d7de;border-radius:12px;background:#fff;color:#1f2328;text-decoration:none;white-space:nowrap}
+.pill.on{background:#0969da;border-color:#0969da;color:#fff}
+.filters{background:#fff;border:1px solid #d0d7de;border-radius:6px;padding:8px 12px;margin:8px 0}
+.frow{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:flex-end;margin:4px 0}
+.frow>label:not(.chk){display:flex;flex-direction:column;font-size:12px;color:#57606a}.frow .flabel{font-size:12px;color:#57606a}
+.chk{white-space:nowrap}.chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.tscroll{overflow-x:auto}.tscroll table{min-width:1100px}.tscroll td:first-child{white-space:nowrap}
+.chip{background:#ddf4ff;border:1px solid #54aeff;border-radius:12px;padding:0 8px;color:#0969da;text-decoration:none;white-space:nowrap}
 .doc h2.md{font-size:20px;border-bottom:1px solid #d0d7de}.doc ul,.doc ol{padding-left:1.5em}.err{background:#ffebe9;border:1px solid #cf222e;padding:6px 10px}
 """
 NAV = [("/", "概要"), ("/notifications", "緊急通知"), ("/agents", "agent"), ("/tasks", "タスク"), ("/board", "ボード"),
@@ -448,11 +457,27 @@ def counts_label(c):
     return out
 
 
+TASK_VIEWS = {"open": "未完了", "closed": "閉じたもの", "all": "すべて"}   # 状態を選んでいないときの見え方。既定は未完了
+OWNER_NONE = "~"   # 担当の絞り込みの「未割り当て」(agent 名には使えない文字)
+KW_MAX = 100
+
+
+def short_ts(ts):
+    """一覧用の短い時刻(YYYY-MM-DD HH:MM)。元の値は title に残す。"""
+    s = "" if ts is None else str(ts)
+    m = re.fullmatch(r"(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(:\d{2}(\.\d+)?)?Z?", s)
+    return f'<span title="{e(s)}">{e(m.group(1))} {e(m.group(2))}</span>' if m else e(s)
+
+
 def page_tasks(qs, ctx=None):
-    """タスク一覧(読み取りのみ)。担当・PJ・状態・未報告・停滞で絞り込み、並び替え、状態の件数サマリ。"""
+    """タスク一覧(読み取りのみ)。既定は未完了だけ。キーワード・PJ・担当・状態(複数)・種別・優先度・ラベル・期日・未報告・停滞で絞り込み、
+    今の条件をチップで出して 1 つずつ外せる。選んだらすぐ反映する(/filter.js。スクリプトが無ければ「絞り込む」で)。"""
     if ctx is not None:
         ctx["norefresh"] = True   # 入力欄があるので自動更新しない
-    proj, st, owner = _one(qs, "project")[:100], _one(qs, "status"), _one(qs, "owner")
+        ctx["scripts"] = ["/filter.js"]
+    proj, owner, view = _one(qs, "project")[:100], _one(qs, "owner"), _one(qs, "view")
+    kw = _one(qs, "q")[:KW_MAX]
+    sts = list(dict.fromkeys(s.strip() for s in (qs.get("status") or []) if s.strip()))
     unrep, stale = _one(qs, "unreported") == "1", _one(qs, "stale") == "1"
     sort = _one(qs, "sort")
     ttype, prio, label = _one(qs, "type"), _one(qs, "priority"), _one(qs, "label")
@@ -460,6 +485,8 @@ def page_tasks(qs, ctx=None):
     tf, hd = has_ticket_fields(), has_due()
     errs = []
     days = DUE_SOON_DAYS
+    if view and view not in TASK_VIEWS:
+        errs.append("表示は open(未完了)/ closed(閉じたもの)/ all(すべて)のどれかです"); view = ""
     if dview and dview not in DUE_VIEWS:
         errs.append("期日の絞り込みは overdue(期限切れ)/ soon(期限間近)のどちらかです"); dview = ""
     if days_s:
@@ -484,16 +511,23 @@ def page_tasks(qs, ctx=None):
     task_statuses = status_names()
     # 設定から外した状態のチケットが残っていれば、その状態でも絞り込める(件数のリンクから来る)
     present = [r["status"] for r in q("SELECT DISTINCT status FROM tasks ORDER BY status")]
-    if st and st not in task_statuses and st not in present:
-        errs.append("状態は " + " / ".join(task_statuses) + " のどれかです"); st = ""
-    if owner and not OWNER_RE.fullmatch(owner):
+    bad_st = [s for s in sts if s not in task_statuses and s not in present]
+    if bad_st:
+        errs.append("状態は " + " / ".join(task_statuses) + " のどれかです"); sts = [s for s in sts if s not in bad_st]
+    if owner and owner != OWNER_NONE and not OWNER_RE.fullmatch(owner):
         errs.append("担当は英数字と . _ - だけです"); owner = ""
     if sort not in TASK_SORTS:
         sort = ""
-    base_w, base_p = [], []   # 状態以外の絞り込み(状態の件数サマリにも使う)
+    eview = "" if sts else (view or "open")   # 状態を選んだときは状態が優先
+    base_w, base_p = [], []   # 状態・表示以外の絞り込み(状態の件数にも使う)
+    if kw:   # ID と題の部分一致(% _ \ はそのままの文字として探す)
+        lk = "%" + kw.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        base_w.append("(id LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\')"); base_p += [lk, lk]
     if proj:
         base_w.append("project=?"); base_p.append(proj)
-    if owner:
+    if owner == OWNER_NONE:
+        base_w.append("(owner_agent IS NULL OR owner_agent='')")
+    elif owner:
         base_w.append("owner_agent=?"); base_p.append(owner)
     if unrep:
         base_w.append("reported_at IS NULL")
@@ -510,8 +544,12 @@ def page_tasks(qs, ctx=None):
         end = (datetime.strptime(today, "%Y-%m-%d") + timedelta(days=days)).strftime("%Y-%m-%d")
         base_w += ["due IS NOT NULL", "due>=?", "due<=?", "status NOT IN (__CLOSED_STATUSES__)"]; base_p += [today, end]
     where, params = list(base_w), list(base_p)
-    if st:
-        where.append("status=?"); params.append(st)
+    if sts:
+        where.append("status IN (" + ",".join("?" * len(sts)) + ")"); params += sts
+    elif eview == "open":
+        where.append("status NOT IN (__CLOSED_STATUSES__)")
+    elif eview == "closed":
+        where.append("status IN (__CLOSED_STATUSES__)")
     # 停滞は作業中(分類 active)で最終更新が古いもの。時刻は ISO(UTC)の文字列比較で絞る
     if stale:
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=TASK_STALE_HOURS)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -527,23 +565,32 @@ def page_tasks(qs, ctx=None):
     total = (q("SELECT COUNT(*) AS n FROM tasks" + wh, params) or [{"n": len(rows)}])[0]["n"]
     summ = {r["status"]: r["n"] for r in q(
         "SELECT status, COUNT(*) AS n FROM tasks" + (" WHERE " + " AND ".join(base_w) if base_w else "") + " GROUP BY status", base_p)}
+    closed_set = set(st_names("done", "cancelled"))
+    n_all = sum(summ.values())
+    n_closed = sum(n for s, n in summ.items() if s in closed_set)
+    vcount = {"open": n_all - n_closed, "closed": n_closed, "all": n_all}
     projects = [r["project"] for r in q("SELECT DISTINCT project FROM tasks ORDER BY project")]
-    owners = [r["owner_agent"] for r in q("SELECT DISTINCT owner_agent FROM tasks WHERE owner_agent IS NOT NULL ORDER BY owner_agent")]
+    owners = [r["owner_agent"] for r in q("SELECT DISTINCT owner_agent FROM tasks WHERE owner_agent IS NOT NULL AND owner_agent!='' ORDER BY owner_agent")]
     kids = {r["parent_id"]: r["n"] for r in q("SELECT parent_id, COUNT(*) AS n FROM tasks WHERE parent_id IS NOT NULL GROUP BY parent_id")}
     labels = [r["value"] for r in q("SELECT DISTINCT j.value FROM tasks, json_each(tasks.labels) j ORDER BY j.value")] if tf else []
     if tf:   # 用意したラベル(設定 labels)は、まだ使われていなくても選べるように先に並べる
         defs = [k for k, _v in defined_labels()]
         labels = defs + [x for x in labels if x not in defs]
     rc = report_counts()
+    cur = {"q": kw, "project": proj, "owner": owner, "view": view, "status": sts, "unreported": "1" if unrep else "",
+           "stale": "1" if stale else "", "sort": sort, "type": ttype, "priority": prio, "label": label, "due": dview, "days": days_s}
 
-    def href(**kw):
-        d = {"project": proj, "status": st, "owner": owner, "unreported": "1" if unrep else "", "stale": "1" if stale else "", "sort": sort,
-             "type": ttype, "priority": prio, "label": label, "due": dview, "days": days_s}
-        d.update(kw)
+    def href(**kw_):
+        d = dict(cur)
+        d.update(kw_)
+        if d.get("view") == "open":
+            d["view"] = ""   # 既定と同じなので URL に出さない
         d = {k: v for k, v in d.items() if v}
-        return "/tasks" + ("?" + urlencode(d) if d else "")
-    # 設定から外した状態のチケットが残っていれば、その件数も後ろに出す(黙って見えなくしない)
-    cells = [f'<a href="{e(href(status=s))}">{e(s)} {summ.get(s, 0)}</a>' for s in task_statuses + sorted(x for x in summ if x not in task_statuses)]
+        return "/tasks" + ("?" + urlencode(d, doseq=True) if d else "")
+    # 状態の並び: 分類の順(ボードと同じ)。設定から外した状態のチケットが残っていれば後ろに出す(黙って見えなくしない)
+    order_st = board_columns()
+    order_st += [s for s in task_statuses if s not in order_st]
+    order_st += sorted(x for x in set(summ) | set(present) if x not in order_st)
     body = err_html("。".join(errs)) * bool(errs)
     if hd:
         n_over = q("SELECT COUNT(*) AS n FROM tasks WHERE due IS NOT NULL AND due<? AND status NOT IN (__CLOSED_STATUSES__)", (today,))[0]["n"]
@@ -555,29 +602,65 @@ def page_tasks(qs, ctx=None):
                      f' <span class=note>(今日 = {e(today)}、閉じたもの({e(" / ".join(st_names("done", "cancelled")))})は数えない)</span></p>')
     if not db_conn_ok():
         body += '<p class=err>タスク DB がありません(または開けません)</p>'
-    body += ("<h2>状態の件数</h2><p>" + " / ".join(cells) + f' / <a href="{e(href(status=""))}">全部 {sum(summ.values())}</a></p>'
-             '<p class=note>件数は PJ・担当・未報告の絞り込みを反映し、状態と「停滞だけ」は反映しません。</p>')
-    popts = '<option value="">(すべて)</option>' + "".join(f'<option value="{e(p_)}"{" selected" if p_ == proj else ""}>{e(p_)}</option>' for p_ in projects)
-    oopts = '<option value="">(すべて)</option>' + "".join(f'<option value="{e(o)}"{" selected" if o == owner else ""}>{e(o)}</option>' for o in owners)
-    sopts = '<option value="">(すべて)</option>' + "".join(f'<option value="{e(s_)}"{" selected" if s_ == st else ""}>{e(s_)}</option>' for s_ in task_statuses + [x for x in present if x not in task_statuses])
+    # 表示の切り替え(未完了 / 閉じたもの / すべて)と状態ごとの件数。押すとその状態だけになる
+    tabs = "".join(f'<a class="pill{" on" if eview == k else ""}" href="{e(href(view=k, status=[]))}">{e(v)} {vcount[k]}</a>' for k, v in TASK_VIEWS.items())
+    cells = [f'<a class="pill{" on" if sts == [s] else ""}" href="{e(href(status=[s], view=""))}">{e(s)} {summ.get(s, 0)}</a>'
+             for s in order_st if s in summ or s in task_statuses]
+    body += (f'<div class=tabs>{tabs}<span class=sep></span>{"".join(cells)}</div>'
+             '<p class=note>件数はキーワード・PJ・担当などの絞り込みを反映し、状態・表示と「停滞だけ」は反映しません。</p>')
+    # 絞り込みの欄
+    def opts(vals, sel, labels_=None):
+        return '<option value="">(すべて)</option>' + "".join(
+            f'<option value="{e(v)}"{" selected" if v == sel else ""}>{e((labels_ or {}).get(v, v))}</option>' for v in vals)
     ropts = "".join(f'<option value="{k}"{" selected" if k == sort else ""}>{e(v[0])}</option>' for k, v in TASK_SORTS.items()
                     if (tf or k != "priority") and (hd or k != "due"))
-    topts = '<option value="">(すべて)</option>' + "".join(f'<option value="{x}"{" selected" if x == ttype else ""}>{x}</option>' for x in TASK_TYPES)
-    pyopts = '<option value="">(すべて)</option>' + "".join(f'<option value="{x}"{" selected" if x == prio else ""}>{x}</option>' for x in TASK_PRIORITIES)
-    lopts = '<option value="">(すべて)</option>' + "".join(f'<option value="{e(x)}"{" selected" if x == label else ""}>{e(x)}</option>' for x in labels)
-    tsel = (f'<label>種別 <select name=type>{topts}</select></label> <label>優先度 <select name=priority>{pyopts}</select></label> '
-            f'<label>ラベル <select name=label>{lopts}</select></label> ') if tf else ""
+    f = [f'<label>キーワード <input type=search name=q value="{e(kw)}" maxlength={KW_MAX} placeholder="ID・題" size=18></label>',
+         f'<label>PJ <select name=project>{opts(projects, proj)}</select></label>',
+         f'<label>担当 <select name=owner>{opts([OWNER_NONE] + owners, owner, {OWNER_NONE: "(未割り当て)"})}</select></label>']
+    if tf:
+        f += [f'<label>種別 <select name=type>{opts(TASK_TYPES, ttype)}</select></label>',
+              f'<label>優先度 <select name=priority>{opts(TASK_PRIORITIES, prio)}</select></label>',
+              f'<label>ラベル <select name=label>{opts(labels, label)}</select></label>']
     if hd:
-        dopts = '<option value="">(すべて)</option>' + "".join(f'<option value="{k}"{" selected" if k == dview else ""}>{e(v)}</option>' for k, v in DUE_VIEWS.items())
-        tsel += (f'<label>期日 <select name=due>{dopts}</select></label> '
-                 f'<label>間近の日数 <input name=days size=3 value="{e(days_s)}" placeholder="{DUE_SOON_DAYS}"></label> ')
-    body += ('<form method=get action="/tasks"><p>'
-             f'<label>PJ <select name=project>{popts}</select></label> <label>担当 <select name=owner>{oopts}</select></label> '
-             f'<label>状態 <select name=status>{sopts}</select></label> ' + tsel +
-             f'<label><input type=checkbox name=unreported value=1{" checked" if unrep else ""}> 未報告だけ</label> '
-             f'<label><input type=checkbox name=stale value=1{" checked" if stale else ""}> 停滞だけ({TASK_STALE_HOURS} 時間超の {e(st_main("active"))})</label> '
-             f'<label>並び <select name=sort>{ropts}</select></label> '
-             '<button type=submit>絞り込む</button> <a href="/tasks">解除</a></p></form>')
+        f += [f'<label>期日 <select name=due>{opts(list(DUE_VIEWS), dview, DUE_VIEWS)}</select></label>',
+              f'<label>間近の日数 <input name=days size=3 value="{e(days_s)}" placeholder="{DUE_SOON_DAYS}"></label>']
+    f.append(f'<label>並び <select name=sort>{ropts}</select></label>')
+    stbox = "".join(f'<label class=chk><input type=checkbox name=status value="{e(s)}"{" checked" if s in sts else ""}> {e(s)}</label>' for s in order_st)
+    body += ('<form id=tfilter method=get action="/tasks" class=filters>'
+             f'<input type=hidden name=view value="{e(view)}">'
+             f'<div class=frow>{"".join(f)}</div>'
+             f'<div class=frow><span class=flabel>状態</span>{stbox}<span class=note>(選ばなければ上の表示に従う)</span></div>'
+             f'<div class=frow><label class=chk><input type=checkbox name=unreported value=1{" checked" if unrep else ""}> 未報告だけ</label>'
+             f'<label class=chk><input type=checkbox name=stale value=1{" checked" if stale else ""}> 停滞だけ({TASK_STALE_HOURS} 時間超の {e(st_main("active"))})</label>'
+             '<button type=submit>絞り込む</button> <a href="/tasks">解除</a></div></form>')
+    # 今の条件(× で 1 つずつ外す)
+    chips = []
+    if kw:
+        chips.append((f"キーワード: {kw}", href(q="")))
+    if proj:
+        chips.append((f"PJ: {proj}", href(project="")))
+    if owner:
+        chips.append(("担当: " + ("(未割り当て)" if owner == OWNER_NONE else owner), href(owner="")))
+    for s in sts:
+        chips.append((f"状態: {s}", href(status=[x for x in sts if x != s])))
+    if eview and eview != "open":
+        chips.append((f"表示: {TASK_VIEWS[eview]}", href(view="")))
+    if ttype:
+        chips.append((f"種別: {ttype}", href(type="")))
+    if prio:
+        chips.append((f"優先度: {prio}", href(priority="")))
+    if label:
+        chips.append((f"ラベル: {label}", href(label="")))
+    if dview:
+        chips.append((f"期日: {DUE_VIEWS[dview]}" + (f"({days} 日以内)" if dview == "soon" else ""), href(due="", days="")))
+    if unrep:
+        chips.append(("未報告だけ", href(unreported="")))
+    if stale:
+        chips.append(("停滞だけ", href(stale="")))
+    shown = "未完了" if eview == "open" else ("状態で選んだもの" if sts else TASK_VIEWS[eview])
+    body += (f'<p class=chips><b>{total} 件</b> <span class=note>({e(shown)})</span> '
+             + "".join(f'<a class=chip href="{e(h)}" title="この条件を外す">{e(t)} ×</a>' for t, h in chips)
+             + (' <a href="/tasks">すべて解除</a>' if chips else "") + "</p>")
     now = datetime.now(timezone.utc)
     out = []
     for t in rows:
@@ -586,17 +669,19 @@ def page_tasks(qs, ctx=None):
         par = tlink(t["parent_id"]) if t.get("parent_id") else ""
         kid = f'子 {kids[t["id"]]}' if kids.get(t["id"]) else ""
         out.append([tlink(t["id"]), e(t["project"]), e(t.get("type") or "-"), priority_html(t.get("priority")),
-                    due_html(t, today), e(_head(t["title"], TITLE_MAX)), labels_html(t.get("labels"), href), e(t["status"]), e(t["owner_agent"]),
-                    " ".join(x for x in (par, e(kid)) if x) or "-", e(t["session_id"]), counts_label(rc.get(t["id"])),
+                    due_html(t, today), e(_head(t["title"], TITLE_MAX)), labels_html(t.get("labels"), href), e(t["status"]), e(t["owner_agent"] or "-"),
+                    " ".join(x for x in (par, e(kid)) if x) or "-", counts_label(rc.get(t["id"])),
                     str(len(safe_json_list(t["deliverables"]))), "○" if t["reported_at"] else "-",
-                    e(t["created_at"]), e(t["updated_at"]), mark])
+                    short_ts(t["created_at"]), short_ts(t["updated_at"]), mark])
     if total > len(rows):
         body += (f'<p class=err>{total} 件のうち {len(rows)} 件だけ表示しています(上限 {TASK_LIST_MAX} 件)。'
-                 '既定の並びは未対応の報告・詰まり・作業中を先に出します。PJ・担当・状態などで絞り込むと残りを見られます。</p>')
-    body += table(["タスク", "PJ", "種別", "優先度", "期日", "題(先頭 80 文字)", "ラベル", "状態", "担当", "親 / 子", "session_id",
-                   "報告(種別ごとの件数)", "成果物", "報告済み", "作成", "更新", "目印"], out)
-    body += (f'<p class=note>最大 {TASK_LIST_MAX} 件。「報告済み」は tb report で指揮官に届いたもの。未対応は人がまだ「対応済み」にしていない question / blocked。'
-             "ラベルを押すとそのラベルで絞り込みます。期日は tb add / update --due で付けます(期日なしは期限切れになりません)。題は先頭だけ、本文は出しません(詳細画面で報告の先頭を見られます)。</p>")
+                 '既定の並びは未対応の報告・詰まり・作業中を先に出します。キーワード・PJ・担当・状態などで絞り込むと残りを見られます。</p>')
+    body += '<div class=tscroll>' + table(["タスク", "PJ", "種別", "優先度", "期日", "題(先頭 80 文字)", "ラベル", "状態", "担当", "親 / 子",
+                   "報告(種別ごとの件数)", "成果物", "報告済み", "作成", "更新", "目印"], out) + "</div>"
+    body += (f'<p class=note>最大 {TASK_LIST_MAX} 件。既定は未完了(閉じたもの = {e(" / ".join(st_names("done", "cancelled")))} を除く)だけ。'
+             "「報告済み」は tb report で指揮官に届いたもの。未対応は人がまだ「対応済み」にしていない question / blocked。"
+             "ラベルを押すとそのラベルで絞り込みます。期日は tb add / update --due で付けます(期日なしは期限切れになりません)。"
+             "題は先頭だけ、本文と session_id は詳細画面で見られます。</p>")
     return "タスク", body
 
 
@@ -949,7 +1034,7 @@ def page_jobs(_qs):
     if left:   # DB に取り込んでいない conf のジョブは scheduler が動かさない
         rows_note = ('<p class=warn>DB に取り込んでいない <code>scheduler/jobs/*.conf</code> があります。定期実行は DB の定義だけで動くので、これらは動きません: '
                      + ", ".join(f"<code>{e(n)}</code>" for n in left)
-                     + '。取り込む: <code>taskboard/bin/tb sched-job import --dry-run</code> で確かめてから <code>taskboard/bin/tb sched-job import</code></p>')
+                     + '。取り込む: <code>taskboard/bin/tb job import --dry-run</code> で確かめてから <code>taskboard/bin/tb job import</code></p>')
     else:
         rows_note = ""
     note = rows_note + ("<p class=note>「何をする」の 2 行目は conf の先頭のコメント(無ければコマンドから推した説明)です。job 名を開くと、型(agent に送る / コマンドを実行)・宛先と今の状態・送られる本文やコマンド・次回の予定・承認の扱いを読めます。"
@@ -1103,7 +1188,7 @@ def page_job(name, csrf, error="", saved=False):
     msg = '<p class=note>保存しました。次の分から反映されます。</p>' if saved else ""
     return "定期実行: " + name, (
         err_html(error) + msg + f"<p>{what}ジョブ。{'Web UI で変更済み。' if info.get('overridden') else ''}</p>" + _job_overview(name, info) + "<h2>スケジュールの変更</h2>" + form +
-        "<p class=note>変更できるのはスケジュールだけです(宛先・本文・コマンドは人が tb sched-job edit で編集)。"
+        "<p class=note>変更できるのはスケジュールだけです(宛先・本文・コマンドは人が tb job edit で編集)。"
         f'保存先: DB の <code>sched-settings:{e(name)}</code>(セッション <code>{e(reqctx.session())}</code>)</p><p><a href="/jobs">一覧へ</a></p>')
 
 

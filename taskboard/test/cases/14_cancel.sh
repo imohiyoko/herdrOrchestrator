@@ -15,14 +15,13 @@ eq "cancel: cancelled blocker no longer blocks claim" "$(rc $TB claim "$b" --own
 eq "cancel: not in pending (not a completion)" "$($TB pending --ids | grep -c "$a")" "0"
 eq "cancel: history has the status event" "$($TB history "$a" | grep "$(printf '\tstatus\t')" | cut -f5,6 | tr '\t' ' ')" "todo cancelled"
 
-# --- 閉じた状態なので、もう動かさない
+# --- 閉じた状態も特別扱いしない: 題などは変えられ、別の状態へも動かせる。二重の cancel と claim(todo の分類だけ)は断る
 eq "cancel: twice rejected" "$(rc $TB cancel "$a")" "1"
-eq "cancel: update rejected" "$(rc $TB update "$a" --title x)" "1"
-eq "cancel: block rejected" "$(rc $TB block "$a")" "1"
-eq "cancel: done rejected" "$(rc $TB done "$a" -d /tmp/x -m ok)" "1"
-eq "cancel: claim rejected" "$(rc $TB claim "$a" --owner w2)" "1"
-eq "cancel: update --status cancelled is a usage error" "$(rc $TB update "$b" --status cancelled)" "2"
-eq "cancel: done task can't be cancelled" "$($TB done "$b" -d /tmp/x -m ok >/dev/null; rc $TB cancel "$b")" "1"
+eq "cancel: update of a cancelled task ok" "$(rc $TB update "$a" --title x)" "0"
+eq "cancel: claim rejected (not todo-category)" "$(rc $TB claim "$a" --owner w2)" "1"
+eq "cancel: update --status cancelled ok (reported_at filled)" "$($TB update "$b" --status cancelled >/dev/null; $TB show "$b" | jq -r '.status+"/"+(.reported_at != null | tostring)')" "cancelled/true"
+eq "cancel: cancelled → done (pending report again)" "$($TB done "$b" -d /tmp/x -m ok >/dev/null; $TB pending --ids | grep -c "^$b$")" "1"
+eq "cancel: done task can be cancelled (not reported)" "$($TB cancel "$b" >/dev/null; $TB pending --ids | grep -c "^$b$")" "0"
 eq "cancel: unknown arg" "$(rc $TB cancel "$b" --nope)" "2"
 eq "cancel: missing task" "$(rc $TB cancel T-cx-999)" "1"
 r=$($TB add -p cx2 -t r); $TB cancel "$r" >/dev/null

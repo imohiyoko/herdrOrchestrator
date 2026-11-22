@@ -370,7 +370,7 @@ PROMPT=x"
 ok "VARS: 不正な定義は読み込みでエラー(exit 2)" "$(for j in pvbad1 pvbad2 pvbad3; do bash bin/show.sh $j >/dev/null 2>&1; printf '%s ' $?; done)" "2 2 2 "
 rm -f "$JOBS_DIR"/p*.conf
 
-# ---- DB のジョブ定義(tb sched-job。config 表の sched-job:<job> / sched-settings:<job>)
+# ---- DB のジョブ定義(tb job。config 表の sched-job:<job> / sched-settings:<job>)
 SJ="$TMP/sj"; mkdir -p "$SJ/jobs" "$SJ/settings" "$SJ/logs"
 export TB_SCHED_DIR="$SJ" HERDR_STATE_DIR_SAVE="${XDG_STATE_HOME:-}" XDG_STATE_HOME="$TMP/state"
 printf "TARGET=dummy\nPROMPT='do the thing'\nWINDOW=09:00-21:00\nINTERVAL_MIN=5\nDAYS=weekdays\n" >"$SJ/jobs/p1.conf"
@@ -420,10 +420,10 @@ D="$TMP/dbonly"; mkdir -p "$D/jobs" "$D/settings" "$D/logs"
 printf "COMMAND='echo hi'\nWINDOW=00:00-23:59\nINTERVAL_MIN=2\n" >"$D/jobs/fonly.conf"
 dbo() { JOBS_DIR="$D/jobs" SCHED_SETTINGS_DIR="$D/settings" LOG_DIR="$D/logs" TB_DB="$TMP/sj.db" "$@"; }
 out=$(dbo bash bin/show.sh fonly 2>&1); rc=$?
-ok "既定: DB に無いジョブは show.sh が読まない(取り込みを促す)" "$rc $(grep -c 'tb sched-job import fonly' <<<"$out")" "2 1"
+ok "既定: DB に無いジョブは show.sh が読まない(取り込みを促す)" "$rc $(grep -c 'tb job import fonly' <<<"$out")" "2 1"
 ok "既定: jobs.sh は DB のジョブだけ" "$(dbo bash bin/jobs.sh | grep -c '^fonly$')" "0"
 out=$(dbo env NOW="$THU 10:00" bash bin/tick.sh fonly 2>/dev/null); rc=$?
-ok "既定: tick.sh は取り込んでいないジョブを動かさず failed を記録" "$rc $(jq -r '.action + " " + (.reason | test("tb sched-job import fonly") | tostring)' "$D/logs/fonly.log")" "2 failed true"
+ok "既定: tick.sh は取り込んでいないジョブを動かさず failed を記録" "$rc $(jq -r '.action + " " + (.reason | test("tb job import fonly") | tostring)' "$D/logs/fonly.log")" "2 failed true"
 dbo env NOW="$THU 10:02" bash bin/tick.sh fonly 2>/dev/null
 ok "既定: 同じ理由の failed は毎分は書き足さない" "$(wc -l <"$D/logs/fonly.log" | tr -d ' ')" "1"
 ok "既定: DRY_RUN でも failed を出す" "$(dbo env DRY_RUN=1 NOW="$THU 10:00" bash bin/tick.sh fonly 2>/dev/null | jq -r .action)" "failed"

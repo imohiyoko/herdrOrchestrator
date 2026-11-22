@@ -57,3 +57,30 @@ eq "denied request checks as human" "$($TB proxy-check "$pid" | first)" "human"
 did=$($TB proxy-list --json | jq -r 'select(.cmd=="gh pr view 12") | .id' | head -1)
 eq "resolve done with file path stored as-is" "$($TB proxy-resolve $did --status done --result /tmp/out.txt)" "$did done"
 eq "result stored" "$($TB proxy-list --json | jq -r "select(.id==$did) | .result")" "/tmp/out.txt"
+
+# 出力の形(Go 版と突き合わせる)
+eq "list: tsv columns" "$($TB proxy-list --status denied | head -1)" "$pid	denied	read-only	$a1	gh pr diff 7"
+eq "list: tab/newline in cmd flattened" "$(pr --cmd $'git log\t-1\nx' --effect write >/dev/null; $TB proxy-list | tail -1 | cut -f5)" "git log -1 x"
+eq "re-register of denied: message" "$(pr --cmd 'gh pr diff 7' --effect read-only 2>&1 >/dev/null)" "tb: 同一 cmd が人に拒否済み(依頼 $pid)。同じ依頼は出し直さず、別の方法を提案すること"
+eq "check: allow output" "$(verdict 'git status')" $'allow\nmatch: git status'
+eq "check: human output" "$(verdict 'git log | head')" $'human\nreason: 危険な構文を含む: パイプ/||\nmismatch: 申告は read-only だが、コマンドに パイプ/|| を含む'
+eq "check: several reasons" "$(verdict 'curl -X POST x > y' write)" $'human\nreason: 危険な構文を含む: リダイレクト(>)、書き込み系の HTTP メソッド\nreason: 申告 effect が write\nreason: 許可リストにない'
+eq "check: unreadable allowlist reason" "$(TB_ALLOWLIST=$TMP/none.txt $TB proxy-check $id | tail -1)" "reason: 許可リストを読めない($TMP/none.txt)。安全側で human"
+eq "request: --cmd missing message" "$($TB proxy-request $a1 --why w --effect write 2>&1 | head -1)" "tb: proxy-request: --cmd が必要です"
+eq "request: blank --why" "$(rc $TB proxy-request $a1 --cmd 'git log' --why ' ' --effect write)" "2"
+eq "request: cmd trimmed" "$(id2=$(pr --cmd '  git log -2  ' --effect write | cut -d' ' -f1); $TB proxy-list --json | jq -r "select(.id==$id2) | .cmd")" "git log -2"
+eq "resolve: unknown id" "$($TB proxy-resolve 99999 --status done 2>&1; echo "rc=$?")" $'tb: 代行依頼が見つかりません: 99999\nrc=1'
+eq "resolve: final message" "$($TB proxy-resolve $pid --status done 2>&1)" "tb: 解決済み(denied)の依頼は変更できません: $pid"
+eq "check: bad id" "$(rc $TB proxy-check x)" "2"
+eq "check: unknown id" "$(rc $TB proxy-check 99999)" "1"
+eq "list: bad status" "$(rc $TB proxy-list --status nope)" "2"
+
+# 新しい名前(tb proxy <サブコマンド>)は古い名前と同じに動く
+eq "proxy request: same as proxy-request" "$($TB proxy request $a1 --cmd 'git status' --why w --effect read-only | cut -d' ' -f2)" "open"
+nid=$($TB proxy list --json | jq -r 'select(.cmd=="git status") | .id' | tail -1)
+eq "proxy check: same output" "$($TB proxy check $nid)" "$($TB proxy-check $nid)"
+eq "proxy list: same output" "$($TB proxy list --status open)" "$($TB proxy-list --status open)"
+eq "proxy resolve" "$($TB proxy resolve $nid --status done)" "$nid done"
+eq "proxy: no subcommand → usage on stdout, exit 2" "$($TB proxy 2>/dev/null | head -1; echo "rc=${PIPESTATUS[0]}")" $'tb proxy request <task-id> --cmd C --why W --effect read-only|write|external [--expect E]   → "<id> <status>"\nrc=2'
+eq "proxy help: exit 0, lists subcommands" "$($TB proxy help | grep -c '^tb proxy ')" "4"
+eq "proxy: unknown subcommand" "$($TB proxy bogus 2>&1; echo "rc=$?")" $'tb: proxy: 不明なサブコマンド bogus(request / list / resolve / check)\n(tb help で使い方)\nrc=2'

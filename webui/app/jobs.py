@@ -21,7 +21,7 @@ DAY_PRESETS = (("daily", "毎日"), ("weekdays", "平日"), ("weekends", "土日
 
 
 CONF_MAX_DB = 262144
-# ジョブ定義・上書き設定は DB の config 表(sched-job:<job> / sched-settings:<job>。tb sched-job)にも置ける。
+# ジョブ定義・上書き設定は DB の config 表(sched-job:<job> / sched-settings:<job>。tb job)にも置ける。
 # 引く順は scheduler と同じ: このセッションの行 > 共通の行(*)(SCHED_FILE_FALLBACK=1 のときだけ、その後にファイル jobs/<job>.conf・settings/<job>.settings)
 _DB_JOBS_SQL = ("SELECT DISTINCT substr(key, 11) AS name FROM main.config WHERE key LIKE 'sched-job:%' "
                 "AND herdr_session IN (?, '*')")
@@ -108,21 +108,21 @@ def job_last(name):
 
 
 def save_job_settings(name, form):
-    """フォームを検証して上書き設定を DB(sched-settings:<job>。このセッションの行)に tb sched-job で書く。エラー文か None。
+    """フォームを検証して上書き設定を DB(sched-settings:<job>。このセッションの行)に tb job で書く。エラー文か None。
     定義がファイル(jobs/<job>.conf)のジョブも DB に書く(scheduler は settings を DB > ファイルの順に読み、定義の置き場所は見ない)。
     残っている settings/<job>.settings は消す(置き場所を DB の 1 つにする。DB の行を消したときに古い値が効き出さないように)。
     書いたあと、scheduler の読む設定(show.sh)が書いた値になったかを確かめる。"""
     if form.get("action") == "reset":
         if db_body("sched-settings:" + name) is not None:
-            rc, out = run_tb_input(["sched-job", "unset", name, "--settings"], "")
+            rc, out = run_tb_input(["job", "unset", name, "--settings"], "")
             # 共通の行(*)は、このセッションからは消さない(ほかのセッションにも効くため)。このセッションの行を消しても共通の行が残れば、それが効く
             if rc != 0 or db_body("sched-settings:" + name) is not None:
-                return "上書き設定を戻せませんでした(共通の行は tb sched-job unset " + name + " --settings --shared で人が消します)"
+                return "上書き設定を戻せませんでした(共通の行は tb job unset " + name + " --settings --shared で人が消します)"
         return _remove_settings_file(name) or _verify_applied(name, form)
     body, err = settings_body(form)
     if err:
         return err
-    rc, out = run_tb_input(["sched-job", "set", name, "--settings"], body)
+    rc, out = run_tb_input(["job", "set", name, "--settings"], body)
     if rc != 0:
         first = next((ln for ln in out.splitlines() if ln.startswith("tb: ")), "")
         return "scheduler が設定を受け付けませんでした" + (": " + clean(first[4:])[:300] if first else "")

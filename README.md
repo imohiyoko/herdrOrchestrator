@@ -16,13 +16,13 @@ conductor  <--- reports ---  workers (herdr panes)
 |---|---|
 | [`taskboard/`](taskboard/README.md) | `tb` CLI: SQLite task table, worker reports batched to the conductor every 10 min (`tb digest`), conductor → worker sends with sender check and routing rules (`tb send`), a log of every message tb sends, hook-based activity tracking, agent lifecycle (`tb agent-new` / `agent-stop` / `agent-revive`, with a "safe to stop" flag set by a light-model sweeper agent) (bash, sqlite3, jq) |
 | [`webui/`](webui/README.md) | Progress web UI with login (Python standard library only). Mostly read-only; it can also change job schedules, mark reports resolved, and stop / revive / create agents (`/agents`, `/agent-new`) |
-| [`scheduler/`](scheduler/README.md) | Periodic prompts / commands via launchd, driven by job definitions in the DB (`tb sched-job`) |
+| [`scheduler/`](scheduler/README.md) | Periodic prompts / commands via launchd, driven by job definitions in the DB (`tb job`) |
 | [`presets/`](presets/example.conf) | Example workspace presets for `herdr-up.sh` |
 | [`herdr-up.sh`](herdr-up.sh) | Creates workspaces and starts agents from a preset |
 | [`conductor/`](conductor/README.md) | Description of the conductor role |
 | [`roles/`](roles/README.md) | Text handed to each agent on startup / after compact (SessionStart hook). By default only the rules shared by every agent (`_common.md`); no roles are assumed |
 | [`setup/examples/`](setup/examples/README.md) | Usage example of a setup with roles (conductor, HR, watcher, sweeper, auditor ...): role texts, name → role map and a preset. Installed with `tb role-write` (see `setup/CLAUDE.md`) |
-| [`cmd/herdrctl/`](cmd/herdrctl/main.go) | 1 つのバイナリ `herdrctl`(仮称)。bash と Python の部品を順に移していく先([ADR 0002](docs/adr/0002-services-and-binary-distribution.md))。今は `version`、`db status` / `db migrate`(tasks.db を tb と同じスキーマにする。Windows の既定の置き場所は `%LOCALAPPDATA%\herdr\state\tasks.db`)、`tb list`(`TB_IMPL=go` のとき `bin/tb` が渡す。既定は bash のまま) (Go) |
+| [`cmd/herdrctl/`](cmd/herdrctl/main.go) | 1 つのバイナリ `herdrctl`(仮称)。bash と Python の部品を順に移していく先([ADR 0002](docs/adr/0002-services-and-binary-distribution.md))。今は `version`、`db status` / `db migrate`(tasks.db を tb と同じスキーマにする。Windows の既定の置き場所は `%LOCALAPPDATA%\herdr\state\tasks.db`)、`tb` の一部のコマンド(`TB_IMPL=go` のとき `bin/tb` が渡す。既定は bash のまま。移した順と残りは [docs/go-migration.md](docs/go-migration.md)) (Go) |
 | [`lib/`](lib/herdr-env.sh) | Defaults shared by every component (repo root, DB path, herdr binary, schema dir), in bash and Python |
 | [`setup/`](setup/README.md) | Setup agent (`./herdr-up.sh setup`) that walks you through the setup and asks before writing any settings, plus a read-only doctor `setup/check.sh` |
 | [`repoindex/`](repoindex/README.md) | Optional (opt-in) module: a local index of per-repository summaries with its own SQLite database (outside the checkout, `0700`/`0600`) and a read-only MCP tool interface. The core never calls it |
@@ -45,7 +45,7 @@ bash repoindex/tests/run.sh
 
 Tests use fake `herdr` binaries and do not touch a real herdr, launchd, or the network. Runtime state (`data/`, `run/`, `logs/`, `generated/`) is git-ignored.
 
-Put job definitions into the DB with `taskboard/bin/tb sched-job set <job>` (start from `scheduler/jobs/*.conf.example`; existing `*.conf` files are imported with `tb sched-job import` — the scheduler no longer reads them), or start the setup agent with `./herdr-up.sh setup` and let it guide you. `bash setup/check.sh` shows what is installed and what is missing.
+Put job definitions into the DB with `taskboard/bin/tb job set <job>` (start from `scheduler/jobs/*.conf.example`; existing `*.conf` files are imported with `tb job import` — the scheduler no longer reads them), or start the setup agent with `./herdr-up.sh setup` and let it guide you. `bash setup/check.sh` shows what is installed and what is missing.
 
 ## Release
 

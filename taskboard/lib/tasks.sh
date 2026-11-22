@@ -32,7 +32,7 @@ config_validate_labels() {  # $1=本文
     n=$((n + 1))
     line=$(trim "${line%%#*}"); [[ -n $line ]] || continue
     k=$(trim "${line%%=*}")
-    if [[ -z $k || ${#k} -gt 40 || $k =~ [[:space:],\"\'] ]]; then
+    if [[ -z $k ]] || (( $(char_len "$k") > 40 )) || [[ $k =~ [[:space:],\"\'] ]]; then   # 文字数はロケールに頼らない(char_len)
       bad+="${n} 行目: ラベルは 1〜40 文字で、空白・カンマ・引用符を含まない: $k"$'\n'
     elif [[ $seen == *" $k "* ]]; then
       bad+="${n} 行目: ラベルが重複しています: $k"$'\n'
@@ -326,13 +326,11 @@ cmd_update() {
   [[ $# -ge 1 ]] || usage "update <id> [--status S] [--title T] [--owner N] [--session S] [--account A] [--parent ID] [--type T] [--priority P] [--desc D] [--due YYYY-MM-DD|''] [--label L ...] [--add-label L] [--remove-label L]"
   local id=$1; shift
   valid_id "$id"
-  local sets=() row cur ntype="" nparent="" setlab=() addlab=() rmlab=() relabel=0 addref=() rmref=() nsprint="-"
+  local sets=() row cur ntype="" nparent="" setlab=() addlab=() rmlab=() relabel=0 addref=() rmref=() nsprint="-" nstatus=""
   while [[ $# -gt 0 ]]; do
     case $1 in
-      --status)  need_arg "$@"; valid_status "$2"
-                 ! st_is "$2" done || usage "update: $2 にするには tb done を使う(deliverables と要約が必須)"
-                 ! st_is "$2" cancelled || usage "update: $2 にするには tb cancel を使う"
-                 sets+=("status=$(q "$2")"); shift 2;;
+      --status)  need_arg "$@"; valid_status "$2"   # どの状態からどの状態へも(閉じた状態から戻すのも)。分類に応じた列は下で足す
+                 nstatus=$2; sets+=("status=$(q "$2")"); shift 2;;
       --title)   need_arg "$@"; blank "$2" && usage "update: title が空です"; sets+=("title=$(q "$2")"); shift 2;;
       --owner)   need_arg "$@"; sets+=("owner_agent=NULLIF($(q "$2"),'')"); shift 2;;
       --session) need_arg "$@"; sets+=("session_id=NULLIF($(q "$2"),'')"); shift 2;;
@@ -356,8 +354,10 @@ cmd_update() {
   done
   [[ ${#sets[@]} -gt 0 || $relabel == 1 || ${#addlab[@]} -gt 0 || ${#rmlab[@]} -gt 0 || ${#addref[@]} -gt 0 || ${#rmref[@]} -gt 0 || $nsprint != - ]] || usage "update: 変更する項目がありません"
   row=$(require_task "$id"); cur=$(jq -r .status <<<"$row")
-  [[ " $CLOSED_STATUSES " != *" $cur "* ]] || die "$cur のタスクは update できません: $id"
-  [[ " ${sets[*]} " != *" status="* ]] || special_ticket_guard "$id" "tb update --status"
+  if [[ -n $nstatus ]]; then
+    special_ticket_guard "$id" "tb update --status"
+    local es; es=$(status_enter_sets "$nstatus" "$cur"); [[ -z $es ]] || sets+=("$es")
+  fi
   local sguard=""
   if [[ $nsprint != - ]]; then
     if [[ -z $nsprint ]]; then sets+=("sprint_id=NULL")
@@ -396,16 +396,15 @@ cmd_update() {
   fi
   event_actor_resolve
   local IFS=,
-  n=$(sql "BEGIN IMMEDIATE; UPDATE main.tasks SET ${sets[*]}, updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id") AND status NOT IN ($ST_CLOSED_SQL)$guard$sguard;
+  n=$(sql "BEGIN IMMEDIATE; UPDATE main.tasks SET ${sets[*]}, updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id")$guard$sguard;
            SELECT changes(); COMMIT;")
   unset IFS
   if [[ $n != 1 ]]; then
-    cur=$(sql "SELECT status FROM tasks WHERE id=$(q "$id");")
-    [[ " $CLOSED_STATUSES " != *" $cur "* ]] || die "$cur のタスクは update できません(並行して閉じられました): $id"
     [[ -z $sguard || -n $(sql "SELECT 1 FROM sprints WHERE id=${nsprint#S-} AND state!='closed';") ]] || usage "閉じたスプリントには入れられません: $nsprint"
     [[ -z $fparent || -z $(sql "SELECT 1 WHERE $(parent_cycle_sql "$fparent" "$id");") ]] || usage "親子が循環します: $id → $fparent"
     usage "update: 種別・親が規則に合いません(並行して変わりました): $id"
   fi
+  [[ -z $nstatus ]] || status_entered_hook "$id" "$nstatus" "$cur"
   notify_rules_hook
   echo "$id updated"
 }
@@ -427,16 +426,29 @@ cmd_done() {
   local row cur dj changed
   row=$(require_task "$id"); cur=$(jq -r .status <<<"$row")
   ! st_is "$cur" done || die "すでに $cur です: $id"
-  ! st_is "$cur" cancelled || die "$cur のタスクは done にできません: $id"
   special_ticket_guard "$id" "tb done"
   dj=$(jq -nc '$ARGS.positional' --args "${dels[@]}")
   event_actor_resolve
   changed=$(sql "UPDATE main.tasks SET status=$(q "$(st_main done)"), deliverables=$(q "$dj"), summary=$(q "$summary"),
-         reported_at=NULL, updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id") AND status NOT IN ($ST_CLOSED_SQL); SELECT changes();")
-  [[ $changed == 1 ]] || die "done できません(並行して閉じられました): $id"
+         reported_at=NULL, updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id") AND status NOT IN ($ST_DONE_SQL); SELECT changes();")
+  [[ $changed == 1 ]] || die "done できません(並行して done になりました): $id"
   notify_hook notify_hook_task_done "$id"
   notify_rules_hook
   echo "$id done (報告は tb digest でまとめて届く。すぐ届けるなら tb report $id)"
+}
+
+# ---------- 状態の移り変わり(tb update --status / tb ticket move) ----------
+# 状態そのものは特別扱いしない(どの状態からどの状態へも動かせる)。分類に入ったときだけ、完了報告の列を合わせる:
+#   done の分類に入る      → reported_at を空に(完了報告の対象。tb done と同じ)
+#   cancelled の分類に入る → reported_at を埋める(完了ではないので報告に出さない。tb cancel と同じ)
+# 閉じた状態から戻すときは、成果物と要約を履歴として残す(もう一度 done にすれば未報告に戻る)
+status_enter_sets() {  # $1=新しい状態 $2=今の状態 → SET に足す 1 つ(無ければ空)
+  st_is "$1" "$(st_cat "$2")" && return 0   # 同じ分類の中の移動は報告の扱いを変えない
+  if st_is "$1" done; then printf 'reported_at=NULL'
+  elif st_is "$1" cancelled; then printf 'reported_at=%s' "$(q "$(now)")"; fi
+}
+status_entered_hook() {  # $1=ID $2=新しい状態 $3=前の状態。done の分類に入ったら done の通知(tb done と同じ)
+  if st_is "$2" done && ! st_is "$3" done; then notify_hook notify_hook_task_done "$1"; fi
 }
 
 # ---------- block ----------
@@ -451,12 +463,11 @@ cmd_block() {
     esac
   done
   local row cur changed; row=$(require_task "$id"); cur=$(jq -r .status <<<"$row")
-  [[ " $CLOSED_STATUSES " != *" $cur "* ]] || die "$cur のタスクは block できません: $id"
   special_ticket_guard "$id" "tb block"
   event_actor_resolve
   changed=$(sql "UPDATE main.tasks SET status=$(q "$(st_main blocked)"), note=NULLIF($(q "$reason"),''), updated_at=$(q "$(now)")
-    WHERE herdr_session=$SQS AND id=$(q "$id") AND status NOT IN ($ST_CLOSED_SQL); SELECT changes();")
-  [[ $changed == 1 ]] || die "block できません(並行して閉じられました): $id"
+    WHERE herdr_session=$SQS AND id=$(q "$id"); SELECT changes();")
+  [[ $changed == 1 ]] || die "block できません: $id"
   notify_rules_hook
   echo "$id $(st_main blocked)"
 }
@@ -475,13 +486,13 @@ cmd_cancel() {
     esac
   done
   local row cur t changed; row=$(require_task "$id"); cur=$(jq -r .status <<<"$row")
-  [[ " $CLOSED_STATUSES " != *" $cur "* ]] || die "すでに $cur です: $id"
+  ! st_is "$cur" cancelled || die "すでに $cur です: $id"
   special_ticket_guard "$id" "tb cancel"
   event_actor_resolve
   t=$(now)
   changed=$(sql "UPDATE main.tasks SET status=$(q "$(st_main cancelled)"), summary=NULLIF($(q "$reason"),''), reported_at=$(q "$t"), updated_at=$(q "$t")
-    WHERE herdr_session=$SQS AND id=$(q "$id") AND status NOT IN ($ST_CLOSED_SQL); SELECT changes();")
-  [[ $changed == 1 ]] || die "cancel できません(並行して閉じられました): $id"
+    WHERE herdr_session=$SQS AND id=$(q "$id") AND status NOT IN ($ST_CANCELLED_SQL); SELECT changes();")
+  [[ $changed == 1 ]] || die "cancel できません(並行して取り消されました): $id"
   notify_rules_hook
   echo "$id $(st_main cancelled)"
 }
@@ -830,4 +841,167 @@ due_scan_sql() {  # $1=今日 $2=日数 [$3=project] → "overdue <n> due_soon <
        $pw AND $(printf "$seen" "'due_soon'") ORDER BY t.due, t.id;
     SELECT 'due_soon ' || changes();
     COMMIT;" | paste -sd' ' -
+}
+
+# ---------- ticket ----------
+# チケットの状態をまとめて扱う入口。tb ticket move で任意の状態へ、tb ticket status で状態そのものを足す・外す・見る。
+# 従来のコマンド(add / list / show / update / claim / done / block / cancel)も tb ticket <それ> で呼べる
+cmd_ticket() {
+  local sub=${1:-}; shift || true
+  case $sub in
+    move) ticket_move "$@";;
+    status|statuses) ticket_status "$@";;
+    add|list|show|update|claim|done|block|cancel|report|history|tree|link|unlink) "cmd_$sub" "$@";;
+    ""|-h|--help|help) ticket_usage; [[ -n $sub ]] || exit 2;;
+    *) usage "ticket: 不明なサブコマンド $sub(move / status / add / list / show / update / claim / done / block / cancel)";;
+  esac
+}
+ticket_usage() {
+  cat <<'USAGE'
+tb ticket move <id> <状態> [-m メモ] [-d 成果物 ...]   どの状態からどの状態へも(閉じた状態から戻すのも)。
+      -m は閉じた分類(done / cancelled)なら要約、それ以外ならメモ(note)に入る。-d は done の分類へ動かすときだけ
+tb ticket status [list] [--json]                      状態・分類・説明・チケットの件数
+tb ticket status add <状態> <分類> [-m 説明] [--after <状態>]   状態を足す(設定 statuses に書き足す。人だけ)
+tb ticket status rm <状態> [--to <状態>]              状態を外す(その状態のチケットが残っていれば --to で移すまで外さない。人だけ)
+tb ticket add|list|show|update|claim|done|block|cancel ...   従来の tb <それ> と同じ
+USAGE
+}
+
+ticket_move() {
+  [[ $# -ge 2 ]] || usage "ticket move <id> <状態> [-m メモ] [-d 成果物 ...]"
+  local id=$1 st=$2 msg="" hasmsg=0 dels=(); shift 2
+  valid_id "$id"
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      -m|--message|--summary) need_arg "$@"; msg=$2; hasmsg=1; shift 2;;
+      -d|--deliverable) need_arg "$@"; blank "$2" || dels+=("$2"); shift 2;;
+      *) usage "ticket move: 不明な引数 $1";;
+    esac
+  done
+  valid_status "$st"
+  [[ ${#dels[@]} -eq 0 ]] || st_is "$st" done || usage "ticket move: -d(成果物)は done の分類へ動かすときだけ使えます: $st"
+  local row cur sets=() es changed
+  row=$(require_task "$id"); cur=$(jq -r .status <<<"$row")
+  special_ticket_guard "$id" "tb ticket move"
+  if [[ $cur == "$st" && $hasmsg == 0 && ${#dels[@]} -eq 0 ]]; then echo "$id はすでに $st です"; return 0; fi
+  sets+=("status=$(q "$st")")
+  es=$(status_enter_sets "$st" "$cur"); [[ -z $es ]] || sets+=("$es")
+  if ((hasmsg)); then
+    if st_is "$st" done cancelled; then sets+=("summary=NULLIF($(q "$msg"),'')"); else sets+=("note=NULLIF($(q "$msg"),'')"); fi
+  fi
+  [[ ${#dels[@]} -eq 0 ]] || sets+=("deliverables=$(q "$(jq -nc '$ARGS.positional' --args "${dels[@]}")")")
+  event_actor_resolve
+  local IFS=,
+  changed=$(sql "UPDATE main.tasks SET ${sets[*]}, updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id") AND status=$(q "$cur"); SELECT changes();")
+  unset IFS
+  [[ $changed == 1 ]] || die "ticket move できません(並行して状態が変わりました): $id"
+  status_entered_hook "$id" "$st" "$cur"
+  notify_rules_hook
+  echo "$id $cur → $st"
+}
+
+# ---------- ticket status(状態そのものを足す・外す・見る) ----------
+# 中身は設定 statuses(lib/core.sh)。別の置き場は作らない。書く先は今読んでいる行(このセッション / 共通 / 明示したファイル)で、
+# 設定が無ければ共通の行(--shared と同じ)に、組み込みの 6 つから始めて書き足す
+ticket_status() {
+  local sub=${1:-list}
+  [[ $sub == -* ]] && sub=list || shift || true
+  case $sub in
+    list) ticket_status_list "$@";;
+    add) ticket_status_add "$@";;
+    rm|remove) ticket_status_rm "$@";;
+    *) usage "ticket status [list [--json] | add <状態> <分類> [-m 説明] [--after <状態>] | rm <状態> [--to <状態>]]";;
+  esac
+}
+
+# 今の本文(設定が無ければ組み込みの 6 つを書式どおりに)
+ticket_status_body() {
+  if config_has statuses 2>/dev/null; then printf '%s\n' "$CFG_BODY"; return 0; fi
+  local k c
+  while IFS=$'\t' read -r k c; do printf '%-12s %s\n' "$k" "$c"; done <<<"$STATUS_BUILTIN"
+}
+ticket_status_write() {  # $1=本文 $2=how
+  local shared=1
+  config_lookup statuses 2>/dev/null || true
+  [[ $CFG_SRC != "db:$SESS" ]] || shared=0   # このセッションの行から読んでいるならそこへ。明示したファイルは config_put が書く
+  config_put statuses "$1" "$2" "$shared"
+  ST_LOADED=0; statuses_load
+}
+
+ticket_status_list() {
+  local json=0
+  while [[ $# -gt 0 ]]; do case $1 in --json) json=1; shift;; *) usage "ticket status list [--json]";; esac; done
+  local counts k c n src
+  counts=$(sql -separator $'\t' "SELECT status, COUNT(*) FROM tasks GROUP BY status;")
+  src=$(config_source statuses)
+  local all=$ST_BOARD extra
+  for k in $(cut -f1 <<<"$counts"); do [[ " $all " == *" $k "* ]] || all+=" $k"; done
+  for k in $all; do
+    c=${ST_CAT[$k]:-}; n=$(awk -F'\t' -v k="$k" '$1 == k { print $2 }' <<<"$counts"); n=${n:-0}
+    extra=""; [[ " $STATUSES " == *" $k "* ]] || extra=removed
+    if ((json)); then jq -nc --arg s "$k" --arg c "$c" --arg d "${ST_DESC[$k]:-}" --argjson n "$n" --arg x "$extra" \
+         '{status: $s, category: $c, description: $d, tickets: $n, configured: ($x == "")}'
+    else printf '%s\t%s\t%s\t%s\n' "$k" "${c:--}" "$n" "${ST_DESC[$k]:-${extra:+(設定から外した状態)}}"; fi
+  done
+  ((json)) || echo "# 設定 statuses: $src(状態 分類 件数 説明)" >&2
+}
+
+ticket_status_add() {
+  [[ $# -ge 2 ]] || usage "ticket status add <状態> <分類> [-m 説明] [--after <状態>]"
+  local name=$1 cat=$2 desc="" after=""; shift 2
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      -m|--desc|--description) need_arg "$@"; desc=$2; shift 2;;
+      --after) need_arg "$@"; after=$2; shift 2;;
+      *) usage "ticket status add: 不明な引数 $1";;
+    esac
+  done
+  require_human "tb ticket status add"
+  [[ " $STATUS_CATEGORIES " == *" $cat "* ]] || usage "ticket status add: 分類は $STATUS_CATEGORIES のどれか: $cat"
+  [[ $desc != *$'\n'* && $desc != *'#'* ]] || usage "ticket status add: 説明に改行と # は使えません"
+  [[ " $STATUSES " != *" $name "* ]] || die "状態 $name はすでにあります(分類 ${ST_CAT[$name]})"
+  [[ -z $after || " $STATUSES " == *" $after "* ]] || usage "ticket status add: --after の状態がありません: $after"
+  local line body
+  line="$name $cat${desc:+ = $desc}"
+  if [[ -n $after ]]; then   # その状態の行の直後に入れる(書いた順が選択肢と列の順)
+    body=$(ticket_status_body | awk -v a="$after" -v l="$line" '{ print } !done { s=$0; sub(/#.*/, "", s); split(s, f, " "); if (f[1] == a) { print l; done=1 } }')
+  else
+    body=$(ticket_status_body; printf '%s\n' "$line")
+  fi
+  ticket_status_write "$body" "ticket status add $name"
+  echo "状態 $name を足しました(分類 ${cat}。設定 statuses: $(config_source statuses))"
+}
+
+ticket_status_rm() {
+  [[ $# -ge 1 ]] || usage "ticket status rm <状態> [--to <状態>]"
+  local name=$1 to=""; shift
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --to) need_arg "$@"; to=$2; shift 2;;
+      *) usage "ticket status rm: 不明な引数 $1";;
+    esac
+  done
+  require_human "tb ticket status rm"
+  [[ " $STATUSES " == *" $name "* ]] || die "状態 $name は設定にありません(tb ticket status で一覧)"
+  [[ -z $to || $to != "$name" ]] || usage "ticket status rm: --to に外す状態そのものは指定できません"
+  [[ -z $to ]] || valid_status "$to"
+  local n body
+  n=$(sql "SELECT COUNT(*) FROM tasks WHERE status=$(q "$name");")
+  # アラート・提案のチケットは DB のトリガーが組み込みの名前で書くので、組み込みの名前を外してもチケットは移さない
+  if ((n > 0)) && [[ -z $to ]]; then
+    die "状態 $name のチケットが $n 件あります。--to <状態> で移してから外します(例: tb ticket status rm $name --to $(st_main "${ST_CAT[$name]}" | grep -vx "$name" || st_main todo))"
+  fi
+  body=$(ticket_status_body | awk -v k="$name" '{ s=$0; sub(/#.*/, "", s); split(s, f, " "); if (f[1] == k) next; print }')
+  statuses_parse "$body" 2>/dev/null || { statuses_parse "$body"; die "状態 $name を外すと設定が成り立ちません"; }
+  if ((n > 0)); then
+    local ids id moved=0
+    ids=$(sql "SELECT id FROM tasks WHERE status=$(q "$name") ORDER BY id;")
+    for id in $ids; do
+      if [[ -n $(sql "SELECT 1 FROM alert_details WHERE task_id=$(q "$id") UNION ALL SELECT 1 FROM proposal_details WHERE task_id=$(q "$id") LIMIT 1;" 2>/dev/null) ]]; then continue; fi
+      ticket_move "$id" "$to" >/dev/null && moved=$((moved + 1))
+    done
+    echo "状態 $name のチケット $moved 件を $to へ移しました"
+  fi
+  ticket_status_write "$body" "ticket status rm $name"
+  echo "状態 $name を外しました(設定 statuses: $(config_source statuses))"
 }

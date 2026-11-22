@@ -90,7 +90,7 @@ config_forget() { unset "CFGC_${1//-/_}" "CFGS_${1//-/_}"; }
 declare -A MSG_VARS=(
   [send.denied.default]="sender"
   [send.blocked.notice]="id target kind rule"
-  [nudge.text]="task title minutes active"
+  [nudge.text]="task title minutes status active"
   [nudge.multi]="task others active todo"
   [nudge.pool]="task title agent session todo"
   [alert.analyze]="id"
@@ -99,6 +99,8 @@ declare -A MSG_VARS=(
   [identity.no-pane]=""
   [identity.herdr-failed]=""
 )
+# 識別子の一覧(名前の順。連想配列の順は bash の版で変わるので並べる)
+msg_codes() { printf '%s\n' "${!MSG_VARS[@]}" | LC_ALL=C sort | paste -sd' ' -; }
 # msg <識別子> <既定の文面> [名前=値 ...] → 文面(改行なし)
 msg() {
   local code=$1 t=$2 kv k line; shift 2
@@ -121,7 +123,7 @@ config_validate_messages() {  # $1=本文
     line=$(trim "$line"); [[ -z $line || $line == \#* ]] && continue
     if [[ $line != *=* ]]; then bad+="${n} 行目: <識別子> = <文面> の形ではありません"$'\n'; continue; fi
     code=$(trim "${line%%=*}"); text=$(trim "${line#*=}")
-    if [[ -z ${MSG_VARS[$code]+x} ]]; then bad+="${n} 行目: 知らない識別子です: $code(使えるのは: ${!MSG_VARS[*]})"$'\n'; continue; fi
+    if [[ -z ${MSG_VARS[$code]+x} ]]; then bad+="${n} 行目: 知らない識別子です: $code(使えるのは: $(msg_codes))"$'\n'; continue; fi
     [[ -n $text ]] || bad+="${n} 行目: 文面が空です: $code"$'\n'
     while [[ $text =~ \{([A-Za-z_]+)\} ]]; do
       v=${BASH_REMATCH[1]}
