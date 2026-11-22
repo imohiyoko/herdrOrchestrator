@@ -57,7 +57,9 @@ func Migrations(fsys fs.FS) ([]Migration, error) {
 
 // Options で Open の既定を差し替える(テスト用)。
 type Options struct {
-	Schema fs.FS // 既定は埋め込みの taskboard/schema
+	Schema        fs.FS // 既定は埋め込みの taskboard/schema
+	BusyTimeoutMS int   // 既定は BusyTimeoutMS(tb の SQL_TIMEOUT)
+	NoSession     bool  // 一時ビューと見張りを作らない(db.sh の sql_all と同じ。tb touch が使う)
 }
 
 // DB は 1 本の接続。一時ビューと見張りのトリガーは接続ごとなので、接続は 1 本に固定する。
@@ -73,8 +75,12 @@ func Quote(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'
 // Open は path の DB を開き、スキーマを最新にし、session の行だけを見る一時ビューと見張りを作る。
 func Open(path, session string, opt *Options) (*DB, error) {
 	schema := fs.FS(schemafs.FS)
+	timeout := BusyTimeoutMS
 	if opt != nil && opt.Schema != nil {
 		schema = opt.Schema
+	}
+	if opt != nil && opt.BusyTimeoutMS > 0 {
+		timeout = opt.BusyTimeoutMS
 	}
 	ms, err := Migrations(schema)
 	if err != nil {
@@ -87,7 +93,7 @@ func Open(path, session string, opt *Options) (*DB, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout("+strconv.Itoa(BusyTimeoutMS)+")")
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout("+strconv.Itoa(timeout)+")")
 	if err != nil {
 		return nil, err
 	}
@@ -98,6 +104,9 @@ func Open(path, session string, opt *Options) (*DB, error) {
 	if err := s.migrate(ms); err != nil {
 		db.Close()
 		return nil, err
+	}
+	if opt != nil && opt.NoSession {
+		return s, nil
 	}
 	if err := s.setupSession(); err != nil {
 		db.Close()
