@@ -1367,15 +1367,15 @@ def page_perms(qs, ctx=None):
             val, hit = perms.decide(rules, op)
             if val == "unknown":
                 res = (f'<p><code>{e(op)}</code> → <b class=warn>判定不能</b>({hit["no"]} 行目 <code>{e(hit["pattern"])}</code> に <code>[</code> があり、'
-                       'bash と照合規則が違いうるため、この画面ではここから下を判定しません。手元で <code>tb approval</code> を使ってください)</p>')
+                       'bash と照合規則が違いうるため、この画面ではここから下を判定しません。手元で <code>tb approval check</code> を使ってください)</p>')
             elif hit:
                 res = (f'<p><code>{e(op)}</code> → <b class="{"warn" if val == "allow" else ""}">{e(val)}</b>'
                        f'(<b>{hit["no"]} 行目</b>: <code>{e(hit["pattern"])} = {e(hit["value"])}</code> で決まる)</p>')
             else:
                 res = f'<p><code>{e(op)}</code> → <b>ask</b>(どの行にも一致しないので既定の ask)</p>'
     body += "<h2>この操作はどの行で決まるか</h2>" + form + res + (
-        '<p class=note>tb の <code>tb approval &lt;操作&gt;</code> と同じ規則(上から見て最初に一致した行)をここで再現した結果です。'
-        '実際に tb を呼んだり、何かを書き換えたりはしません。リスク評価(<code>tb approval &lt;操作&gt; --to 宛先 --text 本文</code>)は'
+        '<p class=note>tb の <code>tb approval check &lt;操作&gt;</code> と同じ規則(上から見て最初に一致した行)をここで再現した結果です。'
+        '実際に tb を呼んだり、何かを書き換えたりはしません。リスク評価(<code>tb approval check &lt;操作&gt; --to 宛先 --text 本文</code>)は'
         '本文が要るので、ここでは出しません。</p>')
     # 権限カタログ × approvals.conf(操作ごとの現在の値)
     catalog, cerr, cbad = perms.load_catalog()
@@ -1419,7 +1419,7 @@ def page_perms(qs, ctx=None):
     body += "<h2>変更履歴(直近 50 件)</h2>" + table(
         ["時刻(UTC)", "パターン", "値"],
         [[e(h["created_at"]), f'<code>{e(h["pattern"])}</code>', e(h["value"])] for h in hist])
-    body += '<p class=note>tb allow / tb ask が残した履歴です。誰が変えたか・変更前の値は記録されません(tb にその欄がありません)。</p>'
+    body += '<p class=note>tb approval allow / ask が残した履歴です。誰が変えたか・変更前の値は記録されません(tb にその欄がありません)。</p>'
     # コマンドの組み立て
     pat, val = _one(qs, "pat"), _one(qs, "val")
     cmd_html = ""
@@ -1450,7 +1450,7 @@ def page_perms(qs, ctx=None):
                 f'<option value=ask{" selected" if val == "ask" else ""}>ask(人の承認が要る)</option></select></label> '
                 '<button type=submit>コマンド行を組み立てる</button></p></form>')
     body += ("<h2>変更したいとき</h2>" + pat_form + cmd_html +
-             "<p class=note>権限の変更は、この画面ではできません(ボタンも POST もありません)。人が端末で <code>tb allow</code> / <code>tb ask</code> を実行します。"
+             "<p class=note>権限の変更は、この画面ではできません(ボタンも POST もありません)。人が端末で <code>tb approval allow</code> / <code>tb approval ask</code> を実行します。"
              "広い allow(例: <code>agent:*</code>)は、agent が自分の承認権限を広げる経路になりえます。</p>")
     return "権限(approvals.conf)", body
 
@@ -1468,7 +1468,7 @@ def age_label(sec):
 
 
 def page_outbox(_qs):
-    """tb send の一覧(読み取り専用)。承認・却下・送信の操作は置かない(承認は手元の tb approve)。"""
+    """tb send の一覧(読み取り専用)。承認・却下・送信の操作は置かない(承認は手元の tb approval approve)。"""
     rows = []
     for o in outbox_rows():
         st = f'<span class=warn>{e(o["status"])}</span>' if o["stuck"] else e(o["status"])
@@ -1476,7 +1476,7 @@ def page_outbox(_qs):
         rows.append([f"O-{o['id']}", st, e(o["from_name"]), e(o["target"]), e(o["kind"]), e(o["task_id"]), age, e(o["text"])])
     body = table(["id", "状態", "from", "宛先", "種別", "タスク", "経過", "本文(先頭 80 文字)"], rows)
     body += (f"<p class=note>新しい順に最大 100 件。queued のまま {QUEUED_WARN_SEC} 秒を超えたものは赤で強調"
-             "(scheduler の flush が止まっていないか見てください)。承認は手元で tb approve。この画面からは操作できません。</p>")
+             "(scheduler の flush が止まっていないか見てください)。承認は手元で tb approval approve。この画面からは操作できません。</p>")
     return "送信 (outbox)", body
 
 

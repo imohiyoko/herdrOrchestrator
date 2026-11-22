@@ -24,6 +24,7 @@
 65_nudge.sh 15
 70_roles.sh 4
 72_conv_learn.sh 14
+80_approval_contract.sh 6
 80_approvals.sh 8
 80_approve_delegate.sh 13
 81_risk.sh 7

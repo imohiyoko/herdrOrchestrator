@@ -58,7 +58,7 @@ ADR 0002(サービスの境界)と ADR 0004(3 つの層とモジュール)から
 | `proposal` | 機能 | 会計役 → 設定役の改善提案(project proposal のチケット) | review / `proposal add/list/show/resolve`(古い名前 `proposal --role ...` `proposals` `proposal-resolve`) |
 | `pr` | 機能 | PR キュー・PR の見張り | prqueue / `pr-queue` `pr-watch` |
 | `gate` | 機能 | ゲート | gate / `gate` |
-| `approval` | 土台(authz) | 承認・人だけの判定 | approvals, risk / `approve` `reject` `approval` `allow` |
+| `approval` | 土台(authz) | 承認・人だけの判定 | approvals, risk / `approval check/allow/ask/approve/reject`(古い名前 `approval <操作>` `allow` `ask` `approve` `reject`) |
 | `recipe` | 機能 | レシピと部品(ADR 0005) | recipes / `recipe-*` `parts` `part-*` |
 | `conv` | 機能 | 会話の下書き・振り分け・学習 | conv, convlearn, convstage / `conv-*` |
 | `reminder` | 機能 | リマインダー・期限 | reminders / `reminders` `due-scan` `nudge` |

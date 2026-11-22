@@ -370,7 +370,7 @@ agent 間の作業の依頼はチケットで行う(tb send では受けない)�
 
 - 止めた送信は宛先の入力にも inbox にも置かない。outbox の行は `denied` になり、`reason` に `delivery: ... → blocked` が残る。messages には種別 `block` で残る
 - 送信者には「止めた。依頼はチケットにして(`tb add ...`)」と返す。`tb send` ではその場で stderr に出し、終了コード 4、出力は `O-<n> blocked by <宛先>`(`--json` なら `"blocked": true`)
-- 承認待ちや `queued` のあとで止めたとき(`tb approve` / `tb flush`)は、送信者の pane にその知らせを打つ(`[tb: blocked / O-<n>] ...`。送信者が使用中で届かなければ stderr に出し、outbox の reason に残る)
+- 承認待ちや `queued` のあとで止めたとき(`tb approval approve` / `tb flush`)は、送信者の pane にその知らせを打つ(`[tb: blocked / O-<n>] ...`。送信者が使用中で届かなければ stderr に出し、outbox の reason に残る)
 - 止めるものは受け付け時に決まり、承認は求めない。`!` の行や `*=block` は種別ごとに選べ、確かめた返信(`reply=now`)だけを通せる
 
 ```bash
@@ -396,21 +396,22 @@ tb inbox-read I-<n> [--json]      # 全文を読み、既読にする
 人の承認が要るかどうかは設定 `approvals`(「設定」の順で引く。既定値は `config/approvals.conf.example`)で操作ごとに決める(`<操作のパターン> = ask|allow`、上から最初に一致した行、無一致は `ask`)。
 
 ```bash
-tb approval <操作>              # ask|allow と根拠の行。終了コード 0=allow / 20=ask
-tb allow <パターン>             # 「今後は許可」。同じパターンの行を書き換え、無ければ先頭(ほかのルールより前)に足す
-tb ask <パターン>               # 承認制に戻す
-tb approve O-<n> [--always]     # 承認待ちの送信を届ける。--always で send:<kind>:<宛先> を allow に
-tb reject O-<n>
+tb approval check <操作>        # ask|allow と根拠の行。終了コード 0=allow / 20=ask
+tb approval allow <パターン>    # 「今後は許可」。同じパターンの行を書き換え、無ければ先頭(ほかのルールより前)に足す
+tb approval ask <パターン>      # 承認制に戻す
+tb approval approve O-<n> [--always]   # 承認待ちの送信を届ける。--always で send:<kind>:<宛先> を allow に
+tb approval reject O-<n>
+# 古い名前(tb approval <操作> / tb allow / tb ask / tb approve / tb reject)も同じに動く
 ```
 
 - 操作の名前: `send:<kind>:<宛先>`(tb send)、`role:change`(人事の roles/ 変更)、`setup:<step>` など。`proxy:<effect>` は操作名としては定義があるが、**承認判定(`approval_of`)には渡らない**(代行依頼は `proxy_requests` の別の仕組み)ので、approvals.conf の `proxy:*` の行は何も効かない。既定では `send:task:*` が `ask`、`send:info:*` / `send:answer:*` が `allow`
 - `tb send` は `ask` の送信を届けず、`outbox` に `pending`(人の承認待ち)で置く(終了コード 20)。Web UI の緊急通知に出る
-- `tb allow` / `tb ask` / `tb approve` / `tb reject` は**人の端末から**だけ実行できる(agent の pane からは拒否)。履歴は `approval_changes`
+- `tb approval allow` / `ask` / `approve` / `reject` は**人の端末から**だけ実行できる(agent の pane からは拒否)。履歴は `approval_changes`
 - agent には承認ルールを書き換えさせない(DB の `config` 表への直接の書き込みと `tb config` を拒否し、取り込み前のファイルも Claude Code の `permissions.deny` で `Edit(//<ORCH_DIR>/taskboard/config/approvals.conf)` などを拒否し、
   `Bash(tb allow:*)` なども拒否しておくとより確実。権限カタログ `approvals-catalog.conf` も同じ扱いにする: 書き換えられると `/perms` の警告が消える)
 - 操作の候補と性質(種別・副作用・リスク階層・allow の候補・状態)は `config/approvals-catalog.conf` に定義している(判定には使わない。Web UI の `/perms` が approvals.conf と突き合わせて見せる)。状態は active(承認判定に渡す箇所がある)・unwired(操作名はあるが承認判定には渡らない)・reserved(将来用)。
   tb が承認判定に渡す操作名を増やしたら、カタログにも足す(`test/cases/82_catalog.sh` が、コード中の操作名の載り漏れと、既定の approvals.conf の未知の規則を検出する)
-- tb が強制するのは `tb send` だけ。ほかの操作(役割の変更・セットアップの書き込みなど)は、agent が `tb approval <操作>` を見て、`ask` なら人に聞く
+- tb が強制するのは `tb send` だけ。ほかの操作(役割の変更・セットアップの書き込みなど)は、agent が `tb approval check <操作>` を見て、`ask` なら人に聞く
 
 ## 部品とレシピ(ADR 0005)
 
@@ -615,7 +616,7 @@ lead1    agent:stop @worker       # lead1 は worker を承認なしで止めら
 - 主体は agent 名の glob か `@<役割>`。対象は agent 名の glob、`@<役割>`、または `tb agent-spawn` の親子関係による相対指定 `~child` / `~descendant` / `~parent` / `~sibling`(同じセッションの台帳で引く)、組織図(下の設定 `org`)の `~report` / `~subordinate` / `~manager` / `~superior` / `~peer`
 - どれかの行に当たれば allow。当たらなければ従来どおり `approvals.conf` が決める。許可を足すだけで、`delivery`(旧 `routes.conf`)の拒否などは外さない
 - 使う場所: `tb peek`(`agent:read`)、承認待ちの承認(`approve:<操作>`。下の節)、`tb send`(`send:<kind>`)、`tb agent-stop` などの agent 操作、`tb role-set`(`role:change`。grants に行があれば人事役でなくてよい。自分は不可・人事役は付けられない、の制限はそのまま。役割の本文・map を書く `tb role-write` は人事役だけ)、`tb agent-flag` / `agent-new --killable`(`agent:flag`)
-- 役割を確かめられない(台帳を読めない)行は使わない。`tb approval <操作> --by <agent>` で、その agent から見た判定(grants を含む)を確かめられる
+- 役割を確かめられない(台帳を読めない)行は使わない。`tb approval check <操作> --by <agent>` で、その agent から見た判定(grants を含む)を確かめられる
 
 #### 組織図(設定 `org`)と `tb can`
 
@@ -635,7 +636,7 @@ lead*   -> boss
 
 #### 承認待ちの承認を agent に任せる(`approve:<操作> <依頼者>`)
 
-ask で止まった承認待ち(送信の `O-<n>`、agent 操作の `L-<n>`)は、ふだんは人が自分の端末で `tb approve` / `tb agent-approve` する。`grants.conf` に `approve:` の行を書くと、「誰からの」「どの操作の」承認待ちかを絞って、特定の agent に承認(LGTM)を任せられる。依頼した agent は、その agent が承認した時点で続けられる。
+ask で止まった承認待ち(送信の `O-<n>`、agent 操作の `L-<n>`)は、ふだんは人が自分の端末で `tb approval approve` / `tb agent-approve` する。`grants.conf` に `approve:` の行を書くと、「誰からの」「どの操作の」承認待ちかを絞って、特定の agent に承認(LGTM)を任せられる。依頼した agent は、その agent が承認した時点で続けられる。
 
 ```
 # <承認者> approve:<元の操作の glob> <依頼者>
@@ -645,7 +646,7 @@ reviewer1  approve:send:task:w3   @worker  # worker からの w3 宛ての依頼
 ```
 
 - 操作は `approve:` のあとに、承認待ちになった元の操作名(`send:<kind>:<宛先>`、`agent:<op>:<対象>`、`agent:spawn:<子>`、`agent:model:<名前>`、`agent:slash:<コマンド>:<宛先>`)。対象は依頼した agent(spawn は親)で、ほかの grants と同じく名前の glob・`@<役割>`・`~child` などの関係が書ける
-- 当たる agent は、自分の pane から `tb approve O-<n>` / `tb reject O-<n>` / `tb agent-approve L-<n>` / `tb agent-reject L-<n>` を実行できる。当たらなければ従来どおり人だけ
+- 当たる agent は、自分の pane から `tb approval approve O-<n>` / `tb approval reject O-<n>` / `tb agent-approve L-<n>` / `tb agent-reject L-<n>` を実行できる。当たらなければ従来どおり人だけ
 - 自分の依頼は承認できない。`--always`(今後は承認なしにする規則の書き換え)は人だけ。`tb slash --all` / `tb model-set --all` の承認待ちと spawn-freeze 中の spawn も人だけ。アラート(`tb alert-approve`)と PR キュー(`tb pr-queue approve`)は対象外(人だけ)
 - 同じ承認待ちを 2 人(人と agent でも)が同時に承認しても、実行・送信は 1 回だけ。実行の途中で止まった `L-<n>` は承認し直せないので、人が `tb agent-reject` で片付けて頼み直す
 - 誰が承認・却下したかは記録に残る(outbox の reason、`tb agent-ops` の結果に `agent <名前>(grants.conf: …)が承認`)。承認しても `delivery` の止める規則などは外れない
@@ -681,7 +682,7 @@ tb spawn-freeze / tb spawn-unfreeze                                        # 人
   追加の固定の条件: 親は herdr で動いていて、`--task` が親の持つ in_progress のタスクであること。`denied_parents`(glob)に当たる親は子を立てられない
 - 判定: 規則に合い、`approvals.conf` の `agent:spawn:<子の名前>` が `allow` → 人の承認なしで作る(`agent-new` と同じ経路。`agent_ops` に requested_by=親・result に policy)。
   規則に合うが ask、または凍結中 → `L-<n>`(終了コード 20、`tb agent-approve`)。規則に合わない → 何も作らず stderr に理由を出して終了コード 4
-- 自動で作るには、人が `tb allow 'agent:spawn:*'`(`approvals.conf` に `agent:spawn:* = allow` を、`agent:* = ask` より上に足す)
+- 自動で作るには、人が `tb approval allow 'agent:spawn:*'`(`approvals.conf` に `agent:spawn:* = allow` を、`agent:* = ask` より上に足す)
 - 親子は `agents.spawned_by` / `spawn_task` に残る。子の `tb comment` は指揮官への本文の先頭に `spawned_by: <親>` が付く
 - `tb digest` が知らせる: 子の数が上限の 1 つ手前以上(全体、または 1 体の親)/ 親のタスクが done・cancelled・blocked なのに子が動いている。子がいなければ何も出さない
 

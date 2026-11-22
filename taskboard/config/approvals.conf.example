@@ -3,10 +3,10 @@
 #   allow = 承認なしで進めてよい(人が「今後は許可」と言ったもの)
 # パターンは glob(* と ?)。上から順に見て最初に一致した行で決まる。どれにも一致しなければ ask。
 # 末尾を @<役割> にすると宛先を役割で比べる(例: send:task:@worker = allow。役割は roles/<名前>.md > 台帳の role > roles/map.conf)。
-# 書き換えるのは人だけ: tb allow <操作> / tb ask <操作>(agent の pane からは実行できない)。手で編集してもよい。
+# 書き換えるのは人だけ: tb approval allow <操作> / tb approval ask <操作>(agent の pane からは実行できない)。手で編集してもよい。
 #
 # 操作の名前:
-#   send:<kind>:<宛先>     tb send(kind は task|info|answer)。ask なら outbox で人の承認待ちになり、tb approve O-<n> で届く
+#   send:<kind>:<宛先>     tb send(kind は task|info|answer)。ask なら outbox で人の承認待ちになり、tb approval approve O-<n> で届く
 #   role:change            人事エージェントが roles/ を書き換える
 #   proxy:<effect>         代行依頼(read-only|write|external)。read-only は proxy check の allow 判定も必要
 #   setup:<step>           セットアップ agent の書き込み(hooks|scheduler|webui|launchctl など)

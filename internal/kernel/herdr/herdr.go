@@ -25,6 +25,7 @@ func Call(args ...string) ([]byte, error) {
 type Agent struct {
 	PaneID       string `json:"pane_id"`
 	Name         string `json:"name"`
+	AgentStatus  any    `json:"agent_status"`
 	AgentSession struct {
 		Value string `json:"value"`
 	} `json:"agent_session"`

@@ -26,10 +26,13 @@ Go に移すサービスは、`.claude/skills/tb-command-naming` の形(`tb <サ
 | 3 | config | `config list/show/set/edit/unset/import/history`(9 種類の設定の検査も Go に) | 済み |
 | 3 | proposal | `proposal add/list/show/resolve`(古い名前 `proposal --role ...` `proposals` `proposal-resolve` も) | 済み |
 | 3 | notify | `notify status/on/off/test/dry-run/tail/ack/flush/events/hash/event/rules`(`pr-watch` は pr サービスなので pr と一緒に移す) | 済み |
-| 3 | approval / alert / review / gate / pr / digest | | まだ |
+| 3 | approval | `approval check/allow/ask/approve/reject`(古い名前 `approval <操作>` `allow` `ask` `approve` `reject` も)。判定に使う役割(agent)・承認後の届け方(message)の部品も Go に | 済み |
+| 3 | alert / review / gate / pr / digest | | まだ(alert は解析役の起動が agent に依存するので agent の後) |
 | 4 | agent / reminder / message | | まだ(message は `send` / `nudge` の PR の後) |
 | 5 | ticket(残り) / recipe / conv | | まだ(ticket は状態の再設計の後、recipe は ADR 0005 段 3 の後) |
 | 6 | scheduler の起動器 / webui | | まだ(ADR 0002 の手順 4・5) |
+
+サービスのコマンドより先に、ほかのサービスが使う部品だけを移すことがある(例: approval の PR で `internal/agents` の役割の引き方と `internal/message` の届け方)。そのサービスのコマンドはまだ bash のままで、移す PR でこの部品を使う。
 
 土台(`internal/kernel`)は、移すサービスが使う分だけ足していく: store(DB)、env(既定の置き場所)、config(設定を引く・書く)、herdr(herdr アダプタ)、identity(人か agent か。報告者の名前 `resolve_label` も)、transport(herdr への送信 `herdr_send` と messages への記録)、util(`oneline` など)。
 
