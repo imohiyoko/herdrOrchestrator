@@ -2099,6 +2099,7 @@ try:
     check("statuses: 設定にもチケットにも無い状態での絞り込みは断る", "状態は backlog / doing / shipped / qa / dropped のどれかです" in _tb)
     _tt, _tb = _vw.page_tasks({"status": ["in_progress"]})
     check("statuses: 設定から外した状態のチケットが残っていれば絞り込める", "状態は" not in _tb and "T-1" in _tb and "T-s-001" not in _tb)
+    check("statuses: 残った状態も選択肢に出て、選んだまま再送信できる", '<option value="in_progress" selected>' in _tb)
     check("statuses: 空の分類は空集合(NOT IN が効く)", _data.q("SELECT COUNT(*) AS n FROM tasks WHERE status NOT IN (SELECT NULL WHERE 0)")[0]["n"] > 0)
     _tt, _tb = _vw.page_tasks({"due": ["overdue"]})
     check("statuses: 期限切れは閉じた分類を数えない", "T-s-002" in _tb and "T-s-003" not in _tb)

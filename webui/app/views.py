@@ -559,7 +559,7 @@ def page_tasks(qs, ctx=None):
              '<p class=note>件数は PJ・担当・未報告の絞り込みを反映し、状態と「停滞だけ」は反映しません。</p>')
     popts = '<option value="">(すべて)</option>' + "".join(f'<option value="{e(p_)}"{" selected" if p_ == proj else ""}>{e(p_)}</option>' for p_ in projects)
     oopts = '<option value="">(すべて)</option>' + "".join(f'<option value="{e(o)}"{" selected" if o == owner else ""}>{e(o)}</option>' for o in owners)
-    sopts = '<option value="">(すべて)</option>' + "".join(f'<option value="{e(s_)}"{" selected" if s_ == st else ""}>{e(s_)}</option>' for s_ in task_statuses)
+    sopts = '<option value="">(すべて)</option>' + "".join(f'<option value="{e(s_)}"{" selected" if s_ == st else ""}>{e(s_)}</option>' for s_ in task_statuses + [x for x in present if x not in task_statuses])
     ropts = "".join(f'<option value="{k}"{" selected" if k == sort else ""}>{e(v[0])}</option>' for k, v in TASK_SORTS.items()
                     if (tf or k != "priority") and (hd or k != "due"))
     topts = '<option value="">(すべて)</option>' + "".join(f'<option value="{x}"{" selected" if x == ttype else ""}>{x}</option>' for x in TASK_TYPES)
