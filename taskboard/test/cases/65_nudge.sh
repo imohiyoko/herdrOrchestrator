@@ -80,6 +80,26 @@ eq "nudge: 不正な ignore の行はエラー" "$(rc $TB nudge --dry-run)" "1"
 # 不正な行は tb config set nudge の時点で断る(実行のたびに失敗する設定を書かない)
 eq "config set nudge: 不正な行は書かない" "$(printf 'ignore a b\n' | rc $TB config set nudge) $(wc -c <"$TB_NUDGE" | tr -d ' ')" "1 0"
 eq "config set nudge: ignore 以外の語も断る" "$(printf 'skip w1\n' | rc $TB config set nudge)" "1"
+# wake: 催促するチケットの状態(既定は active の分類)。分類の名前か状態の名前で、足し合わせる
+eq "config set nudge: wake に閉じた分類は書けない" "$(printf 'wake done\n' | rc $TB config set nudge)" "1"
+eq "config set nudge: wake に閉じた状態も書けない" "$(printf 'wake active cancelled\n' | rc $TB config set nudge)" "1"
+eq "config set nudge: wake に知らない名前は書けない" "$(printf 'wake nope\n' | rc $TB config set nudge)" "1"
+eq "config set nudge: wake に glob の文字は書けない" "$(printf 'wake in_*\n' | rc $TB config set nudge)" "1"
+eq "config set nudge: wake の分類と状態を受け付ける" "$(printf 'wake active\nwake todo review\n' | rc $TB config set nudge)" "0"
+rest s4 30
+eq "nudge: wake todo → todo の割り当ても催促する" "$(out=$($TB nudge --dry-run); row w4)" "$t6 would"
+eq "nudge: wake に active があれば今までどおり" "$(out=$($TB nudge --dry-run); row w1)" "$t1 would"
+printf 'wake todo\n' >"$TB_NUDGE"
+eq "nudge: wake に active が無ければ in_progress だけの agent は走査しない" "$($TB nudge --dry-run | grep -c '^w1')" "0"
+eq "nudge --pool: wake に active が無くても、作業中の agent には todo を取りに行かせない" "$($TB nudge w1 --pool --dry-run | grep "^w1${TAB}" | cut -f3-4 | tr '\t' ' ')" "skip 担当のチケットがある(${t1}。--pool では取りに行かせない)"
+eq "nudge: 当たらない宛先の理由に wake の状態" "$($TB nudge w1 --dry-run | grep "^w1${TAB}" | cut -f4)" "宛先に当たる agent がいない(todo のチケットを握っていない・--pool なら herdr にいない)"
+$TB nudge w4 >/dev/null
+eq "nudge: 文面はそのチケットの状態の名前" "$(grep '^prompt w4' "$FAKE_LOG" | grep -c "${t6}「まだ claim していない」が todo のまま")" "1"
+nsql "DELETE FROM outbox WHERE target='w4';"; nsql "DELETE FROM messages WHERE target='w4';"
+# 状態の名前で書いたもの(設定 statuses から外した名前は当たらないだけで、実行は止めない)
+printf 'wake in_progress no-longer-there\n' >"$TB_NUDGE"
+eq "nudge: wake に状態の名前" "$(out=$($TB nudge --dry-run); row w1) $($TB nudge --dry-run | grep -c '^w4')" "$t1 would 0"
+: >"$TB_NUDGE"
 # 明示した宛先に当たる agent がいなければ、黙って終わらずに skip の行を出す
 eq "nudge: 当たらない宛先 → skip の行" "$($TB nudge no-such-agent --dry-run | cut -f1-3 | tr '\t' ' ')" "no-such-agent - skip"
 # 先行チケット待ち
