@@ -37,8 +37,10 @@ while IFS= read -r l; do
   ((hit)) || pm_bad+="tb $l"$'\n'
 done <<<"$pm_labels"
 eq "perms: every require_human label has an inner row" "$pm_bad" ""
-eq "perms: every inner row is reached by a require_human label (bash)" \
-  "$(comm -23 <(printf '%s\n' "$pm_inner") <(printf '%s' "$pm_used" | sort -u))" ""
+# 使われない inner の行を残さない。同じ操作名の別名の行(例: pr.queue.approve と pr-queue.approve)は、どれかが当たればよい
+pm_used_ops=$(printf '%s' "$pm_used" | sort -u | while IFS= read -r p; do pm_rows | awk -v p="$p" '$1 == p {print $2}'; done | sort -u)
+eq "perms: every inner operation is reached by a require_human label (bash)" \
+  "$(pm_rows | awk '$5 == "inner" {print $2}' | sort -u | comm -23 - <(printf '%s\n' "$pm_used_ops"))" ""
 eq "perms: the bash table is the one herdrctl embeds (no copy)" "$(ls "$PM_ROOT/perms")" "$(printf 'commands.tbl\nembed.go')"
 
 # ---------- 振る舞い ----------

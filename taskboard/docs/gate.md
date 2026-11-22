@@ -115,11 +115,13 @@ AUTHOR-REJECT-RATE low|mid|high|unknown           作者の過去の差し戻し
 人が足したいパスは `config/gate-paths.conf` に書きます(組み込みは外せません)。
 glob は広めに当たります(`*` が `/` も越える)ので、`Dockerfile` で始まる名前(`docs/dockerfile-notes.md` など)も hard になります。人に回る側へ倒す作りです。
 
-## レビュー結果の記録(`tb review-submit`)
+## レビュー結果の記録(`tb review submit`)
 
 ```
-tb review-submit <task-id> --lineage <系統> --sha <head の sha> --blocker <n> --should <n> --verdict pass|fail [--pr <o>/<r>#<n>] [--evidence <パス>]
+tb review submit <task-id> --lineage <系統> --sha <head の sha> --blocker <n> --should <n> --verdict pass|fail [--pr <o>/<r>#<n>] [--evidence <パス>]
 ```
+
+古い名前 `tb review-submit` も同じに使えます(bash を外すときに外します)。Go 版(`TB_IMPL=go`)も、設定と記録は同じ固定の置き場所(`TB_ROOT` の下)だけを読み書きします。
 
 - 記録先は固定の追記専用ファイル `data/gate-reviews.log`(`.gitignore` 済み。env では変えられません)。DB のスキーマは変えません。既存の行は書き換えません。
 - 1 行の形: `ts=<UTC> task=<id> by=<送信者> pr=<o/r#n|-> REVIEW <系統> <sha> blocker=<n> should=<n> verdict=<pass|fail> evidence=<パス|->`
@@ -144,7 +146,7 @@ tb review-submit <task-id> --lineage <系統> --sha <head の sha> --blocker <n>
 tb gate ingest-review <task-id> --pr <o>/<r>#<n> --sha <head の sha>
 ```
 
-外部レビュー(CodeRabbit)を、agent ではなく**決定論の取り込み口**が、別の送信者 `ingest`(固定の名前)で記録します。LLM は使いません。`gh` の読み取り(`api` の GET だけ)で `pulls/<n>/reviews`、`pulls/<n>/comments`、`issues/<n>/comments` を取り、`REVIEW coderabbit <sha> blocker=<n> should=<n> verdict=<pass|fail>` を、`tb review-submit` と同じ追記専用の記録に足します。
+外部レビュー(CodeRabbit)を、agent ではなく**決定論の取り込み口**が、別の送信者 `ingest`(固定の名前)で記録します。LLM は使いません。`gh` の読み取り(`api` の GET だけ)で `pulls/<n>/reviews`、`pulls/<n>/comments`、`issues/<n>/comments` を取り、`REVIEW coderabbit <sha> blocker=<n> should=<n> verdict=<pass|fail>` を、`tb review submit` と同じ追記専用の記録に足します。
 
 - **記録する条件**: 設定した投稿者(既定は `coderabbitai[bot]`)のレビューが、`--sha` の head に対して存在し(コミット ID の前方一致)、状態が COMMENTED / APPROVED / CHANGES_REQUESTED で、スキップの印が無いときだけです。
 - **記録しない(fail-closed。「記録が無い」= レビューの条件を満たさない)**:
@@ -169,7 +171,7 @@ tb gate ingest-review <task-id> --pr <o>/<r>#<n> --sha <head の sha>
 ### 送信者 `ingest` の扱い
 
 - `tb gate evaluate` は、**外部系統(`coderabbit`)の記録のうち、送信者が `ingest` のものだけを独立系統として数えます。** agent が `review-submit --lineage coderabbit` で書いた記録や、`human` が書いた記録は、(sha が合っていても)独立系統には数えません。ただし、その記録の fail や blocker は、ほかの記録と同じく効きます。送信者 `ingest` が外部系統以外の系統を名乗る記録も数えません。
-- `tb review-submit` は、agent の pane から `coderabbit` を名乗れません(送信者は pane から決まります)。`ingest` という名前の agent も記録できません(予約名)。
+- `tb review submit` は、agent の pane から `coderabbit` を名乗れません(送信者は pane から決まります)。`ingest` という名前の agent も記録できません(予約名)。
 - `tb gate ingest-review` は、agent の pane(`HERDR_PANE_ID` がある)からは実行できません。
 - これで、独立 2 系統は「別の agent の `self`」と「`ingest` の `coderabbit`」になります。
 

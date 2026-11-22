@@ -4,7 +4,7 @@
 # 1 行 1 つ: <用途> = <ラベル>。# 以降はコメント。ラベルは 1〜40 文字で、空白・カンマ・引用符を含まない(日本語は可)。
 # 用途:
 #   deadline   tb deadlines-import が期限のチケットに付けるラベル。設定 labels で付けられるラベルを絞っていても、これは付けられる
-#   team       tb nudge --pool が「自分の team のチケット」として探すラベルの形。{team} が team の名前に置き換わる(必ず含める)
+#   team       tb reminder nudge --pool が「自分の team のチケット」として探すラベルの形。{team} が team の名前に置き換わる(必ず含める)
 # アラート・提案のチケットのラベル(alert / proposal / rejected / role:*)は DB のトリガーが付けるので変えられない。
 #
 # 組み込みと同じ内容:

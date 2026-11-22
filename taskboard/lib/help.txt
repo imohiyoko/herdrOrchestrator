@@ -12,7 +12,8 @@ tb labels [-p project] [--json]    使われているラベルと件数(ラベ�
 tb labels --defined [-p project] [--json]   用意したラベル(設定 labels)を書いた順に(ラベル 未完了 全部 説明)。設定があれば add / update で付けられるのはこれと tb 自身のラベルだけ
 tb history <id> [--json]           チケットの履歴(E-番号 時刻 タスク 種類 前 後 変えた者 元)。作成・状態・題・種別・優先度・担当・期日・親・説明・ラベル・外部リンク・リンク・コメント
 tb events [--since E-n] [--kind K] [-p project] [--limit N(既定 50)] [--json]   このセッションの履歴を古い順に
-tb due-scan [-p project] [--within N(既定 1)]   期限切れ(overdue)・期限間近(due_soon: 今日〜N 日後)のタスクに履歴のイベントを 1 日 1 回ずつ残す(通知の規則の材料。tb notify flush も呼ぶ)
+tb reminder scan [-p project] [--within N(既定 1)]   期限切れ(overdue)・期限間近(due_soon: 今日〜N 日後)のタスクに履歴のイベントを 1 日 1 回ずつ残す(通知の規則の材料。tb notify flush も呼ぶ)
+  別名(古い名前): tb due-scan 
 tb link <from> blocks|relates|duplicates <to>   blocks なら to は from が done になるまで claim できない
 tb unlink <from> <種類> <to>
 tb sprint-add -p <project> -n <名前> [--start YYYY-MM-DD] [--end YYYY-MM-DD] [--goal G]   → S-<n>(planned)
@@ -70,9 +71,10 @@ tb reopen C-<n> [-m 理由]   対応済みにした question/blocked の報告�
 tb digest [--dry-run]   未配送の報告・未報告の done・観測した事象(turn 終了後も in_progress / 長時間 working / blocked)を
                         指揮官ごとに 1 通にまとめて送る。宛先が使用中なら送らず次回へ持ち越す。終了コード 0 / 10 / 11
 tb digests [D-<n>] [--json]   送ったまとめの一覧 / 全文
-tb reminders [--json]   人が忘れているかもしれないもの(期限・質問・承認待ち・レビュー待ちの PR・変更依頼が付いた PR・停滞・届いていない送信・未読の保留メッセージ)を優先度順に出す。何も書かない
-tb reminders --check     出すものがあれば 0、無ければ 3(何も出さず、何も書かない。定期実行で --check || exit 0)
-tb reminders --publish [--json]   まとめを出し、前回の記録(notify_seen の reminders:*)を更新する。同じ項目は「継続(N 日目)」の 1 行。1 日 1 回は全件
+tb reminder list [--json]   人が忘れているかもしれないもの(期限・質問・承認待ち・レビュー待ちの PR・変更依頼が付いた PR・停滞・届いていない送信・未読の保留メッセージ)を優先度順に出す。何も書かない
+tb reminder check     出すものがあれば 0、無ければ 3(何も出さず、何も書かない。定期実行で --check || exit 0)
+tb reminder publish [--json]   まとめを出し、前回の記録(notify_seen の reminders:*)を更新する。同じ項目は「継続(N 日目)」の 1 行。1 日 1 回は全件
+  別名(古い名前): tb reminders [--json] / tb reminders --check / tb reminders --publish [--json] (tb reminder だけでサブコマンドの一覧)
 tb deadlines-import [-p project(既定 deadline)] [--dry-run]   期限ファイル(deadlines.conf)の行を担当なし・期日つきのチケットにする(人だけ。同じ題・期日があれば作らない)
 
 agent 間の送信(herdr agent prompt を直接打たない。送信者は herdr から決まり、設定 delivery の 1 つの表で 届ける / 保留する / 止める が決まる。旧 routes も互換で読む):
@@ -82,11 +84,12 @@ tb message send <宛先 agent 名> --text T [--task T-..] [--kind task|info|answ
          --reply-to O-<n>: 自分宛てに届いた O-<n> への返信。tb が DB で確かめ(O-<n> が宛先 → 自分で、届いていて、未返信)、認めれば reply= の規則で届ける
          終了コード 0=送信済み 10=宛先使用中で outbox に積んだ 11=送信失敗で積んだ 4=ルールで拒否・止めた 20=人の承認待ち 3=送信者を特定できず未保存 12=保留に失敗して積んだ
 tb message flush   積まれた送信を届ける(tb digest も最初に呼ぶ)
-tb nudge [<宛先> ...] [--pool] [--dry-run] [--idle-min N(既定 15)] [--max N(既定 3)] [--json]   チケット(既定は active の分類。設定 nudge の wake で分類・状態の名前を選べる。wake は既定を置き換えるので、active も催促するなら wake active todo のように書く)を握ったまま休んでいる agent に、指揮役から「続けて」と送る(tb message send と同じ outbox と delivery)。人の端末か scheduler から
+tb reminder nudge [<宛先> ...] [--pool] [--dry-run] [--idle-min N(既定 15)] [--max N(既定 3)] [--json]   チケット(既定は active の分類。設定 nudge の wake で分類・状態の名前を選べる。wake は既定を置き換えるので、active も催促するなら wake active todo のように書く)を握ったまま休んでいる agent に、指揮役から「続けて」と送る(tb message send と同じ outbox と delivery)。人の端末か scheduler から
          <宛先>: agent 名の glob か @役割の glob(複数は和集合)。明示した宛先には ignore を適用しない。当たる agent がいなければ skip の行を出す
          --pool: チケットを握っておらず、担当の todo/active/review/blocked も無い agent に、自分の team ラベル(team:<x>。役割 domain-<x> → 名前の -lead → 組織図の上司の順で決める)の担当なし todo を優先度順に 1 件取りに行かせる(同じ回で同じ候補は 1 人だけ)
          飛ばす: working / blocked・設定 nudge の ignore(設定 nudge が無いあいだは以前どおり指揮役・保護 protect)・人の返事待ち(未対応の question/blocked)・先行チケット待ち・delivery が now でない・この休みで催促済み・同じチケットで --max 回催促済み
          複数を握っていれば active を先に、優先度の高い 1 枚を名指しし、ほかの active は todo に戻すよう書く。出力は agent チケット 結果(sent|would|skip|held|blocked) 理由
+  別名(古い名前): tb nudge 
 tb message outbox [--status pending|queued|sent|denied] [--json]
 tb message inbox [--unread] [--json]   自分宛てに保留された送信(delivery の設定で hold になったもの)の一覧。読めるのは自分宛てだけ
 tb message read I-<n> [--json]   保留された送信を全文で読み、既読にする
@@ -133,7 +136,8 @@ tb approval check <操作> [--by A]  1 行目 ask|allow、2 行目 rule:。終�
   [--to 宛先 --text 本文 [--kind K]]  付けると risk:(リスク評価。第 1 段は参考値で判定は変えない)を併記。設計: docs/risk-based-approvals.md
   別名(古い名前): tb approval <操作> ...(サブコマンドの名前 check / allow / ask / approve / reject と同じ操作名はこの形では書けない)
 tb gate evaluate <chain-id> --action merge|approve [--pr <o>/<r>#<n>] [--fact '行'] [--facts-stdin]   merge/approve の判定(読み取りのみ。0=allow 20=ask 21=評価不能)。tb gate execute は常に 30(無効)。docs/gate.md
-tb review-submit <task-id> --lineage L --sha S --blocker N --should N --verdict pass|fail [--pr o/r#n] [--evidence P]   レビュー結果を追記専用の記録に残す(送信者は pane から決まる。作者は拒否 4、レビュー担当の役割だけ 5)。docs/gate.md
+tb review submit <task-id> --lineage L --sha S --blocker N --should N --verdict pass|fail [--pr o/r#n] [--evidence P]   レビュー結果を追記専用の記録に残す(送信者は pane から決まる。作者は拒否 4、レビュー担当の役割だけ 5)。docs/gate.md
+  別名(古い名前): tb review-submit 
 tb gate ingest-review <task-id> --pr <o>/<r>#<n> --sha <head の sha>   外部レビュー(CodeRabbit)を gh の読み取りで取り、送信者 ingest で記録する(agent の pane からは実行不可。スキップ・無い・取得失敗は記録しない)。docs/gate.md
 tb gate ingest-events <task-id> --pr <o>/<r>#<n>   PR の全レビュー(reviews / inline / issue)を、数値 id などの身元つきで追記専用の記録に残す(本文は保存しない。agent の pane からは実行不可)。判定には使わない。docs/gate.md
 tb gate reviewers <o>/<r>#<n> [--task <id>]   記録をレビュアーごとにまとめて表示する(読み取りだけ。gh は呼ばない)
@@ -165,7 +169,8 @@ tb job history <job> [--settings]                    変更の履歴
   別名(古い名前。同じに動く。サブコマンドが無ければ list): tb sched-job
 
 会計役(定期レビュー)→ 設定役(人事。TB_HR_NAME、既定 hr):
-tb review-pack [--since ISO] [--mark]      生ログではなく集計と上位だけのレビュー材料。省略時は前回 --mark 以降
+tb review pack [--since ISO] [--mark]      生ログではなく集計と上位だけのレビュー材料。省略時は前回 --mark 以降
+  別名(古い名前): tb review-pack (tb review だけでサブコマンドの一覧)
 tb proposal add --role <roles のファイル|-> --title T (--text X|--text-file F)   改善提案を設定役へ送る
 tb proposal list [--status open|applied|rejected]
 tb proposal show P-<n>
@@ -244,19 +249,21 @@ tb notify ack N-<n> <hash> [--id X]   notifier agent(か人)が、投稿した�
 tb notify hash '<本文>'       本文の hash(12 桁)を出す
 tb notify rules [show | test E-<n> | run]   通知の規則(設定 notify-rules。tb config set notify-rules で人だけが書く)を見る・イベントに当てて試す(積まない)・今すぐ当てる
 tb notify event incident_opened|incident_closed <ID> [--title T] [--severity S]   障害の開・閉を積む(人だけ。障害対応の workspace を開く・閉じるスクリプトから使う)
-tb pr-queue add --branch <接頭辞>/<名> --body-file <本文> --title <題> [--repo <org/repo>] [--task T-…] [--base <ブランチ> | --depends-on PQ-<n>]   draft PR の依頼を置く(agent)。pending。base は既定 main(conf の base_mode / base_allow)。--depends-on は下の PQ のブランチの上に積む
-tb pr-queue list [--status S] [--json] / show <PQ-n>   キューを見る
-tb pr-queue approve <PQ-n> / reject <PQ-n> [-m 理由]   人だけ。approve は本文・題・差分のガードも通ったときだけ
-tb pr-queue retry <PQ-n>   人だけ。failed を approved に戻す(attempts を 0 に)
-tb pr-queue run [--dry-run]   approved だけを処理(scheduler の COMMAND ジョブ)。ガード: ブランチが branch_prefixes(無ければ branch_prefix)のどれかで始まる・base は行に固定した値(既定 main。既定ブランチが変わった・許可外・origin に無いなら却下)・
+tb pr queue add --branch <接頭辞>/<名> --body-file <本文> --title <題> [--repo <org/repo>] [--task T-…] [--base <ブランチ> | --depends-on PQ-<n>]   draft PR の依頼を置く(agent)。pending。base は既定 main(conf の base_mode / base_allow)。--depends-on は下の PQ のブランチの上に積む
+tb pr queue list [--status S] [--json] / show <PQ-n>   キューを見る
+tb pr queue approve <PQ-n> / reject <PQ-n> [-m 理由]   人だけ。approve は本文・題・差分のガードも通ったときだけ
+tb pr queue retry <PQ-n>   人だけ。failed を approved に戻す(attempts を 0 に)
+tb pr queue run [--dry-run]   approved だけを処理(scheduler の COMMAND ジョブ)。ガード: ブランチが branch_prefixes(無ければ branch_prefix)のどれかで始まる・base は行に固定した値(既定 main。既定ブランチが変わった・許可外・origin に無いなら却下)・
                               draft のみ・本文が body_root の中の実ファイルで承認後に変わっていない・1 行目が body_first_line に合う(設定時)・
                               秘密らしい値なし・同じ head の PR なし・許可リスト(config/repos.md)のリポジトリ。
                               公開前検査(conf の deny_patterns。必須。環境変数では決めない。題・本文・コミットメッセージ(author / committer を含む)・ブランチ名・差分に掛け、ヒットは却下して規則名と位置だけ通知)。
                               検査の直前に origin と同期し(追跡参照が origin の SHA と一致しなければ止める)、PR_QUEUE_REPO_DIR(clone)の追跡参照で差分も見る(必須。バイナリの変更も人に回す。空・不正なら通さない。CI 設定・AdministratorAccess の追加・秘密らしい値は人に回す)。
                               gh は PR_QUEUE_GH か conf の gh(絶対パス。必須。未指定なら止まる)。ラッパーが 75 を返したら attempts を使わず止まる。マージ・approve・ready はできない。設定は config/pr-queue.conf
-tb pr-queue scan [--dry-run] [--repo <org/repo>]   origin の先頭の接頭辞(branch_prefixes の先頭)のブランチを走査し、<body_root>/pr-body-<名>.md があるものを積む(run の前に呼ぶ)
-tb pr-watch                   許可リスト(config/repos.md、TB_REPOS_FILE)の PR を gh の読み取りだけで見て、新規・approve・変更依頼・マージを積む
+tb pr queue scan [--dry-run] [--repo <org/repo>]   origin の先頭の接頭辞(branch_prefixes の先頭)のブランチを走査し、<body_root>/pr-body-<名>.md があるものを積む(run の前に呼ぶ)
+  別名(古い名前): tb pr-queue <サブコマンド> (tb pr だけでサブコマンドの一覧)
+tb pr watch                   許可リスト(config/repos.md、TB_REPOS_FILE)の PR を gh の読み取りだけで見て、新規・approve・変更依頼・マージを積む
                               (scheduler の COMMAND ジョブ。許可リストが空・notify が off なら何もせず 0。初回は基準線の記録だけ)
+  別名(古い名前): tb pr-watch 
          外へ出るのは tb が整形した 1 行の本文だけ(タスク ID・重大度・要約・成果物のパス)。秘密らしい値を含むものは slack / webhook に出さない。
          sink: file(data/notify/<日付>.md と sent.log)・stdout・slack(slack_via=agent|webhook)。1 分/1 時間の上限を超えた分は 1 通にまとめる
 

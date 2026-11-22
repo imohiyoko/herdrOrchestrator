@@ -54,14 +54,14 @@ ADR 0002(サービスの境界)と ADR 0004(3 つの層とモジュール)から
 | `digest` | 機能 | まとめ送り | digest / `digest` `digests` |
 | `agent` | 機能 | agent の作成・停止・復活・上限・モデル・役割 | agents, spawn, limits, models, roles, shed / `agent-*` `role-*` `model-set` `limits` |
 | `alert` | 機能 | アラート | alerts / `alert` `alert-*` `alerts` |
-| `review` | 機能 | 会計役のレビュー材料・レビューの提出 | review, gate / `review-pack` `review-submit`(gate と一緒に移す) |
+| `review` | 機能 | 会計役のレビュー材料・レビューの提出 | review, gate / `review pack/submit`(古い名前 `review-pack` `review-submit`) |
 | `proposal` | 機能 | 会計役 → 設定役の改善提案(project proposal のチケット) | review / `proposal add/list/show/resolve`(古い名前 `proposal --role ...` `proposals` `proposal-resolve`) |
-| `pr` | 機能 | PR キュー・PR の見張り | prqueue / `pr-queue` `pr-watch` |
+| `pr` | 機能 | PR キュー・PR の見張り | prqueue / `pr queue add/list/show/approve/reject/retry/run/scan` `pr watch`(古い名前 `pr-queue` `pr-watch`) |
 | `gate` | 機能 | ゲート | gate / `gate` |
 | `approval` | 土台(authz) | 承認・人だけの判定 | approvals, risk / `approval check/allow/ask/approve/reject`(古い名前 `approval <操作>` `allow` `ask` `approve` `reject`) |
 | `recipe` | 機能 | レシピと部品(ADR 0005) | recipes / `recipe-*` `parts` `part-*` |
 | `conv` | 機能 | 会話の下書き・振り分け・学習 | conv, convlearn, convstage / `conv-*` |
-| `reminder` | 機能 | リマインダー・期限 | reminders / `reminders` `due-scan` `nudge` |
+| `reminder` | 機能 | リマインダー・期限 | reminders / `reminder list/check/publish/scan/nudge`(古い名前 `reminders` `due-scan` `nudge`)。`deadlines-import` はまだ古い名前だけ |
 | `job` | 機能 | scheduler のジョブ | schedjobs, schedwatch / `sched-job` |
 | `proxy` | 機能 | 代理の依頼 | proxy / `proxy-*` |
 | `activity` | 機能 | hook からの活動記録 | activity / `touch` `activity`(hook が呼ぶので名前は変えない) |

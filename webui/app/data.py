@@ -601,7 +601,7 @@ def urgent_items():
     return cached("urgent", load)
 
 
-# ---- 保留した送信(inbox 表。tb message send の delivery=hold)と、忘れているかもしれないもの(tb reminders --publish の結果)。読み取り専用
+# ---- 保留した送信(inbox 表。tb message send の delivery=hold)と、忘れているかもしれないもの(tb reminder publish の結果)。読み取り専用
 HELD_MAX = 100
 HELD_TEXT_MAX = 20000
 _REM_PRIO = {1: "急ぎ", 2: "人の番", 3: "停滞", 4: "待ち・予定"}
@@ -641,7 +641,7 @@ def held_message(hid):
 
 
 def reminders_last():
-    """tb reminders --publish が残した最新のまとめ(notify_seen の reminders:last)。無い・壊れていれば None。
+    """tb reminder publish が残した最新のまとめ(notify_seen の reminders:last)。無い・壊れていれば None。
     値はすべて clean 済み。p は 1〜4、status は new / changed / continuing のどれか(それ以外の項目は捨てる)。"""
     rows = q("SELECT value, updated_at FROM notify_seen WHERE key='reminders:last'")
     if not rows:

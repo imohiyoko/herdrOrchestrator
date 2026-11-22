@@ -179,7 +179,7 @@ st_is() { local s=$1 c x; shift; x=$(st_cat "$s"); for c; do [[ $x == "$c" ]] &&
 # ---------- tb 自身が使うラベル(設定 system-labels) ----------
 # tb が付けたり探したりするラベルの名前。書式: 1 行 1 つ「<用途> = <ラベル>」。# 以降はコメント。書かなかった用途は組み込みの名前。
 #   deadline = deadline        tb deadlines-import が期限のチケットに付けるラベル
-#   team     = team:{team}     tb nudge --pool が見る team のラベル({team} が team の名前に置き換わる。必ず含める)
+#   team     = team:{team}     tb reminder nudge --pool が見る team のラベル({team} が team の名前に置き換わる。必ず含める)
 # アラート・提案のチケットのラベル(alert / proposal / rejected / role:*)は DB のトリガーが付けるので固定。
 declare -A SYSLABEL_BUILTIN=([deadline]=deadline [team]='team:{team}')
 SYSLABELS_LOADED=0

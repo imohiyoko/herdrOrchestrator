@@ -16,7 +16,7 @@
 ## 0 現状と、この設計が前提にすること
 
 【現状(`docs/gate.md` と実装)】
-- `tb review-submit` は、送信者を pane から決め、作者と同一の agent は拒否し、`reviewer` の役割以外の agent は記録できない。記録は追記専用の `data/gate-reviews.log`(1 行 = `ts= task= by= pr= REVIEW <系統> <sha> blocker= should= verdict= evidence=`)。
+- `tb review submit` は、送信者を pane から決め、作者と同一の agent は拒否し、`reviewer` の役割以外の agent は記録できない。記録は追記専用の `data/gate-reviews.log`(1 行 = `ts= task= by= pr= REVIEW <系統> <sha> blocker= should= verdict= evidence=`)。
 - `tb gate ingest-review` は、固定の投稿者(既定 `coderabbitai[bot]`)の head の sha に対するレビューだけを取り、送信者 `ingest` の `coderabbit` 系統として記録する。スキップ・無い・取得失敗は記録しない(fail-closed)。
 - `tb gate evaluate` は、有効な記録(sha が head と一致)から「独立した 2 系統の pass(系統も送信者も別)」を要求する。送信者 `human` と、送信者が `ingest` でない外部系統は独立系統に数えない(fail と blocker は効く)。
 - `tb gate execute` は常に 30。何も merge・approve しない。

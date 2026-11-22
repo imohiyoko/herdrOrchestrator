@@ -44,7 +44,7 @@ tb block  T-<project>-NNN -m "詰まっている理由"
 tb cancel T-<project>-NNN -m "取り消す理由"
 ```
 
-- `done` と同じく閉じた状態として扱う(状態の移動は制限しない。戻すのは `tb ticket move <id> <状態>`。`tb claim` は todo の分類だけ)。期限切れ・期限間近(`tb list --overdue` / `--due-within` / `tb due-scan` / Web UI)、`tb nudge`、未対応の報告の数え上げには出ない。
+- `done` と同じく閉じた状態として扱う(状態の移動は制限しない。戻すのは `tb ticket move <id> <状態>`。`tb claim` は todo の分類だけ)。期限切れ・期限間近(`tb list --overdue` / `--due-within` / `tb reminder scan` / Web UI)、`tb reminder nudge`、未対応の報告の数え上げには出ない。
 - `blocks` の先行タスクが `cancelled` になれば、後続は claim できる(先行待ちが解ける)。
 - 理由は要約(`summary`)に残る。完了ではないので完了報告(`tb digest` / `tb report` / `tb pending`)には出さない。
 - スプリントの件数・ポイント(`tb sprints` / Web UI のボード)の分母には数えない。`tb board` には `cancelled` の列が最後に出る。
@@ -146,7 +146,7 @@ tb ticket status rm 検証待ち --to review          # 外す。残っている
 - `tb ticket add|list|show|update|claim|done|block|cancel ...` は `tb <それ>` と同じ。
 - アラート・提案のチケットは今までどおり専用のコマンドだけで動かす(DB のトリガーが状態を書くため)。
 
-tb 自身が付ける・探すラベルの名前は設定 `system-labels` で変えられる(1 行 1 つ `<用途> = <ラベル>`。例は [config/system-labels.conf.example](config/system-labels.conf.example))。`deadline`(`tb deadlines-import` が付ける。既定 `deadline`)と `team`(`tb nudge --pool` が探す team のラベルの形。`{team}` が team の名前。既定 `team:{team}`)。アラート・提案のラベル(`alert` / `proposal` / `rejected` / `role:*`)は DB のトリガーが付けるので固定。
+tb 自身が付ける・探すラベルの名前は設定 `system-labels` で変えられる(1 行 1 つ `<用途> = <ラベル>`。例は [config/system-labels.conf.example](config/system-labels.conf.example))。`deadline`(`tb deadlines-import` が付ける。既定 `deadline`)と `team`(`tb reminder nudge --pool` が探す team のラベルの形。`{team}` が team の名前。既定 `team:{team}`)。アラート・提案のラベル(`alert` / `proposal` / `rejected` / `role:*`)は DB のトリガーが付けるので固定。
 
 ### 期日(期限切れ・期限間近)
 
@@ -162,7 +162,7 @@ tb list --due-within 3 --sort due --long        # 今日〜3 日後が期日で 
 - 作業タスクに紐付かない締め切り(掃除の期限など)は、担当なしのタスク(`--owner` を付けない)に `--due` を付けて置く。
 - 存在しない日付(`2026-02-30`)や形式違い(`2026/12/01`)は使い方の誤り(終了コード 2)。
 - Web UI のタスク一覧は期日の列と「期限切れ」「期限間近(N 日以内)」の絞り込み、期日の近い順の並びを持つ。期限切れは赤で出す。
-- **期限のイベント**(`tb due-scan [-p project] [--within N]`): 期限切れ(`overdue`)と期限間近(`due_soon`。今日〜N 日後、既定 1 = 今日と明日)の done でないタスクに、履歴のイベントを 1 日 1 回ずつ残す(変えた者 `system`、元 `day:<今日>`)。通知の規則(`overdue -> webui` など)の材料になる。`tb notify flush`(定期実行)も毎回呼ぶので、notify を使っていれば別のジョブは要らない。
+- **期限のイベント**(`tb reminder scan [-p project] [--within N]`): 期限切れ(`overdue`)と期限間近(`due_soon`。今日〜N 日後、既定 1 = 今日と明日)の done でないタスクに、履歴のイベントを 1 日 1 回ずつ残す(変えた者 `system`、元 `day:<今日>`)。通知の規則(`overdue -> webui` など)の材料になる。`tb notify flush`(定期実行)も毎回呼ぶので、notify を使っていれば別のジョブは要らない。
 
 ### 履歴(`tb history` / `tb events`)
 
@@ -256,7 +256,7 @@ tb digests [D-<n>] [--json]  # 送ったまとめの一覧 / 全文
 - **まとめるもの**: 未配送の報告(`progress` / `done` と、即時送信に失敗したもの)、`done` なのに未報告のタスク、そして **tb が観測した事象**。
   観測は worker の自己申告に頼らない:
   - turn が終わって `TB_DIGEST_IDLE_MIN`(既定 10)分たつのに、タスクが `in_progress` のまま(`agent_activity` の `Stop` から)
-  - 1 体の agent が `in_progress` のチケットを複数握っている(タスク agent は 1 枚が原則。本人への催促は `tb nudge`)
+  - 1 体の agent が `in_progress` のチケットを複数握っている(タスク agent は 1 枚が原則。本人への催促は `tb reminder nudge`)
   - `TB_DIGEST_STUCK_MIN`(既定 30)分以上 `working` のまま
   - herdr 上で `blocked`(承認ダイアログ待ちなど)。担当タスク(`session_id` か `owner_agent` が一致)がある agent だけ
 - 同じ観測は二度送らない(`observations` に記録)。blocked が解けると記録を消し、また blocked になれば再び送る
@@ -267,25 +267,27 @@ tb digests [D-<n>] [--json]  # 送ったまとめの一覧 / 全文
 
 ## 忘れているかもしれないもの(reminders)
 
-人の番になっているものは、質問・承認待ち・キュー・期限などあちこちに散らばる。`tb reminders` はそれを読むだけで 1 つのまとめにする。
+人の番になっているものは、質問・承認待ち・キュー・期限などあちこちに散らばる。`tb reminder` はそれを読むだけで 1 つのまとめにする。
 agent にも外にも送らない。出力は stdout と、Web UI の「報告・承認待ち」の「忘れているかも」の欄(`notify_seen` の `reminders:last` を読む)。
 定期実行の例は `scheduler/jobs/reminders.conf.example`。
 
 ```bash
-tb reminders               # 今の一覧(記録は変えない)。--json で項目を JSON に
-tb reminders --check       # 前回の publish から出すものが増えた・変わった・消えた、または今日の全件がまだなら 0。それ以外は 3(何も出さない)
-tb reminders --publish     # まとめを出し、記録を更新する
+tb reminder list          # 今の一覧(記録は変えない)。--json で項目を JSON に
+tb reminder check         # 前回の publish から出すものが増えた・変わった・消えた、または今日の全件がまだなら 0。それ以外は 3(何も出さない)
+tb reminder publish       # まとめを出し、記録を更新する
 ```
+
+古い名前 `tb reminders` / `tb reminders --check` / `tb reminders --publish`、`tb due-scan`、`tb nudge` も同じに使える(bash を外すときに外す)。
 
 - **材料**(すべて読むだけ): 未対応の質問・ブロック報告(未完了のタスク)/ 承認待ち(送信 `O-` / agent 操作 `L-` / 代行依頼 / 解析役の起動 `A-`)/
   レビュー待ちの PR(許可リスト `taskboard/config/repos.md` のリポジトリで、開いていて draft でなく、承認も変更依頼もないもの。`gh pr list` で読むだけ)/
   停滞したタスク(`in_progress` のまま `TB_REMINDERS_STALE_HOURS`(既定 24)時間動きがない。動きは更新と履歴 `task_events`(報告のコメントも入る))/
-  変更依頼が付いたままの PR(`tb pr-watch` がチケットの履歴に残した、その PR の最後の出来事が `pr_changes`。担当の番)/
+  変更依頼が付いたままの PR(`tb pr watch` がチケットの履歴に残した、その PR の最後の出来事が `pr_changes`。担当の番)/
   宛先に届いていない送信(`queued` のまま `TB_DIGEST_QUEUED_SEC` 秒)/ 未読の保留メッセージ(`inbox` 表があれば。宛先と送り手と種別だけ)/ 期限(`tasks.due`。`tb list --overdue` / `--due-within` と同じ「今日」。タスクにしない期限は
   `taskboard/config/deadlines.conf` に `deadline = YYYY-MM-DD | 題` の行で書く。`TB_REMINDERS_DEADLINES` で場所を変えられる)
 - **期限ファイルをチケットにする**: `tb deadlines-import [-p project(既定 deadline)] [--dry-run]`(人だけ)で、期限ファイルの行を担当なし・期日つき・ラベル `deadline` のチケットにする。
   同じ題・同じ期日のチケットがあれば作らない(何度流してもよい)。ファイルは書き換えない。取り込んだ行はファイルからは出さず、チケットの期限として載る
-  (`tb due-scan` の期限のイベントと通知の規則も、ほかのチケットと同じに効く)
+  (`tb reminder scan` の期限のイベントと通知の規則も、ほかのチケットと同じに効く)
 - **優先度**: 急ぎ(期限切れ・今日・明日)→ 人の番(質問・承認待ち・レビュー)→ 停滞 → 待ち・予定(届いていない送信、`TB_REMINDERS_DUE_DAYS`(既定 7)日以内の期限)。
   同じ優先度の中は期限、古い順。列は 優先 / 何が / 誰の番 / 期限 / 参照 / 経過
 - **重複の抑え**: 項目ごとに決まったキー(`q:<id>` / `o:<id>` / `pr:<repo>#<n>` / `due:<タスク>` など)と状態を `reminders:state` に残す。
@@ -313,16 +315,16 @@ tb message outbox [--status queued|sent|denied] [--json]
 - 終了コード: 0 送信済み(または保留した)/ 10 宛先使用中で積んだ / 11 送信失敗で積んだ / 12 保留に失敗して積んだ / 4 ルールで拒否 / 20 人の承認待ち(approvals)/ 3 送信者を特定できず未保存
 - agent に `herdr agent prompt` を直接打たせないようにするには、その agent の Claude Code 設定で拒否する(`conductor/README.md`)
 
-### 休んでいる担当への催促(`tb nudge`)
+### 休んでいる担当への催促(`tb reminder nudge`)
 
 チケットを握ったまま(担当で `in_progress`。設定 `nudge` の `wake` で選べる)turn が終わって止まっている agent に、そのチケットの指示役から「続けて」と送る。新しい送り方は作らず、指示役が `tb message send <担当> --kind task --task <チケット>` したのと同じ outbox と delivery の規則で届く(文面のラベルの pane が `nudge`: `[from: <指示役> / nudge / T-x / task / O-n] [催促] ...`)。
 
 ```bash
-tb nudge --dry-run            # 誰に送るか・なぜ飛ばすかを見るだけ(agent の pane からも読める)
-tb nudge [--idle-min 15] [--max 3] [--json]   # 送る(人の端末か scheduler から。例は scheduler/jobs/nudge.conf.example)
+tb reminder nudge --dry-run            # 誰に送るか・なぜ飛ばすかを見るだけ(agent の pane からも読める)
+tb reminder nudge [--idle-min 15] [--max 3] [--json]   # 送る(人の端末か scheduler から。例は scheduler/jobs/nudge.conf.example)
 ```
 
-- **対象**: 既定は全員(固定の除外は無い)。除外は設定 `nudge` に 1 行 1 つ `ignore <@役割の glob | agent 名の glob>` と書く(人だけが `tb config edit nudge`。例は `config/nudge.conf.example`)。**宛先を明示した場合(`tb nudge <agent 名の glob | @役割の glob> ...`)は ignore も適用しない**(指定が意思表示)。ほかの除外条件(下)は常に効く
+- **対象**: 既定は全員(固定の除外は無い)。除外は設定 `nudge` に 1 行 1 つ `ignore <@役割の glob | agent 名の glob>` と書く(人だけが `tb config edit nudge`。例は `config/nudge.conf.example`)。**宛先を明示した場合(`tb reminder nudge <agent 名の glob | @役割の glob> ...`)は ignore も適用しない**(指定が意思表示)。ほかの除外条件(下)は常に効く
 - **移行**: 設定 `nudge` が無い(ファイルも DB の行も無い)あいだは、以前の既定の除外(指揮役 = 既定の宛先と `projects` の値、保護 `protect`)をそのまま保つ。設定 `nudge` を置けば(空でも)全員が対象になり、除外は `ignore` の行だけで決まる。指揮役や保護された agent も除きたいときは、それらを `ignore` に書いてから置く(`--dry-run` で対象を確かめる)
 - **催促する状態(`wake`)**: 設定 `nudge` に `wake <分類 | 状態> ...` と書くと、その状態のチケットを握っている agent も催促する(複数行は足し合わせる)。分類の名前(`todo` / `active` / `review` / `blocked`)ならその分類の状態すべて、ほかは状態の名前(設定 `statuses`)。`wake` を書かなければ `active` だけ(今までどおり)。`wake` を書くなら `active` も書かないと作業中は催促しない。閉じた分類(`done` / `cancelled`)は書けない。例: `wake active todo review blocked`。着手前(todo の分類)のチケットには「止まっています・続きを」ではなく、`tb claim` で着手するよう促す文面(設定 `messages` の `nudge.start`)を送る
 - **設定の検査**: `tb config set nudge` / `edit nudge` は、`ignore <パターン>` / `wake <名前> ...` の形でない行、閉じた状態、今の分類にも状態にも無い名前があれば書かない(あとで設定 `statuses` から外した名前は、実行時に当たらないだけで止めない)。`@役割` の ignore で役割を確かめられない agent は、送らずに skip する
@@ -658,7 +660,7 @@ reviewer1  approve:send:task:w3   @worker  # worker からの w3 宛ての依頼
 
 - 操作は `approve:` のあとに、承認待ちになった元の操作名(`send:<kind>:<宛先>`、`agent:<op>:<対象>`、`agent:spawn:<子>`、`agent:model:<名前>`、`agent:slash:<コマンド>:<宛先>`)。対象は依頼した agent(spawn は親)で、ほかの grants と同じく名前の glob・`@<役割>`・`~child` などの関係が書ける
 - 当たる agent は、自分の pane から `tb approval approve O-<n>` / `tb approval reject O-<n>` / `tb agent-approve L-<n>` / `tb agent-reject L-<n>` を実行できる。当たらなければ従来どおり人だけ
-- 自分の依頼は承認できない。`--always`(今後は承認なしにする規則の書き換え)は人だけ。`tb slash --all` / `tb model-set --all` の承認待ちと spawn-freeze 中の spawn も人だけ。アラート(`tb alert-approve`)と PR キュー(`tb pr-queue approve`)は対象外(人だけ)
+- 自分の依頼は承認できない。`--always`(今後は承認なしにする規則の書き換え)は人だけ。`tb slash --all` / `tb model-set --all` の承認待ちと spawn-freeze 中の spawn も人だけ。アラート(`tb alert-approve`)と PR キュー(`tb pr queue approve`)は対象外(人だけ)
 - 同じ承認待ちを 2 人(人と agent でも)が同時に承認しても、実行・送信は 1 回だけ。実行の途中で止まった `L-<n>` は承認し直せないので、人が `tb agent-reject` で片付けて頼み直す
 - 誰が承認・却下したかは記録に残る(outbox の reason、`tb agent-ops` の結果に `agent <名前>(grants.conf: …)が承認`)。承認しても `delivery` の止める規則などは外れない
 - `tb can <承認者> approve:<元の操作> <依頼者>`(例 `tb can lead1 approve:send:task:w2 w1`)で、承認できるかを確かめられる(allow か deny)。組織図の関係も書ける(例 `@lead approve:send:task:* ~report`)
@@ -764,7 +766,7 @@ tb agent-shed [--count N] [--json]        # 絞る候補の一覧。何も止め
 記録を見直し、役割(プロンプト)の改善を設定役(`projects` の `proposal=<名前>` の行。無ければ `TB_HR_NAME`、既定 `hr`)に提案する。提案を閉じられるのは設定役と人。設定役が `roles/` を直す(`role:change` の承認規則に従う)。
 
 ```bash
-tb review-pack [--since ISO] [--mark]   # レビュー材料。生ログではなく集計と上位だけ(トークン節約)。省略時は前回 --mark より後
+tb review pack [--since ISO] [--mark]   # レビュー材料。生ログではなく集計と上位だけ(トークン節約)。省略時は前回 --mark より後
 tb proposal add --role <roles のファイル|-> --title T (--text X | --text-file F)   # 会計役。設定役へすぐ送る(使用中なら digest が再送)
 tb proposal list [--status open|applied|rejected]
 tb proposal show P-<n>
@@ -774,7 +776,7 @@ tb proposal resolve P-<n> --status applied|rejected [--note N]   # 設定役か�
 **提案はチケット**(ADR 0003)。1 件ごとに project `proposal`・ラベル `proposal` と `role:<ファイル名>`(全体なら `role:-`)のチケット(`T-proposal-NNN`)ができ、担当は設定役。
 `open` は `todo`、`applied` / `rejected` は `done`(要約に「適用」/「見送り」、見送りはラベル `rejected` も付く)。状態は `tb proposal resolve` だけが変える。
 
-`review-pack` の中身: 送信の種類別件数と平均文字数、送れなかった宛先、長い送信、tb message send の拒否・承認待ち、何度も人が承認した操作、
+`tb review pack` の中身: 送信の種類別件数と平均文字数、送れなかった宛先、長い送信、tb message send の拒否・承認待ち、何度も人が承認した操作、
 報告の種類と質問の例、digest の大きさ、アラートの状態・重複・low 判定・解析時間、観測、役割の配布(compact 回数)、定期実行の action 別件数、提案の状況。
 
 ## 役割の配布(roles)
@@ -806,8 +808,8 @@ tb comment / alert / done / 障害の開閉 / pr-watch / 定期 ──▶ notify
 ```
 
 - **既定は off。** 使うには `config/notify.conf.example` を `config/notify.conf`(gitignore 済み・任意)にコピーして編集し、`tb notify on`(人の端末から)。優先は 環境変数 `TB_NOTIFY_<キー大文字>` > `notify.conf` > 既定
-- イベント: アラート登録 / アラートの調査結果 / PR の作成・approve・変更依頼・マージ(`tb pr-watch`) / question・blocked / done(成果物つき) / 障害の開・閉 / 承認待ち(L-/O- の番号と件数だけ) / 定期まとめ。progress と見回りの差分は積まない
-- **PR をチケットに結ぶ**: `tb pr-watch` が見つけた PR の作成・approve・変更依頼・マージは、その PR の URL(`https://github.com/<repo>/pull/<n>`)を外部リンク(`--ref`)に持つチケットと、PR の題に書かれたチケット ID の履歴にも残る(`pr_opened` / `pr_approved` / `pr_changes` / `pr_merged`、変えた者 `system`)。チケットの状態は変えない(マージで done にするかは人か担当が決める)。通知の規則(`pr_merged label=release -> slack` など)の材料になる
+- イベント: アラート登録 / アラートの調査結果 / PR の作成・approve・変更依頼・マージ(`tb pr watch`) / question・blocked / done(成果物つき) / 障害の開・閉 / 承認待ち(L-/O- の番号と件数だけ) / 定期まとめ。progress と見回りの差分は積まない
+- **PR をチケットに結ぶ**: `tb pr watch` が見つけた PR の作成・approve・変更依頼・マージは、その PR の URL(`https://github.com/<repo>/pull/<n>`)を外部リンク(`--ref`)に持つチケットと、PR の題に書かれたチケット ID の履歴にも残る(`pr_opened` / `pr_approved` / `pr_changes` / `pr_merged`、変えた者 `system`)。チケットの状態は変えない(マージで done にするかは人か担当が決める)。通知の規則(`pr_merged label=release -> slack` など)の材料になる
 - 本文は 1 行の短い日本語(タスク ID・重大度・要約・成果物のパス)。制御文字を除き、`@here` `@channel` と `<...>` は無効化、リンクは文字列のまま。生ログ・コードの囲みは落とす(`strip_raw_logs`)
 - **秘密の値は常に止める(設定で変えられない)**: トークン・AWS のキー ID・秘密鍵のヘッダ・`key=value` 形式の秘密・長い base64/16 進を含むイベントは、slack にも webhook にも出さない。`data/notify/<日付>.md` に伏せた形だけを残し、`tb digest` で指揮官(人)に知らせる
 - 伏せ字(`mask_*`): メールは既定で伏せる。リポジトリ名・IP・アカウント ID・ホスト名は、人の決定で既定は**伏せない**(必要なら on)
@@ -826,10 +828,10 @@ tb notify tail [-n N] [-f]         # stdout sink
 tb notify events [--status S] [--json]
 tb notify flush                    # 人の端末か scheduler から
 tb notify ack N-<n> <hash> [--id X]   # notifier が結果を返す
-tb pr-watch                        # 許可リストの PR を gh の読み取りだけで見る(scheduler の COMMAND ジョブ)
+tb pr watch                        # 許可リストの PR を gh の読み取りだけで見る(scheduler の COMMAND ジョブ)
 ```
 
-`tb pr-watch` は許可リスト `taskboard/config/repos.md`(`TB_REPOS_FILE` で変更可。git 管理外)の `- <org>/<repo>` の行のリポジトリだけを、`gh pr list` で読む。許可リストが無い・空、または notify が off なら何もせず終了コード 0。初めて見るリポジトリは基準線の記録だけで、既存の PR をイベントにしない。PR の題(短く)と状態だけを使い、本文・レビューのコメント・差分は読まない。ジョブの例は `scheduler/jobs/pr-watch.conf.example` と `notify-flush.conf.example`。
+`tb pr watch` は許可リスト `taskboard/config/repos.md`(`TB_REPOS_FILE` で変更可。git 管理外)の `- <org>/<repo>` の行のリポジトリだけを、`gh pr list` で読む。許可リストが無い・空、または notify が off なら何もせず終了コード 0。初めて見るリポジトリは基準線の記録だけで、既存の PR をイベントにしない。PR の題(短く)と状態だけを使い、本文・レビューのコメント・差分は読まない。ジョブの例は `scheduler/jobs/pr-watch.conf.example` と `notify-flush.conf.example`。
 
 ### 通知の規則(notify-rules。チケットのイベントで通知する)
 
@@ -850,7 +852,7 @@ label_added label=urgent actor=human -> slack           # 人が付けたとき�
 comment new=question                -> webui
 ```
 
-- **イベントの種類**: `tb history` の種類(created / status / label_added / priority / comment など。`tb due-scan` の overdue / due_soon、`tb pr-watch` の pr_opened / pr_approved / pr_changes / pr_merged も)か `*`。
+- **イベントの種類**: `tb history` の種類(created / status / label_added / priority / comment など。`tb reminder scan` の overdue / due_soon、`tb pr watch` の pr_opened / pr_approved / pr_changes / pr_merged も)か `*`。
 - **条件**: `type=` `priority=` `priority>=` `label=` `project=` `owner=` `new=` `old=` `actor=`。すべて満たした行が当たる。`label=` は、label_added / label_removed では付け外したラベルそのもの、ほかのイベントでは「今そのラベルを持っている」。`actor=` は名前か `human` / `system` / `agent`。
 - **届け先**: `file` `stdout` `slack`(ほかの通知と同じ経路)、`webui`(Web UI の緊急通知と Chrome 通知に 24 時間出す)、`conductor`(そのプロジェクトの指揮役への次のまとめ = `tb digest`)。当たった行の届け先を合わせ、イベント 1 件につき通知 1 件(種別 `ticket`)。
 - **本文**: `[チケット] T-web-012 ログイン画面 — ラベル +notify / high / bug / 担当 worker-2`。ID・題・イベント・優先度・種別・担当だけで、説明やコメントの本文は載せない。秘密の検出・伏せ字・頻度の上限は他の通知と同じく必ず通る。
@@ -860,21 +862,21 @@ comment new=question                -> webui
 
 ## draft PR の作成キュー(pr-queue)
 
-agent のセッションに `gh` の書き込み権限を持たせないための仕組み。agent は PR を作らず、キューに置くだけ。PR を作るのは、人の端末で動く scheduler の COMMAND ジョブ(`tb pr-queue scan` → `tb pr-queue run`)。
+agent のセッションに `gh` の書き込み権限を持たせないための仕組み。agent は PR を作らず、キューに置くだけ。PR を作るのは、人の端末で動く scheduler の COMMAND ジョブ(`tb pr queue scan` → `tb pr queue run`)。
 
 ```
-tb pr-queue add --branch agent/<名> --body-file <本文> --title <題> [--repo <org/repo>] [--task T-…] [--base <ブランチ> | --depends-on PQ-<m>]   # agent。pending
-tb pr-queue approve PQ-<n> / reject PQ-<n> [-m 理由]                                                  # 人だけ
-tb pr-queue retry PQ-<n>                                                                              # 人だけ。failed を approved に戻す(attempts を 0 に)
-tb pr-queue run [--dry-run]                                                                           # approved だけを gh pr create --draft
-tb pr-queue scan [--dry-run] [--repo <org/repo>]                                                      # origin の <branch_prefix>* から積む
+tb pr queue add --branch agent/<名> --body-file <本文> --title <題> [--repo <org/repo>] [--task T-…] [--base <ブランチ> | --depends-on PQ-<m>]   # agent。pending
+tb pr queue approve PQ-<n> / reject PQ-<n> [-m 理由]                                                  # 人だけ
+tb pr queue retry PQ-<n>                                                                              # 人だけ。failed を approved に戻す(attempts を 0 に)
+tb pr queue run [--dry-run]                                                                           # approved だけを gh pr create --draft
+tb pr queue scan [--dry-run] [--repo <org/repo>]                                                      # origin の <branch_prefix>* から積む
 ```
 
 - ガードは run のたびにかけ直す: ブランチが `branch_prefixes`(無ければ `branch_prefix`)のどれかで始まる・base は登録時に決めた値(下を参照)・draft だけ・本文は `body_root` の中の実ファイル(シンボリックリンク不可)で、置いた(承認した)ときから変わっていない・1 行目が `body_first_line` に合う(設定したときだけ)・本文と題に秘密らしい値が無い・同じ head の PR が無い・リポジトリが許可リスト(`config/repos.md`)にある。
 - `PR_QUEUE_REPO_DIR`(ローカルの clone)で差分も見る(**必須**。空・存在しない・git でないときは approve も run も scan も通さない)。CI 設定(`.github/workflows`・`.github/actions`)の変更、`AdministratorAccess` の追加、秘密らしい値は作らずに人に回す。
 - マージ・approve・ready・close は実装していない。draft を ready にするのは人。
 - 書き込み用の認証は、gh のラッパー(人が用意する)に持たせる。`PR_QUEUE_GH`(環境変数)か `config/pr-queue.conf` の `gh`(絶対パス)で指定する。**未指定・不正なら run / scan は警告して止まる**(PATH 上の gh には落ちない。fail-closed)。ラッパーの形と置き場は [`docs/pr-queue-gh-wrapper.md`](docs/pr-queue-gh-wrapper.md)。
-- 認証で止まったとき(ラッパーが終了コード 75 を返す。ghtkn が token を返せない)は、attempts を使わず `auth-locked` として残りの行を止め、通知を状態が変わったときだけ 1 回出す。`failed` になったものは `tb pr-queue retry`(人だけ)で戻す。
+- 認証で止まったとき(ラッパーが終了コード 75 を返す。ghtkn が token を返せない)は、attempts を使わず `auth-locked` として残りの行を止め、通知を状態が変わったときだけ 1 回出す。`failed` になったものは `tb pr queue retry`(人だけ)で戻す。
 - 公開前検査(conf の `deny_patterns`。**必須**。未設定・不正なら run は止まる。環境変数では決められない): run が PR を作る前に、origin と同期した上で(追跡参照の SHA が origin と一致しなければ止める)、題・本文・コミットメッセージ(author / committer を含む)・ブランチ名・差分(変更ファイルのパスと足した行)に規則ファイルを掛ける。バイナリの変更は人に回す。ヒットした PR は作らず却下し(attempts は使わない)、規則名と位置だけを通知する(値は出さない)。書式と例外ファイルは [`docs/pr-queue-deny-patterns.md`](docs/pr-queue-deny-patterns.md)。
 - 既知の限界(詳細は [`docs/pr-queue-deny-patterns.md`](docs/pr-queue-deny-patterns.md)): `PR_QUEUE_CONF` で conf を差し替えられる(deny の規則ファイルは固定の conf のキーで決まり、env では差し替えられない)、`auto_approve` を上げると scan が人の approve なしで approved を積める(既定 0)、固定の conf も同一 OS ユーザーなら書ける(OS の権限分離=ADR 0001 の課題)、検査から PR 作成までの短い時間差は完全には閉じられない。
 - `add` は、ブランチが origin に実在すること(`PR_QUEUE_REPO_DIR` の clone で `git ls-remote`)を確かめ、確認できなければ登録しない。登録できる接頭辞は conf の `branch_prefixes`(既定は `agent/` だけ。広げるのは人。例: `agent/ feat/ fix/`)。`scan` が走査するのは先頭の接頭辞だけ。

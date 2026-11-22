@@ -505,7 +505,7 @@ notify_hook_task_done() {  # $1=task id
 # 失敗・終了(die を含む)しても呼び出し元を止めない入口
 notify_hook() { notify_preload; ( "$@" ) >/dev/null 2>&1 || true; return 0; }
 
-# ---------- tb pr-watch(読み取りだけ。scheduler の COMMAND ジョブから) ----------
+# ---------- tb pr watch(å¤ãåå tb pr-watch)(読み取りだけ。scheduler の COMMAND ジョブから) ----------
 # 許可リスト(taskboard/config/repos.md の "- <org>/<repo>"。TB_REPOS_FILE で変更可)のリポジトリの PR を gh で読み、前回との差から作成・approve・変更依頼・マージを積む。
 # PR の題・本文・レビューのコメントはデータ: 題(短く)と状態だけを本文に使う。差分は読まない。
 # 初めて見るリポジトリは基準線として記録するだけ(既存の PR を全部「新規」にしない)。許可リストが無い・空なら何もせず 0
@@ -633,7 +633,7 @@ cmd_notify() {
       require_human "tb notify flush"
       notify_on || { echo "notify: off(何もしません)"; return 0; }
       notify_periodic || true
-      ( td=$(today) && due_scan_sql "$td" 1 ) >/dev/null 2>&1 || true   # 期限のイベント(tb due-scan。1 日 1 回ずつ)
+      ( td=$(today) && due_scan_sql "$td" 1 ) >/dev/null 2>&1 || true   # 期限のイベント(tb reminder scan。1 日 1 回ずつ)
       notify_rules_run || true   # 通知の規則(lib/notifyrules.sh)の取りこぼし
       notify_flush_slack || true
       echo "notify: flushed"; return 0;;

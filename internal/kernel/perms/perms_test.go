@@ -24,9 +24,9 @@ func TestEveryGoCommandHasARow(t *testing.T) {
 
 // Go の requireHuman の文面は、表の inner の行に当たる(文字列の連結は * とみなす)。
 func TestEveryGoRequireHumanLabelHasAnInnerRow(t *testing.T) {
-	files, err := filepath.Glob(filepath.Join("..", "..", "tbcli", "*.go"))
+	files, err := filepath.Glob(filepath.Join("..", "..", "*", "*.go"))
 	if err != nil || len(files) == 0 {
-		t.Fatalf("tbcli のソースが見つかりません: %v", err)
+		t.Fatalf("internal のソースが見つかりません: %v", err)
 	}
 	re := regexp.MustCompile(`requireHuman\("tb ([^"]*)"( \+)?`)
 	var inner []string
@@ -43,6 +43,9 @@ func TestEveryGoRequireHumanLabelHasAnInnerRow(t *testing.T) {
 		b, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatal(err)
+		}
+		if strings.Contains(string(b), "identity.RequireHuman(") {
+			t.Errorf("%s: identity.RequireHuman を直接呼ぶと権限段階の表を通らない。perms.RequireHuman(tbcli は requireHuman)を使う", filepath.Base(f))
 		}
 		for _, m := range re.FindAllStringSubmatch(string(b), -1) {
 			n++

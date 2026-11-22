@@ -184,7 +184,13 @@ func RequireHuman(what string, openDB func() (*sql.DB, string, func(), error)) e
 	return check(r.Op, what, openDB)
 }
 
+// OpenDB は openDB を渡さない呼び出し(サービスのパッケージの requireHuman)が設定 approvals を読むための DB(herdrctl tb の入口が入れる)。
+var OpenDB func() (*sql.DB, string, func(), error)
+
 func check(op, what string, openDB func() (*sql.DB, string, func(), error)) error {
+	if openDB == nil {
+		openDB = OpenDB
+	}
 	var db *sql.DB
 	session := ""
 	if openDB != nil {

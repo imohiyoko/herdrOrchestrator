@@ -1,10 +1,10 @@
 # shellcheck shell=bash
-# 人が忘れているかもしれないもののまとめ(tb reminders)。bin/tb から source される。単体では実行しない。
+# 人が忘れているかもしれないもののまとめ(tb reminder)。bin/tb から source される。単体では実行しない。
 #
 # - 読み取り専用。書くのは notify_seen の自分の行(キーが reminders: で始まるもの)だけ
 # - 材料: 未対応の質問・ブロック報告 / 承認待ち(送信・agent 操作・代行依頼・アラートの解析役)/ 宛先に届いていない送信 /
 #         停滞したタスク(最後の動きは更新と履歴 task_events)/ 期限(tasks.due 列があれば。無くても期限ファイル)/ 未読の保留メッセージ(inbox 表があれば)/
-#         変更依頼が付いたままの PR(tb pr-watch がチケットの履歴に残したもの)/
+#         変更依頼が付いたままの PR(tb pr watch がチケットの履歴に残したもの)/
 #         許可リストのリポジトリの、レビュー待ちの PR(gh で読むだけ)
 # - 本文は出さない。題(短い見出し)と参照 ID だけ。出す前に秘密らしい値を探して伏せる(notify と同じ規則)
 # - 出力は stdout と、Web UI が読む行(notify_seen の reminders:last)。agent にも外にも送らない
@@ -55,7 +55,7 @@ reminders_collect_db() {
   fi
   parts+=("SELECT 3, 'stall:'||id, status || ':' || $last, '停滞: ' || id || ' ' || title, COALESCE(owner_agent, '-'), '', id, $last
     FROM tasks WHERE status IN ($ST_ACTIVE_SQL) AND (julianday('now') - julianday($last)) * 24 > $REMINDERS_STALE_HOURS")
-  # 変更依頼が付いたままの PR(tb pr-watch がチケットに残した最後の PR の出来事が pr_changes。ADR 0003 の段 4c)。担当の番
+  # 変更依頼が付いたままの PR(tb pr watch がチケットに残した最後の PR の出来事が pr_changes。ADR 0003 の段 4c)。担当の番
   if reminders_has_col task_events task_id; then
     parts+=("SELECT 2, 'prchg:'||e.task_id||':'||e.new, 'E-'||e.id, '変更依頼の PR: ' || e.new || ' (' || e.task_id || ' ' || t.title || ')',
         COALESCE(t.owner_agent, '人'), '', e.task_id, e.created_at
@@ -117,7 +117,7 @@ reminders_collect_file() {
 
 # tb deadlines-import [-p project] [--dry-run]: 期限ファイルの行を、担当なしで期日つきのチケットにする(ADR 0003 の段 5。人だけ)。
 # 同じ題・同じ期日のチケットが既にあれば作らない(何度流してもよい)。ファイルは書き換えない(取り込んだ行は reminders がファイルからは出さなくなる)。
-# チケットは種別 task・ラベル deadline(名前は設定 system-labels の deadline で変えられる)。期限の通知は他のチケットと同じ(tb due-scan の overdue / due_soon、通知の規則、tb reminders)
+# チケットは種別 task・ラベル deadline(名前は設定 system-labels の deadline で変えられる)。期限の通知は他のチケットと同じ(tb reminder scan の overdue / due_soon、通知の規則、tb reminder)
 cmd_deadlines-import() {
   local project=deadline dry=0
   while [[ $# -gt 0 ]]; do
@@ -243,4 +243,30 @@ cmd_reminders() {
   else
     printf '%s\n' "$text"
   fi
+}
+
+# tb reminder <list|check|publish|scan|nudge>(サービスの名前。古い名前 reminders / due-scan / nudge も残す)
+cmd_reminder() {
+  if [[ $# -eq 0 ]]; then reminder_usage; exit 2; fi
+  local sub=$1 a; shift
+  case $sub in
+    list|publish)
+      for a; do [[ $a == --json ]] || usage "reminder $sub: 不明な引数 $a(--json だけ)"; done
+      if [[ $sub == publish ]]; then cmd_reminders --publish "$@"; else cmd_reminders "$@"; fi;;
+    check) [[ $# -eq 0 ]] || usage "reminder check(引数なし)"; cmd_reminders --check;;
+    scan) cmd_due-scan "$@";;
+    nudge) "cmd_$sub" "$@";;   # nudge の本体は届け方(delivery・outbox)と一緒に send.sh にある。bash を外すまでの入口だけ
+    help|-h|--help) reminder_usage;;
+    *) usage "reminder: 不明なサブコマンド $sub(list / check / publish / scan / nudge)";;
+  esac
+}
+reminder_usage() {
+  cat <<'USAGE'
+tb reminder list [--json]          人が忘れているかもしれないものを優先度順に出す(何も書かない)
+tb reminder check                  出すものがあれば 0、無ければ 3(何も出さず、何も書かない)
+tb reminder publish [--json]       まとめを出し、前回の記録を更新する(同じ項目は「継続(N 日目)」の 1 行。1 日 1 回は全件)
+tb reminder scan [-p project] [--within N]   期限切れ・期限間近のタスクに履歴のイベントを 1 日 1 回ずつ残す
+tb reminder nudge [<宛先> ...] [--pool] [--dry-run] [--idle-min N] [--max N] [--json]   チケットを握ったまま休んでいる agent に催促する
+(古い名前 tb reminders [--check | --publish] / tb due-scan / tb nudge も同じに使える。期限ファイルの取り込みは tb deadlines-import のまま)
+USAGE
 }

@@ -22,7 +22,7 @@ import (
 )
 
 // Commands は Go に移し終えたコマンド。bin/tb はこの一覧(herdrctl tb --commands)を見て渡すかを決める。
-var Commands = []string{"activity", "allow", "approval", "approve", "ask", "config", "flush", "handoff", "inbox", "inbox-read", "job", "list", "message", "notify", "outbox", "proposal", "proposal-resolve", "proposals", "proxy", "proxy-check", "proxy-list", "proxy-request", "proxy-resolve", "reject", "sched-job", "send", "touch"}
+var Commands = []string{"activity", "allow", "approval", "approve", "ask", "config", "due-scan", "flush", "gate", "handoff", "inbox", "inbox-read", "job", "list", "message", "notify", "nudge", "outbox", "pr", "pr-queue", "pr-watch", "proposal", "proposal-resolve", "proposals", "proxy", "proxy-check", "proxy-list", "proxy-request", "proxy-resolve", "reject", "review", "review-pack", "review-submit", "reminder", "reminders", "sched-job", "send", "touch"}
 
 // 終了コード(tb と同じ)
 const (
@@ -52,6 +52,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, strings.Join(Commands, " "))
 		return 0
 	}
+	perms.OpenDB = permDB
 	if args[0] != "touch" {
 		// 権限段階の入口(ADR 0006。bash の main → perm_gate と同じ)
 		if err := permErr(perms.Gate(args, permDB)); err != nil {
@@ -101,6 +102,20 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		err = cmdMessage(args[1:], w, stderr, args[0])
 	case "list":
 		err = cmdList(args[1:], w, stderr)
+	case "gate":
+		err = cmdGate(args[1:], w, stderr, os.Stdin)
+	case "review":
+		err = cmdReview(args[1:], w, stderr, "")
+	case "pr":
+		err = cmdPr(args[1:], w, stderr, "")
+	case "pr-queue", "pr-watch":
+		err = cmdPr(args[1:], w, stderr, args[0])
+	case "review-pack", "review-submit":
+		err = cmdReview(args[1:], w, stderr, args[0])
+	case "reminder":
+		err = cmdReminder(args[1:], w, stderr, "")
+	case "reminders", "due-scan", "nudge":
+		err = cmdReminder(args[1:], w, stderr, args[0])
 	default:
 		err = usage("Go 版には無いコマンド: %s", args[0])
 	}

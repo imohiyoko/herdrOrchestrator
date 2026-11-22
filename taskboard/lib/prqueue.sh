@@ -715,3 +715,21 @@ pq_scan() {
   done <<<"$heads"
   return 0
 }
+
+# PR のサービス: tb pr queue <sub> / tb pr watch。古い名前(tb pr-queue / tb pr-watch)も同じに動く
+cmd_pr() {
+  if [[ $# -eq 0 ]]; then pr_usage; exit 2; fi
+  local sub=$1; shift
+  case $sub in
+    queue|watch) "cmd_pr-$sub" "$@";;
+    help|-h|--help) pr_usage;;
+    *) usage "pr: 不明なサブコマンド $sub(queue / watch)";;
+  esac
+}
+pr_usage() {
+  cat <<'USAGE'
+tb pr queue add|list|show|approve|reject|retry|run|scan ...   PR 作成キュー(引数は tb help)
+tb pr watch   許可リストの PR を gh の読み取りだけで見て、新規・approve・変更依頼・マージを積む
+(古い名前 tb pr-queue / tb pr-watch も同じに使える)
+USAGE
+}

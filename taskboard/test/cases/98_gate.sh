@@ -44,10 +44,20 @@ BASE=(
 )
 # gtf <除く行の接頭辞|-> [足す行...] → 基準から接頭辞の行を除いて、足した行を加えた事実
 gtf() { local drop=$1; shift; local l; for l in "${BASE[@]}"; do [[ $drop != - && $l == "$drop"* ]] || printf '%s\n' "$l"; done; printf '%s\n' "$@"; }
+# 設定の無いツリーと、実設定のあるツリーを $TMP に作って tb を呼ぶ(実チェックアウトの config の有無に左右されない)
+mkiso() { mkdir -p "$1/taskboard" "$1/lib" "$1/roles"; cp -R "$HERE/../bin" "$HERE/../lib" "$HERE/../schema" "$HERE/../sql" "$HERE/../perms" "$1/taskboard/"; cp "$HERE/../../lib/"*.sh "$1/lib/"; mkdir -p "$1/taskboard/config"; }
+# Go 版(TB_IMPL=go)は lib を source できないので、gt は隔離ツリーに設定と記録を置いて tb gate evaluate で同じ評価をする
+GTGO=$GT/iso-go; mkiso "$GTGO"; mkdir -p "$GTGO/taskboard/data"
+gtcp() { rm -f "$2"; if [[ -e $1 || -L $1 ]]; then cp -P "$1" "$2"; fi; }
 # gt <action> <gate.conf> <paths.conf> [pr] < 事実 → 評価の全出力。終了コードは最後の行 "rc=<n>"
 gt() {
   local act=$1 conf=$2 paths=$3 pr=${4:-} facts=()
   while IFS= read -r l || [[ -n $l ]]; do facts+=("$l"); done
+  if [[ ${TB_IMPL:-bash} == go ]]; then
+    gtcp "$conf" "$GTGO/taskboard/config/gate.conf"; gtcp "$paths" "$GTGO/taskboard/config/gate-paths.conf"; gtcp "${RVF:-$GT/reviews-good.log}" "$GTGO/taskboard/data/gate-reviews.log"
+    printf '%s\n' "${facts[@]}" | "$GTGO/taskboard/bin/tb" gate evaluate T-1 --action "$act" ${pr:+--pr "$pr"} --facts-stdin; echo "rc=$?"
+    return 0
+  fi
   ( TB_ROOT=$HERE/..; source "$HERE/../lib/gate.sh"; usage() { echo "usage: $*"; exit 2; }
     GATE_CONF=$conf; GATE_PATHS=$paths; GATE_REVIEWS=${RVF:-$GT/reviews-good.log}
     gate_eval "$act" T-1 "$pr" "${facts[@]}"; gate_format; echo "rc=$GATE_EXIT" )
@@ -258,8 +268,6 @@ eq "gate cmd: evaluate without chain-id → 2" "$(rc "$TB" gate evaluate --actio
 eq "gate cmd: no subcommand → 2" "$(rc "$TB" gate)" "2"
 eq "gate cmd: unknown subcommand → 2" "$(rc "$TB" gate run T-1 --action merge)" "2"
 eq "gate cmd: unknown flag → 2" "$(rc "$TB" gate evaluate T-1 --action merge --json)" "2"
-# 設定の無いツリーと、実設定のあるツリーを $TMP に作って tb を呼ぶ(実チェックアウトの config の有無に左右されない)
-mkiso() { mkdir -p "$1/taskboard" "$1/lib" "$1/roles"; cp -R "$HERE/../bin" "$HERE/../lib" "$HERE/../schema" "$HERE/../sql" "$HERE/../perms" "$1/taskboard/"; cp "$HERE/../../lib/"*.sh "$1/lib/"; mkdir -p "$1/taskboard/config"; }
 ISO0=$GT/iso-noconf; mkiso "$ISO0"
 ISO1=$GT/iso-realconf; mkiso "$ISO1"
 # 実設定: 許可リストに例のリポジトリが入っていない(= 基準の事実は H-05 で ask になる)

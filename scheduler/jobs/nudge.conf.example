@@ -1,11 +1,11 @@
-# チケットを握ったまま休んでいる agent に「続けて」と送る(tb nudge)。agent を介さず決定論的に実行。
+# チケットを握ったまま休んでいる agent に「続けて」と送る(tb reminder nudge)。agent を介さず決定論的に実行。
 # 送るのは指示役 → 担当の task と同じ経路(outbox + delivery)。working・人の返事待ち・delivery が now でない相手には送らない。
 # 対象は taskboard の設定 nudge(tb config edit nudge)で決まる。設定 nudge を置くと全員が対象(指揮役・保護された agent も)で、ignore に書いたものだけ外す。
 # 設定 nudge が無いあいだは、以前どおり指揮役と保護(protect)された agent を除く。
-# 担当なしの todo を取りに行かせるなら --pool を足す(例: bin/tb nudge --pool --idle-min 15)。
-# 1 回の休みに 1 通、同じチケットで 3 回まで(--max)。先に tb nudge --dry-run で誰に送るかを確かめる。
+# 担当なしの todo を取りに行かせるなら --pool を足す(例: bin/tb reminder nudge --pool --idle-min 15)。
+# 1 回の休みに 1 通、同じチケットで 3 回まで(--max)。先に tb reminder nudge --dry-run で誰に送るかを確かめる。
 # 注意: COMMAND は bash -c でそのまま実行される。このファイルは人が管理し、外部入力を埋め込まない。
-COMMAND='cd /path/to/taskboard && bin/tb nudge --idle-min 15'
+COMMAND='cd /path/to/taskboard && bin/tb reminder nudge --idle-min 15'
 COMMAND_TIMEOUT=60
 WINDOW=09:00-21:00
 INTERVAL_MIN=10

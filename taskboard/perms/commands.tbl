@@ -132,6 +132,9 @@ gate.ingest-review       cmd:gate:ingest-review       allow       allow       en
 gate.ingest-events       cmd:gate:ingest-events       allow       allow       entry
 gate.reviewers           cmd:gate:reviewers           allow       allow       entry
 gate.execute             cmd:gate:execute             allow       allow       entry
+review                   cmd:review:help              allow       allow       entry
+review.pack              cmd:review:pack              allow       allow       entry
+review.submit            cmd:review:submit            allow       allow       entry
 review-submit            cmd:review:submit            allow       allow       entry
 review-pack              cmd:review:pack              allow       allow       entry
 
@@ -188,6 +191,17 @@ notify.flush             cmd:notify:flush             only-human  ask-human   in
 notify.event             cmd:notify:event             only-human  ask-human   inner
 
 # --- pr
+pr                       cmd:pr:help                  allow       allow       entry
+pr.watch                 cmd:pr:watch                 allow       allow       entry
+pr.queue                 cmd:pr:queue-help            allow       allow       entry
+pr.queue.add             cmd:pr:queue-add             allow       allow       entry
+pr.queue.list            cmd:pr:queue-list            allow       allow       entry
+pr.queue.show            cmd:pr:queue-show            allow       allow       entry
+pr.queue.run             cmd:pr:queue-run             allow       allow       entry
+pr.queue.scan            cmd:pr:queue-scan            allow       allow       entry
+pr.queue.approve         cmd:pr:queue-approve         only-human  ask-human   inner
+pr.queue.reject          cmd:pr:queue-reject          only-human  ask-human   inner
+pr.queue.retry           cmd:pr:queue-retry           only-human  ask-human   inner
 pr-watch                 cmd:pr:watch                 allow       allow       entry
 pr-queue                 cmd:pr:queue-help            allow       allow       entry
 pr-queue.add             cmd:pr:queue-add             allow       allow       entry
@@ -234,6 +248,12 @@ recipe-queue             cmd:recipe:queue             allow       allow       en
 recipe-cancel            cmd:recipe:cancel            allow       allow       entry
 
 # --- reminder
+reminder                 cmd:reminder:help            allow       allow       entry
+reminder.list            cmd:reminder:list            allow       allow       entry
+reminder.check           cmd:reminder:check           allow       allow       entry
+reminder.publish         cmd:reminder:publish         allow       allow       entry
+reminder.scan            cmd:ticket:due-scan          allow       allow       entry
+reminder.nudge           cmd:reminder:nudge           only-human  ask-human   inner
 reminders                cmd:reminder:list            allow       allow       entry
 deadlines-import         cmd:reminder:deadlines-import only-human ask-human   inner
 nudge                    cmd:reminder:nudge           only-human  ask-human   inner
