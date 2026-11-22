@@ -23,10 +23,12 @@ import (
 var reWatcher = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
 
 // limitsCounts は limits_counts: herdr と台帳を同期して、動作中(台帳で running)と作業中(herdr で working の名前つき agent)を数える。
-// 同期に失敗したら ok=false(台帳の値で数える)。
+// 同期に失敗したら ok=false(台帳の値で数える)。台帳を数えられなくても ok=false。
 func limitsCounts(db *store.DB) (running, working int, ok bool) {
 	live, err := agents.SyncLive(db.DB, db.Session)
-	_ = db.QueryRow(`SELECT COUNT(*) FROM agents WHERE state='running'`).Scan(&running)
+	if e := db.QueryRow(`SELECT COUNT(*) FROM agents WHERE state='running'`).Scan(&running); e != nil {
+		return 0, 0, false
+	}
 	for _, a := range live {
 		if s, _ := a.AgentStatus.(string); s == "working" && agents.NameRE.MatchString(a.Name) {
 			working++
@@ -193,7 +195,10 @@ func cmdLimits(args []string, w, stderr io.Writer) error {
 
 // limitsEdit は limits_edit: 設定 limits を書き換える(TB_LIMITS でファイルを明示していればそのファイル、無ければこのセッションの行)。
 func limitsEdit(db *store.DB, kvs []limits.KV) error {
-	cur, src, has := config.Lookup(db.DB, db.Session, "limits")
+	cur, src, has, readErr := config.LookupStrict(db.DB, db.Session, "limits")
+	if readErr != "" { // 読めなかった本文を空とみなして書くと、今の設定が消える
+		return die("設定 limits を読めないため書き換えません(%s)", readErr)
+	}
 	if strings.HasPrefix(src, "example:") { // 例のファイル(既定値)は書き換えの元にしない
 		cur, has = "", false
 	}
