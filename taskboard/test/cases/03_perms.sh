@@ -108,6 +108,9 @@ sqlite3 "$TB_DB" "ALTER TABLE config RENAME TO config_real; CREATE VIEW config A
 eq "perms: a failed DB read of approvals → only-human (not the default)" "$(rc $TB cancel "$t4")" "1"
 eq "perms: a failed DB read also stops commands moved to herdrctl (tb list)" "$(rc $TB list -p pm)" "1"
 eq "perms: nothing was done" "$(env -u HERDR_PANE_ID $TB show "$t4" | jq -r .status)" "todo"
+# config が参照する別の表が無いのも失敗(config そのものが無いときだけ「設定が無い」)
+sqlite3 "$TB_DB" "DROP VIEW config; CREATE TABLE config_gone (key TEXT, herdr_session TEXT, body TEXT); CREATE VIEW config AS SELECT * FROM config_gone; DROP TABLE config_gone;"
+eq "perms: a config view over a missing table → only-human" "$(rc $TB cancel "$t4")" "1"
 export TB_DB=$TMP/perms.db TB_APPROVALS=$TMP/perms.approvals
 
 # 古い herdrctl(権限段階の門が無い)には渡さない

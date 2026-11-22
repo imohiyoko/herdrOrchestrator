@@ -133,6 +133,13 @@ func TestTierFailsClosedOnUnreadableConfig(t *testing.T) {
 	if tier, rule := tb.Tier(db, "s", "cmd:x:a"); tier != "allow" {
 		t.Errorf("行の無い DB = %s %s, want allow", tier, rule)
 	}
+	// config が参照する別の表が無いのは失敗(config そのものが無いときだけ「設定が無い」)
+	if _, err := db.Exec(`ALTER TABLE config RENAME TO config_gone; CREATE VIEW config AS SELECT * FROM config_gone; DROP TABLE config_gone`); err != nil {
+		t.Fatal(err)
+	}
+	if tier, rule := tb.Tier(db, "s", "cmd:x:a"); tier != "only-human" {
+		t.Errorf("config が参照する表が無い DB = %s %s, want only-human", tier, rule)
+	}
 	db.Close()
 	if tier, rule := tb.Tier(db, "s", "cmd:x:a"); tier != "only-human" || !strings.Contains(rule, "読めない") {
 		t.Errorf("問い合わせに失敗した DB = %s %s, want only-human", tier, rule)

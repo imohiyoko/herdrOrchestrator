@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -77,12 +78,15 @@ func DBRow(db *sql.DB, session, key string) (body string, shared, ok bool) {
 	return
 }
 
+// reNoConfigTable は config 表そのものが無いときの誤り(config が参照する別の表が無いのは失敗として返す)。
+var reNoConfigTable = regexp.MustCompile(`no such table: (main\.)?config\b`)
+
 // dbRow は DBRow に加えて、問い合わせの失敗(行が無い・表がまだ無いは失敗にしない)を返す。
 func dbRow(db *sql.DB, session, key string) (body string, shared, ok bool, err error) {
 	var hs string
 	err = db.QueryRow(`SELECT herdr_session, body FROM main.config WHERE key=? AND herdr_session IN (?, '*') ORDER BY herdr_session='*' LIMIT 1`, key, session).Scan(&hs, &body)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) || strings.Contains(err.Error(), "no such table") {
+		if errors.Is(err, sql.ErrNoRows) || reNoConfigTable.MatchString(err.Error()) {
 			err = nil
 		}
 		return "", false, false, err
