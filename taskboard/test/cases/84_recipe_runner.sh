@@ -172,4 +172,4 @@ if [[ -n $_saved_agents ]]; then export FAKE_AGENTS=$_saved_agents; else unset F
 if [[ -n $_saved_lim ]]; then export TB_LIMITS=$_saved_lim; else unset TB_LIMITS; fi
 [[ -z $_saved_pane ]] || export HERDR_PANE_ID=$_saved_pane
 unset FAKE_DYNAMIC TB_RECIPE_POLL_SEC TB_SPAWN_RETRY_SEC TB_AGENT_CWD FAKE_STATUS SCHED_JOB SCHED_OWNER
-[[ -z $_saved_env ]] || eval "${_saved_env//declare -/declare -g}"   # 元の値(と設定の有無)に戻す
+[[ -z $_saved_env ]] || eval "$_saved_env"   # 元の値(と設定の有無)に戻す。ケースは run.sh の最上位で source されるので、declare はそのまま大域になる
