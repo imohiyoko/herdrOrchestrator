@@ -139,3 +139,24 @@ func (s StatusSet) SQLList(cats ...string) string {
 
 // Cat は状態の分類(知らない名前なら空。core.sh の st_cat)。
 func (s StatusSet) Cat(name string) string { return s.cat[name] }
+
+// Main は core.sh の st_main: その分類で tb が書く状態(設定した順で最初のもの。無ければ組み込み)。
+func (s StatusSet) Main(cat string) string {
+	for _, k := range s.Names {
+		if s.cat[k] == cat {
+			return k
+		}
+	}
+	for _, b := range builtin {
+		if b[1] == cat {
+			return b[0]
+		}
+	}
+	return ""
+}
+
+// Is は core.sh の st_is: その状態がどれかの分類か。
+func (s StatusSet) Is(name string, cats ...string) bool {
+	c, ok := s.cat[name]
+	return ok && slices.Contains(cats, c)
+}
