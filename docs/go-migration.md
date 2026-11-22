@@ -34,7 +34,7 @@ Go に移すサービスは、`.claude/skills/tb-command-naming` の形(`tb <サ
 | 4 | reminder | `reminder list/check/publish/scan/nudge`(古い名前 `reminders [--check / --publish]` `due-scan` `nudge` も)と `deadlines-import` | 済み |
 | 4 | agent(一部) | `limits show/get/set/unset/mode/check/watcher-enabled`(spawn_* が無いときの spawn-policy の値も)、読むだけの `can` / `org` / `peek`、役割の `role-context` / `role-broadcast` / `role-show` / `role-list` / `role-write` / `role-edit` / `role-unset` / `role-set` / `role-log` / `roles`、文脈の圧縮 `compact-check`、スラッシュコマンドの送信 `slash`(承認待ちの承認は `agent-approve` に残る) | 済み(残りの agent のコマンドは続きの PR) |
 | 5 | conv | `conv route/routes-set/draft/voice/voice-check/length/kinds/patterns/lint`、学習の `conv pair-add/pairs/pair-show/candidate-add/ledger/candidate-adopt/candidate-reject/scan/learn-purge`、段階の `conv stage/stage-set/stage-reset/stage-log/incident/gate`(古い名前 `conv-<サブコマンド>` も)。文字列の一般化と検査(sanitize / scan / ratio)は bash と同じく `lib/convtext.py` を呼ぶ | 済み |
-| 5 | recipe | | まだ(ADR 0005 段 3 の後) |
+| 5 | recipe(一部) | 部品の `parts` / `part-check` / `part-risk`、レシピの登録と読み取り `recipe-set` / `recipe-rm` / `recipe-list` / `recipe-show` / `recipe-history`(部品の表は `internal/recipe` と recipes.sh の両方に置き、`go test` が同じかを確かめる) | 一部済み(実行の `recipe-run` / `recipe-queue` / `recipe-runner` / `recipe-cancel` はまだ) |
 | 6 | scheduler の起動器 / webui | | まだ(ADR 0002 の手順 4・5) |
 
 サービスのコマンドより先に、ほかのサービスが使う部品だけを移すことがある(例: approval の PR で `internal/agents` の役割の引き方と `internal/message` の届け方)。そのサービスのコマンドはまだ bash のままで、移す PR でこの部品を使う。

@@ -265,7 +265,7 @@ recipe_parse() {  # $1=本文
           if [[ $v == \$* ]]; then
             case ${v#\$} in
               requester|target) [[ $pt == agent ]] || { err+="${n} 行目: $v は agent 型の引数にだけ使えます($part の $k は $pt)"$'\n'; ok=0; };;
-              *) t=${RCP_ARGT[${v#\$}]:-}
+              *) t=""; [[ -z ${v#\$} ]] || t=${RCP_ARGT[${v#\$}]:-}   # $ だけ(名前なし)は宣言されていない扱い
                  if [[ -z $t ]]; then err+="${n} 行目: $v は宣言されていません(arg の行は step より前に書きます)"$'\n'; ok=0
                  elif [[ ${t%%:*} != "${pt%%:*}" ]]; then err+="${n} 行目: $v の型 $t は $part の $k の型 $pt と合いません"$'\n'; ok=0
                  elif ((popt == 0)) && [[ " ${RCP_ARGN[*]} " == *" ${v#\$}? "* ]]; then
