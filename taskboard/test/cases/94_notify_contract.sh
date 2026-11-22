@@ -156,10 +156,11 @@ eq "test: no target → failed" "$(TB_NOTIFY_SLACK_TARGET= $TB notify test | sed
 eq "flush: notifier missing → attempts counted, note" "$(ncsql "SELECT slack_status||' '||slack_attempts||' '||COALESCE(note,'-') FROM notify_events WHERE type='test' ORDER BY id LIMIT 1;")" $'awaiting-ack 1 -'
 
 # ---- webhook(疑似 curl)
+export NC_DIR=$TMP   # 疑似 curl は別のプロセス(TMP は export されていないことがある)
 cat >"$TB_CURL" <<'CURL'
 #!/usr/bin/env bash
-echo "argv: ${*//\/tmp*tb-notify.*/TMP}" | sed -E 's#(/[^ ]*)?tb-notify\.[^ ]*#TMP#g' >>"$TMP/nc-curl.log"
-while [[ $# -gt 0 ]]; do case $1 in --data-binary) cat "${2#@}" >>"$TMP/nc-curl.body"; shift 2;; -K) cat "$2" >>"$TMP/nc-curl.cfg"; shift 2;; *) shift;; esac; done
+echo "argv: ${*//\/tmp*tb-notify.*/TMP}" | sed -E 's#(/[^ ]*)?tb-notify\.[^ ]*#TMP#g' >>"$NC_DIR/nc-curl.log"
+while [[ $# -gt 0 ]]; do case $1 in --data-binary) cat "${2#@}" >>"$NC_DIR/nc-curl.body"; shift 2;; -K) cat "$2" >>"$NC_DIR/nc-curl.cfg"; shift 2;; *) shift;; esac; done
 printf '%s' "${NC_CODE-200}"; exit "${NC_RC:-0}"
 CURL
 chmod +x "$TB_CURL"; : >"$TMP/nc-curl.log"; : >"$TMP/nc-curl.body"; : >"$TMP/nc-curl.cfg"
@@ -198,7 +199,7 @@ eq "rules test: miss" "$($TB notify rules test "E-$(ncsql "SELECT MAX(id) FROM t
 rm -f "$TB_NOTIFY_RULES"
 eq "rules show: none" "$($TB notify rules)" $'# notify-rules(出どころ: none)。書くのは人だけ: tb config set notify-rules < 規則のファイル\n(規則なし。今の決め打ちの通知だけが動きます)'
 
-unset TB_NOTIFY_ENABLED TB_NOTIFY_DEDUPE_SEC TB_NOTIFY_RATE_PER_MIN TB_NOTIFY_SLACK_TARGET TB_NOTIFY_ACK_TIMEOUT_MIN TB_NOTIFY_CONF TB_NOTIFY_DIR TB_REPOS_FILE TB_CURL TB_NOTIFY_RULES
+unset NC_DIR TB_NOTIFY_ENABLED TB_NOTIFY_DEDUPE_SEC TB_NOTIFY_RATE_PER_MIN TB_NOTIFY_SLACK_TARGET TB_NOTIFY_ACK_TIMEOUT_MIN TB_NOTIFY_CONF TB_NOTIFY_DIR TB_REPOS_FILE TB_CURL TB_NOTIFY_RULES
 export TB_DB=$_nc_old_db
 if [[ -n $_nc_old_agents ]]; then export FAKE_AGENTS=$_nc_old_agents; else unset FAKE_AGENTS; fi
 [[ -z $_saved_pane ]] || export HERDR_PANE_ID=$_saved_pane
