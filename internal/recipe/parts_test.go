@@ -1,6 +1,7 @@
 package recipe
 
 import (
+	"bytes"
 	"os"
 	"regexp"
 	"strings"
@@ -13,6 +14,7 @@ func TestTableMatchesBash(t *testing.T) {
 	if err != nil {
 		t.Skip("recipes.sh がありません")
 	}
+	b = bytes.ReplaceAll(b, []byte("\r\n"), []byte("\n")) // Windows のチェックアウトは CRLF
 	m := regexp.MustCompile(`(?s)PARTS_TABLE='\n(.*?)\n'`).FindSubmatch(b)
 	if m == nil {
 		t.Fatal("PARTS_TABLE が見つかりません")
