@@ -574,8 +574,9 @@ cmd_nudge() {
     if [[ -z $pick ]]; then
       if ((n > 0)); then nudge_row "$owner" "$(jq -r '.[0].id' <<<"$rows")" skip "先行チケット(blocks)待ち"; continue; fi
       ((pool)) || { nudge_row "$owner" "-" skip "握っているのは親(epic など)だけ"; continue; }
-      # 自分が担当の todo(割り当て)・review・blocked があれば、新しい仕事を取りに行かせない(親は数えない)
-      w=$(sql "SELECT group_concat(t.id, ' ') FROM tasks t WHERE t.owner_agent=$(q "$owner") AND t.status IN ($(st_sql todo review blocked)) AND t.type!='epic'
+      # 自分が担当の todo(割り当て)・active・review・blocked があれば、新しい仕事を取りに行かせない(親は数えない)。
+      # active は wake に無くても数える(wake に active を書かなかったとき、作業中の agent に別の todo を取りに行かせない)
+      w=$(sql "SELECT group_concat(t.id, ' ') FROM tasks t WHERE t.owner_agent=$(q "$owner") AND t.status IN ($(st_sql todo active review blocked)) AND t.type!='epic'
             AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id=t.id AND c.status NOT IN ($ST_CLOSED_SQL));")
       [[ -z $w ]] || { nudge_row "$owner" "-" skip "担当のチケットがある(${w}。--pool では取りに行かせない)"; continue; }
       team=$(nudge_team_of "$owner") || { nudge_row "$owner" "-" skip "team を決められない(--pool)"; continue; }

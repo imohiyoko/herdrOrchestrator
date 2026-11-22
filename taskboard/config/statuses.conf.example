@@ -7,7 +7,7 @@
 # 分類(固定。tb のコマンドと内部の処理はこれで判断する):
 #   todo      未着手。tb add の既定(この分類で最初に書いた状態になる)、tb claim できる、tb nudge --pool の候補
 #   active    作業中。tb claim の先、tb nudge の催促、digest の観測、agent-spawn の親、停滞の目印
-#   review    確認待ち。担当は持ったまま手が止まっている(既定では nudge しない。設定 nudge の wake で足せる。shed しない)
+#   review    確認待ち。担当は持ったまま手が止まっている(既定では nudge しない。設定 nudge の wake で選べる。shed しない)
 #   blocked   詰まり。tb block の先
 #   done      完了(閉じた状態)。tb done の先、tb report できる
 #   cancelled 取り消し(閉じた状態)。tb cancel の先。完了報告には出さない

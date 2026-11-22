@@ -91,6 +91,7 @@ eq "nudge: wake todo → todo の割り当ても催促する" "$(out=$($TB nudge
 eq "nudge: wake に active があれば今までどおり" "$(out=$($TB nudge --dry-run); row w1)" "$t1 would"
 printf 'wake todo\n' >"$TB_NUDGE"
 eq "nudge: wake に active が無ければ in_progress だけの agent は走査しない" "$($TB nudge --dry-run | grep -c '^w1')" "0"
+eq "nudge --pool: wake に active が無くても、作業中の agent には todo を取りに行かせない" "$($TB nudge w1 --pool --dry-run | grep "^w1${TAB}" | cut -f3-4 | tr '\t' ' ')" "skip 担当のチケットがある(${t1}。--pool では取りに行かせない)"
 eq "nudge: 当たらない宛先の理由に wake の状態" "$($TB nudge w1 --dry-run | grep "^w1${TAB}" | cut -f4)" "宛先に当たる agent がいない(todo のチケットを握っていない・--pool なら herdr にいない)"
 $TB nudge w4 >/dev/null
 eq "nudge: 文面はそのチケットの状態の名前" "$(grep '^prompt w4' "$FAKE_LOG" | grep -c "${t6}「まだ claim していない」が todo のまま")" "1"
