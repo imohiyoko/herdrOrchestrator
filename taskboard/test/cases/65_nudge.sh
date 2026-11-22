@@ -63,6 +63,9 @@ eq "nudge: 対応済みにしたら → would" "$(out=$($TB nudge --dry-run); ro
 # 保護の設定(protect)は nudge の対象を変えない(固定の skip は無い。除外は設定 nudge の ignore)
 printf 'w1 = 定期実行の受け口\n' >"$TB_PROTECT"
 eq "nudge: protect だけでは除外されない" "$(out=$($TB nudge --dry-run); row w1)" "$t1 would"
+# 移行: 設定 nudge が無いあいだは、以前の既定の除外(保護)を保つ。宛先を明示したら適用しない
+eq "nudge: 設定 nudge が無い → 保護は以前どおり skip" "$(TB_NUDGE=$TMP/no-such-nudge.conf $TB nudge --dry-run | grep "^w1${TAB}" | cut -f3-4 | tr '\t' ' ')" "skip 保護(定期実行の受け口。設定 nudge が無いあいだの以前の除外)"
+eq "nudge: 設定 nudge が無くても宛先を明示すれば対象" "$(TB_NUDGE=$TMP/no-such-nudge.conf $TB nudge w1 --dry-run | grep "^w1${TAB}" | cut -f3)" "would"
 : >"$TB_PROTECT"
 # 設定 nudge の ignore(agent 名の glob と @役割)。宛先を明示すると適用しない
 printf '# 注釈\nignore w1   # 名前\nignore @no-such-role\n' >"$TB_NUDGE"
@@ -95,6 +98,8 @@ eq "nudge: 送信失敗 → 取り下げ(queued に残さない)" "$(FAKE_PROMPT
 # 送り手と同じ agent(既定の宛先が本人)は送らない。ほかの指揮役は対象
 tc=$(claim coord '指揮役の仕事'); rest sc 30
 eq "nudge: 指揮役も既定で対象(送り手が別なら would)" "$($TB nudge --dry-run | grep "^coord${TAB}" | cut -f3 | tr '\t' ' ')" "would"
+eq "nudge: 設定 nudge が無い → 指揮役は以前どおり skip" "$(TB_NUDGE=$TMP/no-such-nudge.conf $TB nudge --dry-run | grep "^coord${TAB}" | cut -f3 | tr '\t' ' ')" "skip"
+eq "nudge: 設定 nudge が無くても、空の設定を置けば指揮役も対象" "$(: >"$TMP/empty-nudge.conf"; TB_NUDGE=$TMP/empty-nudge.conf $TB nudge --dry-run | grep "^coord${TAB}" | cut -f3)" "would"
 printf 'ng=conductor\n' >"$TB_CONFIG"
 t7=$(claim conductor '既定の宛先自身の仕事'); rest sconductor 30
 export FAKE_AGENTS="${FAKE_AGENTS%]},$(ag wX:p1 conductor idle sconductor)]"
@@ -128,6 +133,13 @@ eq "nudge --pool: 担当の todo がある → skip" "$($TB nudge team-a-2 --poo
 $TB cancel "$pa" -m 'テストの片付け' >/dev/null 2>&1 || nsql "UPDATE tasks SET status='cancelled' WHERE id='$pa';"
 eq "nudge --pool: 宛先なし・--pool なしの既定では取りに行かせない" "$($TB nudge --dry-run | grep -c '^team-a-lead')" "0"
 eq "nudge --pool: team を決められない agent は skip" "$($TB nudge solo --pool --dry-run | grep "^solo${TAB}" | cut -f3-4 | tr '\t' ' ')" "skip team を決められない(--pool)"
+# 本人から team が決まらなければ、組織図(設定 org)で上司をたどって決める(名前の決まりに頼らない)
+printf 'solo -> team-a-lead\n' >"$TMP/nudge-org.conf"
+eq "nudge --pool: 組織図の上司から team を決める" "$(out=$(TB_ORG=$TMP/nudge-org.conf $TB nudge solo --pool --dry-run); row solo)" "$ph1 would"
+printf 'solo -> boss\nboss -> team-a-lead\n' >"$TMP/nudge-org.conf"
+eq "nudge --pool: 組織図を上へたどる(上司の上司)" "$(out=$(TB_ORG=$TMP/nudge-org.conf $TB nudge solo --pool --dry-run); row solo)" "$ph1 would"
+printf 'solo -> boss\n' >"$TMP/nudge-org.conf"
+eq "nudge --pool: 上司のどれからも決まらなければ skip" "$(TB_ORG=$TMP/nudge-org.conf $TB nudge solo --pool --dry-run | grep "^solo${TAB}" | cut -f3-4 | tr '\t' ' ')" "skip team を決められない(--pool)"
 $TB nudge 'team-a-lead' --pool >/dev/null
 eq "nudge --pool: 取りまとめ役への送信は task・文面に候補" "$(nsql "SELECT kind||' '||task_id||' '||status FROM outbox WHERE target='team-a-lead';")" "task $ph1 sent"
 eq "nudge --pool: 文面" "$(grep '^prompt team-a-lead' "$FAKE_LOG" | grep -c '優先度の高い順(highest→lowest、同順位は古い順)に 1 件 claim')" "1"

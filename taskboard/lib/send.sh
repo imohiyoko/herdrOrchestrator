@@ -378,6 +378,7 @@ cmd_inbox-read() {
 # 催促しない(理由つきで飛ばす)もの:
 #   - herdr にいない / herdr の状態が idle・done 以外(working は作業中、blocked は承認ダイアログなど人の操作待ち)
 #   - 設定 nudge の ignore に当たる agent(tb config edit nudge。人だけが書く。宛先を明示したときは適用しない)
+#     設定 nudge が無いあいだは、以前の既定の除外(指揮役・保護 protect)を保つ(移行)
 #   - 人の返事待ち(自分が出した question / blocked の報告がまだ対応されていない)
 #   - 先行チケット(blocks)が done になっていない(握っているチケットがすべてそう)
 #   - 活動記録(hook)が無い・turn が終わって NUDGE_IDLE_MIN 分たっていない
@@ -427,13 +428,25 @@ nudge_match() {
   # shellcheck disable=SC2053
   [[ $a == $pat ]]
 }
-# team ラベルの名前(領域の役割 domain-<x> から。無ければ名前の接尾辞 -lead を除いたもの)。決まらなければ 1
-nudge_team_of() {
+# nudge_team_self <agent>: その agent 自身から決まる team(領域の役割 domain-<x>、無ければ名前の接尾辞 -lead を除いたもの)。決まらなければ 1
+nudge_team_self() {
   local a=$1 roles r
   roles=$(role_name_of "$a" 2>/dev/null) || roles=""
   local -a have=(); IFS=, read -ra have <<<"$roles"
   for r in ${have[@]+"${have[@]}"}; do r=${r%.md}; [[ $r == domain-?* ]] && { printf '%s' "${r#domain-}"; return 0; }; done
   [[ $a == ?*-lead ]] && { printf '%s' "${a%-lead}"; return 0; }
+  return 1
+}
+# team ラベルの名前。本人から決まらなければ、組織図(設定 org)で上司をたどり、最初に team が決まる上司のもの。決まらなければ 1
+# (team の取りまとめ役の配下の worker も、名前の決まりに頼らず組織図で同じ team になる。役割を確かめられない組織図の行に当たったら決めない)
+nudge_team_of() {
+  local a=$1 chain m
+  nudge_team_self "$a" && return 0
+  chain=$(org_chain "$a") || return 1
+  while IFS= read -r m; do
+    [[ -n $m ]] || continue
+    nudge_team_self "$m" && return 0
+  done <<<"$chain"
   return 1
 }
 
@@ -479,7 +492,11 @@ cmd_nudge() {
   local owner rows n live st sess act stop_at prompt_at mins w pick ptitle project others sender oid rc text team mode t pat hit i mrc
   local offered=""   # --pool: この回で案内した候補(同じ team の複数の agent に同じ todo を案内しない)
   local -a target_hit=()
+  local legacy=0 conds=""
   nudge_load_config
+  # 移行: 設定 nudge がまだ無いあいだは、以前の既定の除外(指揮役・保護 protect)を保つ(更新しただけで指揮役や受け口に催促が飛ばないように)。
+  # 設定 nudge を置けば(空でも)全員が対象になり、除外は ignore の行だけで決まる。宛先を明示したときはどちらも適用しない
+  if ! config_has nudge; then legacy=1; conds=$(conductor_names); fi
   while IFS= read -r owner; do
     [[ -n $owner ]] || continue
     # 宛先: 指定があれば一致するものだけ(ignore は適用しない)。無ければ全員から ignore を除く
@@ -497,6 +514,10 @@ cmd_nudge() {
       # 役割を確かめられないときは、送る側に倒さない(組織図と同じく、分からなければ許さない)
       ((hit == 2)) && { nudge_row "$owner" "-" skip "役割を確かめられない(設定 nudge の ignore $pat)"; continue; }
       ((hit == 0)) || continue
+      if ((legacy)); then
+        grep -qxF -- "$owner" <<<"$conds" && { nudge_row "$owner" "-" skip "指揮役(設定 nudge が無いあいだの以前の除外。tb config edit nudge で置くと対象になる)"; continue; }
+        if w=$(protect_reason "$owner"); then nudge_row "$owner" "-" skip "保護(${w}。設定 nudge が無いあいだの以前の除外)"; continue; fi
+      fi
     fi
     mode=hold
     # 優先度が高い順、同じなら古い順。各行に「done でない先行チケット」の数を付ける
