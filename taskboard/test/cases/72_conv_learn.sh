@@ -39,6 +39,9 @@ eq "conv-candidate-add: 1 件目は candidate" "$(cadd --evidence human-edit --p
 eq "conv-candidate-add: 同じ組をもう一度足しても数は増えない" "$(cadd --evidence human-edit --pair "$p1" 2>/dev/null | cut -f3)" "1/3"
 for i in い ろ は に; do cadd --evidence agent-generated --ref "声の役割の指摘$i" >/dev/null; done
 eq "conv-candidate-add: agent-generated は数えない" "$($TB conv-ledger --kind thanks --json | jq -r '.[0] | "\(.counted) \(.evidence["agent-generated"]) \(.state)"')" "1 4 candidate"
+# 末尾だけ違う別の日本語の ref は、別々の出どころとして 2 件とも記録され、別々に数える(照合順序の比較で「同じ」と見なして落とさない)
+for i in い ろ; do $TB conv-candidate-add --kind reminder --direction locale-check --desc "出どころの比較" --evidence other-source --ref "別の出どころの説明$i" >/dev/null 2>&1; done
+eq "conv-candidate-add: 末尾だけ違う別の ref は other-source として 2 件数える" "$($TB conv-ledger --kind reminder --json | jq -r '.[] | select(.direction=="locale-check") | "\(.counted) \(.evidence["other-source"])"')" "2 2"
 eq "conv-candidate-adopt: 1 回の手直しでは採用しない" "$(rc $TB conv-candidate-adopt thanks conclusion-first --situation 受け取りの連絡 --intent 受け取ったと伝える)" "1"
 p1b=$(padd thanks "$CW/d1" "$CW/f1" "山田さんから 2026-11-19 に PR 123 のレビュー https://example.com/x")
 cadd --evidence human-edit --pair "$p1b" >/dev/null
