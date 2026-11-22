@@ -127,3 +127,13 @@ func Exists(db *sql.DB, id string) (bool, error) {
 	err := db.QueryRow("SELECT COUNT(*) FROM tasks WHERE id=?", id).Scan(&n)
 	return n > 0, err
 }
+
+// TitleSummary はこのセッションのチケットの題名と要約(NULL は空)。無ければ ok=false。
+func TitleSummary(db *sql.DB, id string) (title, summary string, ok bool, err error) {
+	var t, s sql.NullString
+	err = db.QueryRow("SELECT title, summary FROM tasks WHERE id=?", id).Scan(&t, &s)
+	if err == sql.ErrNoRows {
+		return "", "", false, nil
+	}
+	return t.String, s.String, err == nil, err
+}

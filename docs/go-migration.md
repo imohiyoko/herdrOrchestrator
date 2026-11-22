@@ -21,7 +21,8 @@ Go に移すサービスは、`.claude/skills/tb-command-naming` の形(`tb <サ
 | 1 | activity | `touch` `activity` | 済み |
 | 2 | proxy | `proxy request/list/resolve/check`(古い名前 `proxy-*` も) | 済み |
 | 2 | job | `job list/show/set/edit/unset/import/history`(古い名前 `sched-job` も) | 済み |
-| 2 | whoami / handoff | `whoami` `handoff` | まだ(whoami は `bin/tb` の入口を作り直すときに一緒に) |
+| 2 | handoff | `handoff write`(古い形 `handoff <id>` も) | 済み |
+| 2 | whoami | `whoami` | まだ(`bin/tb` の入口を作り直すときに一緒に) |
 | 3 | config / approval / alert / review / gate / pr / digest / notify | | まだ |
 | 4 | agent / reminder / message | | まだ(message は `send` / `nudge` の PR の後) |
 | 5 | ticket(残り) / recipe / conv | | まだ(ticket は状態の再設計の後、recipe は ADR 0005 段 3 の後) |

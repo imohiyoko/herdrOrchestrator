@@ -212,7 +212,8 @@ tb agent-shed [--count N] [--json]   絞る(止める)候補を、完了済み�
                                    読み取り専用(何も止めない)。各行に実行する tb agent-stop <名前> を出す(止めてよい判定が無いものは --force 付き。人だけ)
 
 他の人への調査依頼(human_handoff が on のときだけ。agent は誰にも連絡しない):
-tb handoff <task-id>   人が貼る依頼文(目的・必要なアクセス・期限・返し先)を data/handoff/<task-id>.md に書くだけ。何も送らない。
+tb handoff write <task-id>   人が貼る依頼文(目的・必要なアクセス・期限・返し先)を data/handoff/<task-id>.md に書くだけ。何も送らない。
+  別名(古い形。同じに動く): tb handoff <task-id>
                        off なら終了コード 4。文面に秘密らしい文字列(トークン、AWS キー、秘密鍵のヘッダ)があれば書かずに 4(題名・要約を直してやり直す)
 
 外への通知(既定は off。設定は config/notify.conf、人だけが編集。優先は 環境変数 TB_NOTIFY_<キー大文字> > notify.conf > 既定。設計: drafts/notify-routes.md):
