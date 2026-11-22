@@ -25,8 +25,23 @@ P
   return $hit
 }
 
+# tb handoff write <task-id>(.claude/skills/tb-command-naming の形)。古い形 tb handoff <task-id> も同じに動く
 cmd_handoff() {
-  [[ $# -eq 1 ]] || usage "handoff <task-id>"
+  case ${1:-} in
+    write) shift; handoff_write "$@";;
+    ""|-h|--help|help) handoff_usage; [[ -n ${1:-} ]] || exit 2;;
+    *) handoff_write "$@";;
+  esac
+}
+handoff_usage() {
+  cat <<'USAGE'
+tb handoff write <task-id>   人が貼る依頼文(目的・必要なアクセス・期限・返し先)を data/handoff/<task-id>.md に書くだけ。何も送らない
+(古い形 tb handoff <task-id> も同じに使える。human_handoff が on のときだけ)
+USAGE
+}
+
+handoff_write() {
+  [[ $# -eq 1 ]] || usage "handoff write <task-id>"
   valid_id "$1"
   local tid=$1 row title summary
   if [[ $(limit_get human_handoff) != on ]]; then
@@ -61,7 +76,7 @@ EOF
   local hits
   if hits=$(handoff_secret_scan "$text"); then
     echo "tb: 文面に秘密らしい文字列が含まれるため、書きません(検出: $(tr '\n' ' ' <<<"$hits"))。" \
-         "タスクの題名・要約から取り除いてから、もう一度 tb handoff $tid を実行してください(本文は表示しません)" >&2
+         "タスクの題名・要約から取り除いてから、もう一度 tb handoff write $tid を実行してください(本文は表示しません)" >&2
     return 4
   fi
   local f=$HANDOFF_DIR/$tid.md
