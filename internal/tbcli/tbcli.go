@@ -22,7 +22,7 @@ import (
 )
 
 // Commands は Go に移し終えたコマンド。bin/tb はこの一覧(herdrctl tb --commands)を見て渡すかを決める。
-var Commands = []string{"activity", "allow", "approval", "approve", "ask", "block", "board", "cancel", "claim", "config", "conv", "conv-candidate-add", "conv-candidate-adopt", "conv-candidate-reject", "conv-draft", "conv-gate", "conv-incident", "conv-kinds", "conv-learn-purge", "conv-ledger", "conv-length", "conv-lint", "conv-pair-add", "conv-pair-show", "conv-pairs", "conv-patterns", "conv-route", "conv-routes-set", "conv-scan", "conv-stage", "conv-stage-log", "conv-stage-reset", "conv-stage-set", "conv-voice", "conv-voice-check", "done", "due-scan", "events", "flush", "gate", "handoff", "history", "inbox", "inbox-read", "job", "labels", "link", "list", "message", "notify", "nudge", "outbox", "pr", "pr-queue", "pr-watch", "proposal", "proposal-resolve", "proposals", "proxy", "proxy-check", "proxy-list", "proxy-request", "proxy-resolve", "reject", "reminder", "reminders", "review", "review-pack", "review-submit", "sched-job", "send", "show", "sprint-add", "sprint-close", "sprint-start", "sprints", "touch", "tree", "unlink"}
+var Commands = []string{"activity", "add", "allow", "approval", "approve", "ask", "block", "board", "cancel", "claim", "config", "conv", "conv-candidate-add", "conv-candidate-adopt", "conv-candidate-reject", "conv-draft", "conv-gate", "conv-incident", "conv-kinds", "conv-learn-purge", "conv-ledger", "conv-length", "conv-lint", "conv-pair-add", "conv-pair-show", "conv-pairs", "conv-patterns", "conv-route", "conv-routes-set", "conv-scan", "conv-stage", "conv-stage-log", "conv-stage-reset", "conv-stage-set", "conv-voice", "conv-voice-check", "done", "due-scan", "events", "flush", "gate", "handoff", "history", "inbox", "inbox-read", "job", "labels", "link", "list", "message", "notify", "nudge", "outbox", "pr", "pr-queue", "pr-watch", "proposal", "proposal-resolve", "proposals", "proxy", "proxy-check", "proxy-list", "proxy-request", "proxy-resolve", "reject", "reminder", "reminders", "review", "review-pack", "review-submit", "sched-job", "send", "show", "sprint-add", "sprint-close", "sprint-start", "sprints", "touch", "tree", "unlink", "update"}
 
 // Features は bin/tb が渡す前に確かめる機能(perms = 権限段階の門。ADR 0006)。
 var Features = []string{"perms"}
@@ -124,6 +124,10 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		err = cmdHistory(args[1:], w, stderr)
 	case "events":
 		err = cmdEvents(args[1:], w, stderr)
+	case "add":
+		err = cmdAdd(args[1:], w, stderr)
+	case "update":
+		err = cmdUpdate(args[1:], w, stderr)
 	case "claim":
 		err = cmdClaim(args[1:], w, stderr)
 	case "done":
