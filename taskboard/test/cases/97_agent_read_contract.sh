@@ -103,7 +103,7 @@ eq "org: --me" "$(HERDR_PANE_ID=ww2:p1 arerr $TB org --me --json)" $'{"name":"w2
 eq "org: --me agent list fails" "$(FAKE_LIST_FAIL=1 HERDR_PANE_ID=ww2:p1 arerr $TB org --me)" $'tb: herdr agent list に失敗したため、実行者を特定できません\nrc=1'
 printf '@lead -> boss\n' >"$TB_ORG"
 sqlite3 "$TB_DB" "UPDATE agents SET state='running' WHERE name='w2';"
-eq "org: roles unknown" "$(chmod 000 "$TB_ROLES/map.conf"; arerr $TB org; chmod 644 "$TB_ROLES/map.conf")" $'組織図(設定 org: file:<TMP>/ar-org.conf)\nboss\n  lead1\nhr1\nsweeper1\nw1\nw2\nrc=0'
+eq "org: roles unknown" "$(sqlite3 "$TB_DB" "ALTER TABLE agents RENAME COLUMN role TO role_x;"; arerr $TB org; sqlite3 "$TB_DB" "ALTER TABLE agents RENAME COLUMN role_x TO role;")" $'組織図(設定 org: file:<TMP>/ar-org.conf)\nboss\nhr1\nlead1\nsweeper1\nw1\nw2\n役割を確かめられず上司が決まらない: boss hr1 lead1 sweeper1 w1 w2\nrc=0'
 printf 'a -> b\n' >"$TB_ORG"
 sqlite3 "$TB_DB" "DELETE FROM agents;"
 eq "org: empty ledger" "$(arerr $TB org)" $'組織図(設定 org: file:<TMP>/ar-org.conf)\n(台帳に agent がいません)\nrc=0'
