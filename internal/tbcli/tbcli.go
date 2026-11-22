@@ -21,7 +21,7 @@ import (
 )
 
 // Commands は Go に移し終えたコマンド。bin/tb はこの一覧(herdrctl tb --commands)を見て渡すかを決める。
-var Commands = []string{"activity", "allow", "approval", "approve", "ask", "config", "conv", "conv-candidate-add", "conv-candidate-adopt", "conv-candidate-reject", "conv-draft", "conv-gate", "conv-incident", "conv-kinds", "conv-learn-purge", "conv-ledger", "conv-length", "conv-lint", "conv-pair-add", "conv-pair-show", "conv-pairs", "conv-patterns", "conv-route", "conv-routes-set", "conv-scan", "conv-stage", "conv-stage-log", "conv-stage-reset", "conv-stage-set", "conv-voice", "conv-voice-check", "due-scan", "flush", "gate", "handoff", "inbox", "inbox-read", "job", "list", "message", "notify", "nudge", "outbox", "pr", "pr-queue", "pr-watch", "proposal", "proposal-resolve", "proposals", "proxy", "proxy-check", "proxy-list", "proxy-request", "proxy-resolve", "reject", "review", "review-pack", "review-submit", "reminder", "reminders", "sched-job", "send", "touch"}
+var Commands = []string{"activity", "allow", "approval", "approve", "ask", "board", "config", "conv", "conv-candidate-add", "conv-candidate-adopt", "conv-candidate-reject", "conv-draft", "conv-gate", "conv-incident", "conv-kinds", "conv-learn-purge", "conv-ledger", "conv-length", "conv-lint", "conv-pair-add", "conv-pair-show", "conv-pairs", "conv-patterns", "conv-route", "conv-routes-set", "conv-scan", "conv-stage", "conv-stage-log", "conv-stage-reset", "conv-stage-set", "conv-voice", "conv-voice-check", "due-scan", "events", "flush", "gate", "handoff", "history", "inbox", "inbox-read", "job", "labels", "list", "message", "notify", "nudge", "outbox", "pr", "pr-queue", "pr-watch", "proposal", "proposal-resolve", "proposals", "proxy", "proxy-check", "proxy-list", "proxy-request", "proxy-resolve", "reject", "reminder", "reminders", "review", "review-pack", "review-submit", "sched-job", "send", "show", "sprints", "touch", "tree"}
 
 // 終了コード(tb と同じ)
 const (
@@ -94,6 +94,20 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		err = cmdMessage(args[1:], w, stderr, args[0])
 	case "list":
 		err = cmdList(args[1:], w, stderr)
+	case "show":
+		err = cmdShow(args[1:], w, stderr)
+	case "tree":
+		err = cmdTree(args[1:], w, stderr)
+	case "labels":
+		err = cmdLabels(args[1:], w, stderr)
+	case "sprints":
+		err = cmdSprints(args[1:], w, stderr)
+	case "board":
+		err = cmdBoard(args[1:], w, stderr)
+	case "history":
+		err = cmdHistory(args[1:], w, stderr)
+	case "events":
+		err = cmdEvents(args[1:], w, stderr)
 	case "gate":
 		err = cmdGate(args[1:], w, stderr, os.Stdin)
 	case "review":

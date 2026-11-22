@@ -101,7 +101,7 @@ func (e *Env) metrics(kind string) (obj, error) {
 	winS, win := e.stageNum("window-days", "28")
 	adopted := 0
 	for _, r := range e.ledgerObjs(kind) {
-		if r.(obj).get("state") == "adopted" {
+		if r.(obj).Get("state") == "adopted" {
 			adopted++
 		}
 	}
@@ -118,11 +118,11 @@ func (e *Env) metrics(kind string) (obj, error) {
 	var off, acc float64
 	for _, p := range ps {
 		o, _ := p.(obj)
-		if days(o.get("recorded_at")) < win {
+		if days(o.Get("recorded_at")) < win {
 			w = append(w, o)
 		}
-		x, _ := num(o.get("points_offered"))
-		y, _ := num(o.get("points_accepted"))
+		x, _ := num(o.Get("points_offered"))
+		y, _ := num(o.Get("points_accepted"))
 		off += x
 		acc += y
 	}
@@ -131,7 +131,7 @@ func (e *Env) metrics(kind string) (obj, error) {
 	if len(w) > 0 {
 		s := 0.0
 		for _, o := range w {
-			x, _ := num(o.get("edit_ratio"))
+			x, _ := num(o.Get("edit_ratio"))
 			s += x
 		}
 		ratio = round3(s / float64(len(w)))
@@ -141,7 +141,7 @@ func (e *Env) metrics(kind string) (obj, error) {
 	if inc != "" {
 		lastInc, quiet = inc, days(inc)
 	} else if len(ps) > 0 {
-		quiet = days(ps[0].(obj).get("recorded_at"))
+		quiet = days(ps[0].(obj).Get("recorded_at"))
 	}
 	var das any
 	if since != "" {
@@ -151,20 +151,20 @@ func (e *Env) metrics(kind string) (obj, error) {
 	if off != 0 {
 		ra = round3(acc / off)
 	}
-	return obj{{"stage", st}, {"pairs", len(ps)}, {"window_days", jnum(winS)}, {"window_samples", len(w)}, {"window_edit_ratio", ratio},
-		{"role_points_offered", off}, {"role_points_accepted", acc}, {"adopted_patterns", adopted}, {"last_incident", lastInc},
-		{"quiet_days", quiet}, {"days_at_stage", das}, {"role_acceptance", ra}}, nil
+	return obj{{K: "stage", V: st}, {K: "pairs", V: len(ps)}, {K: "window_days", V: jnum(winS)}, {K: "window_samples", V: len(w)}, {K: "window_edit_ratio", V: ratio},
+		{K: "role_points_offered", V: off}, {K: "role_points_accepted", V: acc}, {K: "adopted_patterns", V: adopted}, {K: "last_incident", V: lastInc},
+		{K: "quiet_days", V: quiet}, {K: "days_at_stage", V: das}, {K: "role_acceptance", V: ra}}, nil
 }
 
 func mnum(m obj, k string) float64 {
-	f, _ := num(m.get(k))
+	f, _ := num(m.Get(k))
 	return f
 }
 
 // stageCheck は conv_stage_check: 段階 to に上げる条件のうち満たさないもの(満たせば空)。
 func (e *Env) stageCheck(kind string, to int, m obj) []string {
 	var un []string
-	j := func(k string) string { return scalar(m.get(k)) }
+	j := func(k string) string { return scalar(m.Get(k)) }
 	switch to {
 	case 1:
 		vs, v := e.stageNum("min-pairs.1", "20")
@@ -180,7 +180,7 @@ func (e *Env) stageCheck(kind string, to int, m obj) []string {
 			un = append(un, fmt.Sprintf("直近 %s 日の組が %s 件(min-samples.2 = %s)", j("window_days"), j("window_samples"), vs))
 		}
 		vs, v = e.stageNum("max-edit-ratio.2", "0.15")
-		if r := m.get("window_edit_ratio"); r == nil || mnum(m, "window_edit_ratio") > v {
+		if r := m.Get("window_edit_ratio"); r == nil || mnum(m, "window_edit_ratio") > v {
 			un = append(un, fmt.Sprintf("直近の編集の割合が %s(max-edit-ratio.2 = %s)", j("window_edit_ratio"), vs))
 		}
 		vs, v = e.stageNum("min-adopted.2", "3")
@@ -196,7 +196,7 @@ func (e *Env) stageCheck(kind string, to int, m obj) []string {
 			un = append(un, "stage3 = の一覧にこの種別がありません")
 		}
 		vs, v := e.stageNum("quiet-days.3", "42")
-		das := m.get("days_at_stage")
+		das := m.Get("days_at_stage")
 		if das == nil {
 			das = 0
 		}
@@ -288,20 +288,20 @@ func (e *Env) Stage(a []string) error {
 		if s < cap {
 			un := e.stageCheck(k, s+1, m)
 			if len(un) == 0 {
-				next = obj{{"ok", true}, {"unmet", []any{}}}
+				next = obj{{K: "ok", V: true}, {K: "unmet", V: []any{}}}
 			} else {
 				l := make([]any, len(un))
 				for i, u := range un {
 					l[i] = u
 				}
-				next = obj{{"ok", false}, {"unmet", l}}
+				next = obj{{K: "ok", V: false}, {K: "unmet", V: l}}
 			}
 		}
-		o := obj{{"kind", k}, {"max_stage", cap}}
+		o := obj{{K: "kind", V: k}, {K: "max_stage", V: cap}}
 		for _, x := range m {
-			o = o.set(x.k, x.v)
+			o = o.Set(x.K, x.V)
 		}
-		out = append(out, o.set("next", next))
+		out = append(out, o.Set("next", next))
 	}
 	if len(out) == 0 {
 		if json {
@@ -316,23 +316,23 @@ func (e *Env) Stage(a []string) error {
 	for _, x := range out {
 		o := x.(obj)
 		ed := "-"
-		if r := o.get("window_edit_ratio"); r != nil && r != false {
+		if r := o.Get("window_edit_ratio"); r != nil && r != false {
 			ed = scalar(r)
 		}
 		nx := "next -"
-		if n, ok := o.get("next").(obj); ok {
-			if n.get("ok") == true {
+		if n, ok := o.Get("next").(obj); ok {
+			if n.Get("ok") == true {
 				nx = "next ok"
 			} else {
 				var us []string
-				for _, u := range n.get("unmet").([]any) {
+				for _, u := range n.Get("unmet").([]any) {
 					us = append(us, u.(string))
 				}
 				nx = "next: " + strings.Join(us, "; ")
 			}
 		}
-		e.say("%s", tsv(o.get("kind"), "stage "+scalar(o.get("stage"))+"/"+scalar(o.get("max_stage")), "pairs "+scalar(o.get("pairs")), "edit "+ed,
-			"adopted "+scalar(o.get("adopted_patterns")), "quiet "+scalar(o.get("quiet_days"))+"d", nx))
+		e.say("%s", tsv(o.Get("kind"), "stage "+scalar(o.Get("stage"))+"/"+scalar(o.Get("max_stage")), "pairs "+scalar(o.Get("pairs")), "edit "+ed,
+			"adopted "+scalar(o.Get("adopted_patterns")), "quiet "+scalar(o.Get("quiet_days"))+"d", nx))
 	}
 	return nil
 }
@@ -524,8 +524,8 @@ func (e *Env) StageLogCmd(a []string) error {
 			}
 			return f
 		}
-		out = append(out, obj{{"at", col(c, 0)}, {"kind", col(c, 1)}, {"from", n(col(c, 2))}, {"to", n(col(c, 3))}, {"how", col(c, 4)},
-			{"by", col(c, 5)}, {"reason", col(c, 6)}, {"metrics", mv[0]}})
+		out = append(out, obj{{K: "at", V: col(c, 0)}, {K: "kind", V: col(c, 1)}, {K: "from", V: n(col(c, 2))}, {K: "to", V: n(col(c, 3))}, {K: "how", V: col(c, 4)},
+			{K: "by", V: col(c, 5)}, {K: "reason", V: col(c, 6)}, {K: "metrics", V: mv[0]}})
 	}
 	if json {
 		e.say("%s", pretty(out))
