@@ -74,11 +74,11 @@ tb send <宛先 agent 名> --text T [--task T-..] [--kind task|info|answer] [--r
          --reply-to O-<n>: 自分宛てに届いた O-<n> への返信。tb が DB で確かめ(O-<n> が宛先 → 自分で、届いていて、未返信)、認めれば reply= の規則で届ける
          終了コード 0=送信済み 10=宛先使用中で outbox に積んだ 11=送信失敗で積んだ 4=ルールで拒否・止めた 20=人の承認待ち 3=送信者を特定できず未保存 12=保留に失敗して積んだ
 tb flush            積まれた送信を届ける(tb digest も最初に呼ぶ)
-tb nudge [<宛先> ...] [--pool] [--dry-run] [--idle-min N(既定 15)] [--max N(既定 3)] [--json]   チケット(in_progress)を握ったまま休んでいる agent に、指揮役から「続けて」と送る(tb send と同じ outbox と delivery)。人の端末か scheduler から
+tb nudge [<宛先> ...] [--pool] [--dry-run] [--idle-min N(既定 15)] [--max N(既定 3)] [--json]   チケット(既定は active の分類。設定 nudge の wake で todo・review・blocked や状態の名前を足せる)を握ったまま休んでいる agent に、指揮役から「続けて」と送る(tb send と同じ outbox と delivery)。人の端末か scheduler から
          <宛先>: agent 名の glob か @役割の glob(複数は和集合)。明示した宛先には ignore を適用しない。当たる agent がいなければ skip の行を出す
          --pool: チケットを握っておらず、担当の todo/review/blocked も無い agent に、自分の team ラベル(team:<x>。役割 domain-<x> → 名前の -lead → 組織図の上司の順で決める)の担当なし todo を優先度順に 1 件取りに行かせる(同じ回で同じ候補は 1 人だけ)
          飛ばす: working / blocked・設定 nudge の ignore(設定 nudge が無いあいだは以前どおり指揮役・保護 protect)・人の返事待ち(未対応の question/blocked)・先行チケット待ち・delivery が now でない・この休みで催促済み・同じチケットで --max 回催促済み
-         複数を握っていれば優先度の高い 1 枚を名指しし、ほかは todo に戻すよう書く。出力は agent チケット 結果(sent|would|skip|held|blocked) 理由
+         複数を握っていれば active を先に、優先度の高い 1 枚を名指しし、ほかの active は todo に戻すよう書く。出力は agent チケット 結果(sent|would|skip|held|blocked) 理由
 tb outbox [--status pending|queued|sent|denied] [--json]
 tb inbox [--unread] [--json]   自分宛てに保留された送信(delivery の設定で hold になったもの)の一覧。読めるのは自分宛てだけ
 tb inbox-read I-<n> [--json]   保留された送信を全文で読み、既読にする

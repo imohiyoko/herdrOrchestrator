@@ -90,7 +90,7 @@ config_forget() { unset "CFGC_${1//-/_}" "CFGS_${1//-/_}"; }
 declare -A MSG_VARS=(
   [send.denied.default]="sender"
   [send.blocked.notice]="id target kind rule"
-  [nudge.text]="task title minutes active"
+  [nudge.text]="task title minutes status active"
   [nudge.multi]="task others active todo"
   [nudge.pool]="task title agent session todo"
   [alert.analyze]="id"
