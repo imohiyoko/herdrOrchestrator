@@ -76,10 +76,22 @@ func liveRows(out []byte) ([]liveRow, error) {
 // Sync は agent_sync: herdr の一覧を台帳に写す(いる agent は running、台帳で running なのに一覧にいないものは stopped)。
 // herdr に届かなければ err(台帳は変えない)。
 func Sync(db *sql.DB, session string) error {
+	_, err := SyncLive(db, session)
+	return err
+}
+
+// SyncLive は Sync と同じに台帳を合わせ、読んだ herdr agent list(bash の LIVE_AGENTS)も返す。
+// 一覧が読めて台帳の書き込みだけ失敗したときは、一覧とエラーの両方を返す。
+func SyncLive(db *sql.DB, session string) ([]herdr.Agent, error) {
 	out, err := herdr.Call("agent", "list")
 	if err != nil {
-		return err
+		return nil, err
 	}
+	live, _ := herdr.ParseAgents(out)
+	return live, syncRows(db, session, out)
+}
+
+func syncRows(db *sql.DB, session string, out []byte) error {
 	rows, err := liveRows(out)
 	if err != nil {
 		return err

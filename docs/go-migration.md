@@ -32,7 +32,7 @@ Go に移すサービスは、`.claude/skills/tb-command-naming` の形(`tb <サ
 | 3 | pr | `pr queue add/list/show/approve/reject/retry/run/scan` と `pr watch`(古い名前 `pr-queue <サブコマンド>` `pr-watch` も)。利用者が書く正規表現(`body_first_line`・公開前検査の規則と例外)は bash と同じ意味になるよう `grep -E` で評価する | 済み |
 | 3 | alert / digest | | まだ(alert は解析役の起動が agent に依存するので agent の後) |
 | 4 | reminder | `reminder list/check/publish/scan/nudge`(古い名前 `reminders [--check / --publish]` `due-scan` `nudge` も)と `deadlines-import` | 済み |
-| 4 | agent | | まだ |
+| 4 | agent(一部) | `limits show/get/set/unset/mode/check/watcher-enabled`(spawn_* が無いときの spawn-policy の値も) | 済み(残りの agent のコマンドは続きの PR) |
 | 5 | conv | `conv route/routes-set/draft/voice/voice-check/length/kinds/patterns/lint`、学習の `conv pair-add/pairs/pair-show/candidate-add/ledger/candidate-adopt/candidate-reject/scan/learn-purge`、段階の `conv stage/stage-set/stage-reset/stage-log/incident/gate`(古い名前 `conv-<サブコマンド>` も)。文字列の一般化と検査(sanitize / scan / ratio)は bash と同じく `lib/convtext.py` を呼ぶ | 済み |
 | 5 | recipe | | まだ(ADR 0005 段 3 の後) |
 | 6 | scheduler の起動器 / webui | | まだ(ADR 0002 の手順 4・5) |
