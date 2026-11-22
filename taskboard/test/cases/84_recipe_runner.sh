@@ -2,6 +2,7 @@
 # レシピの外の実行役(ADR 0005 の段 3): 待ち行列(R-<n>)、tb recipe-runner(実行の時点で依頼者の権限で判定し直す)、
 # 副作用のある部品の実行、定期ジョブの持ち主(SCHED_JOB / SCHED_OWNER)。DB は $TMP/rrun.db、project は rrn だけ。環境変数は最後に戻す
 _saved_pane=${HERDR_PANE_ID-}; _saved_db=$TB_DB; _saved_appr=${TB_APPROVALS-}; _saved_agents=${FAKE_AGENTS-}; _saved_lim=${TB_LIMITS-}
+_saved_env=$(declare -p TB_SPAWN_RETRY_SEC TB_AGENT_CWD TB_RECIPE_POLL_SEC FAKE_DYNAMIC FAKE_STATUS SCHED_JOB SCHED_OWNER 2>/dev/null)
 unset HERDR_PANE_ID SCHED_JOB SCHED_OWNER
 export TB_DB=$TMP/rrun.db TB_APPROVALS=$TMP/rr-approvals.conf TB_SPAWN_RETRY_SEC=0 TB_AGENT_CWD=$TMP TB_LIMITS=$TMP/rr-lim.conf TB_RECIPE_POLL_SEC=0.05
 export FAKE_DYNAMIC=1
@@ -125,6 +126,24 @@ asw "$TB" recipe-run restart-self >/dev/null 2>&1
 eq "runner: wait-idle が時間切れなら failed で、再起動しない" "$(FAKE_STATUS=working "$TB" recipe-runner) $(rr_closes)" "R-11 failed 0"
 eq "runner: 失敗の理由と、それ以降を実行していないことを残す" "$(rrsql "SELECT result FROM recipe_runs WHERE id=11;" | grep -c 'step 1 (wait-idle) が失敗しました.*step 2 以降は実行していません')" "1"
 
+# --- 期限は取り出すたびに見る(前の依頼の実行に時間がかかっても、期限を過ぎた依頼は実行しない)
+asw "$TB" recipe-run restart-self >/dev/null 2>&1; asw "$TB" recipe-run restart-self >/dev/null 2>&1
+rrsql "UPDATE recipe_runs SET created_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','-99.5 seconds') WHERE id=13;"
+eq "runner: 1 件目(wait-idle で 1 秒)のあいだに期限を過ぎた 2 件目は expired" \
+   "$(TB_RECIPE_QUEUE_TTL_SEC=100 FAKE_STATUS=working "$TB" recipe-runner --max 2 | paste -sd,) $(rrsql "SELECT status FROM recipe_runs WHERE id=13;")" "R-12 failed expired"
+
+# --- 改行を含む値も分けずに渡す(text 型は改行を受ける)
+rr_reset; export FAKE_AGENTS="[$(rr_ag conductor wC:p1),$(rr_ag worker1 wW:p1 s1),$(rr_ag helper1 wH:p1 sh)]"
+$TB recipe-set restart-memo >/dev/null <<'EOF'
+arg note? text:500
+step agent-restart target=$requester prompt=$note
+EOF
+out=$(asw "$TB" recipe-run restart-memo "note=$(printf '引継ぎ\n次は T-2')" 2>&1); r=$?
+eq "runner: 改行を含む再開メモでも置ける" "$r|$(tail -1 <<<"$out" | cut -d' ' -f2)" "0|queued"
+eq "runner: 改行を含む再開メモがそのまま実行される" "$($TB recipe-runner | cut -d' ' -f2) $(rrsql "SELECT json_extract(plan,'\$[0].args.prompt') FROM recipe_runs WHERE id=14;" | wc -l | tr -d ' ')" "done 2"
+
+rr_reset; export FAKE_AGENTS="[$(rr_ag conductor wC:p1),$(rr_ag worker1 wW:p1 s1),$(rr_ag helper1 wH:p1 sh)]"   # 再起動で pane が変わったので戻す
+
 # --- 定期ジョブ(scheduler が SCHED_JOB を渡す)からは、持ち主(OWNER → SCHED_OWNER)が無ければ実行しない
 n0=$(rrsql "SELECT count(*) FROM recipe_runs;")
 eq "sched: 持ち主の無いジョブからは 4(人の権限を借りない)" "$(SCHED_JOB=nightly rc "$TB" recipe-run restart-self --target worker1) $(($(rrsql "SELECT count(*) FROM recipe_runs;") - n0))" "4 0"
@@ -152,4 +171,5 @@ if [[ -n $_saved_appr ]]; then export TB_APPROVALS=$_saved_appr; else unset TB_A
 if [[ -n $_saved_agents ]]; then export FAKE_AGENTS=$_saved_agents; else unset FAKE_AGENTS; fi
 if [[ -n $_saved_lim ]]; then export TB_LIMITS=$_saved_lim; else unset TB_LIMITS; fi
 [[ -z $_saved_pane ]] || export HERDR_PANE_ID=$_saved_pane
-unset FAKE_DYNAMIC TB_RECIPE_POLL_SEC TB_SPAWN_RETRY_SEC TB_AGENT_CWD
+unset FAKE_DYNAMIC TB_RECIPE_POLL_SEC TB_SPAWN_RETRY_SEC TB_AGENT_CWD FAKE_STATUS SCHED_JOB SCHED_OWNER
+[[ -z $_saved_env ]] || eval "${_saved_env//declare -/declare -g}"   # 元の値(と設定の有無)に戻す

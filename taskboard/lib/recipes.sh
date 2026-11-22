@@ -450,7 +450,7 @@ recipe_judge() {
   JUDGE_STOP=""; JUDGE_RC=0; JUDGE_RULES=(); JUDGE_OUTSIDE=0
   for ((i = 0; i < $(jq length <<<"$plan"); i++)); do
     n=$((i + 1)); part=$(jq -r ".[$i].part" <<<"$plan")
-    mapfile -t kvs < <(jq -r ".[$i].args | to_entries[] | \"\(.key)=\(.value)\"" <<<"$plan")
+    mapfile -d '' -t kvs < <(jq -j ".[$i].args | to_entries[] | \"\(.key)=\(.value)\u0000\"" <<<"$plan")   # 値は改行を含みうる(text 型)ので NUL で分ける
     verdict=allow; rule=""
     if ! part_args_check "$part" "${kvs[@]}"; then verdict=deny; rule=$PART_ERR; JUDGE_RC=4
     elif ! recipe_agents_ok "$part"; then verdict=deny; rule=$PART_ERR; JUDGE_RC=4
@@ -531,7 +531,7 @@ recipe_exec() {
   EXEC_STOP=""
   for ((i = 0; i < $(jq length <<<"$plan"); i++)); do
     n=$((i + 1)); part=$(jq -r ".[$i].part" <<<"$plan")
-    mapfile -t kvs < <(jq -r ".[$i].args | to_entries[] | \"\(.key)=\(.value)\"" <<<"$plan")
+    mapfile -d '' -t kvs < <(jq -j ".[$i].args | to_entries[] | \"\(.key)=\(.value)\u0000\"" <<<"$plan")   # 値は改行を含みうる(text 型)ので NUL で分ける
     part_args_check "$part" "${kvs[@]}" || { EXEC_STOP="step $n の引数を確かめ直せません: $PART_ERR"; return 1; }
     rc=0; part_run "$part" "$by" || rc=$?
     recipe_event recipe_step "$n $part" "${JUDGE_RULES[$i]} / $([[ $rc == 0 ]] && echo ok || echo failed): $(oneline "$PART_OUT" 300)" "E-$RUN_EID" >/dev/null
@@ -665,21 +665,22 @@ cmd_recipe-runner() {
   require_human "tb recipe-runner"
   [[ $RECIPE_QUEUE_TTL =~ ^[0-9]{1,6}$ ]] || die "TB_RECIPE_QUEUE_TTL_SEC は秒の整数: $RECIPE_QUEUE_TTL"
   [[ $RECIPE_RUNNING_MAX =~ ^[0-9]{1,6}$ ]] || die "TB_RECIPE_RUNNING_MAX_SEC は秒の整数: $RECIPE_RUNNING_MAX"
-  # 古すぎるものは実行しない(依頼した時点の状況と離れている)
-  while IFS= read -r id; do
-    [[ -n $id ]] || continue
-    _runner_close "$id" expired "置いてから ${RECIPE_QUEUE_TTL} 秒を過ぎたため実行しません" queued
-  done < <(sql "SELECT id FROM recipe_runs WHERE status='queued' AND (julianday('now') - julianday(created_at)) * 86400 > $((10#$RECIPE_QUEUE_TTL)) ORDER BY id;")
   # 実行役が途中で落ちた(running のまま長く残った)ものは failed にする。どこまで済んだかは recipe_step の記録で見る。巻き戻さない
   while IFS= read -r id; do
     [[ -n $id ]] || continue
     _runner_close "$id" failed "実行役が ${RECIPE_RUNNING_MAX} 秒たっても終わっていません(途中で止まった可能性。済んだ step は記録を見てください)" running
   done < <(sql "SELECT id FROM recipe_runs WHERE status='running' AND (julianday('now') - julianday(started_at)) * 86400 > $((10#$RECIPE_RUNNING_MAX)) ORDER BY id;")
+  local fresh="(julianday('now') - julianday(created_at)) * 86400 <= $((10#$RECIPE_QUEUE_TTL))"
   while ((n < max)); do
-    id=$(sql "SELECT id FROM recipe_runs WHERE status='queued' ORDER BY id LIMIT 1;")
+    # 古すぎるものは実行しない(依頼した時点の状況と離れている)。前の依頼の実行に時間がかかることがあるので、取り出すたびに見る
+    while IFS= read -r id; do
+      [[ -n $id ]] || continue
+      _runner_close "$id" expired "置いてから ${RECIPE_QUEUE_TTL} 秒を過ぎたため実行しません" queued
+    done < <(sql "SELECT id FROM recipe_runs WHERE status='queued' AND NOT ($fresh) ORDER BY id;")
+    id=$(sql "SELECT id FROM recipe_runs WHERE status='queued' AND $fresh ORDER BY id LIMIT 1;")
     [[ -n $id ]] || break
-    # 取り出し(同時に 2 つの実行役が動いても、1 件を実行するのは 1 つだけ)
-    [[ $(sql "UPDATE main.recipe_runs SET status='running', started_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$id AND status='queued'; SELECT changes();") == 1 ]] || continue
+    # 取り出し(同時に 2 つの実行役が動いても、1 件を実行するのは 1 つだけ。期限もここでもう一度見る)
+    [[ $(sql "UPDATE main.recipe_runs SET status='running', started_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$id AND status='queued' AND $fresh; SELECT changes();") == 1 ]] || continue
     n=$((n + 1))
     row=$(session_row recipe_runs id "$id")
     _runner_one "$row"
