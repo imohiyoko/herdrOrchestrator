@@ -21,7 +21,7 @@ import (
 )
 
 // Commands は Go に移し終えたコマンド。bin/tb はこの一覧(herdrctl tb --commands)を見て渡すかを決める。
-var Commands = []string{"activity", "list", "proxy", "proxy-check", "proxy-list", "proxy-request", "proxy-resolve", "touch"}
+var Commands = []string{"activity", "job", "list", "proxy", "proxy-check", "proxy-list", "proxy-request", "proxy-resolve", "sched-job", "touch"}
 
 // 終了コード(tb と同じ)
 const (
@@ -60,6 +60,10 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	case "activity":
 		err = cmdActivity(args[1:], w, stderr)
+	case "job":
+		err = cmdJob(args[1:], w, stderr, false)
+	case "sched-job":
+		err = cmdJob(args[1:], w, stderr, true)
 	case "proxy":
 		err = cmdProxy(args[1:], w, stderr)
 	case "proxy-request":

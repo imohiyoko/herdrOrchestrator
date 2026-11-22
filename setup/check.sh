@@ -230,7 +230,7 @@ job_launchd_check() {  # $1=job
   esac
 }
 # ジョブの定義は DB の config 表(sched-job:<job>。このセッションの行か共通の行 *)だけから読む(scheduler/bin/lib.sh)。
-# jobs/<job>.conf は取り込む前の置き場所で、DB に無ければ動かない(tb sched-job import で取り込む)
+# jobs/<job>.conf は取り込む前の置き場所で、DB に無ければ動かない(tb job import で取り込む)
 SJ_SESS=${HERDR_SESSION:-}
 if [ -z "$SJ_SESS" ] && [ -f "$ROOT/herdr-session" ]; then SJ_SESS=$(sed -n '1{s/#.*//;s/[[:space:]]//g;p;}' "$ROOT/herdr-session"); fi
 [[ "$SJ_SESS" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$ ]] || SJ_SESS=default
@@ -249,18 +249,18 @@ job_status() {
   body=$(job_db_body "$job")
   if [ -n "$body" ]; then
     if grep -q '/path/to/' <<<"$body"; then
-      report missing "job:$job" "DB の定義に /path/to/ が残っている" "実際のパスに直す: taskboard/bin/tb sched-job edit $job"
+      report missing "job:$job" "DB の定義に /path/to/ が残っている" "実際のパスに直す: taskboard/bin/tb job edit $job"
     else report ok "job:$job" "DB に定義あり(sched-job:$job)"; fi
     return 0
   fi
   if [ -f "$conf" ]; then
     report warn "job:$job" "$job.conf が DB に取り込まれていない(定期実行は DB の定義だけで動くので、このジョブは動かない)" \
-      "取り込む: taskboard/bin/tb sched-job import $job(--dry-run で先に確かめられる)$(grep -q '/path/to/' "$conf" && echo "。先に $conf の /path/to/ を実際のパスに直す")"
+      "取り込む: taskboard/bin/tb job import $job(--dry-run で先に確かめられる)$(grep -q '/path/to/' "$conf" && echo "。先に $conf の /path/to/ を実際のパスに直す")"
     return 1
   fi
   if [ "$required" = 1 ]; then report missing "job:$job" "定義がない(DB に sched-job:$job が無い)" \
-    "$job.conf.example を元にパスを直した本文を DB に置く: taskboard/bin/tb sched-job set $job < <本文のファイル>"
-  else report info "job:$job" "未使用(任意。使うなら $job.conf.example を元に tb sched-job set $job で DB に置く)"; fi
+    "$job.conf.example を元にパスを直した本文を DB に置く: taskboard/bin/tb job set $job < <本文のファイル>"
+  else report info "job:$job" "未使用(任意。使うなら $job.conf.example を元に tb job set $job で DB に置く)"; fi
   return 1
 }
 for ex in "$JOBS"/*.conf.example; do

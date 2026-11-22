@@ -1034,7 +1034,7 @@ def page_jobs(_qs):
     if left:   # DB に取り込んでいない conf のジョブは scheduler が動かさない
         rows_note = ('<p class=warn>DB に取り込んでいない <code>scheduler/jobs/*.conf</code> があります。定期実行は DB の定義だけで動くので、これらは動きません: '
                      + ", ".join(f"<code>{e(n)}</code>" for n in left)
-                     + '。取り込む: <code>taskboard/bin/tb sched-job import --dry-run</code> で確かめてから <code>taskboard/bin/tb sched-job import</code></p>')
+                     + '。取り込む: <code>taskboard/bin/tb job import --dry-run</code> で確かめてから <code>taskboard/bin/tb job import</code></p>')
     else:
         rows_note = ""
     note = rows_note + ("<p class=note>「何をする」の 2 行目は conf の先頭のコメント(無ければコマンドから推した説明)です。job 名を開くと、型(agent に送る / コマンドを実行)・宛先と今の状態・送られる本文やコマンド・次回の予定・承認の扱いを読めます。"
@@ -1188,7 +1188,7 @@ def page_job(name, csrf, error="", saved=False):
     msg = '<p class=note>保存しました。次の分から反映されます。</p>' if saved else ""
     return "定期実行: " + name, (
         err_html(error) + msg + f"<p>{what}ジョブ。{'Web UI で変更済み。' if info.get('overridden') else ''}</p>" + _job_overview(name, info) + "<h2>スケジュールの変更</h2>" + form +
-        "<p class=note>変更できるのはスケジュールだけです(宛先・本文・コマンドは人が tb sched-job edit で編集)。"
+        "<p class=note>変更できるのはスケジュールだけです(宛先・本文・コマンドは人が tb job edit で編集)。"
         f'保存先: DB の <code>sched-settings:{e(name)}</code>(セッション <code>{e(reqctx.session())}</code>)</p><p><a href="/jobs">一覧へ</a></p>')
 
 

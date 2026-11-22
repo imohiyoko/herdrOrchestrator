@@ -1211,7 +1211,7 @@ check("残ったファイルの settings は保存で消え、DB の値が効く
 open(SET, "w").write("INTERVAL_MIN=50\n"); os.chmod(SET, 0o600)
 r = cl.raw("POST", "/jobs/job1", {"action": "reset", "csrf": cl.csrf("/jobs/job1")})
 check("conf の値に戻すと DB の上書き設定を消す", r[0] == 302 and not dbset() and not os.path.exists(SET) and "10 分おき" in cl.get("/jobs")[2])
-# DB にある定義(tb sched-job。config 表の sched-job:<job>)。一覧・詳細に出て、上書き設定は DB に書く(履歴つき)
+# DB にある定義(tb job。config 表の sched-job:<job>)。一覧・詳細に出て、上書き設定は DB に書く(履歴つき)
 _c = sqlite3.connect(env["WEBUI_TB_DB"])
 _sess = "default"   # このプロセスのセッション(HERDR_SESSION も herdr-session ファイルも無い)
 _c.execute("INSERT INTO config (herdr_session, key, body, updated_by, updated_at) VALUES (?, 'sched-job:dbjob', ?, 'human', 'x')",

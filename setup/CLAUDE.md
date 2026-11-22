@@ -14,7 +14,7 @@ worker のプロジェクトが presets に書かれていないときは `bash 
 
 ## 絶対のルール
 
-- **書き込む前に必ず承認をもらう。** 対象: `settings.json` / `settings.local.json` などの設定ファイル、`tb sched-job set` / `import`(ジョブの定義)、
+- **書き込む前に必ず承認をもらう。** 対象: `settings.json` / `settings.local.json` などの設定ファイル、`tb job set` / `import`(ジョブの定義)、
   `presets/*.conf`、`~/Library/LaunchAgents/` へのコピー、`launchctl bootstrap` / `bootout`、`chmod`、ファイルの削除。
   承認を求めるときは、次の 3 つを必ず見せる:
   1. 何をするか(1 文)と、なぜ要るか
@@ -91,8 +91,8 @@ agent の名前・プロンプト・権限(approvals / grants / routes / deliver
   `watch` は任意。
 - ジョブの定義は DB に置く(定期実行は DB の定義だけで動く。`jobs/<job>.conf` を置いただけでは動かない)。
   `jobs/<job>.conf.example` を元に `/path/to/` をこのリポジトリの実際のパスに直した本文を作って見せ、承認後に
-  `bash taskboard/bin/tb sched-job set <job> < <本文のファイル>` で DB に書く(書く前に scheduler が読めるかを tb が確かめる)。
-- `check.sh` が「DB に取り込まれていない」と言ったら、`bash taskboard/bin/tb sched-job import --dry-run` の結果を見せ、承認後に `--dry-run` を外して取り込む
+  `bash taskboard/bin/tb job set <job> < <本文のファイル>` で DB に書く(書く前に scheduler が読めるかを tb が確かめる)。
+- `check.sh` が「DB に取り込まれていない」と言ったら、`bash taskboard/bin/tb job import --dry-run` の結果を見せ、承認後に `--dry-run` を外して取り込む
   (取り込んだファイルは `~/.local/state/herdr/sched-imported/<日時>/` へ退く)。
 - `DRY_RUN=1 bash scheduler/bin/tick.sh <job>` で判定だけを試して結果を見せる。
 - `bash scheduler/bin/gen-plist.sh <job>` で plist を生成(登録はしない)し、内容を見せる。
