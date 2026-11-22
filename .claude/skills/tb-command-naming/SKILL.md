@@ -13,7 +13,7 @@ tb ticket status add qa review       # チケットの状態(設定 statuses)を
 tb team show backend
 ```
 
-この決まりは **これから足すコマンド** のためのもの。今あるコマンド(`tb add`、`tb list`、`tb agent-spawn`、`tb conv-draft` など)はまだこの形になっていないが、**名前を変えない**(下の「今あるコマンド」)。
+この決まりは **これから足すコマンド** のためのもの。今あるコマンド(`tb add`、`tb list`、`tb agent-spawn`、`tb recipe-run` など)はまだこの形になっていないが、**名前を変えない**(下の「今あるコマンド」)。
 
 ## なぜこの形か
 
@@ -60,7 +60,7 @@ ADR 0002(サービスの境界)と ADR 0004(3 つの層とモジュール)から
 | `gate` | 機能 | ゲート | gate / `gate` |
 | `approval` | 土台(authz) | 承認・人だけの判定 | approvals, risk / `approval check/allow/ask/approve/reject`(古い名前 `approval <操作>` `allow` `ask` `approve` `reject`) |
 | `recipe` | 機能 | レシピと部品(ADR 0005) | recipes / `recipe-*` `parts` `part-*` |
-| `conv` | 機能 | 会話の下書き・振り分け・学習 | conv, convlearn, convstage / `conv-*` |
+| `conv` | 機能 | 会話の下書き・振り分け・学習 | conv, convlearn, convstage / `conv route/draft/voice/…` `conv pair-add/ledger/candidate-adopt/…` `conv stage/stage-set/gate/…`(古い名前 `conv-<サブコマンド>`) |
 | `reminder` | 機能 | リマインダー・期限 | reminders / `reminder list/check/publish/scan/nudge`(古い名前 `reminders` `due-scan` `nudge`)。`deadlines-import` はまだ古い名前だけ |
 | `job` | 機能 | scheduler のジョブ | schedjobs, schedwatch / `sched-job` |
 | `proxy` | 機能 | 代理の依頼 | proxy / `proxy-*` |

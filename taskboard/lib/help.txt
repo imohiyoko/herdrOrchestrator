@@ -268,40 +268,43 @@ tb pr watch                   許可リスト(config/repos.md、TB_REPOS_FILE)�
          sink: file(data/notify/<日付>.md と sent.log)・stdout・slack(slack_via=agent|webhook)。1 分/1 時間の上限を超えた分は 1 通にまとめる
 
 会話チーム(下書きだけ。送信はしない。文面は DB・記録に書かない。設計と書式: conversation/README.md):
-tb conv-route --event E --counterpart C --depth D --severity S --deadline DL [--json] | --stdin [--json]
+tb conv route --event E --counterpart C --depth D --severity S --deadline DL [--json] | --stdin [--json]
          構造化した依頼(5 つの区分の名前だけ。本文は受け付けない)を振り分け表(設定 conv-routes)で決める。
          routed なら kind・counterpart・channel・timing・severity。表に無い依頼・未登録の相手の区分は推測せず unregistered(needs_human)
-tb conv-routes-set [--shared] [--approve-looser] [--dry-run] < 新しい表   振り分け表を書く(人の端末だけ)。version は今より大きくする。
+tb conv routes-set [--shared] [--approve-looser] [--dry-run] < 新しい表   振り分け表を書く(人の端末だけ)。version は今より大きくする。
          今の表と全組み合わせで比べ、未登録 → 振り分け・振り分け先の変更があれば --approve-looser が要る(無ければ終了コード 20)。厳しくするだけならそのまま書ける
-tb conv-draft (--route <conv-route --json の出力|-> | --kind K) [--note 一般化した状況] [--ref 参照] [--max-chars N | --request <依頼のファイル>]
+tb conv draft (--route <tb conv route --json の出力|-> | --kind K) [--note 一般化した状況] [--ref 参照] [--max-chars N | --request <依頼のファイル>]
          下書きの指示(共通の土台 + 種別のチーム + 採用済みのパターン + 今回の依頼)を出す。チームが無い種別・未登録の依頼は共通の土台だけで、そう書く。
          --note に数字・URL・@・# は使えない(一般化した言い方にする)。TB_CONV_TEAMS=off でチームの層を止める
-tb conv-voice <役> --draft F [--request F | --request-chars N]   声の役(direct / empathetic / receiver / brevity)に渡す指示と下書きだけを出す(ほかの役の出力は入れない)
-tb conv-voice-check <役> [--draft F --request F] < 役の出力   形を確かめる(多くても 3 点。brevity は 1 行目に長さの判定。--draft/--request があれば実際の長さと突き合わせる)。0 / 1
-tb conv-length --draft F --request F   文字数を比べる。0=依頼以下 / 1=依頼より長い
-tb conv-kinds [--json]   種別ごとのチームの有無とパターンの数
-tb conv-patterns <種別> [--all]   採用済み(--all なら候補も)のパターン
-tb conv-lint   共通の土台・声の役・種別のファイル・パターン・振り分け表を確かめる。0 / 1
+tb conv voice <役> --draft F [--request F | --request-chars N]   声の役(direct / empathetic / receiver / brevity)に渡す指示と下書きだけを出す(ほかの役の出力は入れない)
+tb conv voice-check <役> [--draft F --request F] < 役の出力   形を確かめる(多くても 3 点。brevity は 1 行目に長さの判定。--draft/--request があれば実際の長さと突き合わせる)。0 / 1
+tb conv length --draft F --request F   文字数を比べる。0=依頼以下 / 1=依頼より長い
+tb conv kinds [--json]   種別ごとのチームの有無とパターンの数
+tb conv patterns <種別> [--all]   採用済み(--all なら候補も)のパターン
+tb conv lint   共通の土台・声の役・種別のファイル・パターン・振り分け表を確かめる。0 / 1
+  別名(古い名前): tb conv-route / tb conv-routes-set / tb conv-draft / tb conv-voice / tb conv-voice-check / tb conv-length / tb conv-kinds / tb conv-patterns / tb conv-lint (tb conv だけでサブコマンドの一覧)
 
 会話の学習(#97。組と台帳は DB にも checkout にも置かず $TB_CONV_STATE_DIR(既定 ~/.local/state/herdr/conv、700)。設計: docs/conversation-learning.md):
-tb conv-pair-add --kind K --draft-file F --final-file F --situation S --intent I --posted [--points-offered N --points-accepted M]
+tb conv pair-add --kind K --draft-file F --final-file F --situation S --intent I --posted [--points-offered N --points-accepted M]
          人が送ったあとにだけ、下書きと送った文の組を記録する(人だけ)。→ "<pair-id> <編集の割合>"。下書きが空なら人が一から書いた組
-tb conv-pairs [--kind K] [--json]   組の一覧(本文は出さない)
-tb conv-pair-show <pair-id>   組の記録と本文(この機械の中だけで読む)
-tb conv-candidate-add --kind K --direction D --desc 説明 --evidence human-edit|human-written|other-source|agent-generated (--pair ID | --ref 説明)
+tb conv pairs [--kind K] [--json]   組の一覧(本文は出さない)
+tb conv pair-show <pair-id>   組の記録と本文(この機械の中だけで読む)
+tb conv candidate-add --kind K --direction D --desc 説明 --evidence human-edit|human-written|other-source|agent-generated (--pair ID | --ref 説明)
          [--situation S --intent I --ending E --conclusion first|last --avoid A] [--permissive]
          手直し 1 つを候補の証拠にする。agent-generated は記録するが数えない。別々の状況で conv-learn の threshold(既定 3)回そろえば proposed
-tb conv-ledger [--kind K] [--json]   台帳(種別 向き 状態 件数/しきい値 証拠の種類ごとの数 許す方向か 説明)
-tb conv-candidate-adopt <kind> <direction> [--approve-permissive] [--situation ...]   人だけ。proposed だけを、名前・番号・URL などの検査を通して patterns.conf に adopted で足す
-tb conv-candidate-reject <kind> <direction>   人だけ
-tb conv-scan < 文   パターンに残せないもの(url email mention ref number name deny quote)があれば 1
-tb conv-learn-purge [--kind K] --yes   組と台帳を消す(人だけ)。採用済みのパターンと段階の記録は残る
+tb conv ledger [--kind K] [--json]   台帳(種別 向き 状態 件数/しきい値 証拠の種類ごとの数 許す方向か 説明)
+tb conv candidate-adopt <kind> <direction> [--approve-permissive] [--situation ...]   人だけ。proposed だけを、名前・番号・URL などの検査を通して patterns.conf に adopted で足す
+tb conv candidate-reject <kind> <direction>   人だけ
+tb conv scan < 文   パターンに残せないもの(url email mention ref number name deny quote)があれば 1
+tb conv learn-purge [--kind K] --yes   組と台帳を消す(人だけ)。採用済みのパターンと段階の記録は残る
+  別名(古い名前): tb conv-pair-add / tb conv-pairs / tb conv-pair-show / tb conv-candidate-add / tb conv-ledger / tb conv-candidate-adopt / tb conv-candidate-reject / tb conv-scan / tb conv-learn-purge
 
 会話チームの段階(#98。0 下書きだけ / 1 声の役割 / 2 下書き保存 / 3 1 通ごとに 1 回の承認で送信。設定は conv-stages):
-tb conv-stage [<kind>] [--json]   段階・測った値(組の数・直近の編集の割合・採用数・事故の無い日数・役割の指摘の受け入れ率)・次の段階の条件
-tb conv-stage-set <kind> <0-3> --reason R [--override]   人だけ。上げるのは 1 段ずつ。high の種別・draft-save・stage3 の一覧による上限は --override でも越えない(4)
-tb conv-stage-reset [--to 0|1] --reason R   人だけ。すべての種別を 1 回で戻す(データは消さない)
-tb conv-stage-log [<kind>] [--json]   段階の変更の記録(その時の測った値つき)
-tb conv-incident <kind> --note N   人だけ。事故を記録する(段階は変えない)
-tb conv-gate <kind> --action draft|review|save-draft|post [--counterpart C] [--severity low|normal|high] [--source-vis V --dest-vis V]
+tb conv stage [<kind>] [--json]   段階・測った値(組の数・直近の編集の割合・採用数・事故の無い日数・役割の指摘の受け入れ率)・次の段階の条件
+tb conv stage-set <kind> <0-3> --reason R [--override]   人だけ。上げるのは 1 段ずつ。high の種別・draft-save・stage3 の一覧による上限は --override でも越えない(4)
+tb conv stage-reset [--to 0|1] --reason R   人だけ。すべての種別を 1 回で戻す(データは消さない)
+tb conv stage-log [<kind>] [--json]   段階の変更の記録(その時の測った値つき)
+tb conv incident <kind> --note N   人だけ。事故を記録する(段階は変えない)
+tb conv gate <kind> --action draft|review|save-draft|post [--counterpart C] [--severity low|normal|high] [--source-vis V --dest-vis V]
          決まった表で判定(読み取りのみ)。0=allow 20=ask(この 1 通を人が承認) 4=deny。post は allow を返さない
+  別名(古い名前): tb conv-stage / tb conv-stage-set / tb conv-stage-reset / tb conv-stage-log / tb conv-incident / tb conv-gate

@@ -1,5 +1,5 @@
 # 会話チームの段階的な自動化(#98)の設定。tb config set conv-stages < このファイル で DB に置く(人だけ)
-# 段階そのものは設定ではなく tb conv-stage-set で変える(測った値と一緒に記録される)。設計: taskboard/docs/conversation-learning.md
+# 段階そのものは設定ではなく tb conv stage-set で変える(測った値と一緒に記録される)。設計: taskboard/docs/conversation-learning.md
 
 # 問題の指摘・断り・組織の外へ出る種別。段階 1 より上に進めない(--override でも越えない)
 high = refusal

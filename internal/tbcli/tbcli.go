@@ -22,7 +22,7 @@ import (
 )
 
 // Commands は Go に移し終えたコマンド。bin/tb はこの一覧(herdrctl tb --commands)を見て渡すかを決める。
-var Commands = []string{"activity", "allow", "approval", "approve", "ask", "config", "due-scan", "flush", "gate", "handoff", "inbox", "inbox-read", "job", "list", "message", "notify", "nudge", "outbox", "pr", "pr-queue", "pr-watch", "proposal", "proposal-resolve", "proposals", "proxy", "proxy-check", "proxy-list", "proxy-request", "proxy-resolve", "reject", "review", "review-pack", "review-submit", "reminder", "reminders", "sched-job", "send", "touch"}
+var Commands = []string{"activity", "allow", "approval", "approve", "ask", "config", "conv", "conv-candidate-add", "conv-candidate-adopt", "conv-candidate-reject", "conv-draft", "conv-gate", "conv-incident", "conv-kinds", "conv-learn-purge", "conv-ledger", "conv-length", "conv-lint", "conv-pair-add", "conv-pair-show", "conv-pairs", "conv-patterns", "conv-route", "conv-routes-set", "conv-scan", "conv-stage", "conv-stage-log", "conv-stage-reset", "conv-stage-set", "conv-voice", "conv-voice-check", "due-scan", "flush", "gate", "handoff", "inbox", "inbox-read", "job", "list", "message", "notify", "nudge", "outbox", "pr", "pr-queue", "pr-watch", "proposal", "proposal-resolve", "proposals", "proxy", "proxy-check", "proxy-list", "proxy-request", "proxy-resolve", "reject", "review", "review-pack", "review-submit", "reminder", "reminders", "sched-job", "send", "touch"}
 
 // Features は bin/tb が渡す前に確かめる機能(perms = 権限段階の門。ADR 0006)。
 var Features = []string{"perms"}
@@ -114,6 +114,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		err = cmdGate(args[1:], w, stderr, os.Stdin)
 	case "review":
 		err = cmdReview(args[1:], w, stderr, "")
+	case "conv":
+		err = cmdConv(args[1:], w, stderr, "")
 	case "pr":
 		err = cmdPr(args[1:], w, stderr, "")
 	case "pr-queue", "pr-watch":
@@ -125,6 +127,10 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	case "reminders", "due-scan", "nudge":
 		err = cmdReminder(args[1:], w, stderr, args[0])
 	default:
+		if sub, ok := strings.CutPrefix(args[0], "conv-"); ok && convSubs[sub] != nil {
+			err = cmdConv(args[1:], w, stderr, args[0])
+			break
+		}
 		err = usage("Go 版には無いコマンド: %s", args[0])
 	}
 	w.Flush()

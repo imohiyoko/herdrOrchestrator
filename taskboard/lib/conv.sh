@@ -539,3 +539,22 @@ cmd_conv-lint() {
   ((bad == 0)) && echo "ok"
   return $bad
 }
+
+# tb conv <サブコマンド>(新しい名前)。古い名前 tb conv-<サブコマンド> も同じに動く(別名。bash を外すときに外す)
+cmd_conv() {
+  if [[ $# -eq 0 ]]; then conv_usage; exit 2; fi
+  local sub=$1; shift
+  case $sub in
+    candidate-add|candidate-adopt|candidate-reject|draft|gate|incident|kinds|learn-purge|ledger|length|lint|pair-add|pair-show|pairs|patterns|route|routes-set|scan|stage|stage-log|stage-reset|stage-set|voice|voice-check) "cmd_conv-$sub" "$@";;
+    help|-h|--help) conv_usage;;
+    *) usage "conv: 不明なサブコマンド $sub(tb conv で一覧)";;
+  esac
+}
+conv_usage() {
+  cat <<'USAGE'
+tb conv route|routes-set|draft|voice|voice-check|length|kinds|patterns|lint ...   会話チームの振り分けと下書き(引数は tb help)
+tb conv pair-add|pairs|pair-show|candidate-add|ledger|candidate-adopt|candidate-reject|scan|learn-purge ...   会話の学習
+tb conv stage|stage-set|stage-reset|stage-log|incident|gate ...   会話チームの段階
+(古い名前 tb conv-<サブコマンド> も同じに使える)
+USAGE
+}

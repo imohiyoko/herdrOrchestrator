@@ -33,7 +33,8 @@ Go に移すサービスは、`.claude/skills/tb-command-naming` の形(`tb <サ
 | 3 | alert / digest | | まだ(alert は解析役の起動が agent に依存するので agent の後) |
 | 4 | reminder | `reminder list/check/publish/scan/nudge`(古い名前 `reminders [--check / --publish]` `due-scan` `nudge` も) | 済み(`deadlines-import` はチケットを作るので ticket の `add` と一緒に後で。それまでは bash の古い名前だけ) |
 | 4 | agent | | まだ |
-| 5 | ticket(残り) / recipe / conv | | まだ(ticket は状態の再設計の後、recipe は ADR 0005 段 3 の後) |
+| 5 | conv | `conv route/routes-set/draft/voice/voice-check/length/kinds/patterns/lint`、学習の `conv pair-add/pairs/pair-show/candidate-add/ledger/candidate-adopt/candidate-reject/scan/learn-purge`、段階の `conv stage/stage-set/stage-reset/stage-log/incident/gate`(古い名前 `conv-<サブコマンド>` も)。文字列の一般化と検査(sanitize / scan / ratio)は bash と同じく `lib/convtext.py` を呼ぶ | 済み |
+| 5 | ticket(残り) / recipe | | まだ(ticket は状態の再設計の後、recipe は ADR 0005 段 3 の後) |
 | 6 | scheduler の起動器 / webui | | まだ(ADR 0002 の手順 4・5) |
 
 サービスのコマンドより先に、ほかのサービスが使う部品だけを移すことがある(例: approval の PR で `internal/agents` の役割の引き方と `internal/message` の届け方)。そのサービスのコマンドはまだ bash のままで、移す PR でこの部品を使う。
