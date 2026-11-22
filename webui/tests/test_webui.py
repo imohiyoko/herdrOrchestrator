@@ -297,6 +297,7 @@ class Client:
 
 NOTIFY_TAG = '<script src="/notify.js" defer></script>'
 REFRESH_TAG = '<script src="/refresh.js" defer></script>'
+FILTER_TAG = '<script src="/filter.js" defer></script>'   # タスク一覧の絞り込み(選んだらすぐ反映)
 
 
 def no_js(b):
@@ -497,8 +498,8 @@ for path in PAGES:
     # 入力欄(対応済みにする)があるページは自動更新しない
     check(f"{path}: 共通ナビ・meta refresh・バッジ",
           (('http-equiv="refresh"' in b) != ('action="/resolve"' in b or path in ("/ledger", "/perms", "/tasks"))) and 'href="/ledger"' in b and 'class="badge"' in b, path)
-    check(f"{path}: スクリプトは同一オリジンの notify.js だけ",
-          script_tags(b) == [NOTIFY_TAG[:-9]] and "<script" not in no_js(b).lower()
+    check(f"{path}: スクリプトは同一オリジンの notify.js だけ(タスク一覧は絞り込みの filter.js も)",
+          script_tags(b) == [NOTIFY_TAG[:-9]] + (['<script src="/filter.js" defer>'] if path == "/tasks" else []) and "<script" not in no_js(b).replace(FILTER_TAG, "").lower()
           and "<img" not in b.lower(), str(re.findall(r"<script[^>]*>", b, re.I)))
     check(f"{path}: 自動更新は refresh.js(meta refresh は noscript の中だけ)",
           ('http-equiv="refresh"' in b) == (REFRESH_TAG in b) == ('<meta name=herdr-refresh content="30">' in b)
@@ -721,10 +722,30 @@ _cx = sqlite3.connect(env["WEBUI_TB_DB"])
 _cx.execute(_cm, ("T-3", "question", "長い質問 " + "あ" * 3000 + "REPORT-TAIL"))
 _cx.commit()
 TL = cl.get("/tasks")
-check("タスク: 状態の件数サマリ", all(x in TL[2] for x in ("todo 1", "in_progress 2", "review 0", "done 1", "blocked 1", "全部 5")), "")
-check("タスク: 既定は 5 件すべて", sorted(_ids("/tasks")) == ["T-1", "T-2", "T-3", "T-4", "T-5"], str(_ids("/tasks")))
-check("タスク: PJ で絞る(件数サマリも PJ 内)", sorted(_ids("/tasks?project=pj2")) == ["T-3", "T-4", "T-5"] and "in_progress 1" in cl.get("/tasks?project=pj2")[2])
-check("タスク: 担当で絞る", sorted(_ids("/tasks?owner=alpha")) == ["T-1", "T-3", "T-4"])
+check("タスク: 状態の件数サマリ", all(x in TL[2] for x in ("todo 1", "in_progress 2", "review 0", "done 1", "blocked 1", "すべて 5", "未完了 4", "閉じたもの 1")), "")
+check("タスク: 既定は未完了だけ(done の T-4 は出ない)", sorted(_ids("/tasks")) == ["T-1", "T-2", "T-3", "T-5"], str(_ids("/tasks")))
+check("タスク: view=all で 5 件すべて", sorted(_ids("/tasks?view=all")) == ["T-1", "T-2", "T-3", "T-4", "T-5"])
+check("タスク: view=closed で閉じたものだけ", _ids("/tasks?view=closed") == ["T-4"])
+check("タスク: 状態の複数選択", sorted(_ids("/tasks?status=done&status=blocked")) == ["T-4", "T-5"])
+check("タスク: 状態を選ぶと表示より優先", _ids("/tasks?view=closed&status=blocked") == ["T-5"])
+check("タスク: キーワード(ID・題の部分一致)", _ids("/tasks?q=%E5%8F%A4%E3%81%84") == ["T-5"] and _ids("/tasks?q=T-3") == ["T-3"]
+      and _ids("/tasks?q=%25") == [] and _ids("/tasks?view=all&q=TITLETAIL") == ["T-4"])
+check("タスク: 担当の未割り当て(~)。担当済みだけなら空", _ids("/tasks?owner=~") == [])
+_cx.execute(_t_ins, ("T-6", "pj", "担当なし", None, "todo", None, None, _now_iso, _now_iso))
+_cx.execute(_t_ins, ("T-7", "pj", "担当が空", "", "todo", None, None, _now_iso, _now_iso))
+_cx.commit()
+check("タスク: 担当の未割り当て(~)は NULL と空文字の両方", sorted(_ids("/tasks?owner=~")) == ["T-6", "T-7"], str(_ids("/tasks?owner=~")))
+_cx.execute("DELETE FROM tasks WHERE id IN ('T-6','T-7')")
+_cx.commit()
+_tc = cl.get("/tasks?q=T-3&status=in_progress&owner=alpha")[2]
+check("タスク: 今の条件のチップ(外すリンク)", 'class=chip' in _tc and 'href="/tasks?owner=alpha&amp;status=in_progress"' in _tc
+      and "キーワード: T-3 ×" in _tc and 'src="/filter.js"' in _tc)
+check("タスク: 不正な表示は 200 でエラー表示", "class=err" in cl.get("/tasks?view=zz")[2])
+_fj = cl.get("/filter.js")
+check("/filter.js が 200 の JavaScript", _fj[0] == 200 and _fj[1].get("Content-Type", "").startswith("text/javascript") and "tfilter" in _fj[2]
+      and "innerHTML" not in _fj[2])
+check("タスク: PJ で絞る(件数サマリも PJ 内)", sorted(_ids("/tasks?project=pj2&view=all")) == ["T-3", "T-4", "T-5"] and "in_progress 1" in cl.get("/tasks?project=pj2")[2])
+check("タスク: 担当で絞る", sorted(_ids("/tasks?owner=alpha")) == ["T-1", "T-3"] and sorted(_ids("/tasks?owner=alpha&view=all")) == ["T-1", "T-3", "T-4"])
 check("タスク: 担当 + 状態", _ids("/tasks?owner=alpha&status=done") == ["T-4"])
 check("タスク: 担当 + PJ + 状態", _ids("/tasks?owner=alpha&project=pj2&status=in_progress") == ["T-3"])
 check("タスク: 未報告だけ", sorted(_ids("/tasks?unreported=1")) == ["T-1", "T-2", "T-5"])
@@ -733,10 +754,11 @@ check("タスク: 停滞だけ(in_progress で更新が古いもの)", _ids("/ta
 _t1row = re.search(r'<tr><td><a href="/tasks/T-1">.*?</tr>', TL[2], re.S)
 check("タスク: 停滞の目印は T-1 の行だけ", bool(_t1row) and "停滞 " in _t1row.group(0) and TL[2].count("停滞 ") == 1 and _ids("/tasks?stale=1&owner=beta") == [])
 check("タスク: 状態の件数が停滞の絞り込みを反映しない旨の注記", "「停滞だけ」は反映しません" in TL[2])
-check("タスク: 並び替え(更新が古い順 / ID 順)", _ids("/tasks?sort=oldest")[:2] == ["T-5", "T-1"] and _ids("/tasks?sort=id") == ["T-1", "T-2", "T-3", "T-4", "T-5"])
+check("タスク: 並び替え(更新が古い順 / ID 順)", _ids("/tasks?sort=oldest")[:2] == ["T-5", "T-1"] and _ids("/tasks?sort=id&view=all") == ["T-1", "T-2", "T-3", "T-4", "T-5"])
 check("タスク: 親子の表示(親リンクと子の件数)", '<a href="/tasks/T-2">T-2</a>' in TL[2] and "子 2" in TL[2])
 check("タスク: 報告の種別ごとの件数と未対応", "progress 2" in TL[2] and "question 1" in TL[2] and "未対応 1" in TL[2])
-check("タスク: 題は先頭 80 文字だけ", "TITLETAIL" not in TL[2] and ("x" * 80) in TL[2] and ("x" * 100) not in TL[2])
+_TLa = cl.get("/tasks?view=all")[2]
+check("タスク: 題は先頭 80 文字だけ", "TITLETAIL" not in _TLa and ("x" * 80) in _TLa and ("x" * 100) not in _TLa)
 check("タスク: 題の HTML はエスケープ", XSS not in TL[2] and "&lt;script&gt;" in TL[2])
 _th = TL[2].split("</form>", 1)[1].split("</tr>")[0]
 check("タスク: 種別・優先度・期日・ラベル・作成の列", all(x in _th for x in ("種別", "優先度", "期日", "ラベル", "作成", "更新")))
@@ -752,8 +774,8 @@ check("タスク: 期限切れ(昨日だけ。done と期日なしは出ない)"
 check("タスク: 期限間近 0 日は今日だけ", _ids("/tasks?due=soon&days=0") == ["T-2"], str(_ids("/tasks?due=soon&days=0")))
 check("タスク: 期限間近 1 日は今日と明日", sorted(_ids("/tasks?due=soon&days=1")) == ["T-2", "T-3"])
 check("タスク: 期限間近の既定(3 日)", sorted(_ids("/tasks?due=soon")) == ["T-2", "T-3"])
-check("タスク: 期日の近い順(期日なしは最後)", _ids("/tasks?sort=due") == ["T-4", "T-1", "T-2", "T-3", "T-5"], str(_ids("/tasks?sort=due")))
-_TLd = cl.get("/tasks")[2]
+check("タスク: 期日の近い順(期日なしは最後)", _ids("/tasks?sort=due&view=all") == ["T-4", "T-1", "T-2", "T-3", "T-5"], str(_ids("/tasks?sort=due&view=all")))
+_TLd = cl.get("/tasks?view=all")[2]
 _t1row = re.search(r'<tr><td><a href="/tasks/T-1">.*?</tr>', _TLd, re.S).group(0)
 _t4row = re.search(r'<tr><td><a href="/tasks/T-4">.*?</tr>', _TLd, re.S).group(0)
 check("タスク: 期限切れの目印と件数", "期限切れ</span>" in _t1row and "期限切れ" not in _t4row and "期限切れ 1</span>" in _TLd and "期限間近(3 日以内)2" in _TLd)
@@ -860,12 +882,12 @@ _cy.execute(_t_ins, ("B-1", "zzz", "後ろの PJ の blocked", "delta", "blocked
 _cy.execute(_t_ins, ("P-1", "zzz", "後ろの PJ の in_progress", "delta", "in_progress", None, None, _now_iso, _now_iso))
 _cy.execute(_cm, ("T-2", "question", "todo のタスクの未解決の質問"))
 _cy.commit()
-_BIG = cl.get("/tasks")[2]
+_BIG = cl.get("/tasks?view=all")[2]
 check("タスク(300 件超): 「N 件のうち 300 件だけ表示」と明示する", "327 件のうち 300 件だけ表示しています" in _BIG, re.findall(r"\d+ 件のうち[^<]*", _BIG)[:1].__str__())
-_big_ids = _ids("/tasks")
+_big_ids = _ids("/tasks?view=all")
 check("タスク(300 件超): 既定の並びは 300 行で、blocked・in_progress が後ろの PJ でも出る", len(_big_ids) == 300 and "B-1" in _big_ids and "P-1" in _big_ids, str(len(_big_ids)))
 check("タスク(300 件超): 未解決の報告があるタスクが先頭、次に blocked → in_progress → done", set(_big_ids[:2]) == {"T-1", "T-2"} and _big_ids.index("B-1") < _big_ids.index("P-1") < _big_ids.index("D-000"), str(_big_ids[:6]))
-check("タスク(300 件超): 従来の PJ 順だと切り詰めで隠れる(注記は出る)", "B-1" not in _ids("/tasks?sort=project") and "件のうち 300 件だけ表示" in cl.get("/tasks?sort=project")[2])
+check("タスク(300 件超): 従来の PJ 順だと切り詰めで隠れる(注記は出る)", "B-1" not in _ids("/tasks?sort=project&view=all") and "件のうち 300 件だけ表示" in cl.get("/tasks?sort=project&view=all")[2])
 check("タスク(300 件超): 絞り込めば残りを見られる", _ids("/tasks?status=blocked&owner=delta") == ["B-1"] and "件のうち" not in cl.get("/tasks?status=blocked")[2])
 check("タスク(300 件超): 上限未満なら注記は出ない", "件のうち" not in cl.get("/tasks?project=pj2")[2])
 _cy.execute("DELETE FROM tasks WHERE id LIKE 'D-%' OR id IN ('B-1','P-1')")
@@ -2094,12 +2116,12 @@ try:
     _ka = {r["name"]: r for r in _data.q(_data.KILLABLE_SQL)}
     check("statuses: agent の未完了タスクも分類で数える(T-1 の in_progress と doing)", _ka["alpha"]["open_tasks"] == 2, str(_ka.get("alpha")))
     _tt, _tb = _vw.page_tasks({})
-    check("statuses: タスク一覧の選択肢と件数は設定の状態", '<option value="backlog">' in _tb and "dropped 0" in _tb and "in_progress 1" in _tb, _tb[:400])
+    check("statuses: タスク一覧の選択肢と件数は設定の状態", 'name=status value="backlog">' in _tb and "dropped 0" in _tb and "in_progress 1" in _tb, _tb[:400])
     _tt, _tb = _vw.page_tasks({"status": ["todo"]})
     check("statuses: 設定にもチケットにも無い状態での絞り込みは断る", "状態は backlog / doing / shipped / qa / dropped のどれかです" in _tb)
     _tt, _tb = _vw.page_tasks({"status": ["in_progress"]})
     check("statuses: 設定から外した状態のチケットが残っていれば絞り込める", "状態は" not in _tb and "T-1" in _tb and "T-s-001" not in _tb)
-    check("statuses: 残った状態も選択肢に出て、選んだまま再送信できる", '<option value="in_progress" selected>' in _tb)
+    check("statuses: 残った状態も選択肢に出て、選んだまま再送信できる", 'name=status value="in_progress" checked>' in _tb)
     check("statuses: 空の分類は空集合(NOT IN が効く)", _data.q("SELECT COUNT(*) AS n FROM tasks WHERE status NOT IN (SELECT NULL WHERE 0)")[0]["n"] > 0)
     _tt, _tb = _vw.page_tasks({"due": ["overdue"]})
     check("statuses: 期限切れは閉じた分類を数えない", "T-s-002" in _tb and "T-s-003" not in _tb)
