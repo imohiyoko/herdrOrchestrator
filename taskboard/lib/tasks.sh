@@ -808,7 +808,7 @@ cmd_events() {
 }
 
 # ---------- due-scan(期限のイベント。ADR 0003 の段 3) ----------
-# tb due-scan [-p project] [--within N]: 期日が今日より前(overdue)と、今日〜N 日後(due_soon。既定 1 = 今日と明日)の done でないタスクに、
+# tb reminder scan [-p project] [--within N]: 期日が今日より前(overdue)と、今日〜N 日後(due_soon。既定 1 = 今日と明日)の done でないタスクに、
 # 履歴のイベントを 1 日 1 回ずつ残す(変えた者 system、元 day:<今日>)。期日なし・done は出さない。通知の規則(notify-rules)の材料になる。
 # 「今日」は tb を動かす端末の地方時の日付(TB_TODAY で固定できる)。tb notify flush も呼ぶ。出力: overdue <件数> due_soon <件数>
 cmd_due-scan() {

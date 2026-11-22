@@ -23,6 +23,7 @@
 64_delivery_block.sh 15
 65_nudge.sh 15
 66_message_contract.sh 5
+67_reminder_contract.sh 4
 70_roles.sh 4
 72_conv_learn.sh 14
 80_approval_contract.sh 6

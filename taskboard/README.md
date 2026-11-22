@@ -44,7 +44,7 @@ tb block  T-<project>-NNN -m "詰まっている理由"
 tb cancel T-<project>-NNN -m "取り消す理由"
 ```
 
-- `done` と同じく閉じた状態として扱う(状態の移動は制限しない。戻すのは `tb ticket move <id> <状態>`。`tb claim` は todo の分類だけ)。期限切れ・期限間近(`tb list --overdue` / `--due-within` / `tb due-scan` / Web UI)、`tb nudge`、未対応の報告の数え上げには出ない。
+- `done` と同じく閉じた状態として扱う(状態の移動は制限しない。戻すのは `tb ticket move <id> <状態>`。`tb claim` は todo の分類だけ)。期限切れ・期限間近(`tb list --overdue` / `--due-within` / `tb reminder scan` / Web UI)、`tb reminder nudge`、未対応の報告の数え上げには出ない。
 - `blocks` の先行タスクが `cancelled` になれば、後続は claim できる(先行待ちが解ける)。
 - 理由は要約(`summary`)に残る。完了ではないので完了報告(`tb digest` / `tb report` / `tb pending`)には出さない。
 - スプリントの件数・ポイント(`tb sprints` / Web UI のボード)の分母には数えない。`tb board` には `cancelled` の列が最後に出る。
@@ -146,7 +146,7 @@ tb ticket status rm 検証待ち --to review          # 外す。残っている
 - `tb ticket add|list|show|update|claim|done|block|cancel ...` は `tb <それ>` と同じ。
 - アラート・提案のチケットは今までどおり専用のコマンドだけで動かす(DB のトリガーが状態を書くため)。
 
-tb 自身が付ける・探すラベルの名前は設定 `system-labels` で変えられる(1 行 1 つ `<用途> = <ラベル>`。例は [config/system-labels.conf.example](config/system-labels.conf.example))。`deadline`(`tb deadlines-import` が付ける。既定 `deadline`)と `team`(`tb nudge --pool` が探す team のラベルの形。`{team}` が team の名前。既定 `team:{team}`)。アラート・提案のラベル(`alert` / `proposal` / `rejected` / `role:*`)は DB のトリガーが付けるので固定。
+tb 自身が付ける・探すラベルの名前は設定 `system-labels` で変えられる(1 行 1 つ `<用途> = <ラベル>`。例は [config/system-labels.conf.example](config/system-labels.conf.example))。`deadline`(`tb deadlines-import` が付ける。既定 `deadline`)と `team`(`tb reminder nudge --pool` が探す team のラベルの形。`{team}` が team の名前。既定 `team:{team}`)。アラート・提案のラベル(`alert` / `proposal` / `rejected` / `role:*`)は DB のトリガーが付けるので固定。
 
 ### 期日(期限切れ・期限間近)
 
@@ -162,7 +162,7 @@ tb list --due-within 3 --sort due --long        # 今日〜3 日後が期日で 
 - 作業タスクに紐付かない締め切り(掃除の期限など)は、担当なしのタスク(`--owner` を付けない)に `--due` を付けて置く。
 - 存在しない日付(`2026-02-30`)や形式違い(`2026/12/01`)は使い方の誤り(終了コード 2)。
 - Web UI のタスク一覧は期日の列と「期限切れ」「期限間近(N 日以内)」の絞り込み、期日の近い順の並びを持つ。期限切れは赤で出す。
-- **期限のイベント**(`tb due-scan [-p project] [--within N]`): 期限切れ(`overdue`)と期限間近(`due_soon`。今日〜N 日後、既定 1 = 今日と明日)の done でないタスクに、履歴のイベントを 1 日 1 回ずつ残す(変えた者 `system`、元 `day:<今日>`)。通知の規則(`overdue -> webui` など)の材料になる。`tb notify flush`(定期実行)も毎回呼ぶので、notify を使っていれば別のジョブは要らない。
+- **期限のイベント**(`tb reminder scan [-p project] [--within N]`): 期限切れ(`overdue`)と期限間近(`due_soon`。今日〜N 日後、既定 1 = 今日と明日)の done でないタスクに、履歴のイベントを 1 日 1 回ずつ残す(変えた者 `system`、元 `day:<今日>`)。通知の規則(`overdue -> webui` など)の材料になる。`tb notify flush`(定期実行)も毎回呼ぶので、notify を使っていれば別のジョブは要らない。
 
 ### 履歴(`tb history` / `tb events`)
 
@@ -256,7 +256,7 @@ tb digests [D-<n>] [--json]  # 送ったまとめの一覧 / 全文
 - **まとめるもの**: 未配送の報告(`progress` / `done` と、即時送信に失敗したもの)、`done` なのに未報告のタスク、そして **tb が観測した事象**。
   観測は worker の自己申告に頼らない:
   - turn が終わって `TB_DIGEST_IDLE_MIN`(既定 10)分たつのに、タスクが `in_progress` のまま(`agent_activity` の `Stop` から)
-  - 1 体の agent が `in_progress` のチケットを複数握っている(タスク agent は 1 枚が原則。本人への催促は `tb nudge`)
+  - 1 体の agent が `in_progress` のチケットを複数握っている(タスク agent は 1 枚が原則。本人への催促は `tb reminder nudge`)
   - `TB_DIGEST_STUCK_MIN`(既定 30)分以上 `working` のまま
   - herdr 上で `blocked`(承認ダイアログ待ちなど)。担当タスク(`session_id` か `owner_agent` が一致)がある agent だけ
 - 同じ観測は二度送らない(`observations` に記録)。blocked が解けると記録を消し、また blocked になれば再び送る
@@ -267,15 +267,17 @@ tb digests [D-<n>] [--json]  # 送ったまとめの一覧 / 全文
 
 ## 忘れているかもしれないもの(reminders)
 
-人の番になっているものは、質問・承認待ち・キュー・期限などあちこちに散らばる。`tb reminders` はそれを読むだけで 1 つのまとめにする。
+人の番になっているものは、質問・承認待ち・キュー・期限などあちこちに散らばる。`tb reminder` はそれを読むだけで 1 つのまとめにする。
 agent にも外にも送らない。出力は stdout と、Web UI の「報告・承認待ち」の「忘れているかも」の欄(`notify_seen` の `reminders:last` を読む)。
 定期実行の例は `scheduler/jobs/reminders.conf.example`。
 
 ```bash
-tb reminders               # 今の一覧(記録は変えない)。--json で項目を JSON に
-tb reminders --check       # 前回の publish から出すものが増えた・変わった・消えた、または今日の全件がまだなら 0。それ以外は 3(何も出さない)
-tb reminders --publish     # まとめを出し、記録を更新する
+tb reminder list          # 今の一覧(記録は変えない)。--json で項目を JSON に
+tb reminder check         # 前回の publish から出すものが増えた・変わった・消えた、または今日の全件がまだなら 0。それ以外は 3(何も出さない)
+tb reminder publish       # まとめを出し、記録を更新する
 ```
+
+古い名前 `tb reminders` / `tb reminders --check` / `tb reminders --publish`、`tb due-scan`、`tb nudge` も同じに使える(bash を外すときに外す)。
 
 - **材料**(すべて読むだけ): 未対応の質問・ブロック報告(未完了のタスク)/ 承認待ち(送信 `O-` / agent 操作 `L-` / 代行依頼 / 解析役の起動 `A-`)/
   レビュー待ちの PR(許可リスト `taskboard/config/repos.md` のリポジトリで、開いていて draft でなく、承認も変更依頼もないもの。`gh pr list` で読むだけ)/
@@ -285,7 +287,7 @@ tb reminders --publish     # まとめを出し、記録を更新する
   `taskboard/config/deadlines.conf` に `deadline = YYYY-MM-DD | 題` の行で書く。`TB_REMINDERS_DEADLINES` で場所を変えられる)
 - **期限ファイルをチケットにする**: `tb deadlines-import [-p project(既定 deadline)] [--dry-run]`(人だけ)で、期限ファイルの行を担当なし・期日つき・ラベル `deadline` のチケットにする。
   同じ題・同じ期日のチケットがあれば作らない(何度流してもよい)。ファイルは書き換えない。取り込んだ行はファイルからは出さず、チケットの期限として載る
-  (`tb due-scan` の期限のイベントと通知の規則も、ほかのチケットと同じに効く)
+  (`tb reminder scan` の期限のイベントと通知の規則も、ほかのチケットと同じに効く)
 - **優先度**: 急ぎ(期限切れ・今日・明日)→ 人の番(質問・承認待ち・レビュー)→ 停滞 → 待ち・予定(届いていない送信、`TB_REMINDERS_DUE_DAYS`(既定 7)日以内の期限)。
   同じ優先度の中は期限、古い順。列は 優先 / 何が / 誰の番 / 期限 / 参照 / 経過
 - **重複の抑え**: 項目ごとに決まったキー(`q:<id>` / `o:<id>` / `pr:<repo>#<n>` / `due:<タスク>` など)と状態を `reminders:state` に残す。
@@ -313,16 +315,16 @@ tb message outbox [--status queued|sent|denied] [--json]
 - 終了コード: 0 送信済み(または保留した)/ 10 宛先使用中で積んだ / 11 送信失敗で積んだ / 12 保留に失敗して積んだ / 4 ルールで拒否 / 20 人の承認待ち(approvals)/ 3 送信者を特定できず未保存
 - agent に `herdr agent prompt` を直接打たせないようにするには、その agent の Claude Code 設定で拒否する(`conductor/README.md`)
 
-### 休んでいる担当への催促(`tb nudge`)
+### 休んでいる担当への催促(`tb reminder nudge`)
 
 チケットを握ったまま(担当で `in_progress`。設定 `nudge` の `wake` で選べる)turn が終わって止まっている agent に、そのチケットの指示役から「続けて」と送る。新しい送り方は作らず、指示役が `tb message send <担当> --kind task --task <チケット>` したのと同じ outbox と delivery の規則で届く(文面のラベルの pane が `nudge`: `[from: <指示役> / nudge / T-x / task / O-n] [催促] ...`)。
 
 ```bash
-tb nudge --dry-run            # 誰に送るか・なぜ飛ばすかを見るだけ(agent の pane からも読める)
-tb nudge [--idle-min 15] [--max 3] [--json]   # 送る(人の端末か scheduler から。例は scheduler/jobs/nudge.conf.example)
+tb reminder nudge --dry-run            # 誰に送るか・なぜ飛ばすかを見るだけ(agent の pane からも読める)
+tb reminder nudge [--idle-min 15] [--max 3] [--json]   # 送る(人の端末か scheduler から。例は scheduler/jobs/nudge.conf.example)
 ```
 
-- **対象**: 既定は全員(固定の除外は無い)。除外は設定 `nudge` に 1 行 1 つ `ignore <@役割の glob | agent 名の glob>` と書く(人だけが `tb config edit nudge`。例は `config/nudge.conf.example`)。**宛先を明示した場合(`tb nudge <agent 名の glob | @役割の glob> ...`)は ignore も適用しない**(指定が意思表示)。ほかの除外条件(下)は常に効く
+- **対象**: 既定は全員(固定の除外は無い)。除外は設定 `nudge` に 1 行 1 つ `ignore <@役割の glob | agent 名の glob>` と書く(人だけが `tb config edit nudge`。例は `config/nudge.conf.example`)。**宛先を明示した場合(`tb reminder nudge <agent 名の glob | @役割の glob> ...`)は ignore も適用しない**(指定が意思表示)。ほかの除外条件(下)は常に効く
 - **移行**: 設定 `nudge` が無い(ファイルも DB の行も無い)あいだは、以前の既定の除外(指揮役 = 既定の宛先と `projects` の値、保護 `protect`)をそのまま保つ。設定 `nudge` を置けば(空でも)全員が対象になり、除外は `ignore` の行だけで決まる。指揮役や保護された agent も除きたいときは、それらを `ignore` に書いてから置く(`--dry-run` で対象を確かめる)
 - **催促する状態(`wake`)**: 設定 `nudge` に `wake <分類 | 状態> ...` と書くと、その状態のチケットを握っている agent も催促する(複数行は足し合わせる)。分類の名前(`todo` / `active` / `review` / `blocked`)ならその分類の状態すべて、ほかは状態の名前(設定 `statuses`)。`wake` を書かなければ `active` だけ(今までどおり)。`wake` を書くなら `active` も書かないと作業中は催促しない。閉じた分類(`done` / `cancelled`)は書けない。例: `wake active todo review blocked`。着手前(todo の分類)のチケットには「止まっています・続きを」ではなく、`tb claim` で着手するよう促す文面(設定 `messages` の `nudge.start`)を送る
 - **設定の検査**: `tb config set nudge` / `edit nudge` は、`ignore <パターン>` / `wake <名前> ...` の形でない行、閉じた状態、今の分類にも状態にも無い名前があれば書かない(あとで設定 `statuses` から外した名前は、実行時に当たらないだけで止めない)。`@役割` の ignore で役割を確かめられない agent は、送らずに skip する
@@ -840,7 +842,7 @@ label_added label=urgent actor=human -> slack           # 人が付けたとき�
 comment new=question                -> webui
 ```
 
-- **イベントの種類**: `tb history` の種類(created / status / label_added / priority / comment など。`tb due-scan` の overdue / due_soon、`tb pr-watch` の pr_opened / pr_approved / pr_changes / pr_merged も)か `*`。
+- **イベントの種類**: `tb history` の種類(created / status / label_added / priority / comment など。`tb reminder scan` の overdue / due_soon、`tb pr-watch` の pr_opened / pr_approved / pr_changes / pr_merged も)か `*`。
 - **条件**: `type=` `priority=` `priority>=` `label=` `project=` `owner=` `new=` `old=` `actor=`。すべて満たした行が当たる。`label=` は、label_added / label_removed では付け外したラベルそのもの、ほかのイベントでは「今そのラベルを持っている」。`actor=` は名前か `human` / `system` / `agent`。
 - **届け先**: `file` `stdout` `slack`(ほかの通知と同じ経路)、`webui`(Web UI の緊急通知と Chrome 通知に 24 時間出す)、`conductor`(そのプロジェクトの指揮役への次のまとめ = `tb digest`)。当たった行の届け先を合わせ、イベント 1 件につき通知 1 件(種別 `ticket`)。
 - **本文**: `[チケット] T-web-012 ログイン画面 — ラベル +notify / high / bug / 担当 worker-2`。ID・題・イベント・優先度・種別・担当だけで、説明やコメントの本文は載せない。秘密の検出・伏せ字・頻度の上限は他の通知と同じく必ず通る。

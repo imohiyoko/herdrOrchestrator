@@ -1,4 +1,4 @@
-# タスクにしない期限(tb reminders が読む)。deadlines.conf にコピーして使う(git 管理外)。人が書く
+# タスクにしない期限(tb reminder が読む)。deadlines.conf にコピーして使う(git 管理外)。人が書く
 # 書式: deadline = YYYY-MM-DD | 題   (それ以外の行は読み飛ばす。# から後はコメント)
 # 期限切れ・今日・明日は「急ぎ」、TB_REMINDERS_DUE_DAYS(既定 7)日以内は「予定」として載る
 deadline = 2026-12-25 | 検証用ブランチの片付け

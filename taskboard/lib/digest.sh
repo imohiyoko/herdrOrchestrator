@@ -83,7 +83,7 @@ collect_digest() {
              WHERE t.status IN ($ST_ACTIVE_SQL) AND a.last_stop_at IS NOT NULL
                AND (a.last_prompt_at IS NULL OR a.last_prompt_at <= a.last_stop_at)
                AND (julianday('now') - julianday(a.last_stop_at)) * 1440 >= $DIGEST_IDLE_MIN ORDER BY t.id;")
-  # 3b. 観測: 1 体の agent が in_progress のチケットを複数握っている(タスク agent は 1 枚が原則。tb nudge の文面でも本人に知らせる)
+  # 3b. 観測: 1 体の agent が in_progress のチケットを複数握っている(タスク agent は 1 枚が原則。tb reminder nudge の文面でも本人に知らせる)
   #     同じ組み合わせは二度出さない。解消したら記録を消す(また握れば、また出す)
   local multi=""
   while IFS=$'\t' read -r owner list project; do
@@ -92,7 +92,7 @@ collect_digest() {
     obs_seen "$key" && continue
     add_item "$(target_for "$project")" obs "${list%%,*}" "$key" "${list%%,*}" multi "$owner 観測 / 複数チケット" \
       "$(st_main active) のチケットを $(tr ',' '\n' <<<"$list" | grep -c .) 枚握っている(${list//,/ })。1 枚に絞るか、ほかを $(st_main todo) に戻すか、別の agent に回す"
-  #     tb nudge と同じく、epic と完了していない子を持つ親は数えない(取りまとめ役が親と子を 1 枚ずつ持つのは普通)
+  #     tb reminder nudge と同じく、epic と完了していない子を持つ親は数えない(取りまとめ役が親と子を 1 枚ずつ持つのは普通)
   done < <(sql -separator $'\t' "SELECT owner_agent, group_concat(id, ','), MIN(project) FROM (SELECT t.owner_agent, t.id, t.project FROM tasks t
              WHERE t.status IN ($ST_ACTIVE_SQL) AND t.owner_agent IS NOT NULL AND t.owner_agent!='' AND t.type!='epic'
                AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.parent_id=t.id AND c.status NOT IN ($ST_CLOSED_SQL)) ORDER BY t.id)

@@ -923,7 +923,7 @@ REM_STATUS_LABEL = {"new": "新規", "changed": "変化", "continuing": "継続"
 
 
 def reminders_html():
-    """「忘れているかも」(tb reminders --publish の最新のまとめ)。まとめが無い・項目が無ければ何も出さない。読み取り専用。"""
+    """「忘れているかも」(tb reminder publish の最新のまとめ)。まとめが無い・項目が無ければ何も出さない。読み取り専用。"""
     rem = reminders_last()
     if not rem or not rem["items"]:
         return ""
@@ -936,7 +936,7 @@ def reminders_html():
         rows.append([label, e(it["what"]), e(it["who"] or "-"), e(it["due"] or "-"), ref, e(it["age"] or "-"), e(st)])
     return ('<h2 id="reminders">忘れているかも</h2>'
             + table(["優先", "何が", "誰の番", "期限", "参照", "経過", "前回から"], rows)
-            + f'<p class=note>{e(rem["at"])} の tb reminders --publish の結果(定期実行が更新する)。'
+            + f'<p class=note>{e(rem["at"])} の tb reminder publish の結果(定期実行が更新する)。'
             + (f'前回から解消 {rem["removed"]} 件。' if rem["removed"] else "")
             + "この欄は読むだけで、agent には何も送りません。承認や質問への対応は、参照のリンク先の画面で。</p>")
 
@@ -1499,7 +1499,7 @@ def page_notifications(_qs):
     body += table(["種別", "何が・中身・どう対応するか", "時刻"],
                   [[f'<span class=warn>{e(it["label"])}</span>', summary3(it), e(it["ts"])] for it in items])
     body += ("<p class=note>対象: 未完了タスクの question/blocked 報告、pending-human の代行依頼、blocked の agent、"
-             f"working のまま {STALL_MIN} 分超の agent、最後の実行が失敗した定期実行、tb reminders が急ぎとしたもの(期限切れ・今日・明日が期限)。"
+             f"working のまま {STALL_MIN} 分超の agent、最後の実行が失敗した定期実行、tb reminder が急ぎとしたもの(期限切れ・今日・明日が期限)。"
              "通知は Web UI のタブが 1 つ開いている間だけ届きます(タブを閉じると止まる)。</p>")
     return "緊急通知", body
 

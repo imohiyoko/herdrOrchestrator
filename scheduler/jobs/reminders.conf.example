@@ -1,7 +1,7 @@
-# 人が忘れているかもしれないもののまとめ(tb reminders)。平日の日中に 1 時間おき。agent を介さず決定論的に実行。
+# 人が忘れているかもしれないもののまとめ(tb reminder)。平日の日中に 1 時間おき。agent を介さず決定論的に実行。
 # 出すものが無ければ --check が 3 で終わるので、そこで止める(publish しない)。出力は Web UI の「報告・承認待ち」に出る。
 # 注意: COMMAND は bash -c でそのまま実行される。このファイルは人が管理し、外部入力を埋め込まない。
-COMMAND='cd /path/to/taskboard && { bin/tb reminders --check || exit 0; } && bin/tb reminders --publish'
+COMMAND='cd /path/to/taskboard && { bin/tb reminder check || exit 0; } && bin/tb reminder publish'
 COMMAND_TIMEOUT=120
 WINDOW=09:00-19:00
 INTERVAL_MIN=60
