@@ -97,7 +97,7 @@ sw_hms() {
 
 # conf の COMMAND= の値だけを出す(1 行 1 値)。引用符で始まれば閉じ引用符までの内側、無ければ最初の " #" の前まで。
 # 行末の コメント(COMMAND=x # watchx)の語は含めない。bash の while read だけで書く(awk・sed の方言に依存しない)
-# $1=ジョブ名。本文は DB の sched-job:<job>(tb sched-job)か jobs/<job>.conf(sj_lookup)
+# $1=ジョブ名。本文は DB の sched-job:<job>(tb job)か jobs/<job>.conf(sj_lookup)
 sw_command_value() {
   local line v q
   sj_lookup "$1" 0 || return 0

@@ -56,6 +56,28 @@ cmd_sched-job() {
   esac
 }
 
+# tb job <サブコマンド>(.claude/skills/tb-command-naming の形)。古い名前 tb sched-job も同じに動く(サブコマンドが無ければ list)
+cmd_job() {
+  local sub=${1:-}; shift || true
+  case $sub in
+    list|show|set|edit|unset|import|history) cmd_sched-job "$sub" "$@";;
+    ""|-h|--help|help) job_usage; [[ -n $sub ]] || exit 2;;
+    *) usage "job: 不明なサブコマンド $sub(list / show / set / edit / unset / import / history)";;
+  esac
+}
+job_usage() {
+  cat <<'USAGE'
+tb job list   ジョブの一覧と、定義・上書き設定の出どころ(db:<セッション> / db:* / file:<パス> / none)
+tb job show <job> [--settings]   今の本文(出どころは標準エラーに 1 行)
+tb job set <job> [--settings] [--shared] < 本文   書く(人だけ。scheduler が読めることを確かめてから)
+tb job edit <job> [--settings] [--shared]   $VISUAL / $EDITOR で書き換える(人だけ)
+tb job unset <job> [--settings] [--shared]   DB の行を消す(人だけ)
+tb job import [--dry-run] [--shared] [<job> ...]   jobs/*.conf(と settings/*.settings)を DB に取り込み、ファイルを退かす(人だけ)
+tb job history <job> [--settings]   変更の履歴
+(古い名前 tb sched-job も同じに使える。tb sched-job だけなら list)
+USAGE
+}
+
 # ジョブ名の一覧(DB とファイルの和)と、定義・設定の出どころ
 sj_list() {
   [[ $# -eq 0 ]] || usage "sched-job list"
@@ -69,7 +91,7 @@ sj_list() {
     sj_lookup "$j" 0 || true; js=$SJ_SRC
     sj_lookup "$j" 1 || true; ss=$SJ_SRC
     # DB に無い conf は、scheduler が既定では読まない(動かない)。取り込みを促す
-    [[ $js == none && -f $SJ_DIR/jobs/$j.conf ]] && js="未取り込み:$SJ_DIR/jobs/$j.conf(tb sched-job import $j)"
+    [[ $js == none && -f $SJ_DIR/jobs/$j.conf ]] && js="未取り込み:$SJ_DIR/jobs/$j.conf(tb job import $j)"
     printf '%s\t%s\tsettings=%s\n' "$j" "$js" "$ss"
   done <<<"$names"
 }
@@ -90,7 +112,7 @@ sj_args() {  # → SJ_JOB / SJ_SET / SJ_SHARED / SJ_DRY
 
 sj_show() {
   sj_args "$@"
-  sj_lookup "$SJ_JOB" "$SJ_SET" || die "$(sj_key "$SJ_JOB" "$SJ_SET") は DB にありません$( [[ $SJ_SET == 0 && -f $SJ_DIR/jobs/$SJ_JOB.conf ]] && echo "(jobs/$SJ_JOB.conf は tb sched-job import $SJ_JOB で取り込む)")"
+  sj_lookup "$SJ_JOB" "$SJ_SET" || die "$(sj_key "$SJ_JOB" "$SJ_SET") は DB にありません$( [[ $SJ_SET == 0 && -f $SJ_DIR/jobs/$SJ_JOB.conf ]] && echo "(jobs/$SJ_JOB.conf は tb job import $SJ_JOB で取り込む)")"
   echo "# $(sj_key "$SJ_JOB" "$SJ_SET"): $SJ_SRC" >&2
   [[ -z $SJ_BODY ]] || printf '%s\n' "$SJ_BODY"
 }
@@ -98,7 +120,7 @@ sj_show() {
 sj_change() {
   local sub=$1 body tmp conf settings key hs; shift
   sj_args "$@"
-  require_human "tb sched-job $sub"
+  require_human "tb job $sub"
   key=$(sj_key "$SJ_JOB" "$SJ_SET")
   case $sub in
     unset)
@@ -108,7 +130,7 @@ sj_change() {
       config_unset "$key" "$SJ_SHARED"
       sj_lookup "$SJ_JOB" "$SJ_SET" || true; echo "$key: $SJ_SRC"; return 0;;
     set)
-      [[ ! -t 0 ]] || usage "sched-job set <job>: 本文は標準入力から渡す(例: tb sched-job set $SJ_JOB < jobs/$SJ_JOB.conf)"
+      [[ ! -t 0 ]] || usage "sched-job set <job>: 本文は標準入力から渡す(例: tb job set $SJ_JOB < jobs/$SJ_JOB.conf)"
       body=$(cat);;
     edit)
       tmp=$(mktemp); { sj_lookup "$SJ_JOB" "$SJ_SET" && printf '%s\n' "$SJ_BODY"; } >"$tmp" || true
@@ -117,7 +139,7 @@ sj_change() {
   esac
   # scheduler が読めることを確かめてから書く(設定なら今の定義と組み合わせて)
   if ((SJ_SET)); then
-    sj_lookup "$SJ_JOB" 0 || die "ジョブ $SJ_JOB の定義が DB にありません(先に tb sched-job set $SJ_JOB か tb sched-job import $SJ_JOB で置く)"
+    sj_lookup "$SJ_JOB" 0 || die "ジョブ $SJ_JOB の定義が DB にありません(先に tb job set $SJ_JOB か tb job import $SJ_JOB で置く)"
     conf=$SJ_BODY; settings=$body
   else
     conf=$body; settings=""; sj_lookup "$SJ_JOB" 1 && settings=$SJ_BODY
@@ -141,7 +163,7 @@ sj_import() {
       *) sj_valid_job "$1"; want+=("$1"); shift;;
     esac
   done
-  require_human "tb sched-job import"
+  require_human "tb job import"
   hs=$SQS; ((shared)) && hs="'*'"
   if ((${#want[@]} == 0)); then
     for f in "$SJ_DIR"/jobs/*.conf; do [[ -f $f ]] && want+=("$(basename "$f" .conf)"); done

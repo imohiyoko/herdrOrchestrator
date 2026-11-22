@@ -21,7 +21,7 @@ import (
 )
 
 // Commands は Go に移し終えたコマンド。bin/tb はこの一覧(herdrctl tb --commands)を見て渡すかを決める。
-var Commands = []string{"list"}
+var Commands = []string{"activity", "config", "handoff", "job", "list", "proxy", "proxy-check", "proxy-list", "proxy-request", "proxy-resolve", "sched-job", "touch"}
 
 // 終了コード(tb と同じ)
 const (
@@ -54,6 +54,30 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	w := bufio.NewWriter(stdout)
 	var err error
 	switch args[0] {
+	case "touch":
+		// hook 用。常に 0 で、標準出力・標準エラーには何も出さない(失敗は touch-errors.log に理由コードだけ)
+		cmdTouch(args[1:])
+		return 0
+	case "activity":
+		err = cmdActivity(args[1:], w, stderr)
+	case "config":
+		err = cmdConfig(args[1:], w, stderr)
+	case "handoff":
+		err = cmdHandoff(args[1:], w, stderr)
+	case "job":
+		err = cmdJob(args[1:], w, stderr, false)
+	case "sched-job":
+		err = cmdJob(args[1:], w, stderr, true)
+	case "proxy":
+		err = cmdProxy(args[1:], w, stderr)
+	case "proxy-request":
+		err = cmdProxyRequest(args[1:], w, stderr)
+	case "proxy-list":
+		err = cmdProxyList(args[1:], w, stderr)
+	case "proxy-resolve":
+		err = cmdProxyResolve(args[1:], w, stderr)
+	case "proxy-check":
+		err = cmdProxyCheck(args[1:], w, stderr)
 	case "list":
 		err = cmdList(args[1:], w, stderr)
 	default:
@@ -66,6 +90,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	var e *exit
 	if !errors.As(err, &e) {
 		e = &exit{exitErr, err.Error()}
+	}
+	if e.msg == "" { // 使い方を標準出力に出して 2 で終わるとき(tb <サービス> だけ)
+		return e.code
 	}
 	fmt.Fprintf(stderr, "tb: %s\n", e.msg)
 	if e.code == exitUsage {
@@ -139,17 +166,27 @@ func labels(arg string) ([]string, error) {
 	return slices.Compact(out), nil
 }
 
+// openCmd は bin/tb の main がコマンドの前にすること(init_db と statuses_load)をする。
+// 設定 statuses が壊れていれば、どのコマンドでも bash と同じ警告を標準エラーに出す。
+func openCmd(stderr io.Writer) (*store.DB, tickets.StatusSet, error) {
+	db, err := openDB()
+	if err != nil {
+		return nil, tickets.StatusSet{}, err
+	}
+	st := tickets.LoadStatuses(db.DB, db.Session)
+	if st.Broken {
+		fmt.Fprintln(stderr, "tb: 設定 statuses に不正な行があるので組み込みの状態を使います(tb config edit statuses で直す)")
+	}
+	return db, st, nil
+}
+
 func cmdList(args []string, w, stderr io.Writer) error {
 	// tb と同じく、引数を読む前に DB を開く(版上げも先に済む)
-	db, err := openDB()
+	db, st, err := openCmd(stderr) // 設定 statuses(閉じた状態と、--status に使える状態)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	st := tickets.LoadStatuses(db.DB, db.Session) // 設定 statuses(閉じた状態と、--status に使える状態)
-	if st.Broken {
-		fmt.Fprintln(stderr, "tb: 設定 statuses に不正な行があるので組み込みの状態を使います(tb config edit statuses で直す)")
-	}
 	closed := st.SQLList("done", "cancelled")
 	var f tickets.Filter
 	project, status, sort := "", "", ""

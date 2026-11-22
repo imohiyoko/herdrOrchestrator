@@ -134,12 +134,12 @@ has "プリセットの ~ を HOME に展開" ok hook:proj
 fresh; run; has "DB に定義があれば ok" ok job:taskboard-digest "DB に定義あり"
 fresh; sjob_rm taskboard-digest; run
 has "digest の定義が DB にないと missing" missing job:taskboard-digest
-printf '%s\n' "$OUT" | grep -A1 "job:taskboard-digest" | grep -q "tb sched-job set taskboard-digest" && ok "next: で tb sched-job set を案内" || ng "next: で tb sched-job set を案内"
+printf '%s\n' "$OUT" | grep -A1 "job:taskboard-digest" | grep -q "tb job set taskboard-digest" && ok "next: で tb job set を案内" || ng "next: で tb job set を案内"
 fresh; sjob taskboard-digest "COMMAND='cd /path/to/taskboard && bin/tb digest'"; run
 has "/path/to/ が残っていると missing" missing job:taskboard-digest "/path/to/"
 fresh; sjob_rm taskboard-digest; printf "COMMAND='cd %s/taskboard && bin/tb digest'\n" "$R" >"$R/scheduler/jobs/taskboard-digest.conf"; run
 has "DB に取り込んでいない conf は warn(動かない)" warn job:taskboard-digest "取り込まれていない"
-printf '%s\n' "$OUT" | grep -A1 "job:taskboard-digest" | grep -q "tb sched-job import taskboard-digest" && ok "next: で tb sched-job import を案内" || ng "next: で tb sched-job import を案内"
+printf '%s\n' "$OUT" | grep -A1 "job:taskboard-digest" | grep -q "tb job import taskboard-digest" && ok "next: で tb job import を案内" || ng "next: で tb job import を案内"
 has "取り込んでいない conf でも launchd は見る" ok launchd:taskboard-digest
 fresh; sjob taskboard-digest "COMMAND=x"; "$SQLITE" "$SDB" "UPDATE config SET herdr_session='other' WHERE key='sched-job:taskboard-digest';"; run
 has "ほかのセッションの行は数えない" missing job:taskboard-digest

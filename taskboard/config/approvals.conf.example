@@ -8,7 +8,7 @@
 # 操作の名前:
 #   send:<kind>:<宛先>     tb send(kind は task|info|answer)。ask なら outbox で人の承認待ちになり、tb approve O-<n> で届く
 #   role:change            人事エージェントが roles/ を書き換える
-#   proxy:<effect>         代行依頼(read-only|write|external)。read-only は proxy-check の allow 判定も必要
+#   proxy:<effect>         代行依頼(read-only|write|external)。read-only は proxy check の allow 判定も必要
 #   setup:<step>           セットアップ agent の書き込み(hooks|scheduler|webui|launchctl など)
 #   agent:read:<agent>     tb peek で他の agent の中身(pane の出力)を読む。既定 ask = 読めない(人と本人は常に読める)
 #   alert:analyze          アラートが登録されたとき解析役の agent を起動する(同時に動かす数は TB_ANALYST_MAX、既定 2)

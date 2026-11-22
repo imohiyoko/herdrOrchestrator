@@ -21,7 +21,7 @@ from .sanitize import clean, e
 from .actions import agent_decide, agent_new, agent_op, resolve_comment
 from .data import NOTIFY_POLL_SEC, badge_count, request_db, urgent_items
 from .jobs import job_names, save_job_settings
-from .scripts import DOCS_JS, REFRESH_JS, notify_js
+from .scripts import DOCS_JS, FILTER_JS, REFRESH_JS, notify_js
 from .views import CSS, err_html, inst_label, page, page_agent_new, page_job, route, title_suffix
 
 
@@ -219,6 +219,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, notify_js(reqctx.base(), NOTIFY_POLL_SEC * 1000), "text/javascript; charset=utf-8")
         if path == "/refresh.js":
             return self._send(200, REFRESH_JS, "text/javascript; charset=utf-8")
+        if path == "/filter.js":
+            return self._send(200, FILTER_JS, "text/javascript; charset=utf-8")
         if path == "/docs.js":
             return self._send(200, DOCS_JS, "text/javascript; charset=utf-8")
         if path == "/static/mermaid.min.js":

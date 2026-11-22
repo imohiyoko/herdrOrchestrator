@@ -120,3 +120,20 @@ func Text(v any) string {
 		return fmt.Sprint(x)
 	}
 }
+
+// Exists はこのセッションにチケット id があるか(core.sh の require_task の判定)。
+func Exists(db *sql.DB, id string) (bool, error) {
+	var n int
+	err := db.QueryRow("SELECT COUNT(*) FROM tasks WHERE id=?", id).Scan(&n)
+	return n > 0, err
+}
+
+// TitleSummary はこのセッションのチケットの題名と要約(NULL は空)。無ければ ok=false。
+func TitleSummary(db *sql.DB, id string) (title, summary string, ok bool, err error) {
+	var t, s sql.NullString
+	err = db.QueryRow("SELECT title, summary FROM tasks WHERE id=?", id).Scan(&t, &s)
+	if err == sql.ErrNoRows {
+		return "", "", false, nil
+	}
+	return t.String, s.String, err == nil, err
+}

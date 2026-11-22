@@ -22,21 +22,29 @@ tb sprints [-p project] [--state planned|active|closed] [--json]   件数・完�
 tb board [S-n | -p project] [-l ラベル] [--json]   状態ごとの列(-p だけならその project の active なスプリント。列は分類の順)
   状態は設定 statuses(1 行「<状態> <分類> [= 説明]」。分類は todo / active / review / blocked / done / cancelled)で足したり名前を変えたりできる。
   無ければ todo in_progress review done blocked cancelled。下のコマンドが書く状態は、その分類で最初に書いた状態
+  状態は特別扱いしない: どの状態からどの状態へも動かせる(done / cancelled から戻すのも)。閉じているかは分類 done / cancelled で決まる
+tb ticket move <id> <状態> [-m メモ] [-d 成果物 ...]   状態を変える(任意の状態へ)。-m は閉じた分類なら要約、それ以外はメモ。-d は done の分類へだけ
+                    done の分類に入ると未報告に戻り(完了報告の対象)、cancelled の分類に入ると報告に出さない
+tb ticket status [list] [--json]   状態・分類・チケットの件数・説明
+tb ticket status add <状態> <分類> [-m 説明] [--after <状態>]   状態を足す(設定 statuses に書き足す。人だけ)
+tb ticket status rm <状態> [--to <状態>]   状態を外す(残っているチケットは --to の状態へ移す。人だけ)
+tb ticket add|list|show|update|claim|done|block|cancel ...   tb <それ> と同じ
 tb claim <id> --owner <name> [--session S] [--account A]    todo → in_progress(分類 todo → 分類 active の先頭。todo の分類以外、別の担当に割り当て済みの todo は失敗。担当が空か --owner と同じなら通る。付け替えは tb update --owner)
-tb update <id> [--status 状態(分類 todo / active / review / blocked のもの)] [--title T] [--owner N] [--session S] [--account A] [--parent ID]
+tb update <id> [--status 状態(どの状態へも。tb ticket move と同じ扱い)] [--title T] [--owner N] [--session S] [--account A] [--parent ID]
            [--type T] [--priority P] [--desc D] [--due YYYY-MM-DD(''で外す)] [--label L ...(置き換え。'' で全部外す)] [--add-label L] [--remove-label L] [--add-ref [種類=]URL] [--remove-ref URL] [--sprint S-n|''] [--points N|'']
-tb done <id> -d <成果物> [-d ...] -m <要約>                  成果物と要約が必須。reported_at は空のまま
+tb done <id> -d <成果物> [-d ...] -m <要約>                  worker の終了手順。成果物と要約が必須。reported_at は空のまま(任意にするなら tb ticket move <id> done)
 tb block <id> [-m <理由>]   分類 blocked の先頭へ(既定 blocked)。tb done は分類 done の先頭へ(既定 done)
-tb cancel <id> [-m <理由>]   やらないと決めたタスクを閉じる(分類 cancelled の先頭。既定 cancelled)。done と同じく閉じた状態で、期限切れ・nudge・先行チケット待ちの対象から外れる。完了報告には出さない
+tb cancel <id> [-m <理由>]   やらないと決めたタスクを閉じる(分類 cancelled の先頭。既定 cancelled)。done と同じく閉じた状態で、期限切れ・nudge・先行チケット待ちの対象から外れる。完了報告には出さない。戻すのは tb ticket move
 tb report <id>      完了の報告を done の報告コメント(C-<n>)にして指示役へすぐ届ける。届いたときだけ reported_at を埋める(打たなくても tb digest が届ける)
                     終了コード 0=送信済み/報告済み 10=宛先が使用中で未送信 11=送信/状態取得に失敗
 tb pending [--json|--ids]   done なのに未報告のタスク
 
 代行依頼(判定と記録だけ。cmd は tb が実行しない):
-tb proxy-request <task-id> --cmd C --why W --effect read-only|write|external [--expect E]   → "<id> <status>"
-tb proxy-list [--status open|done|pending-human|denied] [--json]
-tb proxy-resolve <id> --status done|pending-human|denied [--result <本文かファイルパス>]
-tb proxy-check <id>   1 行目が allow(自動代行可)か human(人に回す)。mismatch: があれば申告の食い違い
+tb proxy request <task-id> --cmd C --why W --effect read-only|write|external [--expect E]   → "<id> <status>"
+tb proxy list [--status open|done|pending-human|denied] [--json]
+tb proxy resolve <id> --status done|pending-human|denied [--result <本文かファイルパス>]
+tb proxy check <id>   1 行目が allow(自動代行可)か human(人に回す)。mismatch: があれば申告の食い違い
+  別名(古い名前。同じに動く): tb proxy-request tb proxy-list tb proxy-resolve tb proxy-check
 
 agent の活動記録(hook から。bin/tb-hook 経由が基本):
 tb db-import <旧 DB> [--session <名前>] [--dry-run]   旧形式(checkout ごと)の DB を、共有の DB の 1 セッション(既定は今のセッション)の行として取り込む。人の端末だけ。元の DB は読むだけ
@@ -137,10 +145,11 @@ tb alert-dispatch                          承認・上限待ちを進める(tb 
 tb alert-close A-<n>                       人が閉じる
   (アラートは project alert のチケット T-alert-NNN でもある。状態は上のコマンドだけが変え、tb done などでは変えない)
 tb system-send <宛先> --text T --job J      scheduler 用。agent の pane からは使えない
-tb sched-job [list | show <job> [--settings]]   scheduler のジョブ定義・上書き設定の出どころと本文(DB の sched-job:<job> > jobs/<job>.conf)
-tb sched-job set|edit|unset <job> [--settings] [--shared]   DB に書く / 消す(人だけ。scheduler が読めるか確かめてから書く。履歴は history)
-tb sched-job import [--dry-run] [--shared] [<job> ...]     jobs/*.conf と settings/*.settings を DB に取り込み、ファイルを退かす(人だけ)
-tb sched-job history <job> [--settings]                    変更の履歴
+tb job [list | show <job> [--settings]]   scheduler のジョブ定義・上書き設定の出どころと本文(DB の sched-job:<job> > jobs/<job>.conf)
+tb job set|edit|unset <job> [--settings] [--shared]   DB に書く / 消す(人だけ。scheduler が読めるか確かめてから書く。履歴は history)
+tb job import [--dry-run] [--shared] [<job> ...]     jobs/*.conf と settings/*.settings を DB に取り込み、ファイルを退かす(人だけ)
+tb job history <job> [--settings]                    変更の履歴
+  別名(古い名前。同じに動く。サブコマンドが無ければ list): tb sched-job
 
 会計役(定期レビュー)→ 設定役(人事。TB_HR_NAME、既定 hr):
 tb review-pack [--since ISO] [--mark]      生ログではなく集計と上位だけのレビュー材料。省略時は前回 --mark 以降
@@ -203,7 +212,8 @@ tb agent-shed [--count N] [--json]   絞る(止める)候補を、完了済み�
                                    読み取り専用(何も止めない)。各行に実行する tb agent-stop <名前> を出す(止めてよい判定が無いものは --force 付き。人だけ)
 
 他の人への調査依頼(human_handoff が on のときだけ。agent は誰にも連絡しない):
-tb handoff <task-id>   人が貼る依頼文(目的・必要なアクセス・期限・返し先)を data/handoff/<task-id>.md に書くだけ。何も送らない。
+tb handoff write <task-id>   人が貼る依頼文(目的・必要なアクセス・期限・返し先)を data/handoff/<task-id>.md に書くだけ。何も送らない。
+  別名(古い形。同じに動く): tb handoff <task-id>
                        off なら終了コード 4。文面に秘密らしい文字列(トークン、AWS キー、秘密鍵のヘッダ)があれば書かずに 4(題名・要約を直してやり直す)
 
 外への通知(既定は off。設定は config/notify.conf、人だけが編集。優先は 環境変数 TB_NOTIFY_<キー大文字> > notify.conf > 既定。設計: drafts/notify-routes.md):

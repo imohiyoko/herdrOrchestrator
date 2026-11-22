@@ -36,15 +36,13 @@ eq "statuses: overdue includes open custom status" "$($TB list -p st --overdue |
 eq "statuses: claim from todo-category → first active" "$($TB claim "$a" --owner w1 >/dev/null; $TB show "$a" | jq -r .status)" "doing"
 eq "statuses: claim twice fails (not todo-category)" "$(rc $TB claim "$a" --owner w2)" "1"
 eq "statuses: update --status to added review status" "$($TB update "$a" --status waiting >/dev/null; $TB show "$a" | jq -r .status)" "waiting"
-eq "statuses: update --status to done-category is a usage error" "$(rc $TB update "$a" --status shipped)" "2"
-eq "statuses: update --status to cancelled-category is a usage error" "$(rc $TB update "$a" --status dropped)" "2"
 eq "statuses: update --status to unknown is a usage error" "$(rc $TB update "$a" --status in_progress)" "2"
 eq "statuses: block → first blocked" "$($TB block "$a" -m 待ち)" "$a stuck"
 $TB update "$a" --status doing >/dev/null
 eq "statuses: done → first done" "$($TB done "$a" -d /tmp/x -m ok >/dev/null; $TB show "$a" | jq -r .status)" "shipped"
 eq "statuses: done task is pending report" "$($TB pending --ids | grep -c "^$a$")" "1"
 eq "statuses: done twice says its name" "$($TB done "$a" -d /tmp/x -m ok 2>&1)" "tb: すでに shipped です: $a"
-eq "statuses: closed (done-category) can't be updated" "$(rc $TB update "$a" --title x)" "1"
+eq "statuses: closed (done-category) can be updated" "$(rc $TB update "$a" --title x)" "0"
 eq "statuses: closed not overdue" "$($TB list -p st --overdue | wc -l | tr -d ' ')" "0"
 c=$($TB add -p st -t "やめる")
 eq "statuses: cancel → first cancelled" "$($TB cancel "$c")" "$c dropped"
@@ -59,7 +57,7 @@ eq "statuses: closed blocker no longer blocks" "$(rc $TB claim "$b2" --owner w1)
 o=$($TB add -p st2 -t "古い done" --due 2026-04-01)
 sqlite3 "$TB_DB" "UPDATE tasks SET status='done' WHERE id='$o';"
 eq "statuses: leftover builtin done is closed (not overdue)" "$($TB list -p st2 --overdue | wc -l | tr -d ' ')" "0"
-eq "statuses: leftover builtin done can't be updated" "$(rc $TB update "$o" --title x)" "1"
+eq "statuses: leftover builtin done can be updated" "$(rc $TB update "$o" --title x)" "0"
 o2=$($TB add -p st2 -t "古い in_progress"); sqlite3 "$TB_DB" "UPDATE tasks SET status='in_progress', owner_agent='w9' WHERE id='$o2';"
 eq "statuses: leftover builtin in_progress counts as held (agents open_tasks)" \
   "$(sqlite3 "$TB_DB" "INSERT INTO agents (herdr_session, name, state, created_by, created_at, updated_at) VALUES ('default','w9','running','human','2026-04-10T00:00:00Z','2026-04-10T00:00:00Z');" 2>/dev/null; $TB agents --json 2>/dev/null | jq -r 'select(.name=="w9") | .open_tasks')" "1"

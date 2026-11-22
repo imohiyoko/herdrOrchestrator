@@ -44,7 +44,7 @@ tb block  T-<project>-NNN -m "詰まっている理由"
 tb cancel T-<project>-NNN -m "取り消す理由"
 ```
 
-- `done` と同じく閉じた状態として扱う: `tb update` / `tb block` / `tb done` / `tb claim` はできない。期限切れ・期限間近(`tb list --overdue` / `--due-within` / `tb due-scan` / Web UI)、`tb nudge`、未対応の報告の数え上げには出ない。
+- `done` と同じく閉じた状態として扱う(状態の移動は制限しない。戻すのは `tb ticket move <id> <状態>`。`tb claim` は todo の分類だけ)。期限切れ・期限間近(`tb list --overdue` / `--due-within` / `tb due-scan` / Web UI)、`tb nudge`、未対応の報告の数え上げには出ない。
 - `blocks` の先行タスクが `cancelled` になれば、後続は claim できる(先行待ちが解ける)。
 - 理由は要約(`summary`)に残る。完了ではないので完了報告(`tb digest` / `tb report` / `tb pending`)には出さない。
 - スプリントの件数・ポイント(`tb sprints` / Web UI のボード)の分母には数えない。`tb board` には `cancelled` の列が最後に出る。
@@ -118,12 +118,33 @@ tb config unset statuses --shared        # 組み込みに戻す
 ```
 
 - 書式は 1 行 1 つ `<状態> <分類> [= 説明]`。分類は固定の 6 つ: `todo`(未着手)/ `active`(作業中)/ `review`(確認待ち)/ `blocked`(詰まり)/ `done`(完了)/ `cancelled`(取り消し)。`done` と `cancelled` が閉じた状態。`todo` / `active` / `done` の分類にはそれぞれ 1 つ以上要る。組み込みの名前(`in_progress` など)は組み込みの分類にだけ置ける(別の分類にしたい状態は別の名前にする)。例は [config/statuses.conf.example](config/statuses.conf.example)。
-- tb が状態を書くときは、その分類で **最初に書いた** 状態を使う: `tb add` → todo、`tb claim` → active(元は todo の分類のどれでもよい)、`tb block` → blocked、`tb done` → done、`tb cancel` → cancelled。`tb update --status` で選べるのは、設定に書いた todo / active / review / blocked の分類の状態。
+- tb が状態を書くときは、その分類で **最初に書いた** 状態を使う: `tb add` → todo、`tb claim` → active(元は todo の分類のどれでもよい)、`tb block` → blocked、`tb done` → done、`tb cancel` → cancelled。`tb ticket move` / `tb update --status` で選べるのは、設定に書いたすべての状態(下の「状態を動かす・足す」)。
 - 分類で決まる振る舞い: nudge が催促するのは active を握っている agent(設定 `nudge` の `wake` で分類・状態を選べる)、`--pool` の候補は担当なしの todo。digest の「turn が終わったのに作業中」「複数握っている」は active。agent-shed・agent-kill・Web UI の未完了タスクは active / review / blocked。期限切れ・先行チケット待ち・人の返事待ちは閉じていないもの。`tb report` と完了報告は done、スプリントの件数とポイントは cancelled を除く。ボード(`tb board` と Web UI)の列は分類の順。
-- 組み込みの名前は、設定から外しても組み込みの分類として数える(アラート・提案のチケットは DB のトリガーがこの名前で書くため)。外した状態には `tb update --status` で新しく変えられないが、既にその状態のチケットはボードと Web UI の件数の後ろに出る(黙って見えなくしない)。
+- 組み込みの名前は、設定から外しても組み込みの分類として数える(アラート・提案のチケットは DB のトリガーがこの名前で書くため)。外した状態には `tb ticket move` / `tb update --status` で新しく変えられないが、既にその状態のチケットはボードと Web UI の件数の後ろに出る(黙って見えなくしない)。
 - DB の `status` 列は値の一覧を持たない(スキーマ 024 で CHECK を外し、空でない 30 文字までだけを残した)。一覧は tb と Web UI が設定から読み、書く前に確かめる。
 - agent への文面(`nudge.text` など)は `{active}` / `{todo}` で今の状態の名前を、`nudge.text` は `{status}` で名指ししたチケットの状態を出せる。着手前(todo の分類)のチケットの催促は `nudge.start`(`tb claim` で着手するよう書く)(設定 `messages`)。
 - 手で壊した本文(ファイルを直接書いた・DB を直接書いた)は、警告を出して組み込みの 6 つで動く(`tb config edit statuses` で直す)。
+
+### 状態を動かす・足す(`tb ticket`)
+
+状態は特別扱いしない。done・cancelled も含め、どの状態からどの状態へも動かせる(閉じた状態から戻す再オープンも)。
+「閉じているか」は分類(done / cancelled)で決まるので、先行チケット待ち・子チケット・digest・nudge・期限は今までどおり分類で動く。
+
+```sh
+tb ticket move T-web-012 review                 # 任意の状態へ
+tb ticket move T-web-012 done -d PR#12 -m 済み   # -d / -m は任意(tb done は worker の終了手順なので必須のまま)
+tb ticket move T-web-012 in_progress            # done から戻す。成果物と要約は残る
+tb ticket status                                # 状態・分類・チケットの件数・説明(--json も)
+tb ticket status add 検証待ち review -m "QA が確認" --after review   # 状態を足す(人だけ)
+tb ticket status rm 検証待ち --to review          # 外す。残っているチケットは --to の状態へ移す(人だけ)
+```
+
+- `-m` は閉じた分類(done / cancelled)へ動かすときは要約(`summary`)、それ以外はメモ(`note`)に入る。`-d` は done の分類へ動かすときだけ。
+- done の分類に入ると未報告に戻り、完了報告(`tb pending` / `tb digest` / `tb report`)の対象になる。done の通知も出る。cancelled の分類に入ると報告に出さない(`reported_at` を埋める)。同じ分類の中の移動では報告の扱いを変えない。
+- `tb update --status` も同じ扱い(どの状態へも)。閉じたタスクの題・ラベルなども変えられる。`tb block` / `tb done` / `tb cancel` もどの状態からでも使える(すでにその分類なら断る)。`tb claim` は今までどおり todo の分類だけ。
+- `tb ticket status add` / `rm` は設定 `statuses` を書き換えるだけ(別の置き場は無い)。書く先は今読んでいる行(このセッションの行 / 共通の行 / 環境変数で明示したファイル)で、設定が無ければ組み込みの 6 つから始めて共通の行に書く。`todo` / `active` / `done` の分類の最後の 1 つは外せない。
+- `tb ticket add|list|show|update|claim|done|block|cancel ...` は `tb <それ>` と同じ。
+- アラート・提案のチケットは今までどおり専用のコマンドだけで動かす(DB のトリガーが状態を書くため)。
 
 tb 自身が付ける・探すラベルの名前は設定 `system-labels` で変えられる(1 行 1 つ `<用途> = <ラベル>`。例は [config/system-labels.conf.example](config/system-labels.conf.example))。`deadline`(`tb deadlines-import` が付ける。既定 `deadline`)と `team`(`tb nudge --pool` が探す team のラベルの形。`{team}` が team の名前。既定 `team:{team}`)。アラート・提案のラベル(`alert` / `proposal` / `rejected` / `role:*`)は DB のトリガーが付けるので固定。
 
@@ -166,16 +187,16 @@ tb events --since E-120         # E-120 より後のもの(通知の規則など
 
 ```bash
 # worker: 依頼を出す(effect 必須。迷ったら write。read-only|write|external 以外は拒否)
-tb proxy-request T-<project>-NNN --cmd 'gh pr view 12' --why '目的' --effect read-only --expect '期待する出力'
+tb proxy request T-<project>-NNN --cmd 'gh pr view 12' --why '目的' --effect read-only --expect '期待する出力'
 #   → "<id> open"。同じ cmd が denied 済みなら "<id> denied" で即登録される(出し直さず別の方法を提案する)
 
 # 指揮官
-tb proxy-list [--status open] [--json]
-tb proxy-check <id>      # 1 行目: allow(自動代行可) / human(人に回す)。続けて reason: / mismatch: 行
-tb proxy-resolve <id> --status done|pending-human|denied [--result '<本文 or ファイルパス>']
+tb proxy list [--status open] [--json]
+tb proxy check <id>      # 1 行目: allow(自動代行可) / human(人に回す)。続けて reason: / mismatch: 行
+tb proxy resolve <id> --status done|pending-human|denied [--result '<本文 or ファイルパス>']
 ```
 
-`proxy-check` の判定(`allow` になるのは、次の 3 つをすべて満たすときだけ):
+`proxy check` の判定(`allow` になるのは、次の 3 つをすべて満たすときだけ):
 1. 申告 effect が `read-only`
 2. cmd が `config/proxy-allowlist.txt`(読むだけ。`TB_ALLOWLIST` で差し替え可)のいずれかに先頭一致。語の境界で比べる(`git log` は `git log -5` に一致、`git logx` には一致しない)
 3. 危険な構文を含まない: `> < | ; &`(`&&` `||` を含む)・`$`(`$()` を含む)・バッククォート・改行、`-X|--request|--method` の POST/PUT/DELETE/PATCH、`--approve` `--merge` `--body` `--add`(`--body-file` `--add-label` も)、`--output`
@@ -184,7 +205,7 @@ tb proxy-resolve <id> --status done|pending-human|denied [--result '<本文 or �
 - 申告が `read-only` なのに危険な構文を含むときは `mismatch:` 行を足す(申告の食い違い)
 - 許可リストを読めないときは `human`
 - `--output` は仕様にない追加(`git diff --output=file` が許可リストの `git diff` からファイルを書けるため)
-- `proxy-resolve` の `--result` は渡された文字列をそのまま保存する(ファイルは読まない)。`done` / `denied` になった依頼は変更できない(`open` と `pending-human` のみ解決できる)
+- `proxy resolve` の `--result` は渡された文字列をそのまま保存する(ファイルは読まない)。`done` / `denied` になった依頼は変更できない(`open` と `pending-human` のみ解決できる)
 - 結果を worker へ返す `herdr agent prompt` と、`dispatch.jsonl` への `action: proxy` の追記は指揮官の作業で、tb は行わない
 
 ## agent の活動記録(hook)

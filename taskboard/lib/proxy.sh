@@ -105,7 +105,7 @@ cmd_proxy-check() {
   local reasons=() mismatch="" META=()
   detect_meta "$c"
   if [[ ${#META[@]} -gt 0 ]]; then
-    local metas; metas=$(IFS=、; echo "${META[*]}")
+    local metas; metas=$(printf '%s、' "${META[@]}"); metas=${metas%、}   # IFS=、 は C ロケールで 1 バイト目しか使わないので printf でつなぐ
     reasons+=("危険な構文を含む: $metas")
     [[ $effect == read-only ]] && mismatch="申告は read-only だが、コマンドに $metas を含む"
   fi
@@ -134,4 +134,23 @@ cmd_proxy-check() {
   fi
   [[ -z $mismatch ]] || echo "mismatch: $mismatch"
   return 0
+}
+
+# tb proxy <サブコマンド>(.claude/skills/tb-command-naming の形)。古い名前 tb proxy-request なども同じに動く
+cmd_proxy() {
+  local sub=${1:-}; shift || true
+  case $sub in
+    request|list|resolve|check) "cmd_proxy-$sub" "$@";;
+    ""|-h|--help|help) proxy_usage; [[ -n $sub ]] || exit 2;;
+    *) usage "proxy: 不明なサブコマンド $sub(request / list / resolve / check)";;
+  esac
+}
+proxy_usage() {
+  cat <<'USAGE'
+tb proxy request <task-id> --cmd C --why W --effect read-only|write|external [--expect E]   → "<id> <status>"
+tb proxy list [--status open|done|pending-human|denied] [--json]
+tb proxy resolve <id> --status done|pending-human|denied [--result <本文かファイルパス>]
+tb proxy check <id>   1 行目が allow(自動代行可)か human(人に回す)。mismatch: があれば申告の食い違い
+(古い名前 tb proxy-request / proxy-list / proxy-resolve / proxy-check も同じに使える)
+USAGE
 }

@@ -1,0 +1,396 @@
+package tbcli
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/imohiyoko/herdrorchestrator/internal/jobs"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/config"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/env"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/identity"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
+)
+
+const jobUsage = `tb job list   ジョブの一覧と、定義・上書き設定の出どころ(db:<セッション> / db:* / file:<パス> / none)
+tb job show <job> [--settings]   今の本文(出どころは標準エラーに 1 行)
+tb job set <job> [--settings] [--shared] < 本文   書く(人だけ。scheduler が読めることを確かめてから)
+tb job edit <job> [--settings] [--shared]   $VISUAL / $EDITOR で書き換える(人だけ)
+tb job unset <job> [--settings] [--shared]   DB の行を消す(人だけ)
+tb job import [--dry-run] [--shared] [<job> ...]   jobs/*.conf(と settings/*.settings)を DB に取り込み、ファイルを退かす(人だけ)
+tb job history <job> [--settings]   変更の履歴
+(古い名前 tb sched-job も同じに使える。tb sched-job だけなら list)
+`
+
+// requireHuman は identity.RequireHuman の断りを tb の die にする。
+func requireHuman(what string) error {
+	if err := identity.RequireHuman(what); err != nil {
+		var d *identity.Denied
+		if errors.As(err, &d) {
+			return die("%s", d.Msg)
+		}
+		return err
+	}
+	return nil
+}
+
+// cmdJob は tb job <サブコマンド>。legacy(tb sched-job)ならサブコマンドが無いときは list。
+func cmdJob(args []string, w, stderr io.Writer, legacy bool) error {
+	db, _, err := openCmd(stderr)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	sub := ""
+	if len(args) > 0 {
+		sub, args = args[0], args[1:]
+	}
+	if sub == "" && legacy {
+		sub = "list"
+	}
+	e := jobs.DefaultEnv()
+	switch sub {
+	case "list":
+		return jobList(db, e, args, w)
+	case "show":
+		return jobShow(db, e, args, w, stderr)
+	case "set", "edit", "unset":
+		return jobChange(db, e, sub, args, w, stderr)
+	case "import":
+		return jobImport(db, e, args, w, stderr)
+	case "history":
+		return jobHistory(db, args, w)
+	case "", "-h", "--help", "help":
+		if !legacy {
+			fmt.Fprint(w, jobUsage)
+			if sub == "" {
+				return &exit{exitUsage, ""}
+			}
+			return nil
+		}
+	}
+	if legacy {
+		return usage("sched-job [list | show <job> [--settings] | set <job> [--settings] [--shared] < 本文 | edit <job> [--settings] [--shared] | unset <job> [--settings] [--shared] | import [--dry-run] [--shared] [<job> ...] | history <job> [--settings]]")
+	}
+	return usage("job: 不明なサブコマンド %s(list / show / set / edit / unset / import / history)", sub)
+}
+
+func validJob(j string) error {
+	if !jobs.ValidName(j) {
+		return usage("ジョブ名は英数字で始まり、英数字・_・- の 64 字以内(dispatch は予約名): %s", j)
+	}
+	return nil
+}
+
+type jobArgs struct {
+	job              string
+	settings, shared bool
+}
+
+func parseJobArgs(args []string) (jobArgs, error) {
+	var a jobArgs
+	for _, s := range args {
+		switch {
+		case s == "--settings":
+			a.settings = true
+		case s == "--shared":
+			a.shared = true
+		case strings.HasPrefix(s, "-"):
+			return a, usage("sched-job: 不明な引数 %s", s)
+		default:
+			if a.job != "" {
+				return a, usage("sched-job: ジョブは 1 つ")
+			}
+			a.job = s
+		}
+	}
+	if a.job == "" {
+		return a, usage("sched-job: ジョブ名が必要です")
+	}
+	return a, validJob(a.job)
+}
+
+func jobList(db *store.DB, e jobs.Env, args []string, w io.Writer) error {
+	if len(args) != 0 {
+		return usage("sched-job list")
+	}
+	names, err := e.Names(db.DB, db.Session)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(w, "セッション: %s\n", db.Session)
+	for _, j := range names {
+		_, js, _ := e.Lookup(db.DB, db.Session, j, false)
+		_, ss, _ := e.Lookup(db.DB, db.Session, j, true)
+		if js == "none" && jobs.IsRegular(e.JobFile(j)) {
+			js = "未取り込み:" + e.JobFile(j) + "(tb job import " + j + ")"
+		}
+		fmt.Fprintf(w, "%s\t%s\tsettings=%s\n", j, js, ss)
+	}
+	return nil
+}
+
+func jobShow(db *store.DB, e jobs.Env, args []string, w, stderr io.Writer) error {
+	a, err := parseJobArgs(args)
+	if err != nil {
+		return err
+	}
+	key := jobs.Key(a.job, a.settings)
+	body, src, ok := e.Lookup(db.DB, db.Session, a.job, a.settings)
+	if !ok {
+		hint := ""
+		if !a.settings && jobs.IsRegular(e.JobFile(a.job)) {
+			hint = "(jobs/" + a.job + ".conf は tb job import " + a.job + " で取り込む)"
+		}
+		return die("%s は DB にありません%s", key, hint)
+	}
+	fmt.Fprintf(stderr, "# %s: %s\n", key, src)
+	if body != "" {
+		fmt.Fprintln(w, body)
+	}
+	return nil
+}
+
+// stdinIsTTY は [[ -t 0 ]]。
+func stdinIsTTY() bool {
+	st, err := os.Stdin.Stat()
+	return err == nil && st.Mode()&os.ModeCharDevice != 0
+}
+
+func readStdin() (string, error) {
+	b, err := io.ReadAll(os.Stdin)
+	return strings.TrimRight(string(b), "\n"), err
+}
+
+// editBody は $VISUAL / $EDITOR(既定 vi)で本文を書き換える。
+func editBody(cur string, has bool) (string, error) {
+	f, err := os.CreateTemp("", "tb-edit-")
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(f.Name())
+	if has {
+		fmt.Fprintln(f, cur)
+	}
+	f.Close()
+	ed := os.Getenv("VISUAL")
+	if ed == "" {
+		ed = os.Getenv("EDITOR")
+	}
+	if ed == "" {
+		ed = "vi"
+	}
+	cmd := exec.Command(ed, f.Name())
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if err := cmd.Run(); err != nil {
+		return "", die("編集を中止しました")
+	}
+	return jobs.ReadBody(f.Name()), nil
+}
+
+func jobChange(db *store.DB, e jobs.Env, sub string, args []string, w, stderr io.Writer) error {
+	a, err := parseJobArgs(args)
+	if err != nil {
+		return err
+	}
+	if err := requireHuman("tb job " + sub); err != nil {
+		return err
+	}
+	key := jobs.Key(a.job, a.settings)
+	var body string
+	switch sub {
+	case "unset":
+		which := "このセッションの行"
+		if a.shared {
+			which = "共通の行"
+		}
+		if ok, err := config.HasRow(db.DB, db.Session, key, a.shared); err != nil {
+			return err
+		} else if !ok {
+			return die("%s の DB の行はありません(%s)", key, which)
+		}
+		if err := config.Unset(db.DB, db.Session, key, a.shared); err != nil {
+			return err
+		}
+		_, src, _ := e.Lookup(db.DB, db.Session, a.job, a.settings)
+		fmt.Fprintf(w, "%s: %s\n", key, src)
+		return nil
+	case "set":
+		if stdinIsTTY() {
+			return usage("sched-job set <job>: 本文は標準入力から渡す(例: tb job set %s < jobs/%s.conf)", a.job, a.job)
+		}
+		if body, err = readStdin(); err != nil {
+			return err
+		}
+	case "edit":
+		cur, _, has := e.Lookup(db.DB, db.Session, a.job, a.settings)
+		if body, err = editBody(cur, has); err != nil {
+			return err
+		}
+	}
+	// scheduler が読めることを確かめてから書く(設定なら今の定義と組み合わせて)
+	var conf, settings string
+	if a.settings {
+		c, _, ok := e.Lookup(db.DB, db.Session, a.job, false)
+		if !ok {
+			return die("ジョブ %s の定義が DB にありません(先に tb job set %s か tb job import %s で置く)", a.job, a.job, a.job)
+		}
+		conf, settings = c, body
+	} else {
+		conf = body
+		if s, _, ok := e.Lookup(db.DB, db.Session, a.job, true); ok {
+			settings = s
+		}
+	}
+	if conf == "" {
+		return die("本文が空です")
+	}
+	ok, last, err := e.Check(a.job, conf, settings)
+	if err != nil {
+		return die("一時ディレクトリを作れません")
+	}
+	if !ok {
+		fmt.Fprintf(stderr, "tb: scheduler がこの本文を受け付けません: %s\n", last)
+		return die("%s は書きませんでした", key)
+	}
+	if err := config.DBPut(db.DB, db.Session, key, body, sub, a.shared, ""); err != nil {
+		return err
+	}
+	_, src, _ := e.Lookup(db.DB, db.Session, a.job, a.settings)
+	fmt.Fprintf(w, "%s: %s\n", key, src)
+	return nil
+}
+
+func jobImport(db *store.DB, e jobs.Env, args []string, w, stderr io.Writer) error {
+	dry, shared := false, false
+	var want []string
+	for _, s := range args {
+		switch {
+		case s == "--dry-run":
+			dry = true
+		case s == "--shared":
+			shared = true
+		case strings.HasPrefix(s, "-"):
+			return usage("sched-job import [--dry-run] [--shared] [<job> ...]")
+		default:
+			if err := validJob(s); err != nil {
+				return err
+			}
+			want = append(want, s)
+		}
+	}
+	if err := requireHuman("tb job import"); err != nil {
+		return err
+	}
+	if len(want) == 0 {
+		want = e.FileJobs()
+	}
+	dest, n := "", 0
+	for _, j := range want {
+		if !jobs.NameChars(j) {
+			fmt.Fprintf(w, "%s: ジョブ名に使えない文字があるので飛ばします\n", j)
+			continue
+		}
+		f, sf := e.JobFile(j), e.SettingsFile(j)
+		if !jobs.IsRegular(f) || jobs.IsLink(f) {
+			fmt.Fprintf(w, "%s: jobs/%s.conf がありません(通常のファイルのみ)\n", j, j)
+			continue
+		}
+		if ok, err := config.HasRow(db.DB, db.Session, "sched-job:"+j, shared); err != nil {
+			return err
+		} else if ok {
+			fmt.Fprintf(w, "%s: DB に行が既にあるので飛ばします(jobs/%s.conf はそのまま)\n", j, j)
+			continue
+		}
+		if jobs.IsLink(sf) {
+			fmt.Fprintf(w, "%s: settings/%s.settings がシンボリックリンクなので飛ばします\n", j, j)
+			continue
+		}
+		conf, settings := jobs.ReadBody(f), ""
+		sfExists := jobs.IsRegular(sf)
+		if sfExists {
+			settings = jobs.ReadBody(sf)
+		}
+		ok, last, err := e.Check(j, conf, settings)
+		if err != nil {
+			return die("一時ディレクトリを作れません")
+		}
+		if !ok {
+			fmt.Fprintf(stderr, "tb: scheduler がこの本文を受け付けません: %s\n", last)
+			fmt.Fprintf(w, "%s: scheduler が読めない定義なので飛ばします\n", j)
+			continue
+		}
+		n++
+		if dry {
+			also := ""
+			if settings != "" {
+				also = " と settings/" + j + ".settings"
+			}
+			fmt.Fprintf(w, "%s: jobs/%s.conf%s を取り込みます\n", j, j, also)
+			continue
+		}
+		if dest == "" {
+			dest = filepath.Join(env.StateDir(), "sched-imported", time.Now().Format("20060102-150405"))
+			if os.MkdirAll(filepath.Join(dest, "jobs"), 0o755) != nil || os.MkdirAll(filepath.Join(dest, "settings"), 0o755) != nil {
+				return die("退かす先を作れません: %s", dest)
+			}
+		}
+		if err := config.DBPut(db.DB, db.Session, "sched-job:"+j, conf, "import", shared, ""); err != nil {
+			return err
+		}
+		if settings != "" || sfExists {
+			if err := config.DBPut(db.DB, db.Session, "sched-settings:"+j, settings, "import", shared, ""); err != nil {
+				return err
+			}
+		}
+		if moveFile(f, filepath.Join(dest, "jobs")) != nil {
+			return die("%s を退かせません(DB には取り込み済み)", f)
+		}
+		if sfExists && moveFile(sf, filepath.Join(dest, "settings")) != nil {
+			return die("%s を退かせません(DB には取り込み済み)", sf)
+		}
+		fmt.Fprintf(w, "%s: 取り込み、ファイルを %s/ へ退かしました\n", j, dest)
+	}
+	if dry {
+		fmt.Fprintln(w, "(dry-run: 何も書いていません)")
+	}
+	if n == 0 {
+		fmt.Fprintln(w, "取り込むジョブはありません")
+	}
+	return nil
+}
+
+// moveFile は mv f dir/(別のファイルシステムならコピーして消す)。
+func moveFile(f, dir string) error {
+	to := filepath.Join(dir, filepath.Base(f))
+	if os.Rename(f, to) == nil {
+		return nil
+	}
+	b, err := os.ReadFile(f)
+	if err != nil {
+		return err
+	}
+	st, err := os.Stat(f)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(to, b, st.Mode().Perm()); err != nil {
+		return err
+	}
+	return os.Remove(f)
+}
+
+func jobHistory(db *store.DB, args []string, w io.Writer) error {
+	a, err := parseJobArgs(args)
+	if err != nil {
+		return err
+	}
+	return jobs.History(db.DB, db.Session, jobs.Key(a.job, a.settings), func(cols []string, vals []any) error {
+		return emitRow(w, false, cols, vals, "")
+	})
+}
