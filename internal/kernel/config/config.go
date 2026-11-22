@@ -5,6 +5,7 @@ package config
 import (
 	"database/sql"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -66,6 +67,12 @@ func readBody(path string) (string, bool) {
 	return strings.TrimRight(string(b), "\n"), true
 }
 
+// unreachable はファイルがあるかどうかを確かめられない(stat が「無い」以外の理由で失敗した)。「ファイルが無い」とは分ける。
+func unreachable(path string) bool {
+	_, err := os.Stat(path)
+	return err != nil && !errors.Is(err, fs.ErrNotExist)
+}
+
 func isFile(path string) bool {
 	st, err := os.Stat(path)
 	return err == nil && st.Mode().IsRegular()
@@ -122,6 +129,9 @@ func LookupStrict(db *sql.DB, session, key string) (body, src string, ok bool, r
 		if k.Example && isFile(f+".example") {
 			return read(f+".example", "example:")
 		}
+		if unreachable(f) {
+			return "", "none", false, "stat:" + f
+		}
 		return "", "none", false, ""
 	}
 	if db != nil {
@@ -145,6 +155,9 @@ func LookupStrict(db *sql.DB, session, key string) (body, src string, ok bool, r
 	}
 	if k.Example && isFile(f+".example") {
 		return read(f+".example", "example:")
+	}
+	if unreachable(f) {
+		readErr = strings.TrimSpace(readErr + " stat:" + f)
 	}
 	return "", "none", false, readErr
 }

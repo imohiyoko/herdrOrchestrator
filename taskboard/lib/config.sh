@@ -73,7 +73,8 @@ config_lookup() {
   f=${!CFG_ENV:-}
   if [[ -n $f ]]; then
     if [[ -f $f ]]; then CFG_BODY=$(cat "$f" 2>/dev/null) || CFG_ERR="file:$f"; CFG_SRC="file:$f"
-    elif ((CFG_EXAMPLE)) && [[ -f $f.example ]]; then CFG_BODY=$(cat "$f.example" 2>/dev/null) || CFG_ERR="example:$f.example"; CFG_SRC="example:$f.example"; fi
+    elif ((CFG_EXAMPLE)) && [[ -f $f.example ]]; then CFG_BODY=$(cat "$f.example" 2>/dev/null) || CFG_ERR="example:$f.example"; CFG_SRC="example:$f.example"
+    elif config_unreachable "$f"; then CFG_ERR="dir:${f%/*}"; fi
   else
     r=$(config_db_row "$key") || CFG_ERR="db:$DB"
     if [[ -n $r ]]; then
@@ -81,12 +82,15 @@ config_lookup() {
     else
       f=$CONFIG_DIR/$CFG_FILE
       if [[ -f $f ]]; then CFG_BODY=$(cat "$f" 2>/dev/null) || CFG_ERR+="${CFG_ERR:+ }file:$f"; CFG_SRC="file:$f"
-      elif ((CFG_EXAMPLE)) && [[ -f $f.example ]]; then CFG_BODY=$(cat "$f.example" 2>/dev/null) || CFG_ERR+="${CFG_ERR:+ }example:$f.example"; CFG_SRC="example:$f.example"; fi
+      elif ((CFG_EXAMPLE)) && [[ -f $f.example ]]; then CFG_BODY=$(cat "$f.example" 2>/dev/null) || CFG_ERR+="${CFG_ERR:+ }example:$f.example"; CFG_SRC="example:$f.example"
+      elif config_unreachable "$f"; then CFG_ERR+="${CFG_ERR:+ }dir:${f%/*}"; fi
     fi
   fi
   printf -v "$cv" '%s' "$CFG_BODY"; printf -v "$sv" '%s' "$CFG_SRC"; printf -v "$ev" '%s' "$CFG_ERR"
   [[ $CFG_SRC != none ]]
 }
+# ファイルがあるかどうかを確かめられない(置き場のディレクトリはあるのに中を見られない)。「ファイルが無い」とは分ける
+config_unreachable() { local d=${1%/*}; [[ $d != "$1" && -d $d && ! -x $d ]]; }
 config_forget() { unset "CFGC_${1//-/_}" "CFGS_${1//-/_}" "CFGE_${1//-/_}"; }
 
 # ---------- agent に返す文面(設定 messages)----------

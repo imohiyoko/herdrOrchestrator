@@ -81,6 +81,10 @@ if [[ $(id -u) != 0 ]]; then
   printf 'cmd:ticket:show = allow\n' >"$TB_APPROVALS"; chmod 000 "$TB_APPROVALS"
   eq "perms: an approvals file that cannot be read → only-human (not the default)" "$(rc $TB show "$t1")" "1"
   chmod 644 "$TB_APPROVALS"
+  # 置き場のディレクトリの中を見られない(ファイルがあるか確かめられない)のも、設定が無いのとは分ける
+  mkdir -p "$TMP/perms-noexec"; _pm_appr=$TB_APPROVALS; export TB_APPROVALS=$TMP/perms-noexec/approvals; chmod 000 "$TMP/perms-noexec"
+  eq "perms: an approvals dir that cannot be searched → only-human (not the default)" "$(rc $TB show "$t1")" "1"
+  chmod 755 "$TMP/perms-noexec"; export TB_APPROVALS=$_pm_appr
 fi
 
 # 下限は今はすべて allow(表の下限の列で守りを足せる。下限で丸める処理は internal/kernel/perms のテストで確かめる)
