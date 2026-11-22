@@ -60,6 +60,7 @@
 95_review.sh 4
 95_review_governance.sh 1
 96_limits.sh 33
+96_limits_contract.sh 4
 97_agents.sh 19
 97_agents_graph.sh 15
 97_grants.sh 4
