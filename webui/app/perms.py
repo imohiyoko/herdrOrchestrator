@@ -28,7 +28,7 @@ def load_rules():
     if text is None:
         return [], "approvals の設定がありません(DB にもファイルにも無い。すべての操作が ask として扱われます)"
     if len(text.encode("utf-8", "replace")) > MAX_BYTES:
-        return [], f"approvals.conf が大きすぎて({MAX_BYTES // 1024} KiB 超)全部は読めません。一覧と判定は出しません(tb は全体を読むので、手元で tb approval を使ってください)"
+        return [], f"approvals.conf が大きすぎて({MAX_BYTES // 1024} KiB 超)全部は読めません。一覧と判定は出しません(tb は全体を読むので、手元で tb approval check を使ってください)"
     rules = []
     for ln in text.splitlines():
         body, _, note = ln.partition("#")
@@ -92,7 +92,7 @@ def warning(r):
     """行ごとの警告文(無ければ空)。"""
     pat, v = r["raw"], r["value"]
     if "[" in pat:
-        return "[ を含むパターン: bash と照合規則が違いうるので、この画面ではこの行から下の判定をしません(手元で tb approval を使ってください)"
+        return "[ を含むパターン: bash と照合規則が違いうるので、この画面ではこの行から下の判定をしません(手元で tb approval check を使ってください)"
     if pat == "*" and v == "ask":
         return "全体の既定(どれにも一致しない操作は ask)。この行を allow にしたり消したりしないこと"
     if v != "allow" or not wildcard(pat):
@@ -128,7 +128,7 @@ def tb_command(val, pat):
     """表示するだけのコマンド行。検査に通らなければ None。"""
     if val not in ("allow", "ask") or not ACTION_RE.fullmatch(pat or ""):
         return None
-    return f"tb {val} {shlex.quote(pat)}"
+    return f"tb approval {val} {shlex.quote(pat)}"
 
 
 def conf_path_label():

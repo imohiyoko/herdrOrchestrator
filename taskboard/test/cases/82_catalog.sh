@@ -20,7 +20,7 @@ EFFECTS_CODE=$(sed -n 's/^EFFECTS="\(.*\)"$/\1/p' "$TBROOT/lib/proxy.sh")
 # コードが承認判定に渡す操作名(動的な部分は *)
 _code_ops() {
   { grep -hoE '(approval_of|set_approval (allow|ask)) +"[^"]+"' "$TBROOT"/lib/*.sh "$TBROOT"/bin/tb | sed -E 's/^[^"]*"//; s/"$//'
-    grep -hoE 'tb approval [A-Za-z0-9:<>*._-]+' "$REPO"/roles/*.md "$REPO"/setup/examples/roles/*.md "$REPO"/setup/CLAUDE.md | sed -E 's/^tb approval //; s/<[^>]*>/*/g'
+    grep -hoE 'tb approval (check )?[A-Za-z0-9:<>*._-]+' "$REPO"/roles/*.md "$REPO"/setup/examples/roles/*.md "$REPO"/setup/CLAUDE.md | sed -E 's/^tb approval (check )?//; s/<[^>]*>/*/g'
   } | sed -E 's/\$\{[^}]*\}|\$[A-Za-z0-9_]+/*/g' | grep -E '^[a-z][A-Za-z0-9._:*?-]*$' | sort -u   # 「tb approval <操作>」のような説明文の記号は除く
 }
 CODE_OPS=$(_code_ops)

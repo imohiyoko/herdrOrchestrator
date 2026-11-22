@@ -17,6 +17,6 @@
 # lead1    agent:stop @worker
 # 例: 組織図で、lead は直属の部下の中身を読める
 # @lead    agent:read ~report
-# 例: 承認の委任。lead ロールは子からの依頼の送信を、reviewer1 は w1 が頼んだ停止を承認できる(tb approve / tb agent-approve)
+# 例: 承認の委任。lead ロールは子からの依頼の送信を、reviewer1 は w1 が頼んだ停止を承認できる(tb approval approve / tb agent-approve)
 # @lead     approve:send:task:* ~child
 # reviewer1 approve:agent:stop:* w1

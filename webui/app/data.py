@@ -551,7 +551,7 @@ def urgent_items():
             items.append({"id": f"o:{o['id']}", "kind": "send_pending", "label": "送信の承認待ち",
                           "title": _short(f"O-{o['id']} {o['from_name']} → {o['target']} ({o['kind']})", 80),
                           "body": _short(o["text"]),
-                          "how": f"送ってよければ手元で tb approve O-{o['id']}(今後も許可なら --always)、止めるなら tb reject O-{o['id']}",
+                          "how": f"送ってよければ手元で tb approval approve O-{o['id']}(今後も許可なら --always)、止めるなら tb approval reject O-{o['id']}",
                           "href": "/notifications", "ts": clean(o.get("created_at") or "")})
         for o in agent_ops("pending", NOTIFY_MAX):
             items.append({"id": f"l:{o['id']}", "kind": "agent_op_pending", "label": "agent 操作の承認待ち",

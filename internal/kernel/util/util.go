@@ -71,3 +71,11 @@ func JQString(s string) string {
 	b.WriteByte('"')
 	return b.String()
 }
+
+// ReadRest は IFS=<d> read の最後の変数に入る残り: 末尾の区切り 1 つは、残りにほかの区切りが無いときだけ落ちる。
+func ReadRest(rest, d string) string {
+	if t, ok := strings.CutSuffix(rest, d); ok && !strings.Contains(t, d) {
+		return t
+	}
+	return rest
+}

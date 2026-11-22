@@ -181,9 +181,33 @@ _approval_rules() {
   fi
 }
 
-# tb approval <操作> [--to 宛先 --text 本文 [--kind K] [--task T-..]]: 1 行目 ask|allow、2 行目 rule:。終了コード 0=allow / 20=ask
-# --to と --text があるときだけ、続けて risk: 行(リスク評価。第 1 段は参考値で、1 行目と終了コードには影響しない)を出す
+# tb approval <サブコマンド>(サービス approval)。古い名前 tb approval <操作> / allow / ask / approve / reject も同じに動く
 cmd_approval() {
+  if [[ $# -eq 0 ]]; then approval_usage; exit 2; fi   # 空の操作名(tb approval '')は引数なしと分け、check で誤りにする
+  case $1 in
+    check|allow|ask|approve|reject) local sub=$1; shift; "cmd_approval_$sub" "$@";;
+    help|-h|--help) approval_usage;;
+    *) cmd_approval_check "$@";;   # 古い形: tb approval <操作>
+  esac
+}
+approval_usage() {
+  cat <<'USAGE'
+tb approval check <操作> [--by A] [--to 宛先 --text 本文 [--kind K]]   1 行目 ask|allow、2 行目 rule:(終了コード 0=allow 20=ask)
+tb approval allow <操作のパターン>    今後は許可する(人だけ)
+tb approval ask <操作のパターン>      承認制に戻す(人だけ)
+tb approval approve O-<n> [--always]  承認待ちの送信を届ける
+tb approval reject O-<n>              承認待ちの送信を却下する
+(古い名前 tb approval <操作> / tb allow / tb ask / tb approve / tb reject も同じに使える)
+USAGE
+}
+cmd_approval_allow() { cmd_allow "$@"; }
+cmd_approval_ask() { cmd_ask "$@"; }
+cmd_approval_approve() { cmd_approve "$@"; }
+cmd_approval_reject() { cmd_reject "$@"; }
+
+# tb approval check <操作> [--to 宛先 --text 本文 [--kind K] [--task T-..]]: 1 行目 ask|allow、2 行目 rule:。終了コード 0=allow / 20=ask
+# --to と --text があるときだけ、続けて risk: 行(リスク評価。第 1 段は参考値で、1 行目と終了コードには影響しない)を出す
+cmd_approval_check() {
   [[ $# -ge 1 ]] || usage "approval <操作>(例: send:task:worker1, role:change)[--by agent][--to 宛先 --text 本文 [--kind K] [--task T-..]]"
   local act=$1 to="" text="" kind=task have_text=0 by=""; shift
   while [[ $# -gt 0 ]]; do

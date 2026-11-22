@@ -128,18 +128,24 @@ tb can [<主体>] <操作> <対象>   主体(省くと叩いた agent。pane か
          終了コード 0=allow 20=ask(人の承認待ち)21=hold(inbox に置かれる)4=deny。主体 human は人の端末。
          操作: send:task|info|answer(delivery → approvals)/ agent:stop(protect → approvals)/ role:change / agent:flag / ほかは approvals の操作名
          approve:<元の操作>(対象は依頼した agent。grants の approve: の行だけで allow か deny)
-tb approval <操作> [--by A]  1 行目 ask|allow、2 行目 rule:。終了コード 0=allow 20=ask(例: send:task:worker1, role:change, setup:hooks)。--by で agent A から見た判定(grants.conf も見る)
+tb approval check <操作> [--by A]  1 行目 ask|allow、2 行目 rule:。終了コード 0=allow 20=ask(例: send:task:worker1, role:change, setup:hooks)。--by で agent A から見た判定(grants.conf も見る)
   [--to 宛先 --text 本文 [--kind K]]  付けると risk:(リスク評価。第 1 段は参考値で判定は変えない)を併記。設計: docs/risk-based-approvals.md
+  別名(古い名前): tb approval <操作> ...(サブコマンドの名前 check / allow / ask / approve / reject と同じ操作名はこの形では書けない)
 tb gate evaluate <chain-id> --action merge|approve [--pr <o>/<r>#<n>] [--fact '行'] [--facts-stdin]   merge/approve の判定(読み取りのみ。0=allow 20=ask 21=評価不能)。tb gate execute は常に 30(無効)。docs/gate.md
 tb review-submit <task-id> --lineage L --sha S --blocker N --should N --verdict pass|fail [--pr o/r#n] [--evidence P]   レビュー結果を追記専用の記録に残す(送信者は pane から決まる。作者は拒否 4、レビュー担当の役割だけ 5)。docs/gate.md
 tb gate ingest-review <task-id> --pr <o>/<r>#<n> --sha <head の sha>   外部レビュー(CodeRabbit)を gh の読み取りで取り、送信者 ingest で記録する(agent の pane からは実行不可。スキップ・無い・取得失敗は記録しない)。docs/gate.md
 tb gate ingest-events <task-id> --pr <o>/<r>#<n>   PR の全レビュー(reviews / inline / issue)を、数値 id などの身元つきで追記専用の記録に残す(本文は保存しない。agent の pane からは実行不可)。判定には使わない。docs/gate.md
 tb gate reviewers <o>/<r>#<n> [--task <id>]   記録をレビュアーごとにまとめて表示する(読み取りだけ。gh は呼ばない)
-tb allow <パターン>       今後は承認なしにする(人の端末からだけ)
-tb ask <パターン>         承認制に戻す(人の端末からだけ)
-tb approve O-<n> [--always]   承認待ちの送信を届ける。--always なら send:<kind>:<宛先> を allow にする(人だけ)。
+tb approval allow <パターン>   今後は承認なしにする(人の端末からだけ)
+  別名(古い名前): tb allow <パターン>
+tb approval ask <パターン>     承認制に戻す(人の端末からだけ)
+  別名(古い名前): tb ask <パターン>
+tb approval approve O-<n> [--always]   承認待ちの送信を届ける。--always なら send:<kind>:<宛先> を allow にする(人だけ)。
                               grants.conf の <agent> approve:send:<kind>:<宛先> <依頼者> に当たる agent も承認できる(自分の依頼は不可)
-tb reject O-<n>               承認待ちの送信を却下する(承認と同じく、人か approve: の許可がある agent)
+  別名(古い名前): tb approve O-<n> [--always]
+tb approval reject O-<n>       承認待ちの送信を却下する(承認と同じく、人か approve: の許可がある agent)
+  別名(古い名前): tb reject O-<n>
+tb approval                    approval のサブコマンドの一覧
 
 アラート(見張り役 → 解析役の agent を起動 → 結果を指揮官・Web UI へ):
 tb alert --title T [--body B|--body-file F] [--key K] [--json]   見張り役が登録(緊急度は付けない)
