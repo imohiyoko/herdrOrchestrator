@@ -77,6 +77,7 @@
 98_gate.sh 69
 98_model_set.sh 14
 99_compact.sh 6
+99_compact_contract.sh 4
 99_gate_ingest.sh 17
 99_gate_review_events.sh 20
 99_layout.sh 1
