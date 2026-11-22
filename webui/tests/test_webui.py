@@ -730,7 +730,13 @@ check("タスク: 状態の複数選択", sorted(_ids("/tasks?status=done&status
 check("タスク: 状態を選ぶと表示より優先", _ids("/tasks?view=closed&status=blocked") == ["T-5"])
 check("タスク: キーワード(ID・題の部分一致)", _ids("/tasks?q=%E5%8F%A4%E3%81%84") == ["T-5"] and _ids("/tasks?q=T-3") == ["T-3"]
       and _ids("/tasks?q=%25") == [] and _ids("/tasks?view=all&q=TITLETAIL") == ["T-4"])
-check("タスク: 担当の未割り当て(~)", _ids("/tasks?owner=~") == [])
+check("タスク: 担当の未割り当て(~)。担当済みだけなら空", _ids("/tasks?owner=~") == [])
+_cx.execute(_t_ins, ("T-6", "pj", "担当なし", None, "todo", None, None, _now_iso, _now_iso))
+_cx.execute(_t_ins, ("T-7", "pj", "担当が空", "", "todo", None, None, _now_iso, _now_iso))
+_cx.commit()
+check("タスク: 担当の未割り当て(~)は NULL と空文字の両方", sorted(_ids("/tasks?owner=~")) == ["T-6", "T-7"], str(_ids("/tasks?owner=~")))
+_cx.execute("DELETE FROM tasks WHERE id IN ('T-6','T-7')")
+_cx.commit()
 _tc = cl.get("/tasks?q=T-3&status=in_progress&owner=alpha")[2]
 check("タスク: 今の条件のチップ(外すリンク)", 'class=chip' in _tc and 'href="/tasks?owner=alpha&amp;status=in_progress"' in _tc
       and "キーワード: T-3 ×" in _tc and 'src="/filter.js"' in _tc)
