@@ -2,7 +2,7 @@
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
 # --- チケットを作る・変える(add / update)の使い方・文面・終了コード・保存する値・履歴(bash と Go で同じ。期待値は bash の出力から作った)。project は tec / tec2 だけを使う
 # 並行の検査は 11_tickets.sh と 12_sprints.sh、用意したラベルは 11_labels_defined.sh(どれも TB_IMPL=go で Go を通る)
-_te_saved=$(env | grep -E '^(HERDR_PANE_ID|TB_STATUSES|TB_LABELS|TB_SYSTEM_LABELS)=' || true)
+_te_saved=$(declare -p HERDR_PANE_ID TB_STATUSES TB_LABELS TB_SYSTEM_LABELS 2>/dev/null || true)
 unset HERDR_PANE_ID
 export TB_STATUSES=$TMP/te-statuses.conf TB_LABELS=$TMP/te-labels.conf TB_SYSTEM_LABELS=$TMP/te-syslabels.conf; rm -f "$TB_STATUSES" "$TB_LABELS" "$TB_SYSTEM_LABELS"
 teerr() { "$@" 2>&1; echo "rc=$?"; }
@@ -74,15 +74,20 @@ eq "update: many" "$(teerr $TB update T-tec-001 --title 新しい題 --priority 
 eq "update: clear" "$(teerr $TB update T-tec-001 --owner '' --session '' --account '' --desc '' --due '' --label '' --sprint '' --points '' --remove-ref https://x.test/1)" $'T-tec-001 updated\nrc=0'
 eq "update: refs replace kind" "$(teerr $TB update T-tec-002 --add-ref 'gh=https://github.com/o/r/pull/1' --remove-ref https://x.test/e)" $'T-tec-002 updated\nrc=0'
 eq "update: labels add only" "$(teerr $TB update T-tec-002 --add-label 'q,a' --remove-label nope)" $'T-tec-002 updated\nrc=0'
-eq "update: rows" "$(terow T-tec-001; terow T-tec-002)" $'T-tec-001|todo|新しい題|story|low|-|-|-|-|[]|-|[{"kind":"pr","url":"https://github.com/o/r/pull/9"}]|-|0|-|1\nT-tec-002|todo|E|story|highest|-|w1|s1|acct|["a","b","c","q"]|説明\n2 行|[{"kind":"slack","url":"https://acme.slack.com/archives/C1/p1"},{"kind":"doc","url":"https://x.test/d?a=1&b=2"},{"kind":"gh","url":"https://github.com/o/r/pull/1"}]|2026-12-01|1|0|1'
+eq "update: --sprint - is no sprint" "$(teerr $TB update T-tec-002 --title E2 --sprint -)" $'T-tec-002 updated\nrc=0'
+eq "update: only --sprint - is nothing" "$(teerr $TB update T-tec-002 --sprint -)" $'tb: update: 変更する項目がありません\n(tb help で使い方)\nrc=2'
+eq "update: label with a newline keeps the first line" "$(teerr $TB update T-tec-002 --add-label $'nl1,nl2\nnl3'; $TB show T-tec-002 | jq -c .labels)" $'T-tec-002 updated\nrc=0\n["a","b","c","nl1","nl2","q"]'
+eq "list: nbsp label is accepted like add" "$(teerr $TB add -p tec -t nb -l $'ops\u00a0ui'; teerr $TB list -p tec -l $'ops\u00a0ui')" $'T-tec-005\nrc=0\nT-tec-005\ttodo\t-\tnb\tmedium\nrc=0'
+eq "update: rows" "$(terow T-tec-001; terow T-tec-002)" $'T-tec-001|todo|新しい題|story|low|-|-|-|-|[]|-|[{"kind":"pr","url":"https://github.com/o/r/pull/9"}]|-|0|-|1\nT-tec-002|todo|E2|story|highest|-|w1|s1|acct|["a","b","c","nl1","nl2","q"]|説明\n2 行|[{"kind":"slack","url":"https://acme.slack.com/archives/C1/p1"},{"kind":"doc","url":"https://x.test/d?a=1&b=2"},{"kind":"gh","url":"https://github.com/o/r/pull/1"}]|2026-12-01|1|0|1'
 eq "update: history" "$($TB history T-tec-001 | temask)" $'E-N\tTS\tT-tec-001\tcreated\t-\ttodo\thuman\t-\nE-N\tTS\tT-tec-001\ttype\ttask\tstory\thuman\t-\nE-N\tTS\tT-tec-001\ttitle\t題\tタブ\t新しい題\thuman\t-\nE-N\tTS\tT-tec-001\tpriority\tmedium\tlow\thuman\t-\nE-N\tTS\tT-tec-001\towner\t-\tw2\thuman\t-\nE-N\tTS\tT-tec-001\tdue\t-\t2026-11-30\thuman\t-\nE-N\tTS\tT-tec-001\tpoints\t-\t3\thuman\t-\nE-N\tTS\tT-tec-001\tsprint\t-\tS-N\thuman\t-\nE-N\tTS\tT-tec-001\tdescription\t-\t-\thuman\t-\nE-N\tTS\tT-tec-001\tlabel_added\t-\tx\thuman\t-\nE-N\tTS\tT-tec-001\tlabel_added\t-\tz\thuman\t-\nE-N\tTS\tT-tec-001\tref_added\t-\thttps://x.test/1\thuman\t-\nE-N\tTS\tT-tec-001\tref_added\t-\thttps://github.com/o/r/pull/9\thuman\t-\nE-N\tTS\tT-tec-001\towner\tw2\t-\thuman\t-\nE-N\tTS\tT-tec-001\tdue\t2026-11-30\t-\thuman\t-\nE-N\tTS\tT-tec-001\tpoints\t3\t-\thuman\t-\nE-N\tTS\tT-tec-001\tsprint\tS-N\t-\thuman\t-\nE-N\tTS\tT-tec-001\tdescription\t-\t-\thuman\t-\nE-N\tTS\tT-tec-001\tlabel_removed\tx\t-\thuman\t-\nE-N\tTS\tT-tec-001\tlabel_removed\tz\t-\thuman\t-\nE-N\tTS\tT-tec-001\tref_removed\thttps://x.test/1\t-\thuman\t-'
 
 # ---- update --status(分類に入ったときだけ完了報告の列を合わせる)
-eq "status: done" "$(teerr $TB update T-tec2-001 --status done)" $'T-tec2-001 updated\nrc=0'
-eq "status: reported_at" "$(terow T-tec2-001)" $'T-tec2-001|done|X|task|medium|-|-|-|-|[]|-|[]|-|0|-|1'
 sqlite3 "$TB_DB" "UPDATE tasks SET reported_at='x' WHERE id='T-tec2-001';"
+eq "status: done" "$(teerr $TB update T-tec2-001 --status done)" $'T-tec2-001 updated\nrc=0'
+eq "status: done clears reported_at" "$(terow T-tec2-001)" $'T-tec2-001|done|X|task|medium|-|-|-|-|[]|-|[]|-|0|-|1'
+sqlite3 "$TB_DB" "UPDATE tasks SET reported_at=NULL WHERE id='T-tec2-001';"
 eq "status: cancelled" "$(teerr $TB update T-tec2-001 --status cancelled)" $'T-tec2-001 updated\nrc=0'
-eq "status: cancelled fills reported_at" "$(terow T-tec2-001)" $'T-tec2-001|cancelled|X|task|medium|-|-|-|-|[]|-|[]|-|0|-|0'
+eq "status: cancelled fills reported_at" "$(sqlite3 "$TB_DB" "SELECT status, reported_at GLOB '????-??-??T??:??:??Z' FROM tasks WHERE id='T-tec2-001';")" $'cancelled|1'
 eq "status: back to todo" "$(teerr $TB update T-tec2-001 --status todo)" $'T-tec2-001 updated\nrc=0'
 eq "status: notify done once" "$(TB_NOTIFY_ENABLED=on TB_NOTIFY_DEDUPE_SEC=0 $TB update T-tec2-001 --status done >/dev/null; TB_NOTIFY_ENABLED=on TB_NOTIFY_DEDUPE_SEC=0 $TB update T-tec2-001 --status done >/dev/null; sqlite3 "$TB_DB" "SELECT type, ref FROM notify_events WHERE ref='T-tec2-001';")" $'done|T-tec2-001'
 
@@ -103,6 +108,5 @@ eq "statuses: builtin name not listed" "$(teerr $TB update T-tec2-004 --status d
 eq "statuses: rows" "$(terow T-tec2-004)" $'T-tec2-004|shipped|M|task|medium|-|-|-|-|[]|-|[]|-|0|-|1'
 rm -f "$TB_STATUSES"
 
-unset -f teerr temask terow; unset sa so sc TB_STATUSES TB_LABELS TB_SYSTEM_LABELS
-[[ -z $_te_saved ]] || while IFS= read -r _l; do export "$_l"; done <<<"$_te_saved"
-unset _te_saved _l
+unset -f teerr temask terow; unset sa so sc HERDR_PANE_ID TB_STATUSES TB_LABELS TB_SYSTEM_LABELS
+eval "$_te_saved"; unset _te_saved

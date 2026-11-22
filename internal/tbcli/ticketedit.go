@@ -71,6 +71,10 @@ func validRefURL(v string) error {
 func labelsJSON(args []string) ([]string, error) {
 	var out []string
 	for _, a := range args {
+		// bash は read -ra で読むので、改行があれば先頭の行だけ
+		if i := strings.IndexByte(a, '\n'); i >= 0 {
+			a = a[:i]
+		}
 		for _, p := range strings.Split(a, ",") {
 			p = config.Trim(p)
 			if p == "" {
@@ -519,7 +523,7 @@ func cmdUpdate(args []string, w, stderr io.Writer) error {
 		case "--add-ref":
 			addref = append(addref, v)
 		case "--sprint":
-			nsprint, hasSprint = v, true
+			nsprint, hasSprint = v, v != "-" // bash と同じく - は指定なし
 		case "--points":
 			if v != "" {
 				if err := validPoints(v); err != nil {

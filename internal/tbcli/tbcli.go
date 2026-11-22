@@ -12,8 +12,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/env"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/perms"
@@ -238,24 +236,8 @@ func today() (string, error) {
 	return time.Now().Format("2006-01-02"), nil
 }
 
-// labels は tasks.sh の labels_json と同じ: カンマで分け、前後の空白を落とし、検査する。
-func labels(arg string) ([]string, error) {
-	var out []string
-	for _, p := range strings.Split(arg, ",") {
-		p = strings.TrimFunc(p, unicode.IsSpace)
-		if p == "" {
-			continue
-		}
-		if n := utf8.RuneCountInString(p); n < 1 || n > 40 || strings.ContainsFunc(p, func(r rune) bool {
-			return unicode.IsSpace(r) || r == ',' || r == '"' || r == '\''
-		}) {
-			return nil, usage("ラベルは 1〜40 文字で、空白・カンマ・引用符を含まない: %s", p)
-		}
-		out = append(out, p)
-	}
-	slices.Sort(out)
-	return slices.Compact(out), nil
-}
+// labels は tasks.sh の labels_json と同じ(list -l も add / update と同じ検査。labelsJSON)。
+func labels(arg string) ([]string, error) { return labelsJSON([]string{arg}) }
 
 // openCmd は bin/tb の main がコマンドの前にすること(init_db と statuses_load)をする。
 // 設定 statuses が壊れていれば、どのコマンドでも bash と同じ警告を標準エラーに出す。
