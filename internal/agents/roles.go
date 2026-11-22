@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/config"
@@ -40,8 +41,8 @@ func RolesDir(session string) string {
 }
 
 type roleBody struct {
-	body string
-	ok   bool
+	body, src string // src は db:<セッション> / db:* / file:<パス>
+	ok        bool
 }
 
 type roleNames struct {
@@ -70,27 +71,84 @@ func NewRolesIn(db *sql.DB, session, dir string) *Roles {
 
 // Lookup は role_lookup(@map は役割の対応)。
 func (r *Roles) Lookup(name string) (string, bool) {
+	b, _, ok := r.LookupSrc(name)
+	return b, ok
+}
+
+// LookupSrc は role_lookup の本文と出どころ(RB_SRC)。
+func (r *Roles) LookupSrc(name string) (body, src string, ok bool) {
 	if b, ok := r.bodies[name]; ok {
-		return b.body, b.ok
+		return b.body, b.src, b.ok
 	}
 	key, file := "", ""
 	if name == "@map" {
 		key, file = "role-map", "map.conf"
 	} else {
 		if !reRoleKey.MatchString(name) || name == "README" {
-			return "", false
+			return "", "none", false
 		}
 		key, file = "role:"+name, name+".md"
 	}
-	var b roleBody
-	if body, _, ok := config.DBRow(r.DB, r.Session, key); ok {
-		b = roleBody{body, true}
+	b := roleBody{src: "none"}
+	if body, shared, ok := config.DBRow(r.DB, r.Session, key); ok {
+		b = roleBody{body, "db:" + r.Session, true}
+		if shared {
+			b.src = "db:*"
+		}
 	} else if p := filepath.Join(r.Dir, file); isRegular(p) {
 		data, _ := os.ReadFile(p)
-		b = roleBody{strings.TrimRight(string(data), "\n"), true}
+		b = roleBody{strings.TrimRight(string(data), "\n"), "file:" + p, true}
 	}
 	r.bodies[name] = b
-	return b.body, b.ok
+	return b.body, b.src, b.ok
+}
+
+// Forget は role_forget(書いたあとに覚えた本文を捨てる)。
+func (r *Roles) Forget(name string) {
+	delete(r.bodies, name)
+	r.names = map[string]roleNames{}
+}
+
+// KeyOf は role_key_of: 役割名(か @map)の DB のキー。使えない名前なら ok=false。
+func KeyOf(name string) (string, bool) {
+	if name == "@map" {
+		return "role-map", true
+	}
+	if !reRoleKey.MatchString(name) || name == "README" {
+		return "", false
+	}
+	return "role:" + name, true
+}
+
+// List は role_list: 役割名の一覧(DB の行とファイル。_ で始まるもの・README を除く。バイト順で重複なし)。
+func (r *Roles) List() []string {
+	var all []string
+	if rows, err := r.DB.Query(`SELECT substr(key, 6) FROM main.config WHERE key LIKE 'role:%' AND herdr_session IN (?, '*')`, r.Session); err == nil {
+		for rows.Next() {
+			var k string
+			if rows.Scan(&k) == nil {
+				all = append(all, k)
+			}
+		}
+		rows.Close()
+	}
+	if es, err := os.ReadDir(r.Dir); err == nil {
+		for _, e := range es {
+			n := e.Name()
+			if !strings.HasPrefix(n, ".") && strings.HasSuffix(n, ".md") && isRegular(filepath.Join(r.Dir, n)) {
+				all = append(all, strings.TrimSuffix(n, ".md"))
+			}
+		}
+	}
+	sort.Strings(all)
+	var out []string
+	for i, n := range all {
+		if strings.HasPrefix(n, "_") || n == "README" || (i > 0 && n == all[i-1]) {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
 }
 
 // Exists は role_exists。
@@ -115,19 +173,43 @@ func (r *Roles) list(s string) []string {
 
 // FilesFor は role_files_for(ROLE_STRICT=1): agent の役割名。台帳を読めなければ ok=false。
 func (r *Roles) FilesFor(name string) ([]string, bool) {
+	return r.filesFor(name, nil, true)
+}
+
+// FilesForLoose は ROLE_STRICT なしの role_files_for(台帳を読めなければ未登録とみなして map で決める。load_role など)。
+func (r *Roles) FilesForLoose(name string) []string {
+	fs, _ := r.filesFor(name, nil, false)
+	return fs
+}
+
+// FilesForReg は role_files_for <名前> <台帳の role>(台帳を読まずに渡した値で決める)。
+func (r *Roles) FilesForReg(name, reg string) []string {
+	fs, _ := r.filesFor(name, &reg, false)
+	return fs
+}
+
+func (r *Roles) filesFor(name string, given *string, strict bool) ([]string, bool) {
 	if !reRoleAgent.MatchString(name) || strings.HasPrefix(name, "_") || name == "README" {
 		return nil, true
 	}
 	if r.Exists(name) {
 		return []string{name}, true
 	}
-	var reg sql.NullString
-	err := r.DB.QueryRow(`SELECT COALESCE(role,'') FROM agents WHERE name=?`, name).Scan(&reg)
-	if err != nil && err != sql.ErrNoRows {
-		return nil, false
+	reg := ""
+	if given != nil {
+		reg = *given
+	} else {
+		var v sql.NullString
+		err := r.DB.QueryRow(`SELECT COALESCE(role,'') FROM agents WHERE name=?`, name).Scan(&v)
+		if err != nil && err != sql.ErrNoRows {
+			if strict {
+				return nil, false
+			}
+		}
+		reg = v.String
 	}
-	if reg.String != "" {
-		if found := r.list(reg.String); len(found) > 0 {
+	if reg != "" {
+		if found := r.list(reg); len(found) > 0 {
 			return found, true
 		}
 	}

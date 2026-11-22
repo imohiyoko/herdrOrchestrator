@@ -20,7 +20,7 @@ import (
 )
 
 // Commands は Go に移し終えたコマンド。bin/tb はこの一覧(herdrctl tb --commands)を見て渡すかを決める。
-var Commands = []string{"activity", "add", "allow", "approval", "approve", "ask", "block", "board", "can", "cancel", "claim", "comment", "comments", "config", "conv", "conv-candidate-add", "conv-candidate-adopt", "conv-candidate-reject", "conv-draft", "conv-gate", "conv-incident", "conv-kinds", "conv-learn-purge", "conv-ledger", "conv-length", "conv-lint", "conv-pair-add", "conv-pair-show", "conv-pairs", "conv-patterns", "conv-route", "conv-routes-set", "conv-scan", "conv-stage", "conv-stage-log", "conv-stage-reset", "conv-stage-set", "conv-voice", "conv-voice-check", "deadlines-import", "done", "due-scan", "events", "flush", "gate", "handoff", "history", "inbox", "inbox-read", "job", "labels", "limits", "link", "list", "message", "notify", "nudge", "org", "outbox", "peek", "pending", "pr", "pr-queue", "pr-watch", "proposal", "proposal-resolve", "proposals", "proxy", "proxy-check", "proxy-list", "proxy-request", "proxy-resolve", "reject", "reminder", "reminders", "reopen", "report", "resolve", "review", "review-pack", "review-submit", "sched-job", "send", "show", "sprint-add", "sprint-close", "sprint-start", "sprints", "ticket", "touch", "tree", "unlink", "update"}
+var Commands = []string{"activity", "add", "allow", "approval", "approve", "ask", "block", "board", "can", "cancel", "claim", "comment", "comments", "config", "conv", "conv-candidate-add", "conv-candidate-adopt", "conv-candidate-reject", "conv-draft", "conv-gate", "conv-incident", "conv-kinds", "conv-learn-purge", "conv-ledger", "conv-length", "conv-lint", "conv-pair-add", "conv-pair-show", "conv-pairs", "conv-patterns", "conv-route", "conv-routes-set", "conv-scan", "conv-stage", "conv-stage-log", "conv-stage-reset", "conv-stage-set", "conv-voice", "conv-voice-check", "deadlines-import", "done", "due-scan", "events", "flush", "gate", "handoff", "history", "inbox", "inbox-read", "job", "labels", "limits", "link", "list", "message", "notify", "nudge", "org", "outbox", "peek", "pending", "pr", "pr-queue", "pr-watch", "proposal", "proposal-resolve", "proposals", "proxy", "proxy-check", "proxy-list", "proxy-request", "proxy-resolve", "reject", "reminder", "reminders", "reopen", "report", "resolve", "review", "review-pack", "review-submit", "role-broadcast", "role-context", "role-edit", "role-list", "role-log", "role-set", "role-show", "role-unset", "role-write", "roles", "sched-job", "send", "show", "sprint-add", "sprint-close", "sprint-start", "sprints", "ticket", "touch", "tree", "unlink", "update"}
 
 // Features は bin/tb が渡す前に確かめる機能(perms = 権限段階の門。ADR 0006)。
 var Features = []string{"perms"}
@@ -148,6 +148,26 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		err = cmdOrg(args[1:], w, stderr)
 	case "peek":
 		err = cmdPeek(args[1:], w, stderr)
+	case "role-context":
+		err = cmdRoleContext(args[1:], w, stderr)
+	case "role-broadcast":
+		err = cmdRoleBroadcast(args[1:], w, stderr)
+	case "role-show":
+		err = cmdRoleShow(args[1:], w, stderr)
+	case "role-list":
+		err = cmdRoleList(args[1:], w, stderr)
+	case "role-write":
+		err = cmdRoleWrite(args[1:], w, stderr)
+	case "role-edit":
+		err = cmdRoleEdit(args[1:], w, stderr)
+	case "role-unset":
+		err = cmdRoleUnset(args[1:], w, stderr)
+	case "role-set":
+		err = cmdRoleSet(args[1:], w, stderr)
+	case "role-log":
+		err = cmdRoleLog(args[1:], w, stderr)
+	case "roles":
+		err = cmdRoles(args[1:], w, stderr)
 	case "deadlines-import":
 		err = cmdDeadlinesImport(args[1:], w, stderr)
 	case "claim":
