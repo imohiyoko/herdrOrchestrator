@@ -94,21 +94,32 @@ func deliverComment(db *store.DB, w, stderr io.Writer, ref string) error {
 	if rc := transport.Send(db.DB, db.Session, target, msg, "C-"+ref, "comment", stderr); rc != transport.Sent {
 		return &exit{rc, ""}
 	}
-	ts := now()
-	if _, err := db.Exec(`UPDATE main.comments SET delivered_at=? WHERE herdr_session=? AND id=`+ref, ts, db.Session); err != nil {
+	// 配送済みの印とタスクの報告済みは一緒に書く(片方だけ残ると、次の tb report が同じ報告を作り直して送る)
+	if err := commentMarkDelivered(db, ref, now()); err != nil {
 		return err
 	}
-	commentMarksReported(db, ref, ts)
 	fmt.Fprintf(w, "C-%s delivered to %s\n", ref, target)
 	return nil
 }
 
-// commentMarksReported は comment_marks_reported: done の報告コメントが届いたら、そのタスク(done のもの)を報告済みにする。
-func commentMarksReported(db *store.DB, ref, ts string) {
+// commentMarkDelivered は配送の記録: delivered_at を書き、comment_marks_reported(done の報告コメントが届いたら、
+// そのタスク(done のもの)を報告済みにする)を同じトランザクションで行う。ref は数字だけ(呼び出し側で確かめてある)。
+func commentMarkDelivered(db *store.DB, ref, ts string) error {
 	st := tickets.LoadStatuses(db.DB, db.Session)
-	_, _ = db.Exec(`UPDATE main.tasks SET reported_at=?1, updated_at=?1
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE main.comments SET delivered_at=? WHERE herdr_session=? AND id=?`, ts, db.Session, ref); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE main.tasks SET reported_at=?1, updated_at=?1
 		WHERE herdr_session=?2 AND status IN (`+st.SQLList("done")+`) AND reported_at IS NULL
-		AND id=(SELECT task_id FROM comments WHERE id=`+ref+` AND kind='done')`, ts, db.Session)
+		AND id=(SELECT task_id FROM comments WHERE id=?3 AND kind='done')`, ts, db.Session, ref); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // commentNotify は notify_hook_comment: 外への通知を積む(失敗しても止めない)。
@@ -222,7 +233,7 @@ func cmdComment(args []string, w, stderr io.Writer) error {
 	if v, ok := os.LookupEnv("TB_IMMEDIATE_KINDS"); ok && v != "" {
 		imm = v
 	}
-	if contains(strings.Fields(imm), kind) { // 人の判断待ちはすぐ送る。それ以外は tb digest でまとめて送る
+	if strings.Contains(" "+imm+" ", " "+kind+" ") { // 人の判断待ちはすぐ送る。それ以外は tb digest でまとめて送る
 		if err := deliverComment(db, io.Discard, stderr, strconv.FormatInt(cid, 10)); err != nil {
 			e, ok := err.(*exit)
 			if !ok {
@@ -276,7 +287,7 @@ func cmdComments(args []string, w, stderr io.Writer) error {
 		qa = append(qa, args[0])
 		args = args[1:]
 	}
-	js := false
+	js, kind := false, ""
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--kind":
@@ -285,11 +296,7 @@ func cmdComments(args []string, w, stderr io.Writer) error {
 				return err
 			}
 			i++
-			if !contains(commentKinds, v) {
-				return usage("comments: --kind は %s", strings.Join(commentKinds, " "))
-			}
-			where += " AND kind=?"
-			qa = append(qa, v)
+			kind = v
 		case "--undelivered":
 			where += " AND delivered_at IS NULL"
 		case "--open":
@@ -299,6 +306,13 @@ func cmdComments(args []string, w, stderr io.Writer) error {
 		default:
 			return usage("comments: 不明な引数 %s", args[i])
 		}
+	}
+	if kind != "" { // bash と同じく最後に指定した値を見る。空なら絞らない
+		if !contains(commentKinds, kind) {
+			return usage("comments: --kind は %s", strings.Join(commentKinds, " "))
+		}
+		where += " AND kind=?"
+		qa = append(qa, kind)
 	}
 	if js {
 		return commentRows(db, w, where, qa...)
@@ -411,7 +425,7 @@ func cmdReopen(args []string, w, stderr io.Writer) error {
 		return err
 	}
 	defer conn.Close()
-	if _, err := conn.ExecContext(ctx, "BEGIN"); err != nil {
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		return err
 	}
 	commit := false
@@ -420,7 +434,9 @@ func cmdReopen(args []string, w, stderr io.Writer) error {
 			_, _ = conn.ExecContext(ctx, "ROLLBACK")
 		}
 	}()
-	if _, err := conn.ExecContext(ctx, `UPDATE main.comments SET resolved_at=NULL, resolved_note=NULL WHERE herdr_session=? AND id=`+ref+` AND resolved_at IS NOT NULL`, db.Session); err != nil {
+	// 読んでから書くまでの間に resolve し直されても、実際に外した時刻を old に残す(外すものが無ければ event は作らない)
+	_ = conn.QueryRowContext(ctx, `SELECT resolved_at FROM comments WHERE id=?`, ref).Scan(&at)
+	if _, err := conn.ExecContext(ctx, `UPDATE main.comments SET resolved_at=NULL, resolved_note=NULL WHERE herdr_session=? AND id=? AND resolved_at IS NOT NULL`, db.Session, ref); err != nil {
 		return err
 	}
 	if hasEv > 0 {

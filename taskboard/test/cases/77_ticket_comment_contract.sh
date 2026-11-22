@@ -41,6 +41,9 @@ eq "comments: unknown" "$(tcerr $TB comments --bogus)" $'tb: comments: 不明な
 eq "comments: bad kind" "$(tcerr $TB comments "$a" --kind info)" $'tb: comments: --kind は done progress question blocked\n(tb help で使い方)\nrc=2'
 eq "comments: task" "$(tcerr $TB comments "$a" | tcmask)" $'C-N\tprogress\t-\tundelivered\tT-tcm-001\tworker1\t途中\nC-N\tdone\t-\tundelivered\tT-tcm-001\tworker1\t終わり\nC-N\tquestion\tneeds-human\tdelivered\tT-tcm-001\tworker1\tどちら ですか\nrc=0'
 eq "comments: task kind" "$(tcerr $TB comments "$a" --kind done | tcmask)" $'C-N\tdone\t-\tundelivered\tT-tcm-001\tworker1\t終わり\nrc=0'
+eq "comments: empty kind is no filter" "$(tcerr $TB comments "$a" --kind '' | cut -f2)" $'progress\ndone\nquestion\nrc=0'
+eq "comments: last kind wins" "$(tcerr $TB comments "$a" --kind info --kind done | cut -f2)" $'done\nrc=0'
+eq "comments: last kind is checked" "$(tcerr $TB comments "$a" --kind done --kind info)" $'tb: comments: --kind は done progress question blocked\n(tb help で使い方)\nrc=2'
 eq "comments: open" "$(tcerr $TB comments --open | grep -E 'tcm|rc=' | tcmask)" $'C-N\tquestion\tneeds-human\tdelivered\tT-tcm-001\tworker1\tどちら ですか\nC-N\tblocked\tneeds-human\tundelivered\tT-tcm-002\tworker1\t止まった\nC-N\tquestion\tneeds-human\tundelivered\tT-tcm-002\tworker1\t送れない\nrc=0'
 eq "comments: json" "$($TB comments "$b" --json | jq -c 'del(.created_at,.id,.delivered_at)')" $'{"task_id":"T-tcm-002","kind":"blocked","text":"止まった","deliverables":[],"from_name":"worker1","from_pane":"wW:p1","from_session":"sess-w1","resolved_at":null,"resolved_note":null,"herdr_session":"default"}\n{"task_id":"T-tcm-002","kind":"question","text":"送れない","deliverables":[],"from_name":"worker1","from_pane":"wW:p1","from_session":"sess-w1","resolved_at":null,"resolved_note":null,"herdr_session":"default"}'
 eq "comments: missing task" "$(tcerr $TB comments T-tcm-999)" $'rc=0'
@@ -73,7 +76,7 @@ eq "reopen: row and event" "$(tcrow "$q"; sqlite3 "$TB_DB" "SELECT kind, actor, 
 # ---- pending / report
 eq "pending: unknown" "$(tcerr $TB pending --bogus)" $'tb: pending: 不明な引数 --bogus\n(tb help で使い方)\nrc=2'
 eq "pending: tsv" "$(tcerr $TB pending | grep -E 'tcm|rc=' | tcmask)" $'C-N\ttcm\tconductor\t[progress] 途中\nC-N\ttcm\tconductor\t[done] 終わり\nC-N\ttcm\tconductor\t[blocked] 止まった\nC-N\ttcm\tconductor\t[question] 送れない\nC-N\ttcm2\tconductor\t[progress] json\nrc=0'
-eq "pending: ids" "$($TB pending --ids | grep -Fx -f <(sqlite3 "$TB_DB" "SELECT 'C-'||id FROM comments WHERE task_id LIKE 'T-tcm%' UNION SELECT id FROM tasks WHERE id LIKE 'T-tcm%';") | tcmask)" $'C-N\nC-N\nC-N\nC-N\nC-N'
+eq "pending: ids" "$(diff <($TB pending --ids | grep -Fx -f <(sqlite3 "$TB_DB" "SELECT 'C-'||id FROM comments WHERE task_id LIKE 'T-tcm%' UNION SELECT id FROM tasks WHERE id LIKE 'T-tcm%';")) <(sqlite3 "$TB_DB" "SELECT 'C-'||id FROM comments WHERE task_id LIKE 'T-tcm%' AND text IN ('途中','終わり','止まった','送れない','json') ORDER BY id;") && echo same)" $'same'
 eq "report: no args" "$(tcerr $TB report)" $'tb: report <id>\n(tb help で使い方)\nrc=2'
 eq "report: bad id" "$(tcerr $TB report x)" $'tb: タスク ID は T-<project>-NNN 形式: x\n(tb help で使い方)\nrc=2'
 eq "report: missing task" "$(tcerr $TB report T-tcm-999)" $'tb: タスクが見つかりません: T-tcm-999\nrc=1'
@@ -87,6 +90,8 @@ eq "report: comment redeliver" "$(tcerr $TB report "$(sqlite3 "$TB_DB" "SELECT '
 eq "report: comment already delivered" "$(tcerr $TB report "$q" | tcmask)" $'C-N は配送済みです(TS)\nrc=0'
 eq "pending: after" "$(tcerr $TB pending | grep -E 'tcm|rc=' | tcmask)" $'C-N\ttcm\tconductor\t[progress] 途中\nC-N\ttcm\tconductor\t[done] 終わり\nC-N\ttcm\tconductor\t[question] 送れない\nC-N\ttcm2\tconductor\t[progress] json\nrc=0'
 eq "report: rows" "$(sqlite3 "$TB_DB" "SELECT id, reported_at IS NULL FROM tasks WHERE id LIKE 'T-tcm%' ORDER BY id;"; sqlite3 "$TB_DB" "SELECT id FROM comments WHERE task_id LIKE 'T-tcm%' ORDER BY id;" | while read -r i; do tcrow "$i"; done)" $'T-tcm-001|1\nT-tcm-002|0\nT-tcm2-001|1\nT-tcm-001|progress|途中|[]|worker1|wW:p1|sess-w1|1|1|NULL\nT-tcm-001|done|終わり|["out/a.md","<b>&\\"c\\""]|worker1|wW:p1|sess-w1|1|1|NULL\nT-tcm-001|question|どちら\nですか|[]|worker1|wW:p1|sess-w1|0|1|NULL\nT-tcm-002|blocked|止まった|[]|worker1|wW:p1|sess-w1|0|1|NULL\nT-tcm-002|question|送れない|[]|worker1|wW:p1|sess-w1|1|1|NULL\nT-tcm2-001|progress|すぐ|[]|worker1|wW:p1|sess-w1|0|1|NULL\nT-tcm2-001|progress|json|[]|worker1|wW:p1|sess-w1|1|1|NULL\nT-tcm-002|done|B 要約|["out/b.md"]|-|-|-|0|1|NULL'
+eq "comment: immediate kinds split on spaces only" "$(TB_IMMEDIATE_KINDS=$'progress\tquestion' tcerr $TB comment "$c" --kind progress --text 'タブ' | tcmask)" $'C-N queued\nrc=0'
+eq "reopen: old is the cleared time" "$(HERDR_PANE_ID= $TB resolve "$q" >/dev/null; t=$(sqlite3 "$TB_DB" "SELECT resolved_at FROM comments WHERE id=${q#C-};"); HERDR_PANE_ID= $TB reopen "$q" >/dev/null; sqlite3 "$TB_DB" "SELECT old='$t' FROM task_events WHERE ref='$q' AND kind='comment_reopened' ORDER BY id DESC LIMIT 1;")" $'1'
 
 unset HERDR_PANE_ID TB_IMMEDIATE_KINDS FAKE_STATUS
 eval "$_tc_saved"
