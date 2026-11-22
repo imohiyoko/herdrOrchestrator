@@ -111,6 +111,7 @@ fi
 exec "$_real_sqlite" "\$@"
 WRAP
 chmod +x "$TMP/race-bin/sqlite3"
+export TB_TEST_HOOKS=1  # Go 版(TB_IMPL=go)は sqlite3 を呼ばないので、同じことを herdrctl のテスト用の口(store.RaceHook)がする
 ra=$($TB add -p tk6 -t a); rb=$($TB add -p tk6 -t b)
 eq "tickets(race): --type epic loses to a parent set in between" \
   "$(PATH="$TMP/race-bin:$PATH" RACE_MARK=$TMP/race1 RACE_SQL="UPDATE tasks SET parent_id='$rb' WHERE id='$ra'" rc $TB update "$ra" --type epic)" "2"
@@ -126,6 +127,7 @@ eq "tickets(race): only the reverse link exists" "$(sqlite3 "$TB_DB" "SELECT fro
 $TB update "$re" --add-label keep >/dev/null
 PATH="$TMP/race-bin:$PATH" RACE_MARK=$TMP/race4 RACE_SQL="UPDATE tasks SET labels='[\"keep\",\"other\"]' WHERE id='$re'" $TB update "$re" --add-label mine >/dev/null
 eq "tickets(race): concurrent label add is kept" "$($TB show "$re" | jq -c .labels)" '["keep","mine","other"]'
+unset TB_TEST_HOOKS
 
 # --- 外部リンク(Slack・PR・ドキュメントの URL)
 x1=$($TB add -p tk7 -t refs --ref https://acme.slack.com/archives/C1/p123 --ref pr=https://github.com/o/r/pull/1 --ref https://example.invalid/doc)
