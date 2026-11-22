@@ -14,7 +14,7 @@ export FAKE_AGENTS="[$(rm_ hrm1),$(rm_ hrt1),$(rm_ worker1)]"
 $TB agents >/dev/null 2>&1
 eq "roles: map.conf gives several roles" "$($TB roles | cut -f1,2 | tr '\t\n' ' ')" "hrm1 hr.md,manager.md hrt1 hr.md,task.md worker1 worker.md "
 ctx=$(HERDR_PANE_ID=whrm1:p1 $TB role-context --source startup --session-id s-hrm1 | jq -r .hookSpecificOutput.additionalContext)
-eq "role-context: _common then each role file" "$(grep -c '^COMMON$\|^ROLE-hr$\|^ROLE-manager$' <<<"$ctx") $(grep -c 'ROLE-task' <<<"$ctx")" "3 0"
+eq "role-context: _common then each role file" "$(grep -cE '^(COMMON|ROLE-hr|ROLE-manager)$' <<<"$ctx") $(grep -c 'ROLE-task' <<<"$ctx")" "3 0"
 printf 'send:task:@hr+task = allow\nagent:stop:@hr = allow\n* = ask\n' >"$TB_APPROVALS"
 eq "approvals: @hr+task needs both roles" "$($TB approval send:task:hrt1 | head -1) $($TB approval send:task:hrm1 | head -1)" "allow ask"
 eq "approvals: @hr matches any agent that has hr among its roles" "$($TB approval agent:stop:hrm1 | head -1) $($TB approval agent:stop:worker1 | head -1)" "allow ask"

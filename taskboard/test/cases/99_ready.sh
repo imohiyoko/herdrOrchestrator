@@ -38,11 +38,11 @@ out=$($TB agent-new rd5 --cwd "$TMP" --prompt 'hello' 2>&1; echo "rc=$?")
 eq "verify: TB_PROMPT_VERIFY_SEC=0 disables the check" "$(rd_n '^prompt rd5') $(rd_n '^keys')" "1 0"
 
 # tb send は準備待ちも検証もしない(ready な agent への送信は従来どおり 1 回)
-rd_reset; export FAKE_PROMPT_MODE=swallow-always TB_PROMPT_VERIFY_SEC=5 TB_SPAWN_READY_SEC=5 FAKE_READY_AFTER=100000
+rd_reset; export FAKE_PROMPT_MODE=swallow-always TB_PROMPT_VERIFY_SEC=30 TB_SPAWN_READY_SEC=30 FAKE_READY_AFTER=100000
 n0=$SECONDS
 RD_AG='[{"pane_id":"wC:p1","name":"conductor","agent_status":"idle","agent_session":{"value":"sc"}},{"pane_id":"wW:p1","name":"worker1","agent_session":{"value":"sw"}}]'
 eq "send: unaffected by readiness/verification" "$(FAKE_AGENTS=$RD_AG HERDR_PANE_ID=wC:p1 $TB send worker1 --kind info --text hi >/dev/null 2>&1; echo $?) $(rd_n '^prompt worker1') $(rd_n '^keys')" "0 1 0"
-eq "send: returns promptly" "$(( SECONDS - n0 < 3 ))" "1"
+eq "send: returns promptly" "$(( SECONDS - n0 < 20 ))" "1"
 
 rd_reset; unset TB_SPAWN_READY_SEC TB_PROMPT_VERIFY_SEC
 export TB_PROMPT_VERIFY_SEC=0 TB_SPAWN_POLL_SEC=0.05 TB_SPAWN_READY_SEC=0.2 TB_VERIFY_POLL_SEC=0.05

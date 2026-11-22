@@ -14,6 +14,8 @@
 #   run.sh --units          ユニットの一覧(1 行 1 ユニット)
 #   run.sh --timings        すべてを流して、ケースごとの秒数を weights に書き直す
 set -uo pipefail
+# An agent pane running this suite would make tb refuse human-only operations. Cases that need a pane set HERDR_PANE_ID themselves.
+unset HERDR_PANE_ID
 HERE=$(cd "$(dirname "$0")" && pwd)
 SWEEP=99_zzz_session_sweep.sh
 
@@ -113,7 +115,7 @@ wait
 pass=0 fail=0 bad=()
 for i in "${!ulist[@]}"; do
   echo "=== ${ulist[i]}"
-  grep -v '^pass=[0-9]* fail=[0-9]*$' "$out/$i.log" | sed '${/^$/d}'
+  grep -v '^pass=[0-9]* fail=[0-9]*$' "$out/$i.log" | sed -e '${' -e '/^$/d' -e '}'
   last=$(grep -E '^pass=[0-9]+ fail=[0-9]+$' "$out/$i.log" | tail -n 1)
   if [[ -z $last ]]; then bad+=("${ulist[i]}"); echo "FAIL (ユニットが最後まで流れなかった: 終了コード $(cat "$out/$i.rc"))"; continue; fi
   p=${last#pass=}; p=${p%% *}; f=${last##*fail=}
