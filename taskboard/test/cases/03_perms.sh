@@ -84,7 +84,14 @@ if [[ $(id -u) != 0 ]]; then
   # 置き場のディレクトリの中を見られない(ファイルがあるか確かめられない)のも、設定が無いのとは分ける
   mkdir -p "$TMP/perms-noexec"; _pm_appr=$TB_APPROVALS; export TB_APPROVALS=$TMP/perms-noexec/approvals; chmod 000 "$TMP/perms-noexec"
   eq "perms: an approvals dir that cannot be searched → only-human (not the default)" "$(rc $TB show "$t1")" "1"
-  chmod 755 "$TMP/perms-noexec"; export TB_APPROVALS=$_pm_appr
+  chmod 755 "$TMP/perms-noexec"
+  # さらに上のディレクトリの中を見られないときも同じ
+  mkdir -p "$TMP/perms-noexec/a/b"; export TB_APPROVALS=$TMP/perms-noexec/a/b/approvals; chmod 000 "$TMP/perms-noexec/a"
+  eq "perms: an ancestor dir that cannot be searched → only-human" "$(rc $TB show "$t1")" "1"
+  chmod 755 "$TMP/perms-noexec/a"
+  export TB_APPROVALS=$TMP/perms-noexec/none/approvals
+  eq "perms: a missing approvals file (dirs searchable) is no config → default allow" "$(rc $TB show "$t1")" "0"
+  export TB_APPROVALS=$_pm_appr
 fi
 
 # 下限は今はすべて allow(表の下限の列で守りを足せる。下限で丸める処理は internal/kernel/perms のテストで確かめる)

@@ -174,3 +174,32 @@ func TestTierClampsToFloor(t *testing.T) {
 		t.Errorf("丸めの根拠が無い: %s", rule)
 	}
 }
+
+// 途中のディレクトリの中を見られず、設定ファイルがあるか確かめられないときも only-human(本当に無いときは既定のまま)。
+func TestTierFailsClosedOnUnsearchableDir(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root はディレクトリの権限を無視する")
+	}
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "a", "b"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "x.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	tb := perms.Parse("a cmd:x:a allow allow entry\n")
+	t.Setenv("TB_APPROVALS", filepath.Join(root, "none", "approvals"))
+	if tier, rule := tb.Tier(db, "s", "cmd:x:a"); tier != "allow" {
+		t.Errorf("無いファイル = %s %s, want allow", tier, rule)
+	}
+	if err := os.Chmod(filepath.Join(root, "a"), 0); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(filepath.Join(root, "a"), 0o755)
+	t.Setenv("TB_APPROVALS", filepath.Join(root, "a", "b", "approvals"))
+	if tier, rule := tb.Tier(db, "s", "cmd:x:a"); tier != "only-human" {
+		t.Errorf("上のディレクトリを見られない = %s %s, want only-human", tier, rule)
+	}
+}

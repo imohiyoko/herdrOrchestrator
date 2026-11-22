@@ -89,8 +89,17 @@ config_lookup() {
   printf -v "$cv" '%s' "$CFG_BODY"; printf -v "$sv" '%s' "$CFG_SRC"; printf -v "$ev" '%s' "$CFG_ERR"
   [[ $CFG_SRC != none ]]
 }
-# ファイルがあるかどうかを確かめられない(置き場のディレクトリはあるのに中を見られない)。「ファイルが無い」とは分ける
-config_unreachable() { local d=${1%/*}; [[ $d != "$1" && -d $d && ! -x $d ]]; }
+# ファイルがあるかどうかを確かめられない(途中のディレクトリの中を見られない)。「ファイルが無い」とは分ける。
+# 上へたどって最初に見えたもの(-e)が、中を見られるディレクトリなら本当に無い。そうでなければ確かめられない
+config_unreachable() {
+  local d=$1
+  while [[ $d == */* ]]; do
+    d=${d%/*}; [[ -n $d ]] || d=/
+    if [[ -e $d ]]; then [[ ! -d $d || ! -x $d ]]; return; fi
+    [[ $d != / ]] || break
+  done
+  return 1
+}
 config_forget() { unset "CFGC_${1//-/_}" "CFGS_${1//-/_}" "CFGE_${1//-/_}"; }
 
 # ---------- agent に返す文面(設定 messages)----------
