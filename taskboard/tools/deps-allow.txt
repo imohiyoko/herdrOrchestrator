@@ -35,7 +35,10 @@ models -> agents
 models -> approvals
 models -> roles
 models -> send
+recipes -> agents
 recipes -> approvals
+recipes -> limits
+recipes -> send
 risk -> roles
 roles -> agents
 roles -> approvals

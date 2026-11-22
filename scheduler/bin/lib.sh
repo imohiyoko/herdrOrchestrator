@@ -139,7 +139,7 @@ load_job() {
     JOB_SRC=file
     [ -f "$JOB_CONF" ] || die "ジョブ定義がない: $JOB_CONF"
   fi
-  unset TARGET PROMPT PROMPT_FILE PROMPT_RULES PROMPT_CMD PROMPT_CMD_TIMEOUT PROMPT_VARS PROMPT_VAR_TIMEOUT COMMAND COMMAND_TIMEOUT GATE GATE_TIMEOUT WINDOW START END INTERVAL_MIN INTERVAL_SEC DAYS SKIP_IF TZ ENABLED WATCHER
+  unset TARGET PROMPT PROMPT_FILE PROMPT_RULES PROMPT_CMD PROMPT_CMD_TIMEOUT PROMPT_VARS PROMPT_VAR_TIMEOUT COMMAND COMMAND_TIMEOUT GATE GATE_TIMEOUT WINDOW START END INTERVAL_MIN INTERVAL_SEC DAYS SKIP_IF TZ ENABLED WATCHER OWNER
   if [ "$JOB_SRC" = db ]; then
     eval "$job_body"   # 本文は conf と同じ(bash の変数代入)。人が tb sched-job で書いたもの
   else
@@ -163,6 +163,12 @@ load_job() {
   [[ "$ENABLED" =~ ^[01]$ ]] || die "$JOB: ENABLED は 0 か 1"
   # WATCHER: 見張り系のジョブか(tb digest の観測が見る)。1 / 0。未設定なら空(TARGET と COMMAND から推定)
   [[ -z "${WATCHER:-}" || "$WATCHER" =~ ^[01]$ ]] || die "$JOB: WATCHER は 0 か 1"
+  # OWNER: コマンド型のジョブの持ち主(agent 名。ADR 0005 の守り 8)。tick.sh が SCHED_OWNER で渡し、tb recipe-run はこの agent の権限で判定する。
+  # 持ち主の無いジョブからは tb recipe-run は実行しない(人の権限を借りない)。conf にだけ書ける(settings・Web UI からは変えられない)
+  if [ -n "${OWNER:-}" ]; then
+    [ -n "${COMMAND:-}" ] || die "$JOB: OWNER はコマンド型(COMMAND)のジョブにだけ書ける"
+    [[ "$OWNER" =~ ^[a-z][a-z0-9_-]{0,31}$ && "$OWNER" != human ]] || die "$JOB: OWNER は agent 名(英小文字で始まる 32 字以内。human は不可): $OWNER"
+  fi
   # 一時的な上書き: SCHED_WINDOW / SCHED_START / SCHED_END / SCHED_INTERVAL_MIN / SCHED_INTERVAL_SEC
   if [ -n "${SCHED_WINDOW:-}" ]; then
     [[ "$SCHED_WINDOW" =~ ^([0-9:]+)-([0-9:]+)$ ]] || die "SCHED_WINDOW は HH:MM-HH:MM"

@@ -193,7 +193,7 @@ cmd_part-risk() {
 #   登録・変更・削除は人だけ(tb recipe-set / recipe-rm)。履歴は recipe_changes
 #   実行の入口は 1 つ(tb recipe-run)。判定の操作名は recipe:<名前>:<対象>(approvals / grants の glob で ask / allow)。権限カタログの項目は recipe:*:* の 1 行
 #   登録されていないレシピ名は、ask ではなく実行しない(fail-closed)
-#   段 2 で実行するのは、副作用 none で実行役 inside の部品だけ。ほかの部品は判定まで行い、実行しない(段 3 で外の実行役が行う)
+#   pane の外で行う部品(実行役 outside)を含む並びは、判定してから待ち行列(recipe_runs)に置き、外の実行役(tb recipe-runner)が実行する(段 3)
 #
 # 本文(1 行 1 つ。# から行末は注釈):
 #   desc <説明>                説明(1 行、200 字まで)
@@ -406,18 +406,85 @@ cmd_recipe-history() {
 }
 
 # ---------- 実行の入口 ----------
-# 記録(チケットの履歴 task_events。ADR 0003)。--task が無ければ task_id は空(どのチケットにも属さない)
-RUN_TASK=""; RUN_EID=""
+# 記録(チケットの履歴 task_events。ADR 0003)。--task が無ければ task_id は空(どのチケットにも属さない)。actor は依頼者
+RUN_TASK=""; RUN_EID=""; RUN_TARGET=""; RUN_VIA=""
 recipe_event() {  # $1=kind $2=old $3=new $4=ref → 行の id を出す
   sql "INSERT INTO main.task_events (herdr_session, task_id, kind, old, new, actor, ref, created_at)
     VALUES ($SQS, $(q "$RUN_TASK"), $(q "$1"), $([[ -n $2 ]] && q "$2" || echo NULL), $(q "$3"), $(q "$REQ_BY"), $(q "$4"), $(q "$(now)"));
     SELECT last_insert_rowid();"
 }
 
-# 読み取りの部品の実行(段 2 で実行するのはこれだけ)。出力は PART_OUT、0=成功
+# 実行できる部品(段 3)。ここに無い部品は判定まで行い、実行しない(send-info / pr-queue-approve / config-set はまだ)
+PART_EXEC="agent-status wait-idle task-show agent-stop agent-revive agent-restart agent-force-stop comment-resolve"
+
+# 依頼者を決める。人の端末(pane なし)でも、定期ジョブ(scheduler が SCHED_JOB を渡す)から呼ばれたときは人として扱わない:
+# ジョブに持ち主(OWNER。scheduler が SCHED_OWNER で渡す)があればその agent の権限で判定し、無ければ実行しない(守り 8)
+recipe_requester() {
+  RUN_VIA=""
+  requester
+  [[ $REQ_BY == human && -n ${SCHED_JOB:-} ]] || return 0
+  if [[ -z ${SCHED_OWNER:-} ]]; then
+    echo "tb: recipe-run: 定期ジョブ($SCHED_JOB)からは、ジョブに持ち主(OWNER=<agent 名>)があるときだけ実行します(人の権限では実行しない)" >&2; return 4
+  fi
+  part_value_ok agent "$SCHED_OWNER" || { echo "tb: recipe-run: ジョブ $SCHED_JOB の OWNER が agent 名ではありません: $SCHED_OWNER" >&2; return 4; }
+  REQ_BY=$SCHED_OWNER; RUN_VIA="sched:$SCHED_JOB"
+}
+
+# agent 型の値が依頼者か対象か(登録の検査をすり抜けた行への備え)。$1=部品(PART_VAL に引数)
+recipe_agents_ok() {
+  local spec k
+  for spec in ${PART_ARGS[$1]}; do
+    [[ ${spec#*:} == agent ]] || continue
+    k=${spec%%:*}; k=${k%\?}
+    [[ -z ${PART_VAL[$k]+x} || ${PART_VAL[$k]} == "$REQ_BY" || ${PART_VAL[$k]} == "$RUN_TARGET" ]] && continue
+    PART_ERR="$1 の $k(${PART_VAL[$k]})は依頼者でも対象でもありません"; return 1
+  done
+}
+
+# 部品ごとの判定(依頼者 REQ_BY の権限。レシピの許可は部品の許可の代わりにならない)。$1=plan(JSON)
+# 全部を判定し、1 行ずつ出す。JUDGE_RULES(step ごとの判定と根拠)。止まる step があれば JUDGE_STOP(理由)と JUDGE_RC(4 / 20)
+JUDGE_STOP=""; JUDGE_RC=0; JUDGE_RULES=(); JUDGE_OUTSIDE=0
+recipe_judge() {
+  local plan=$1 i n part verdict rule k c
+  local -a kvs
+  JUDGE_STOP=""; JUDGE_RC=0; JUDGE_RULES=(); JUDGE_OUTSIDE=0
+  for ((i = 0; i < $(jq length <<<"$plan"); i++)); do
+    n=$((i + 1)); part=$(jq -r ".[$i].part" <<<"$plan")
+    mapfile -t kvs < <(jq -r ".[$i].args | to_entries[] | \"\(.key)=\(.value)\"" <<<"$plan")
+    verdict=allow; rule=""
+    if ! part_args_check "$part" "${kvs[@]}"; then verdict=deny; rule=$PART_ERR; JUDGE_RC=4
+    elif ! recipe_agents_ok "$part"; then verdict=deny; rule=$PART_ERR; JUDGE_RC=4
+    elif part_human_only "$part" && [[ $REQ_BY != human ]]; then verdict=deny; rule="人だけの部品(コードで固定)"; JUDGE_RC=4
+    elif [[ " $PART_EXEC " != *" $part "* ]]; then verdict=deny; rule="この部品の実行はまだありません(判定だけ)"; JUDGE_RC=4
+    else
+      # agent から指揮官を止める・戻すことはしない(tb agent-restart と同じ)
+      if [[ $REQ_BY != human && -n ${PART_VAL[target]:-} && ( ${PART_OPS[$part]} == *agent:stop* || ${PART_OPS[$part]} == *agent:revive* ) ]]; then
+        while IFS= read -r c; do
+          [[ -n $c && $c == "${PART_VAL[target]}" ]] && { verdict=deny; rule="指揮官(${PART_VAL[target]})は agent から止めない・戻さない(人が実行します)"; JUDGE_RC=4; }
+        done < <(conductor_names)
+      fi
+      if [[ $verdict == allow ]]; then
+        while IFS= read -r k; do
+          [[ -n $k ]] || continue
+          if [[ $REQ_BY == human ]]; then rule+="${rule:+ / }$k: 人の端末"; continue; fi
+          approval_of "$k" "$REQ_BY"
+          rule+="${rule:+ / }$k: $APPROVAL_RULE"
+          [[ $APPROVAL_VALUE == allow ]] || { verdict=ask; ((JUDGE_RC == 4)) || JUDGE_RC=20; }
+        done < <(part_ops "$part")
+        [[ -n $rule ]] || rule="判定の操作名なし(読み取り)"
+      fi
+      [[ ${PART_RUNNER[$part]} != outside ]] || JUDGE_OUTSIDE=1
+    fi
+    JUDGE_RULES+=("$verdict $rule")
+    echo "step $n $part: $verdict($rule)"
+    if [[ $verdict != allow ]]; then JUDGE_STOP="step $n ($part) で止めました: $verdict($rule)"; return 0; fi
+  done
+}
+
+# 部品の実行。出力は PART_OUT、0=成功。$1=部品(PART_VAL に引数)$2=実行の記録に残す名前(recipe:R-<n> など)
 PART_OUT=""
-part_run_inside() {  # $1=部品(PART_VAL に引数)
-  local st out t0
+part_run() {
+  local st out t0 r=0 args
   PART_OUT=""
   case $1 in
     agent-status)
@@ -435,23 +502,58 @@ part_run_inside() {  # $1=部品(PART_VAL に引数)
       done;;
     task-show)
       PART_OUT=$( (cmd_show "${PART_VAL[task]}") 2>&1) || return 1;;
-    *) PART_OUT="段 2 では実行しません: $1"; return 1;;
+    comment-resolve)
+      PART_OUT=$( (cmd_resolve "${PART_VAL[comment]}") 2>&1) || return 1;;
+    agent-stop|agent-force-stop)
+      args=$(jq -nc --argjson f "$([[ $1 == agent-force-stop ]] && echo 1 || echo 0)" --arg r "$2" '{force:$f, recipe:$r}')
+      do_agent_stop "${PART_VAL[target]}" "$([[ $1 == agent-force-stop ]] && echo 1 || echo 0)" "$2" || r=$?
+      record_op stop "${PART_VAL[target]}" "$args" "$REQ_BY" "$r" "$2: $OP_OUT"; PART_OUT=$OP_OUT; return "$r";;
+    agent-revive)
+      args=$(jq -nc --arg r "$2" --arg p "${PART_VAL[prompt]:-}" '{fresh:0, recipe:$r} + (if $p=="" then {} else {prompt:$p} end)')
+      limits_refuse_running 1 >/dev/null 2>&1 || { PART_OUT="動作中の agent が上限のため戻しません"; record_op revive "${PART_VAL[target]}" "$args" "$REQ_BY" 4 "$2: $PART_OUT"; return 4; }
+      do_agent_revive "${PART_VAL[target]}" 0 "" "${PART_VAL[prompt]:-}" "$2" || r=$?
+      record_op revive "${PART_VAL[target]}" "$args" "$REQ_BY" "$r" "$2: $OP_OUT"; PART_OUT=$OP_OUT; return "$r";;
+    agent-restart)
+      args=$(jq -nc --arg r "$2" --arg p "${PART_VAL[prompt]:-}" '{restart:1, recipe:$r} + (if $p=="" then {} else {prompt:$p} end)')
+      limits_refuse_running 0 >/dev/null 2>&1 || { PART_OUT="動作中の agent が上限を超えているため触りません"; record_op revive "${PART_VAL[target]}" "$args" "$REQ_BY" 4 "$2: $PART_OUT"; return 4; }
+      do_agent_restart "${PART_VAL[target]}" "${PART_VAL[prompt]:-}" "$2" || r=$?
+      record_op revive "${PART_VAL[target]}" "$args" "$REQ_BY" "$r" "restart: $2: $OP_OUT"; PART_OUT=$OP_OUT; return "$r";;
+    *) PART_OUT="この部品の実行はまだありません: $1"; return 1;;
   esac
 }
 
+# 並びどおりに実行する(シェルを経由せず部品を直接呼ぶ)。途中で失敗したら残りは続行しない(巻き戻さない)。$1=plan $2=記録の名前
+# 0=全部済んだ / 1=途中の部品が失敗(EXEC_STOP に理由)
+EXEC_STOP=""
+recipe_exec() {
+  local plan=$1 by=$2 i n part rc
+  local -a kvs
+  EXEC_STOP=""
+  for ((i = 0; i < $(jq length <<<"$plan"); i++)); do
+    n=$((i + 1)); part=$(jq -r ".[$i].part" <<<"$plan")
+    mapfile -t kvs < <(jq -r ".[$i].args | to_entries[] | \"\(.key)=\(.value)\"" <<<"$plan")
+    part_args_check "$part" "${kvs[@]}" || { EXEC_STOP="step $n の引数を確かめ直せません: $PART_ERR"; return 1; }
+    rc=0; part_run "$part" "$by" || rc=$?
+    recipe_event recipe_step "$n $part" "${JUDGE_RULES[$i]} / $([[ $rc == 0 ]] && echo ok || echo failed): $(oneline "$PART_OUT" 300)" "E-$RUN_EID" >/dev/null
+    printf '%s\n' "$PART_OUT"
+    if ((rc)); then EXEC_STOP="step $n ($part) が失敗しました: $(oneline "$PART_OUT" 300)。step $((n + 1)) 以降は実行していません(済んだ step は巻き戻しません)"; return 1; fi
+  done
+}
+
 # tb recipe-run <名前> [--target A] [--task T-..] [--dry-run] [<名前>=<値> ...]
-# 終了コード 0=すべて済んだ / 1=途中の部品が失敗した(残りは続行しない)/ 2=使い方 / 4=実行しない(未登録・検査を通らない・人だけの部品・まだ実行できない部品)/
-#            20=人の承認が要る(レシピか部品の判定が ask。段 2 では承認待ちに積まない。人が自分の端末で実行するか、人が allow にする)
+# 終了コード 0=すべて済んだ、または外の実行役の待ち行列に置いた(R-<n> queued)/ 1=途中の部品が失敗した(残りは続行しない)/ 2=使い方 /
+#            4=実行しない(未登録・検査を通らない・人だけの部品・まだ実行できない部品・持ち主の無い定期ジョブ)/
+#            20=人の承認が要る(レシピか部品の判定が ask。承認待ちには積まない。人が自分の端末で実行するか、人が allow にする)
 cmd_recipe-run() {
   [[ $# -ge 1 && $1 != -* ]] || usage "recipe-run <名前> [--target A] [--task T-..] [--dry-run] [<名前>=<値> ...]"
-  local name=$1 target="" dry=0 kv k v row op i s part tok rule verdict rc=0 stop="" stoprc=0 n
-  local -a given=() resolved=() rules=()
+  local name=$1 dry=0 kv k v row op i part plan step body rr=0
+  local -a given=() tok
   declare -A bound=()
-  shift
+  RUN_TARGET=""; shift
   valid_recipe_name "$name"
   while [[ $# -gt 0 ]]; do
     case $1 in
-      --target) need_arg "$@"; target=$2; shift 2;;
+      --target) need_arg "$@"; RUN_TARGET=$2; shift 2;;
       --task) need_arg "$@"; valid_id "$2"; RUN_TASK=$2; shift 2;;
       --dry-run) dry=1; shift;;
       -*) usage "recipe-run: 不明な引数 $1";;
@@ -459,37 +561,29 @@ cmd_recipe-run() {
     esac
   done
   [[ -z $RUN_TASK ]] || require_task "$RUN_TASK" >/dev/null
-  requester
-  if [[ -z $target ]]; then
-    [[ $REQ_BY != human ]] || usage "recipe-run: 人の端末からは --target <agent 名> が要ります(既定の対象は依頼者自身)"
-    target=$REQ_BY
+  recipe_requester || rr=$?
+  if ((rr)); then
+    ((dry)) || { RUN_EID=$(recipe_event recipe_run "" "$name target=${RUN_TARGET:--} via=sched:${SCHED_JOB:-}" "recipe:$name:${RUN_TARGET:--}")
+                 recipe_event recipe_end "" "定期ジョブの持ち主を確かめられないため実行しません" "E-$RUN_EID" >/dev/null; }
+    return 4
   fi
-  part_value_ok agent "$target" || usage "recipe-run: --target: $PART_ERR: $target"
-  op="recipe:$name:$target"
+  if [[ -z $RUN_TARGET ]]; then
+    [[ $REQ_BY != human ]] || usage "recipe-run: 人の端末からは --target <agent 名> が要ります(既定の対象は依頼者自身)"
+    RUN_TARGET=$REQ_BY
+  fi
+  part_value_ok agent "$RUN_TARGET" || usage "recipe-run: --target: $PART_ERR: $RUN_TARGET"
+  op="recipe:$name:$RUN_TARGET"
 
   _rr_end() {  # $1=終了コード $2=理由(空 = done)
     ((dry)) || recipe_event recipe_end "" "${2:-done}" "E-$RUN_EID" >/dev/null
     [[ -z $2 ]] || echo "tb: recipe-run: $2" >&2
     return "$1"
   }
-  _rr_agents_ok() {  # $1=部品(PART_VAL に引数)。agent 型の値が依頼者か対象でなければ 1(登録の検査をすり抜けた行への備え)
-    local spec k
-    for spec in ${PART_ARGS[$1]}; do
-      [[ ${spec#*:} == agent ]] || continue
-      k=${spec%%:*}; k=${k%\?}
-      [[ -z ${PART_VAL[$k]+x} || ${PART_VAL[$k]} == "$REQ_BY" || ${PART_VAL[$k]} == "$target" ]] && continue
-      PART_ERR="$1 の $k(${PART_VAL[$k]})は依頼者でも対象でもありません"; return 1
-    done
-  }
+  ((dry)) || RUN_EID=$(recipe_event recipe_run "" "$name target=$RUN_TARGET${RUN_VIA:+ via=$RUN_VIA}" "$op")
   row=$(recipe_row "$name")
-  if [[ -z $row ]]; then
-    ((dry)) || RUN_EID=$(recipe_event recipe_run "" "$name target=$target" "$op")
-    _rr_end 4 "登録されていないレシピは実行しません: $name(登録は人が tb recipe-set)"; return
-  fi
-  ((dry)) || RUN_EID=$(recipe_event recipe_run "" "$name target=$target" "$op")
-  if ! recipe_parse "$(jq -r .body <<<"$row")"; then
-    _rr_end 4 "レシピ $name は今のコードでは検査を通らないため実行しません: $(head -1 <<<"$RCP_ERR")"; return
-  fi
+  [[ -n $row ]] || { _rr_end 4 "登録されていないレシピは実行しません: $name(登録は人が tb recipe-set)"; return; }
+  body=$(jq -r .body <<<"$row")
+  recipe_parse "$body" || { _rr_end 4 "レシピ $name は今のコードでは検査を通らないため実行しません: $(head -1 <<<"$RCP_ERR")"; return; }
   # 引数: 宣言したものだけ。宣言の型で確かめる
   for kv in "${given[@]}"; do
     [[ $kv == *=* ]] || { _rr_end 2 "引数は <名前>=<値>: $kv"; return; }
@@ -503,66 +597,153 @@ cmd_recipe-run() {
     [[ $k == *\? ]] && continue
     [[ -n ${bound[$k]+x} ]] || { _rr_end 2 "引数 $k がありません"; return; }
   done
+  # 並び(plan)を作る: 変数を値に置き換える。省略された引数は、その部品の引数も省く
+  plan='[]'
+  for step in "${RCP_STEPS[@]}"; do
+    read -ra tok <<<"$step"; part=${tok[0]}
+    local args='{}'
+    for kv in "${tok[@]:1}"; do
+      k=${kv%%=*}; v=${kv#*=}
+      case $v in
+        '$requester') [[ $REQ_BY != human ]] || { _rr_end 4 "人の端末からは \$requester を使うレシピ($name)は実行できません。agent の pane から実行します"; return; }
+                      v=$REQ_BY;;
+        '$target') v=$RUN_TARGET;;
+        \$*) [[ -n ${bound[${v#\$}]+x} ]] || continue; v=${bound[${v#\$}]};;
+      esac
+      args=$(jq -c --arg k "$k" --arg v "$v" '. + {($k): $v}' <<<"$args")
+    done
+    plan=$(jq -c --arg p "$part" --argjson a "$args" '. + [{part:$p, args:$a}]' <<<"$plan")
+  done
 
   # 判定 1: レシピの操作名。人の端末は承認なし。agent は approvals / grants(既存の判定のまま)
+  local verdict rule
   if [[ $REQ_BY == human ]]; then rule="人の端末"; verdict=allow
   else approval_of "$op" "$REQ_BY"; rule=$APPROVAL_RULE; verdict=$APPROVAL_VALUE; fi
-  echo "recipe $name target=$target risk=$RCP_RISK: $verdict($rule)"
+  echo "recipe $name target=$RUN_TARGET risk=$RCP_RISK: $verdict($rule)"
   if [[ $verdict != allow ]]; then
     ((dry)) || recipe_event recipe_step "0 $op" "$verdict $rule" "E-$RUN_EID" >/dev/null
     _rr_end 20 "$op は人の承認が要ります($rule)。人が自分の端末で実行するか、人が allow にします"; return
   fi
-
-  # 判定 2: 部品ごと(レシピの許可は部品の許可の代わりにならない)。全部を判定してから実行する
-  for i in "${!RCP_STEPS[@]}"; do
-    s=${RCP_STEPS[$i]}; n=$((i + 1))
-    read -ra tok <<<"$s"; part=${tok[0]}
-    local -a kvs=()
-    for kv in "${tok[@]:1}"; do
-      k=${kv%%=*}; v=${kv#*=}
-      case $v in
-        '$requester') [[ $REQ_BY != human ]] || { _rr_end 4 "人の端末からは \$requester を使うレシピ($name の step $n)は実行できません。agent の pane から実行します"; return; }
-                      v=$REQ_BY;;
-        '$target') v=$target;;
-        \$*) [[ -n ${bound[${v#\$}]+x} ]] || continue; v=${bound[${v#\$}]};;   # 省略された引数はその部品の引数も省く
-      esac
-      kvs+=("$k=$v")
-    done
-    verdict=allow; rule=""
-    if ! part_args_check "$part" "${kvs[@]}"; then verdict=deny; rule=$PART_ERR; stoprc=4
-    elif ! _rr_agents_ok "$part"; then verdict=deny; rule=$PART_ERR; stoprc=4
-    elif part_human_only "$part" && [[ $REQ_BY != human ]]; then verdict=deny; rule="人だけの部品(コードで固定)"; stoprc=4
-    else
-      while IFS= read -r k; do
-        [[ -n $k ]] || continue
-        if [[ $REQ_BY == human ]]; then rule+="${rule:+ / }$k: 人の端末"; continue; fi
-        approval_of "$k" "$REQ_BY"
-        rule+="${rule:+ / }$k: $APPROVAL_RULE"
-        [[ $APPROVAL_VALUE == allow ]] || { verdict=ask; stoprc=20; }
-      done < <(part_ops "$part")
-      [[ -n $rule ]] || rule="判定の操作名なし(読み取り)"
-      if [[ $verdict == allow && ( ${PART_SIDE[$part]} != none || ${PART_RUNNER[$part]} != inside ) ]]; then
-        verdict=deny; rule+=" / 副作用のある部品・外の実行役の部品は段 3 まで実行しません"; stoprc=4
-      fi
-    fi
-    resolved+=("$part ${kvs[*]}"); rules+=("$verdict $rule")
-    echo "step $n $part: $verdict($rule)"
-    if [[ $verdict != allow ]]; then stop="step $n ($part) で止めました: $verdict($rule)"; break; fi
-  done
-  if ((dry)); then [[ -z $stop ]] && return 0; echo "tb: recipe-run: $stop" >&2; return "$stoprc"; fi
-  if [[ -n $stop ]]; then
-    for i in "${!rules[@]}"; do recipe_event recipe_step "$((i + 1)) ${resolved[$i]%% *}" "${rules[$i]} / 未実行" "E-$RUN_EID" >/dev/null; done
-    _rr_end "$stoprc" "${stop}。どの部品も実行していません"; return
+  # 判定 2: 部品ごと。全部を判定してから実行する
+  recipe_judge "$plan"
+  if ((dry)); then [[ -z $JUDGE_STOP ]] && return 0; echo "tb: recipe-run: $JUDGE_STOP" >&2; return "$JUDGE_RC"; fi
+  if [[ -n $JUDGE_STOP ]]; then
+    for i in "${!JUDGE_RULES[@]}"; do recipe_event recipe_step "$((i + 1)) $(jq -r ".[$i].part" <<<"$plan")" "${JUDGE_RULES[$i]} / 未実行" "E-$RUN_EID" >/dev/null; done
+    _rr_end "$JUDGE_RC" "${JUDGE_STOP}。どの部品も実行していません"; return
   fi
-
-  # 実行: 並びどおりに、部品を直接呼ぶ(シェルを経由しない)。途中で失敗したら残りは続行しない(巻き戻さない)
-  for i in "${!RCP_STEPS[@]}"; do
-    n=$((i + 1)); read -ra tok <<<"${resolved[$i]}"; part=${tok[0]}
-    part_args_check "$part" "${tok[@]:1}" || { _rr_end 4 "step $n の引数を確かめ直せません: $PART_ERR"; return; }
-    rc=0; part_run_inside "$part" || rc=$?
-    recipe_event recipe_step "$n $part" "${rules[$i]} / $([[ $rc == 0 ]] && echo ok || echo failed): $(oneline "$PART_OUT" 300)" "E-$RUN_EID" >/dev/null
-    printf '%s\n' "$PART_OUT"
-    if ((rc)); then _rr_end 1 "step $n ($part) が失敗しました: $(oneline "$PART_OUT" 300)。step $((n + 1)) 以降は実行していません(済んだ step は巻き戻しません)"; return; fi
-  done
+  # pane の外で行う部品があれば、検査済みの並びだけを待ち行列に置く(外の実行役 tb recipe-runner が実行の時点で判定し直してから実行する)
+  # 人の端末からの依頼は pane の外なので、その場で実行する(待ち行列に人の権限の依頼を置かない。実行役は人の依頼を受け付けない)
+  if ((JUDGE_OUTSIDE)) && [[ $REQ_BY != human ]]; then
+    local rid
+    rid=$(sql "INSERT INTO main.recipe_runs (herdr_session, name, body_sha, target, requester, via, task_id, plan, event_id, status, created_at)
+      VALUES ($SQS, $(q "$name"), $(q "$(printf '%s' "$body" | sha256)"), $(q "$RUN_TARGET"), $(q "$REQ_BY"), $([[ -n $RUN_VIA ]] && q "$RUN_VIA" || echo NULL),
+              $(q "$RUN_TASK"), $(q "$plan"), $RUN_EID, 'queued', $(q "$(now)"));
+      SELECT last_insert_rowid();")
+    recipe_event recipe_step "0 queue" "R-$rid queued(pane の外の実行役が実行します)" "E-$RUN_EID" >/dev/null
+    echo "R-$rid queued (外の実行役 tb recipe-runner が実行します。状態は tb recipe-queue)"
+    return 0
+  fi
+  recipe_exec "$plan" "recipe:E-$RUN_EID" || { _rr_end 1 "$EXEC_STOP"; return; }
   _rr_end 0 ""
+}
+
+# ---------- 外の実行役(段 3) ----------
+# tb recipe-runner [--max N]: 待ち行列(recipe_runs)の queued を古い順に取り出し、依頼者の権限で部品ごとに判定し直してから、並びどおりに実行する。
+# 人の端末(pane なし)からだけ。定期ジョブ(人が登録したコマンド型。例 scheduler/jobs/recipe-runner.conf.example)が動かす短命のプロセスで、常駐しない。
+# 並びの外のことはしない。レシピの本文が変わった・消えた、置いてから TB_RECIPE_QUEUE_TTL_SEC(既定 900)秒を過ぎた、判定が allow でない、のどれでも実行しない。
+# 出力: 1 件ごとに R-<n> <状態>。終了コード 0(1 件ずつの失敗は状態と記録に残す)
+RECIPE_QUEUE_TTL=${TB_RECIPE_QUEUE_TTL_SEC:-900}
+RECIPE_RUNNING_MAX=${TB_RECIPE_RUNNING_MAX_SEC:-3600}
+cmd_recipe-runner() {
+  local max=1 n=0 id row cur
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --max) need_arg "$@"; [[ $2 =~ ^[0-9]{1,3}$ ]] && ((10#$2 >= 1)) || usage "recipe-runner: --max は 1〜999: $2"; max=$((10#$2)); shift 2;;
+      *) usage "recipe-runner: 不明な引数 $1";;
+    esac
+  done
+  require_human "tb recipe-runner"
+  [[ $RECIPE_QUEUE_TTL =~ ^[0-9]{1,6}$ ]] || die "TB_RECIPE_QUEUE_TTL_SEC は秒の整数: $RECIPE_QUEUE_TTL"
+  [[ $RECIPE_RUNNING_MAX =~ ^[0-9]{1,6}$ ]] || die "TB_RECIPE_RUNNING_MAX_SEC は秒の整数: $RECIPE_RUNNING_MAX"
+  # 古すぎるものは実行しない(依頼した時点の状況と離れている)
+  while IFS= read -r id; do
+    [[ -n $id ]] || continue
+    _runner_close "$id" expired "置いてから ${RECIPE_QUEUE_TTL} 秒を過ぎたため実行しません" queued
+  done < <(sql "SELECT id FROM recipe_runs WHERE status='queued' AND (julianday('now') - julianday(created_at)) * 86400 > $((10#$RECIPE_QUEUE_TTL)) ORDER BY id;")
+  # 実行役が途中で落ちた(running のまま長く残った)ものは failed にする。どこまで済んだかは recipe_step の記録で見る。巻き戻さない
+  while IFS= read -r id; do
+    [[ -n $id ]] || continue
+    _runner_close "$id" failed "実行役が ${RECIPE_RUNNING_MAX} 秒たっても終わっていません(途中で止まった可能性。済んだ step は記録を見てください)" running
+  done < <(sql "SELECT id FROM recipe_runs WHERE status='running' AND (julianday('now') - julianday(started_at)) * 86400 > $((10#$RECIPE_RUNNING_MAX)) ORDER BY id;")
+  while ((n < max)); do
+    id=$(sql "SELECT id FROM recipe_runs WHERE status='queued' ORDER BY id LIMIT 1;")
+    [[ -n $id ]] || break
+    # 取り出し(同時に 2 つの実行役が動いても、1 件を実行するのは 1 つだけ)
+    [[ $(sql "UPDATE main.recipe_runs SET status='running', started_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$id AND status='queued'; SELECT changes();") == 1 ]] || continue
+    n=$((n + 1))
+    row=$(session_row recipe_runs id "$id")
+    _runner_one "$row"
+    cur=$(sql "SELECT status FROM recipe_runs WHERE id=$id;")
+    echo "R-$id $cur"
+  done
+  return 0
+}
+_runner_close() {  # $1=id $2=状態 $3=理由 $4=元の状態 [$5=記録の actor(既定は依頼者)] → recipe_end を残す
+  local row eid actor
+  row=$(session_row recipe_runs id "$1"); [[ -n $row ]] || return 0
+  [[ $(sql "UPDATE main.recipe_runs SET status=$(q "$2"), result=$(q "$3"), finished_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$1 AND status=$(q "$4"); SELECT changes();") == 1 ]] || return 0
+  eid=$(jq -r .event_id <<<"$row")
+  REQ_BY=${5:-$(jq -r .requester <<<"$row")}; RUN_TASK=$(jq -r .task_id <<<"$row")
+  sql "INSERT INTO main.task_events (herdr_session, task_id, kind, old, new, actor, ref, created_at)
+    VALUES ($SQS, $(q "$RUN_TASK"), 'recipe_end', $(q "R-$1"), $(q "$([[ $2 == done ]] && echo done || echo "$2: $3")"), $(q "$REQ_BY"), $(q "E-$eid"), $(q "$(now)"));" >/dev/null
+}
+_runner_one() {  # $1=recipe_runs の行(JSON)
+  local row=$1 id name plan body cur_sha
+  id=$(jq -r .id <<<"$row"); name=$(jq -r .name <<<"$row"); plan=$(jq -c '.plan | fromjson' <<<"$row")
+  REQ_BY=$(jq -r .requester <<<"$row"); RUN_TARGET=$(jq -r .target <<<"$row"); RUN_TASK=$(jq -r .task_id <<<"$row"); RUN_EID=$(jq -r .event_id <<<"$row")
+  # 依頼者は記録された agent。人の依頼は待ち行列に置かない(recipe-run がその場で実行する)ので、human の行は実行しない(fail-closed)
+  part_value_ok agent "$REQ_BY" || { _runner_close "$id" stopped "依頼者が agent 名ではありません(人の依頼は待ち行列では実行しない)" running; return; }
+  part_value_ok agent "$RUN_TARGET" || { _runner_close "$id" stopped "対象が agent 名ではありません" running; return; }
+  # レシピがまだ登録されていて、判定したときと同じ本文か
+  body=$(sql "SELECT body FROM recipes WHERE name=$(q "$name");")
+  [[ -n $body ]] || { _runner_close "$id" stopped "レシピ $name の登録が消えたため実行しません" running; return; }
+  cur_sha=$(printf '%s' "$body" | sha256)
+  [[ $cur_sha == "$(jq -r .body_sha <<<"$row")" ]] || { _runner_close "$id" stopped "レシピ $name の本文が変わったため実行しません(もう一度頼みます)" running; return; }
+  recipe_parse "$body" || { _runner_close "$id" stopped "レシピ $name は今のコードでは検査を通りません" running; return; }
+  # 実行の時点で判定し直す(レシピの操作名と、部品ごと)。設定が変わっていれば、それに従う
+  approval_of "recipe:$name:$RUN_TARGET" "$REQ_BY"
+  [[ $APPROVAL_VALUE == allow ]] || { _runner_close "$id" stopped "recipe:$name:$RUN_TARGET が実行の時点で allow ではありません($APPROVAL_RULE)" running; return; }
+  recipe_judge "$plan" >/dev/null
+  [[ -z $JUDGE_STOP ]] || { _runner_close "$id" stopped "実行の時点の判定で止めました: ${JUDGE_STOP#step }" running; return; }
+  if recipe_exec "$plan" "recipe:R-$id" >/dev/null; then _runner_close "$id" done "" running
+  else _runner_close "$id" failed "$EXEC_STOP" running; fi
+}
+
+# tb recipe-queue [--all] [--json]: 待ち行列(既定は queued と running。--all は全部)。R-<n> 状態 レシピ 対象 依頼者 置いた時刻 結果
+cmd_recipe-queue() {
+  local all=0 json=0 where="status IN ('queued','running')"
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --all) all=1; shift;;
+      --json) json=1; shift;;
+      *) usage "recipe-queue: 不明な引数 $1";;
+    esac
+  done
+  ((all == 0)) || where="1=1"
+  if ((json)); then sql -json "SELECT 'R-'||id AS id, status, name, target, requester, via, task_id, plan, 'E-'||event_id AS event, created_at, started_at, finished_at, result FROM recipe_runs WHERE $where ORDER BY recipe_runs.id;" | jq -c '(. // [])[] | .plan |= fromjson'
+  else sql -separator $'\t' "SELECT 'R-'||id, status, name, target, requester, created_at, COALESCE(replace(result, char(10), ' '),'-') FROM recipe_runs WHERE $where ORDER BY recipe_runs.id;"; fi
+}
+
+# tb recipe-cancel R-<n>: 待ち行列の queued を取り消す。人と、頼んだ agent 自身だけ
+cmd_recipe-cancel() {
+  [[ $# -eq 1 && $1 =~ ^R-([0-9]{1,18})$ ]] || usage "recipe-cancel R-<n>"
+  local id=${BASH_REMATCH[1]} row by
+  row=$(session_row recipe_runs id "$id"); [[ -n $row ]] || die "実行の依頼が見つかりません: R-$id"
+  requester; by=$REQ_BY
+  [[ $by == human || $by == "$(jq -r .requester <<<"$row")" ]] || die "R-$id を取り消せるのは人と、頼んだ agent($(jq -r .requester <<<"$row"))だけです"
+  [[ $(jq -r .status <<<"$row") == queued ]] || die "R-$id は待ち行列にありません($(jq -r .status <<<"$row"))"
+  _runner_close "$id" cancelled "$([[ $by == human ]] && echo 人 || echo "$by")が取り消し" queued "$by"
+  [[ $(sql "SELECT status FROM recipe_runs WHERE id=$id;") == cancelled ]] || die "R-$id は待ち行列にありません(ほかで決まりました)"
+  REQ_BY=$by
+  echo "R-$id cancelled"
 }

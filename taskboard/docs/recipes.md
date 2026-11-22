@@ -94,12 +94,12 @@ step agent-restart target=$requester prompt=$note
 `tb recipe-run` は、次の順に判定する。**全部の step を判定してから実行する**ので、途中の step で止まるときは、前の読み取りの部品も実行しない。
 
 1. **登録されていないレシピ名は実行しない**(終了コード 4。ask ではない)。登録の後でコードの部品が変わって検査を通らなくなったレシピも実行しない
-2. **レシピの操作名** `recipe:<名前>:<対象>` を、既存の `approvals` / `grants` で判定する。人の端末は承認なし。ask なら 20(段 2 では承認待ちに積まない。人が自分の端末で実行するか、人が allow にする)
+2. **レシピの操作名** `recipe:<名前>:<対象>` を、既存の `approvals` / `grants` で判定する。人の端末は承認なし。ask なら 20(承認待ちには積まない。人が自分の端末で実行するか、人が allow にする)
    - 既定の対象は依頼者自身。他者を対象にするときは `--target <agent 名>`。人の端末からは `--target` が要る
    - `approvals` は操作名の全体を照合する: `recipe:restart-self:* = allow`
    - `grants` は操作(対象を除く)を書く: `lead recipe:restart-self ~report`
 3. **部品ごと**: 引数の型、人だけの部品(agent からは 4)、部品の判定の操作名(`agent:stop:<対象>` など。ask なら 20)。**レシピの許可は部品の許可の代わりにならない**
-4. 段 2 で実行するのは、副作用 `none` で実行役 `inside` の部品だけ(`agent-status` / `wait-idle` / `task-show`)。ほかの部品は判定まで行い、実行しない(4。段 3 で外の実行役が行う)
+4. 実行できない部品(下の段 3 の一覧に無いもの)は判定まで行い、実行しない(4)。pane の外で行う部品を含む並びは、待ち行列に置く(段 3)
 
 実行の途中で部品が失敗したら、残りは続行しない(終了コード 1。済んだ step は巻き戻さない。人が見る)。`--dry-run` は判定だけを出し、何も記録しない。
 
@@ -130,7 +130,55 @@ actor は依頼者(agent 名か `human`)。
 
 - `#` から行末は注釈なので、リテラルの値に `#` は書けない(引数で渡す)
 
-## これから(段 3・段 4)
+## 段 3: 外の実行役と、副作用のある部品の実行
 
-- 段 3: pane の外の短命の実行役(既存の定期ジョブの仕組み)と、副作用のある部品の実行。定期ジョブに持ち主(依頼者)を持たせる(それまでは、定期ジョブからのレシピの実行を許さない)
-- 段 4: 最初のレシピ(agent の安全な再起動)を設定で作る
+pane の中の tb は、自分を止めるとその後の手順を実行できない。そこで、pane の外で行う部品(実行役 `outside`)を含むレシピは、
+**依頼者の pane の中で判定してから、検査済みの部品の並び(plan)だけを待ち行列に置き**、pane の外の短命の実行役が実行する。
+
+```bash
+tb recipe-run restart-self 'note=続きは T-1 から'   # agent の pane から。判定が全部 allow なら R-<n> queued(0)
+tb recipe-queue [--all] [--json]                    # 待ち行列
+tb recipe-cancel R-<n>                              # 取り消し(人と、頼んだ agent 自身)
+tb recipe-runner [--max N]                          # 外の実行役(人の端末か、人が登録した定期ジョブから)
+```
+
+- 実行役は既存の定期ジョブ(コマンド型)で動かす。例: `scheduler/jobs/recipe-runner.conf.example`(人が `tb sched-job set` で登録する)。常駐しない
+- 実行役は**実行の時点で、依頼者の権限で判定し直す**(レシピの操作名と、部品ごと)。置いた後に許可が外れていれば実行しない(`stopped`)
+- 置いた後にレシピの本文が変わった・消えた、置いてから `TB_RECIPE_QUEUE_TTL_SEC`(既定 900)秒を過ぎた、のどれでも実行しない(`stopped` / `expired`)
+- 実行役は並びの外のことをしない。部品は直接呼び、シェルを経由しない。途中で失敗したら残りは続行しない(`failed`。巻き戻さない)
+- 状態: `queued` → `running` → `done` / `failed` / `stopped`、または `expired` / `cancelled`。記録は依頼の `recipe_run` の行(`E-<n>`)にまとまる
+- `agent_ops` には依頼者の名前で残し、`args.recipe` に `recipe:R-<n>` を入れる
+- 外の実行役の部品が無い並びは、副作用があっても依頼者の pane の中でその場で実行する(例: 人の端末からの `comment-resolve`)
+
+実行できる部品: `agent-status` / `wait-idle` / `task-show` / `agent-stop` / `agent-revive` / `agent-restart` / `agent-force-stop`(人だけ)/ `comment-resolve`(人だけ)。
+`send-info` / `pr-queue-approve` / `config-set` は、判定まで行い実行しない(4)。
+
+agent から指揮官を対象にした停止・復活の部品は、許可があっても止める(`tb agent-restart` と同じ)。
+
+### 定期ジョブの持ち主(守り 8)
+
+定期ジョブのコマンドは人の端末と同じ権限で動く。これを使ってレシピの判定を迂回しないよう、`tb recipe-run` は定期ジョブ
+(scheduler が `SCHED_JOB` を渡す)から呼ばれると**人として扱わない**。
+
+- ジョブの conf に `OWNER=<agent 名>` を書くと、scheduler が `SCHED_OWNER` で渡し、その agent の権限で判定する(人だけの部品は止まる)
+- 持ち主の無いジョブからは実行しない(4)
+- `OWNER` は conf にだけ書ける(settings・Web UI からは変えられない)。コマンド型のジョブにだけ書ける
+- agent の pane から呼ばれたときは `SCHED_*` を見ない(pane の agent が依頼者)
+
+## 段 4: 最初のレシピ(agent の安全な再起動)
+
+登録は人が行う。agent が自分の pane から、自分を安全に再起動するためのレシピの例:
+
+```bash
+tb recipe-set restart-self <<'BODY'
+desc 自分を安全に再起動する(MCP の接続を張り直す)
+arg note? text:500
+step agent-status  target=$requester
+step wait-idle     target=$requester timeout=120
+step agent-restart target=$requester prompt=$note
+BODY
+```
+
+権限の割り当ても人が行う(例: `tb allow 'recipe:restart-self:*'` と、各 agent の `agent:stop:<名前>` / `agent:revive:<名前>`)。
+`agent-restart` の安全条件(idle か done、作業中のタスクがあれば再開メモが要る、同じ会話に戻れる)は、`tb agent-restart` と同じ。
+既存の `tb agent-restart`(人や外からの復旧)はそのまま残す。自分の再起動のためだけの新しいコマンドは足さない。

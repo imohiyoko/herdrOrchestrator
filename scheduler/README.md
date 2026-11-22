@@ -26,6 +26,7 @@ launchd が `bin/tick.sh <job>` を毎分起動し、時間帯・曜日・間隔
 | `PROMPT_RULES` | 任意。回の時刻で本文を切り替える(例: 00 分は A、30 分は B)。下の「回ごとに本文を変える」 |
 | `PROMPT_CMD` / `PROMPT_CMD_TIMEOUT` | 任意。本文を出すコマンド(既定 10 秒)。出力が空でなければそれを送る |
 | `PROMPT_VARS` / `PROMPT_VAR_TIMEOUT` | 任意。本文の `{{名前}}` に、送る直前に実行したコマンドの出力(検索結果など)を差し込む(既定 30 秒) |
+| `OWNER` | 任意。コマンド型のジョブの持ち主(agent 名)。`COMMAND` に `SCHED_OWNER` で渡す。`tb recipe-run` は定期ジョブ(`SCHED_JOB` がある)から呼ばれると人として扱わず、この agent の権限で判定する。**持ち主の無いジョブからは `tb recipe-run` は実行しない**(ADR 0005 の守り 8)。conf にだけ書ける(settings・Web UI からは変えられない)。プロンプト型には書けない |
 | `WATCHER` | 任意。`1` で見張り系のジョブ(tb digest が ran / sent の途絶を見る)、`0` で対象外。未設定なら、TARGET が `tb limits` の watchers に入っているか、`COMMAND=` の行がその名前を含むかで推定する。PROMPT のパスやコメントの語は見ない |
 
 ### コマンド実行型ジョブ

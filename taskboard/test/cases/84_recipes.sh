@@ -113,7 +113,7 @@ eid=$(rsql "SELECT max(id) FROM task_events WHERE kind='recipe_run';")
 eq "recipe-run: 止めたときも step ごとの判定を記録する" "$(rsql "SELECT old FROM task_events WHERE ref='E-$eid' AND kind='recipe_step' ORDER BY id;" | paste -sd,)" "1 agent-status,2 agent-restart"
 printf 'recipe:*:* = allow\nagent:stop:w1 = allow\nagent:revive:w1 = allow\n* = ask\n' >"$TB_APPROVALS"
 out=$(asw1 "$TB" recipe-run rs 2>&1); r=$?
-eq "recipe-run: 部品の判定が allow でも、副作用のある部品は段 2 では実行しない(4)" "$r|$(grep -c '段 3 まで実行しません' <<<"$out")" "4|2"
+eq "recipe-run: 判定が全部 allow で外の実行役の部品があれば、その場では実行せず待ち行列に置く(0)" "$r|$(tail -1 <<<"$out" | grep -c '^R-[0-9]* queued')" "0|1"
 eq "recipe-run: 何も止めていない・起動していない" "$(grep -cE '^(pane-close|start) ' "$FAKE_LOG")" "0"
 eq "recipe-run: --dry-run は判定だけ(記録しない)" "$(n0=$(rsql "SELECT count(*) FROM task_events;"); asw1 "$TB" recipe-run look --dry-run >/dev/null; echo $(($(rsql "SELECT count(*) FROM task_events;") - n0)) $(gets))" "0 0"
 
@@ -122,7 +122,7 @@ printf '* = allow\n' >"$TB_APPROVALS"
 printf '* recipe:* *\n* approve:* *\n' >"$TB_GRANTS"
 eq "recipe-run: 人だけの部品は agent から 4(approvals / grants を全部許可しても)" "$(asw1 "$TB" recipe-run cfg 2>&1 | grep -c '人だけの部品(コードで固定)'; asw1 rc "$TB" recipe-run cfg)" "2
 4"
-eq "recipe-run: 人の端末なら人だけの判定は通る(段 2 では副作用のある部品は実行しない)" "$($TB recipe-run cfg --target w1 2>&1 | grep -c '人だけ')$(rc "$TB" recipe-run cfg --target w1)" "04"
+eq "recipe-run: 人の端末なら人だけの判定は通る(config-set の実行はまだ無いので 4)" "$($TB recipe-run cfg --target w1 2>&1 | grep -c '人だけ')$(rc "$TB" recipe-run cfg --target w1)" "04"
 : >"$TB_GRANTS"; printf 'recipe:*:* = allow\n* = ask\n' >"$TB_APPROVALS"
 
 # --- 引数
