@@ -2066,6 +2066,7 @@ _stdb = os.path.join(TMP, "statuses.db")
 make_db(_stdb)
 _old_db, _old_hs = os.environ.get("WEBUI_TB_DB"), os.environ.get("HERDR_SESSION")
 _old_cache = _data.STATUS_CACHE_SEC
+_old_st, _old_cd = os.environ.pop("TB_STATUSES", None), os.environ.pop("TB_CONFIG_DIR", None)   # 外の設定に頼らない
 os.environ["WEBUI_TB_DB"] = _stdb
 os.environ["HERDR_SESSION"] = "default"
 _data.STATUS_CACHE_SEC = 0   # 設定を書き換えながら確かめる
@@ -2095,7 +2096,10 @@ try:
     _tt, _tb = _vw.page_tasks({})
     check("statuses: タスク一覧の選択肢と件数は設定の状態", '<option value="backlog">' in _tb and "dropped 0" in _tb and "in_progress 1" in _tb, _tb[:400])
     _tt, _tb = _vw.page_tasks({"status": ["todo"]})
-    check("statuses: 設定に無い状態での絞り込みは断る", "状態は backlog / doing / shipped / qa / dropped のどれかです" in _tb)
+    check("statuses: 設定にもチケットにも無い状態での絞り込みは断る", "状態は backlog / doing / shipped / qa / dropped のどれかです" in _tb)
+    _tt, _tb = _vw.page_tasks({"status": ["in_progress"]})
+    check("statuses: 設定から外した状態のチケットが残っていれば絞り込める", "状態は" not in _tb and "T-1" in _tb and "T-s-001" not in _tb)
+    check("statuses: 空の分類は空集合(NOT IN が効く)", _data.q("SELECT COUNT(*) AS n FROM tasks WHERE status NOT IN (SELECT NULL WHERE 0)")[0]["n"] > 0)
     _tt, _tb = _vw.page_tasks({"due": ["overdue"]})
     check("statuses: 期限切れは閉じた分類を数えない", "T-s-002" in _tb and "T-s-003" not in _tb)
     _c = sqlite3.connect(_stdb)
@@ -2104,7 +2108,7 @@ try:
     check("statuses: 不正な本文なら組み込みに戻る", _data.status_names()[0] == "todo")
 finally:
     _data.STATUS_CACHE_SEC = _old_cache
-    for _k, _v in (("WEBUI_TB_DB", _old_db), ("HERDR_SESSION", _old_hs)):
+    for _k, _v in (("WEBUI_TB_DB", _old_db), ("HERDR_SESSION", _old_hs), ("TB_STATUSES", _old_st), ("TB_CONFIG_DIR", _old_cd)):
         if _v is None:
             os.environ.pop(_k, None)
         else:

@@ -531,7 +531,7 @@ EDGES_SQL=$TB_ROOT/sql/agent_edges.sql
 agent_edges() {
   local rows projects map="{}" p
   # 共有の SQL は表の名前のまま書いてあるので、同じ名前の CTE(このセッションの行だけ)を前に置いて絞る(Web UI は一時ビューで同じことをする)
-  local qs; qs=$(grep -v '^--' "$EDGES_SQL"); qs=${qs//__HELD_STATUSES__/$ST_HELD_SQL}
+  local qs; qs=$(grep -v '^--' "$EDGES_SQL"); qs=${qs//__HELD_STATUSES__/"$ST_HELD_SQL"}   # 引用する(patsub_replacement で & が展開されないように)
   rows=$(sql -json "$qs;")   # 表の名前はこのセッションのビュー || return 1
   [[ -n $rows ]] || rows="[]"
   projects=$(jq -r '[.[] | .project // empty] | unique[]' <<<"$rows")

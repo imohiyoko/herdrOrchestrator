@@ -1,7 +1,8 @@
 # shellcheck shell=bash
 # 状態を設定で差し替える(設定 statuses と system-labels、024 の CHECK 外し)。tb のコマンドは名前ではなく分類で判断する。
 # project は st / st2 だけを使う。設定はファイル(TB_STATUSES / TB_SYSTEM_LABELS)で渡し、最後に戻す
-_st_saved_env=${TB_STATUSES-__unset__}
+_st_saved_env=${TB_STATUSES-__unset__} _st_saved_db=$TB_DB
+export TB_DB=$TMP/statuses.db; rm -f "$TB_DB"
 export TB_STATUSES=$TMP/statuses.conf TB_TODAY=2026-04-10
 rm -f "$TB_STATUSES"
 
@@ -15,6 +16,9 @@ eq "statuses: unknown category refused" "$(printf 'a todo\nb doing\nc done\n' | 
 eq "statuses: missing active refused" "$(printf 'a todo\nc done\n' | rc $TB config set statuses)" "1"
 eq "statuses: glob character refused" "$(printf 'a* todo\nb active\nc done\n' | rc $TB config set statuses)" "1"
 eq "statuses: duplicate refused" "$(printf 'a todo\na active\nc done\n' | rc $TB config set statuses)" "1"
+eq "statuses: builtin name in another category refused" "$(printf 'blocked todo\nb active\nc done\n' | rc $TB config set statuses)" "1"
+eq "statuses: 30 characters counted as characters (not bytes)" "$(printf '%s todo\nb active\nc done\n' "$(printf '待%.0s' {1..30})" | LC_ALL=C rc $TB config set statuses; rm -f "$TB_STATUSES")" "0"
+eq "statuses: 31 characters refused" "$(printf '%s todo\nb active\nc done\n' "$(printf '待%.0s' {1..31})" | LC_ALL=C rc $TB config set statuses)" "1"
 eq "statuses: three words refused" "$(printf 'a todo extra\nb active\nc done\n' | rc $TB config set statuses)" "1"
 eq "statuses: nothing written on error" "$([[ -e $TB_STATUSES ]] && echo y || echo n)" "n"
 
@@ -87,4 +91,5 @@ eq "system-labels: old deadline name is no longer a system label" "$(rc $TB add 
 unset TB_LABELS TB_SYSTEM_LABELS
 
 if [[ $_st_saved_env == __unset__ ]]; then unset TB_STATUSES; else export TB_STATUSES=$_st_saved_env; fi
-unset TB_TODAY _st_saved_env a b1 b2 c d k o o2 s
+export TB_DB=$_st_saved_db
+unset TB_TODAY _st_saved_env _st_saved_db a b1 b2 c d k o o2 s

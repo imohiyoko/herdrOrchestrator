@@ -117,7 +117,7 @@ printf '%s\n' '未着手 todo' '作業中 active' 'レビュー待ち review' '�
 tb config unset statuses --shared        # 組み込みに戻す
 ```
 
-- 書式は 1 行 1 つ `<状態> <分類> [= 説明]`。分類は固定の 6 つ: `todo`(未着手)/ `active`(作業中)/ `review`(確認待ち)/ `blocked`(詰まり)/ `done`(完了)/ `cancelled`(取り消し)。`done` と `cancelled` が閉じた状態。`todo` / `active` / `done` の分類にはそれぞれ 1 つ以上要る。例は [config/statuses.conf.example](config/statuses.conf.example)。
+- 書式は 1 行 1 つ `<状態> <分類> [= 説明]`。分類は固定の 6 つ: `todo`(未着手)/ `active`(作業中)/ `review`(確認待ち)/ `blocked`(詰まり)/ `done`(完了)/ `cancelled`(取り消し)。`done` と `cancelled` が閉じた状態。`todo` / `active` / `done` の分類にはそれぞれ 1 つ以上要る。組み込みの名前(`in_progress` など)は組み込みの分類にだけ置ける(別の分類にしたい状態は別の名前にする)。例は [config/statuses.conf.example](config/statuses.conf.example)。
 - tb が状態を書くときは、その分類で **最初に書いた** 状態を使う: `tb add` → todo、`tb claim` → active(元は todo の分類のどれでもよい)、`tb block` → blocked、`tb done` → done、`tb cancel` → cancelled。`tb update --status` で選べるのは、設定に書いた todo / active / review / blocked の分類の状態。
 - 分類で決まる振る舞い: nudge が催促するのは active を握っている agent、`--pool` の候補は担当なしの todo。digest の「turn が終わったのに作業中」「複数握っている」は active。agent-shed・agent-kill・Web UI の未完了タスクは active / review / blocked。期限切れ・先行チケット待ち・人の返事待ちは閉じていないもの。`tb report` と完了報告は done、スプリントの件数とポイントは cancelled を除く。ボード(`tb board` と Web UI)の列は分類の順。
 - 組み込みの名前は、設定から外しても組み込みの分類として数える(アラート・提案のチケットは DB のトリガーがこの名前で書くため)。外した状態には `tb update --status` で新しく変えられないが、既にその状態のチケットはボードと Web UI の件数の後ろに出る(黙って見えなくしない)。

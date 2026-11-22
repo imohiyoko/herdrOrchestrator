@@ -306,6 +306,8 @@ def parse_statuses(text):
         k, c = parts
         if len(k) > 30 or _STATUS_BAD.search(k) or c not in STATUS_CATEGORIES or k in seen:
             return None
+        if dict(STATUS_BUILTIN).get(k, c) != c:   # 組み込みの名前は組み込みの分類だけ(tb と同じ)
+            return None
         seen.add(k)
         out.append((k, c, desc.strip()))
     cats = {c for _k, c, _d in out}
@@ -364,8 +366,8 @@ def st_names(*cats):
 
 
 def st_sql(*cats):
-    """SQL の IN (...) の中身('a','b')。当たる状態が無ければ NULL。"""
-    return ",".join("'" + k.replace("'", "''") + "'" for k in st_names(*cats)) or "NULL"
+    """SQL の IN (...) の中身('a','b')。当たる状態が無ければ空集合(NULL だと NOT IN が偽になる)。"""
+    return ",".join("'" + k.replace("'", "''") + "'" for k in st_names(*cats)) or "SELECT NULL WHERE 0"
 
 
 # SQL の中の状態の一覧の置き場。q / q_checked が実行の前に埋める(SQL を 1 つの文字列のまま書けるように。tests/test_webui_queries.py)

@@ -2,7 +2,7 @@
 # 実際に読むのは DB の行(tb config set / edit)か statuses.conf。.example は既定値にしない(無ければ下の組み込みの 6 つ)。
 #
 # 1 行 1 つ: <状態> <分類> [= 説明]。# 以降はコメント。書いた順が tb list の usage・Web UI の選択肢の順。
-# 状態の名前は 1〜30 文字で、空白・カンマ・引用符・* ? [ ] を含まない(日本語は可)。
+# 状態の名前は 1〜30 文字(ロケールに関係なく文字数で数える)で、空白・カンマ・引用符・* ? [ ] を含まない(日本語は可)。
 #
 # 分類(固定。tb のコマンドと内部の処理はこれで判断する):
 #   todo      未着手。tb add の既定(この分類で最初に書いた状態になる)、tb claim できる、tb nudge --pool の候補
@@ -12,6 +12,8 @@
 #   done      完了(閉じた状態)。tb done の先、tb report できる
 #   cancelled 取り消し(閉じた状態)。tb cancel の先。完了報告には出さない
 # todo / active / done の分類にはそれぞれ 1 つ以上要る(無いと書けない)。
+# 組み込みの名前(todo / in_progress / review / done / blocked / cancelled)を書くときは、組み込みの分類にだけ置ける
+# (例: blocked を todo の分類には置けない。別の分類にしたい状態は別の名前にする)。
 # tb が状態を書くとき(add / claim / block / done / cancel)は、その分類で最初に書いた状態を使う。
 # tb update --status で変えられるのは、ここに書いた todo / active / review / blocked の分類の状態(閉じるのは tb done / tb cancel)。
 # ボード(tb board・Web UI)の列は分類の順にまとめる(同じ分類は書いた順)。

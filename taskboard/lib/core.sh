@@ -92,9 +92,13 @@ ST_BOARD="todo in_progress review blocked done cancelled"
 ST_CLOSED_SQL="'done','cancelled'"; ST_HELD_SQL="'in_progress','review','blocked'"
 ST_TODO_SQL="'todo'"; ST_ACTIVE_SQL="'in_progress'"; ST_DONE_SQL="'done'"; ST_CANCELLED_SQL="'cancelled'"
 
+# char_len <文字列> → UTF-8 の文字数(ロケールに頼らない。C ロケールの ${#s} はバイト数になるので、続きのバイト 10xxxxxx を数えない)
+char_len() { local LC_ALL=C s=$1; s=${s//[$'\x80'-$'\xbf']/}; printf '%s' "${#s}"; }
+# 組み込みの名前を別の分類に書いたら断る(tb がその分類の状態を書くときの代わりに使うので、分類がずれると tb block が未着手にする、などになる)
+statuses_builtin_cat() { case $1 in todo|review|done|blocked|cancelled) printf '%s' "$1";; in_progress) printf active;; esac; }
 # statuses_parse <本文>: 正しければ ST_PARSED に「状態<TAB>分類<TAB>説明」の行を入れて 0。不正な行は stderr に出して 1
 statuses_parse() {
-  local line k c d n=0 bad="" seen=" " cats=" " need
+  local line k c d b n=0 bad="" seen=" " cats=" " need
   ST_PARSED=""
   while IFS= read -r line || [[ -n $line ]]; do
     n=$((n + 1))
@@ -102,8 +106,10 @@ statuses_parse() {
     d=""; if [[ $line == *=* ]]; then d=$(trim "${line#*=}"); line=$(trim "${line%%=*}"); fi
     k=${line%%[[:space:]]*}; c=$(trim "${line#"$k"}")
     if [[ -z $c || $c == *[[:space:]]* ]]; then bad+="${n} 行目: <状態> <分類> [= 説明] の形ではありません: $line"$'\n'; continue; fi
-    if [[ ${#k} -gt 30 || $k =~ [],\"\'\`\\*?[] ]]; then bad+="${n} 行目: 状態は 1〜30 文字で、カンマ・引用符・* ? [ ] を含まない: $k"$'\n'; continue; fi
+    if (( $(char_len "$k") > 30 )) || [[ $k =~ [],\"\'\`\\*?[] ]]; then bad+="${n} 行目: 状態は 1〜30 文字で、カンマ・引用符・* ? [ ] を含まない: $k"$'\n'; continue; fi
     [[ " $STATUS_CATEGORIES " == *" $c "* ]] || { bad+="${n} 行目: 分類は $STATUS_CATEGORIES のどれか: $c"$'\n'; continue; }
+    b=$(statuses_builtin_cat "$k")
+    [[ -z $b || $b == "$c" ]] || { bad+="${n} 行目: 組み込みの状態 $k の分類は $b だけです(別の分類にするなら別の名前にする): $c"$'\n'; continue; }
     [[ $seen != *" $k "* ]] || { bad+="${n} 行目: 状態が重複しています: $k"$'\n'; continue; }
     seen+="$k "; cats+="$c "
     ST_PARSED+="$k"$'\t'"$c"$'\t'"$d"$'\n'
@@ -152,11 +158,11 @@ st_names() {
   done
   printf '%s' "$out"
 }
-# st_sql <分類...> → SQL の IN (...) の中身('a','b')。当たる状態が無ければ NULL(何にも当たらない)
+# st_sql <分類...> → SQL の IN (...) の中身('a','b')。当たる状態が無ければ空集合(IN も NOT IN も正しく効く。NULL だと NOT IN が偽になる)
 st_sql() {
   local k out=""
   for k in $(st_names "$@"); do out+="${out:+,}$(q "$k")"; done
-  printf '%s' "${out:-NULL}"
+  printf '%s' "${out:-SELECT NULL WHERE 0}"
 }
 # st_main <分類> → tb がその分類の状態を書くときの名前(設定でその分類の最初に書いたもの。無ければ組み込みの名前)
 st_main() {

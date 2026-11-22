@@ -482,7 +482,9 @@ def page_tasks(qs, ctx=None):
         if sort == "priority":
             sort = ""
     task_statuses = status_names()
-    if st and st not in task_statuses:
+    # 設定から外した状態のチケットが残っていれば、その状態でも絞り込める(件数のリンクから来る)
+    present = [r["status"] for r in q("SELECT DISTINCT status FROM tasks ORDER BY status")]
+    if st and st not in task_statuses and st not in present:
         errs.append("状態は " + " / ".join(task_statuses) + " のどれかです"); st = ""
     if owner and not OWNER_RE.fullmatch(owner):
         errs.append("担当は英数字と . _ - だけです"); owner = ""

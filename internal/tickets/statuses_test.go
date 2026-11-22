@@ -11,13 +11,14 @@ func TestParseStatuses(t *testing.T) {
 		t.Fatalf("ParseStatuses = %v %v %v", names, cats, ok)
 	}
 	for _, bad := range []string{
-		"",                             // 状態が無い
-		"a todo\nc done\n",             // active が無い
-		"a todo\nb doing\nc done\n",    // 知らない分類
-		"a todo\na active\nc done\n",   // 重複
-		"a* todo\nb active\nc done\n",  // glob の文字
-		"a todo x\nb active\nc done\n", // 3 語
-		"a'b todo\nb active\nc done\n", // 引用符
+		"",                                 // 状態が無い
+		"a todo\nc done\n",                 // active が無い
+		"a todo\nb doing\nc done\n",        // 知らない分類
+		"a todo\na active\nc done\n",       // 重複
+		"a* todo\nb active\nc done\n",      // glob の文字
+		"a todo x\nb active\nc done\n",     // 3 語
+		"a'b todo\nb active\nc done\n",     // 引用符
+		"blocked todo\nb active\nc done\n", // 組み込みの名前を別の分類に
 	} {
 		if _, _, ok := ParseStatuses(bad); ok {
 			t.Errorf("ParseStatuses(%q) ok; want refused", bad)
@@ -39,7 +40,7 @@ func TestStatusSetIn(t *testing.T) {
 	if got := s.SQLList("active"); got != "'doing','in_progress'" {
 		t.Errorf("SQLList(active) = %s", got)
 	}
-	if got := (StatusSet{cat: map[string]string{}}).SQLList("review"); got != "NULL" {
+	if got := (StatusSet{cat: map[string]string{}}).SQLList("review"); got != "SELECT NULL WHERE 0" {
 		t.Errorf("SQLList on empty = %s", got)
 	}
 }

@@ -51,6 +51,11 @@ func ParseStatuses(body string) (names []string, cats map[string]string, ok bool
 		if _, dup := cats[k]; dup {
 			return nil, nil, false
 		}
+		for _, b := range builtin { // 組み込みの名前は組み込みの分類だけ(tb と同じ)
+			if b[0] == k && b[1] != c {
+				return nil, nil, false
+			}
+		}
 		cats[k] = c
 		have[c] = true
 		names = append(names, k)
@@ -120,14 +125,14 @@ func (s StatusSet) In(cats ...string) []string {
 	return out
 }
 
-// SQLList は SQL の IN (...) の中身('a','b')。当たる状態が無ければ NULL。
+// SQLList は SQL の IN (...) の中身('a','b')。当たる状態が無ければ空集合(NULL だと NOT IN が偽になる)。
 func (s StatusSet) SQLList(cats ...string) string {
 	var q []string
 	for _, k := range s.In(cats...) {
 		q = append(q, "'"+strings.ReplaceAll(k, "'", "''")+"'")
 	}
 	if len(q) == 0 {
-		return "NULL"
+		return "SELECT NULL WHERE 0"
 	}
 	return strings.Join(q, ",")
 }
