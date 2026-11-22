@@ -13,6 +13,7 @@ var MsgVars = map[string][]string{
 	"send.denied.default":        {"sender"},
 	"send.blocked.notice":        {"id", "target", "kind", "rule"},
 	"nudge.text":                 {"task", "title", "minutes", "status", "active"},
+	"nudge.start":                {"task", "title", "minutes", "status", "agent", "session"},
 	"nudge.multi":                {"task", "others", "active", "todo"},
 	"nudge.pool":                 {"task", "title", "agent", "session", "todo"},
 	"alert.analyze":              {"id"},

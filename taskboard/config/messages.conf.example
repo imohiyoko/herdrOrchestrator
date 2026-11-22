@@ -7,6 +7,7 @@
 # send.denied.default          {sender}                  delivery のどの行にも当たらず、送信者が指揮官でないときの拒否の理由(outbox の reason)
 # send.blocked.notice          {id} {target} {kind} {rule}  delivery の block で止めたとき、送信者に返す知らせ
 # nudge.text                   {task} {title} {minutes} {status} {active}  tb nudge の催促の本文({status} は名指ししたチケットの状態、{active} は作業中の状態の名前。設定 statuses)
+# nudge.start                  {task} {title} {minutes} {status} {agent} {session}  tb nudge の催促で、名指ししたチケットが着手前(todo の分類。設定 nudge の wake)のときの本文
 # nudge.multi                  {task} {others} {active} {todo}  催促の本文の後ろ(作業中を複数握っているとき。{todo} は未着手の状態の名前)
 # nudge.pool                   {task} {title} {agent} {session} {todo}  tb nudge --pool で担当なしの未着手を取りに行かせる本文
 # alert.analyze                {id}                      アラートの解析を頼む agent への最初の依頼

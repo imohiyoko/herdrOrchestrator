@@ -482,14 +482,26 @@ nudge_team_of() {
   return 1
 }
 
+# 握っているほかの active のチケットに触れる後ろの文(1 枚ずつの原則)
+nudge_multi_text() {  # $1=今やるチケット $2=ほかの active のチケット
+  msg nudge.multi 'あなたは {active} のチケットをほかにも持っています({others})。1 枚ずつ進めるのが原則なので、まず {task} を進め、今やっていないものは tb update <ID> --status {todo} で戻すか、tb comment で指示役に相談してください。' \
+    task="$1" others="$2" active="$(st_main active)" todo="$(st_main todo)"
+}
+
 nudge_text() {  # $1=今やるチケット $2=題 $3=分 $4=握っているほかの active のチケット(空白区切り。空可) $5=今やるチケットの状態
   local t
   t=$(msg nudge.text '[催促] {task}「{title}」が {status} のまま、turn が終わって {minutes} 分止まっています。続きを進めてください。終わったら tb done {task} -d <成果物> -m <要約> と tb report {task}、進められない理由があれば tb block {task} -m <理由> か tb comment {task} --kind question --text <聞きたいこと> で知らせてください。' \
     task="$1" title="$2" minutes="$3" status="${5:-$(st_main active)}" active="$(st_main active)")
-  if [[ -n $4 ]]; then
-    t+=$(msg nudge.multi 'あなたは {active} のチケットをほかにも持っています({others})。1 枚ずつ進めるのが原則なので、まず {task} を進め、今やっていないものは tb update <ID> --status {todo} で戻すか、tb comment で指示役に相談してください。' \
-      task="$1" others="$4" active="$(st_main active)" todo="$(st_main todo)")
-  fi
+  [[ -z $4 ]] || t+=$(nudge_multi_text "$1" "$4")
+  printf '%s' "$t"
+}
+
+# 割り当てだけで着手前(todo の分類)のチケットの催促。「〜のまま止まっています・続きを」は作業中の言い方なので、着手を促す文面にする
+nudge_start_text() {  # $1=チケット $2=題 $3=分 $4=握っているほかの active のチケット(空可) $5=状態 $6=agent 名 $7=session id
+  local t
+  t=$(msg nudge.start '[催促] {task}「{title}」はあなたに割り当てられていますが、まだ着手されていません({status})。turn が終わって {minutes} 分たちました。始めるなら tb claim {task} --owner {agent} --session {session} で着手してください。始められない理由があれば tb comment {task} --kind question --text <聞きたいこと> で知らせてください。' \
+    task="$1" title="$2" minutes="$3" status="$5" agent="$6" session="$7")
+  [[ -z $4 ]] || t+=$(nudge_multi_text "$1" "$4")
   printf '%s' "$t"
 }
 
@@ -617,6 +629,7 @@ cmd_nudge() {
     if [[ $mode == pool ]]; then
       offered+="\"$pick\","   # dry-run でも同じ選び方になるよう、ここで印を付ける(候補の ID は T-... で引用符を含まない)
       text=$(nudge_pool_text "$pick" "$(oneline "$ptitle" 80)" "$owner" "$sess")
+    elif st_is "$pstatus" todo; then text=$(nudge_start_text "$pick" "$(oneline "$ptitle" 80)" "$mins" "$others" "$pstatus" "$owner" "$sess")
     else text=$(nudge_text "$pick" "$(oneline "$ptitle" 80)" "$mins" "$others" "$pstatus"); fi
     ((nact > 1)) && w=" / $(st_main active) $nact 枚" || w=""
     if ((dry)); then nudge_row "$owner" "$pick" would "休んで $mins 分 / $sender から$w"; continue; fi

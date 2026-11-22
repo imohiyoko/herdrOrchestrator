@@ -94,8 +94,15 @@ eq "nudge: wake に active が無ければ in_progress だけの agent は走査
 eq "nudge --pool: wake に active が無くても、作業中の agent には todo を取りに行かせない" "$($TB nudge w1 --pool --dry-run | grep "^w1${TAB}" | cut -f3-4 | tr '\t' ' ')" "skip 担当のチケットがある(${t1}。--pool では取りに行かせない)"
 eq "nudge: 当たらない宛先の理由に wake の状態" "$($TB nudge w1 --dry-run | grep "^w1${TAB}" | cut -f4)" "宛先に当たる agent がいない(todo のチケットを握っていない・--pool なら herdr にいない)"
 $TB nudge w4 >/dev/null
-eq "nudge: 文面はそのチケットの状態の名前" "$(grep '^prompt w4' "$FAKE_LOG" | grep -c "${t6}「まだ claim していない」が todo のまま")" "1"
+eq "nudge: 着手前(todo)のチケットは着手を促す文面" "$(grep '^prompt w4' "$FAKE_LOG" | grep -c "${t6}「まだ claim していない」はあなたに割り当てられていますが、まだ着手されていません(todo)")" "1"
+eq "nudge: 着手前の文面に本人の claim" "$(grep '^prompt w4' "$FAKE_LOG" | grep -c "tb claim $t6 --owner w4 --session s4 で着手")" "1"
+eq "nudge: 着手前の文面は「続きを進めて」と言わない" "$(grep '^prompt w4' "$FAKE_LOG" | grep -c 'のまま\|続きを進めて')" "0"
 nsql "DELETE FROM outbox WHERE target='w4';"; nsql "DELETE FROM messages WHERE target='w4';"
+# 着手前でなければ(review など)今までの文面で、状態の名前を出す
+$TB update "$t6" --status review >/dev/null; printf 'wake review\n' >"$TB_NUDGE"; : >"$FAKE_LOG"
+$TB nudge w4 >/dev/null
+eq "nudge: review のチケットは状態の名前で「のまま」" "$(grep '^prompt w4' "$FAKE_LOG" | grep -c "${t6}「まだ claim していない」が review のまま")" "1"
+nsql "DELETE FROM outbox WHERE target='w4';"; nsql "DELETE FROM messages WHERE target='w4';"; $TB update "$t6" --status todo >/dev/null
 # 状態の名前で書いたもの(設定 statuses から外した名前は当たらないだけで、実行は止めない)
 printf 'wake in_progress no-longer-there\n' >"$TB_NUDGE"
 eq "nudge: wake に状態の名前" "$(out=$($TB nudge --dry-run); row w1) $($TB nudge --dry-run | grep -c '^w4')" "$t1 would 0"
