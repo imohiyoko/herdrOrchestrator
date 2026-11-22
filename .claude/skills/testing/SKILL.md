@@ -39,7 +39,7 @@ description: このリポジトリでテストを設計・追加・修正・実�
 - 判定の部品: `eq "<名前>" "<実際>" "<期待>"`、`rc <コマンド>`(終了コードを出す)、`ok` / `ng`、`prompts`(送信の数)。名前はケースの中で一意に、何が成り立つべきかを書く(例: `"claim twice fails"`)
 - **前のケースの状態を使わない**。自分のケースで使う project 名(例: `-p tk`)、DB(`export TB_DB=$TMP/<名前>.db`)、設定ファイル(`$TMP/<名前>.conf`)を自分で用意する。先頭のコメントに「project は tk / tk2 だけを使う」のように書く
 - 環境変数を変えたら、同じユニットの後続に漏らさないよう最後に戻す(`_saved_db=$TB_DB` … `export TB_DB=$_saved_db`)。`HERDR_PANE_ID` を外す・戻す型は `12_conv.sh` を見る
-  - 「元は設定されていなかった」も戻す。`unset` や `export X=...` をする変数は、先頭で `_saved_env=$(declare -p A B C 2>/dev/null)` と保存し、最後に `unset A B C` してから `eval "${_saved_env//declare -/declare -g}"` で戻す(`84_recipe_runner.sh`)。`X=${X-}` で保存して `unset` で戻すだけだと、元の値が消える
+  - 「元は設定されていなかった」も戻す。`unset` や `export X=...` をする変数は、先頭で `_saved_env=$(declare -p A B C 2>/dev/null)` と保存し、最後に `unset A B C` してから `eval "$_saved_env"` で戻す(`84_recipe_runner.sh`。ケースは run.sh の最上位で source されるので大域に戻る。`declare -` を `declare -g` に置き換えると、export していない変数の `declare --` が壊れる)。`X=${X-}` で保存して `unset` で戻すだけだと、元の値が消える
   - ケースの中の関数(例: `rr_reset`)が `unset` する変数も、戻す対象に入れる
 - ケースの中で `c`・`out` などの変数は自由に使ってよい(runner の変数は `__` 始まり)
 - どのユニットも最後に `99_zzz_session_sweep.sh` が流れ、テスト中に書かれた **すべての行に `herdr_session` が入っているか** を見る。新しい表・INSERT はセッション列を埋める
