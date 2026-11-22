@@ -136,3 +136,6 @@ func (s StatusSet) SQLList(cats ...string) string {
 	}
 	return strings.Join(q, ",")
 }
+
+// Cat は状態の分類(知らない名前なら空。core.sh の st_cat)。
+func (s StatusSet) Cat(name string) string { return s.cat[name] }
