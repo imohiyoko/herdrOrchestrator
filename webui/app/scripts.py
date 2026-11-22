@@ -17,6 +17,27 @@ DOCS_JS = """(function () {
 """
 
 
+# タスク一覧の絞り込み: 選んだらすぐ反映する(キーワードと日数は Enter / 「絞り込む」で)。空の欄は URL に載せない
+FILTER_JS = """(function () {
+  "use strict";
+  var f = document.getElementById("tfilter");
+  if (!f) return;
+  function go() {
+    Array.prototype.forEach.call(f.elements, function (el) {
+      if (el.name && el.type !== "checkbox" && el.value === "") el.disabled = true;
+    });
+    f.submit();
+  }
+  f.addEventListener("change", function (ev) {
+    var t = ev.target;
+    if (t && (t.name === "q" || t.name === "days")) return;
+    go();
+  });
+  f.addEventListener("submit", function (ev) { ev.preventDefault(); go(); });
+})();
+"""
+
+
 # 画面の自動更新。<meta name=herdr-refresh content=秒> があるページだけ。
 # 見ていないタブ(document.hidden)では再読み込みしない: 再読み込みのたびにサーバーが画面を作り直し herdr を呼ぶため。
 # 見えるようになった時点で期限を過ぎていれば、すぐに読み直す。読み直しは GET(POST の結果画面を再送しない)
