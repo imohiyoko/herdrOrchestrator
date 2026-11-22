@@ -2,6 +2,7 @@ package tbcli
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -74,5 +75,34 @@ func TestListUsageAndEmpty(t *testing.T) {
 	}
 	if c, out, _ := run(t, "--commands"); c != 0 || !strings.Contains(out, "list") {
 		t.Errorf("--commands = %d %q", c, out)
+	}
+}
+
+func TestTouchAndActivity(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TB_DB", filepath.Join(dir, "tasks.db"))
+	t.Setenv("TB_TOUCH_LOG", filepath.Join(dir, "touch.log"))
+	t.Setenv("HERDR_SESSION", "s1")
+	t.Setenv("HERDR_SOCKET_PATH", "")
+	t.Setenv("TB_SCHEMA_DIR", "")
+	if c, out, e := run(t, "touch", "--event", "UserPromptSubmit", "--session-id", "a1", "--pane-id", "w:p1"); c != 0 || out != "" || e != "" {
+		t.Fatalf("touch = %d %q %q", c, out, e)
+	}
+	if c, out, _ := run(t, "activity"); c != 0 || !strings.HasPrefix(out, "a1\tw:p1\t1\t0\t") || !strings.HasSuffix(out, "\t-\t-\n") {
+		t.Errorf("activity = %d %q", c, out)
+	}
+	if c, out, _ := run(t, "activity", "--json"); c != 0 || !strings.Contains(out, `"session_id":"a1"`) || !strings.Contains(out, `"working":1,"stuck":0,"since_prompt_min":0}`) {
+		t.Errorf("activity --json = %d %q", c, out)
+	}
+	if c, _, e := run(t, "activity", "--stuck-min", "x"); c != 2 || !strings.Contains(e, "tb: 分は数字: x") {
+		t.Errorf("bad --stuck-min = %d %q", c, e)
+	}
+	// 不正な入力: 何も出さず 0、記録には理由コードだけ
+	if c, out, e := run(t, "touch", "--event", "Stop", "--prompt", "SECRET"); c != 0 || out != "" || e != "" {
+		t.Errorf("bad touch = %d %q %q", c, out, e)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "touch.log"))
+	if err != nil || !strings.Contains(string(b), " event=Stop reason=invalid-args\n") || strings.Contains(string(b), "SECRET") {
+		t.Errorf("log = %q %v", b, err)
 	}
 }
