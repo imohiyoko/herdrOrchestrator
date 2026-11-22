@@ -22,7 +22,7 @@ type Role struct {
 
 // roleMax は ROLE_MAX(渡す本文の上限。超えたら切る)。
 func roleMax() int {
-	if n, err := strconv.Atoi(os.Getenv("TB_ROLE_MAX")); err == nil {
+	if n, err := strconv.Atoi(os.Getenv("TB_ROLE_MAX")); err == nil && n >= 0 { // 負の値は既定に戻す
 		return n
 	}
 	return 12000

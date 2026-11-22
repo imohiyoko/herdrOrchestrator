@@ -63,8 +63,8 @@ main() {
     whoami) cmd_whoami "$@"; return $?;;   # 読み取りだけ。DB を開かない(壊れた DB でも今の向き先を確かめられる)
     touch) [[ ${TB_IMPL:-bash} != go ]] || tb_go_quiet touch "$@"; cmd_touch "$@"; return 0;;   # 常に 0。ツールの有無チェックや init_db の失敗でも止めない
     role-context) ( need_tools && init_db ) >/dev/null 2>&1 && session_setup_load || return 0   # hook 用。常に 0
-      if [[ ${TB_IMPL:-bash} == go ]] && tb_go_has role-context; then ( tb_go_exec "${TB_HERDRCTL:-herdrctl}" role-context "$@" ) 2>/dev/null
-      else cmd_role-context "$@" 2>/dev/null; fi
+      if [[ ${TB_IMPL:-bash} == go ]] && tb_go_has role-context; then ( tb_go_exec "${TB_HERDRCTL:-herdrctl}" role-context "$@" ) 2>/dev/null || true
+      else cmd_role-context "$@" 2>/dev/null || true; fi
       return 0;;
   esac
   # ADR 0002 の手順 3: TB_IMPL=go なら、Go に移し終えたコマンド(herdrctl tb --commands)は herdrctl に渡す。既定は bash
