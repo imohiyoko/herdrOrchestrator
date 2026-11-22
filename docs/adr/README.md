@@ -8,3 +8,4 @@
 | [0004](0004-teams-and-ticket-handoff.md) | 機能を層で分け、仕事は「チーム」にチケットで頼む | Proposed |
 | [0005](0005-minimal-parts-recipes-and-registered-grants.md) | tb の部品を最小にし、組み合わせ(レシピ)と権限(操作の種類)を DB に登録できるようにする | Accepted |
 | [0006](0006-common-permission-tiers-for-all-commands.md) | tb の全コマンドに共通の権限段階を割り当て、設定で変えられるようにする | Accepted |
+| [0007](0007-authenticated-principals-and-one-policy.md) | 認証した主体に認可を与える 1 つのモデルにし、過去の権限の仕組みをなくす | Proposed |
