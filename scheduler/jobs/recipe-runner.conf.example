@@ -1,0 +1,13 @@
+# レシピの外の実行役(tb recipe-runner。ADR 0005 の段 3)。agent が tb recipe-run で待ち行列に置いた並び(R-<n>)を、古い順に 1 件ずつ実行する。
+# 実行の時点で、依頼者(置いた agent)の権限で部品ごとに判定し直す。レシピの本文が変わった・消えた・古すぎる(既定 900 秒)ものは実行しない。
+# 自分自身の再起動のように、pane の中の tb ではできない手順のために使う。常駐しない(回ごとに起動して終わる)。
+# このジョブは人の端末と同じ権限で動くが、待ち行列の並びの外のことはしない。OWNER は付けない(付けると recipe-runner は pane の外でも動くが、意味がない)。
+# wait-idle の上限(最大 600 秒)より COMMAND_TIMEOUT を長くする。
+# 注意: COMMAND は bash -c でそのまま実行される。このファイルは人が管理し、外部入力を埋め込まない。
+ENABLED=0
+COMMAND='cd /path/to/taskboard && bin/tb recipe-runner --max 1'
+COMMAND_TIMEOUT=900
+WINDOW=00:00-23:59
+INTERVAL_SEC=30
+DAYS=daily
+TZ=Asia/Tokyo

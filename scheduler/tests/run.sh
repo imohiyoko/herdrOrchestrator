@@ -213,6 +213,22 @@ ok "出力は 500 字に切り詰め" "$(last long | jq -r '.stdout|length')" 50
 t0=$SECONDS; NOW="$THU 12:00" bash bin/tick.sh slow
 ok "タイムアウトで failed / exit 124" "$(last slow | jq -r '[.action,.exit]|join("|")')" "failed|124"
 ok "タイムアウトは 4 秒以内に打ち切る" "$([ $((SECONDS - t0)) -le 4 ] && echo y)" y
+# OWNER(コマンド型の持ち主。ADR 0005 の守り 8): COMMAND に SCHED_OWNER で渡す。無ければ空。プロンプト型・不正な名前は拒否
+mkcmd own "COMMAND='echo \"owner=[\$SCHED_OWNER] job=\$SCHED_JOB\"'
+OWNER=w1"
+mkcmd noown "COMMAND='echo \"owner=[\$SCHED_OWNER]\"'"
+NOW="$THU 12:00" bash bin/tick.sh own; NOW="$THU 12:00" bash bin/tick.sh noown
+ok "OWNER: COMMAND に SCHED_OWNER と SCHED_JOB が渡る" "$(last own | jq -r .stdout)" "owner=[w1] job=own"
+ok "OWNER: 無ければ SCHED_OWNER は空(外から持ち込んだ値も残さない)" "$(SCHED_OWNER=leak NOW="$THU 12:02" bash bin/tick.sh noown; last noown | jq -r .stdout)" "owner=[]"
+ok "show.sh: owner" "$(bash bin/show.sh own | jq -c .owner) $(bash bin/show.sh noown | jq -c .owner)" '"w1" null'
+printf 'TARGET=dummy\nPROMPT=x\nWINDOW=09:00-10:00\nINTERVAL_MIN=5\nOWNER=w1\n' >"$JOBS_DIR/ownp.conf"
+ok "OWNER: プロンプト型には書けない" "$(bash bin/show.sh ownp >/dev/null 2>&1; echo $?)" 2
+for bad in human W1 'w1;id' ''x''; do :; done
+mkcmd ownbad "COMMAND='echo x'
+OWNER=Bad"
+mkcmd ownhuman "COMMAND='echo x'
+OWNER=human"
+ok "OWNER: agent 名でなければ拒否(show.sh / tick.sh)" "$(bash bin/show.sh ownbad >/dev/null 2>&1; echo $?) $(NOW="$THU 12:00" bash bin/tick.sh ownbad >/dev/null 2>&1; echo $?) $(bash bin/show.sh ownhuman >/dev/null 2>&1; echo $?)" "2 2 2"
 NOW="$THU 12:00" bash bin/tick.sh lock & sleep 0.5
 NOW="$THU 12:00" bash bin/tick.sh lock; wait
 ok "多重実行は skipped_locked" "$(jq -r .action "$LOG_DIR/lock.log" | sort | tr '\n' ' ')" "ran skipped_locked "

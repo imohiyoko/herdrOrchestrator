@@ -114,8 +114,14 @@ tb recipe-list [--json]   名前 リスク階層 step 数 更新者 更新時刻
 tb recipe-show <名前>   判定の操作名・リスク階層・step ごとの部品の性質と本文
 tb recipe-history [<名前>] [--json]   登録の変更(時刻 名前 add|update|rm リスク階層 変えた者)
 tb recipe-run <名前> [--target A] [--task T-..] [--dry-run] [<名前>=<値> ...]   汎用の入口。判定は recipe:<名前>:<対象>(既定の対象は依頼者。人の端末は --target が要る)、続けて部品ごと
-         (人だけの部品は agent から止まる。部品の操作名も approvals / grants で判定)。段 2 で実行するのは読み取りの部品だけ。記録は tb events(recipe_run / recipe_step / recipe_end)
-         終了コード 0=済んだ 1=途中の部品が失敗(残りは続行しない)2=使い方 4=実行しない(未登録・検査を通らない・人だけ・まだ実行できない部品)20=人の承認が要る
+         (人だけの部品は agent から止まる。部品の操作名も approvals / grants で判定。agent から指揮官は止めない)。全部を判定してから、依頼者が agent で pane の外で行う部品があれば
+         検査済みの並びだけを待ち行列に置く(R-<n> queued。外の実行役 tb recipe-runner が実行する)。人の依頼と、外の部品が無い並びはその場で実行する。記録は tb events(recipe_run / recipe_step / recipe_end)
+         定期ジョブ(SCHED_JOB)からはジョブの持ち主(OWNER → SCHED_OWNER)の権限で判定し、持ち主が無ければ実行しない
+         終了コード 0=済んだ・置いた 1=途中の部品が失敗(残りは続行しない)2=使い方 4=実行しない(未登録・検査を通らない・人だけ・まだ実行できない部品・持ち主の無い定期ジョブ)20=人の承認が要る
+tb recipe-runner [--max N]   外の実行役(人の端末か、人が登録した定期ジョブから)。待ち行列の queued を古い順に N 件(既定 1)、依頼者の権限で判定し直してから実行する。
+         本文が変わった・消えた・TB_RECIPE_QUEUE_TTL_SEC(既定 900)秒を過ぎた・判定が allow でない、のどれでも実行しない。出力は 1 件ごとに R-<n> <状態>
+tb recipe-queue [--all] [--json]   待ち行列(既定は queued と running。R-<n> 状態 レシピ 対象 依頼者 置いた時刻 結果)
+tb recipe-cancel R-<n>   待ち行列の queued を取り消す(人と、頼んだ agent 自身だけ)
 
 人の承認(config/approvals.conf。<操作のパターン> = ask|allow、最初に一致した行、無一致は ask):
 tb can [<主体>] <操作> <対象>   主体(省くと叩いた agent。pane から決める)が対象にその操作をできるかを、実際の判定と同じ規則で出す(読むだけ)。1 行目 allow|ask|hold|deny、続けて rule:。

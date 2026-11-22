@@ -21,6 +21,7 @@ proposal_details
 proxy_requests
 read_log
 recipe_changes
+recipe_runs
 recipes
 reviews
 role_briefings

@@ -322,7 +322,8 @@ for p in "${DUE[@]}"; do
   AT=$(fmt_epoch "$p" '%Y-%m-%d %H:%M:%S'); PANE=""; STATE=""; EXITC=""; OUT_S=""; ERR_S=""; PSRC=""
   # この回の時刻を GATE / COMMAND / PROMPT_CMD に渡す(ジョブの TZ の現地時刻。曜日は 1=Mon..7=Sun)
   read -r SCHED_HOUR SCHED_MIN SCHED_SEC SCHED_DOW <<<"$(fmt_epoch "$p" '%H %M %S %u')"
-  export SCHED_JOB=$JOB SCHED_AT=$AT SCHED_HOUR SCHED_MIN SCHED_SEC SCHED_DOW
+  # SCHED_OWNER: ジョブの持ち主(OWNER。無ければ空)。tb recipe-run は SCHED_JOB があれば人として扱わず、この agent の権限で判定する
+  export SCHED_JOB=$JOB SCHED_AT=$AT SCHED_HOUR SCHED_MIN SCHED_SEC SCHED_DOW SCHED_OWNER="${OWNER:-}"
   run_gate || continue
   if [ -n "${COMMAND:-}" ]; then run_command || RC=1; else run_prompt || RC=1; fi
 done
