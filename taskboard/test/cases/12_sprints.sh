@@ -58,6 +58,7 @@ fi
 exec "$_real_sqlite" "\$@"
 WRAP
 chmod +x "$TMP/race-bin2/sqlite3"
+export TB_TEST_HOOKS=1  # Go 版(TB_IMPL=go)は sqlite3 を呼ばないので、同じことを herdrctl のテスト用の口(store.RaceHook)がする
 eq "sprints(race): sprint closed in between" \
   "$(PATH="$TMP/race-bin2:$PATH" RACE_MARK=$TMP/srace1 RACE_SQL="UPDATE sprints SET state='closed' WHERE id=${s3#S-}" rc $TB update "$d" --sprint "$s3")" "2"
 eq "sprints(race): task still in backlog" "$($TB show "$d" | jq -r .sprint_id)" "null"
@@ -70,6 +71,7 @@ eq "sprints(race): carry target closed in between" \
   "$(PATH="$TMP/race-bin2:$PATH" RACE_MARK=$TMP/srace3 RACE_SQL="UPDATE sprints SET state='closed' WHERE id=${c2#S-}" rc $TB sprint-close "$c1" --carry "$c2")" "1"
 eq "sprints(race): task not moved into the closed sprint" "$($TB show "$ct" | jq -r .sprint_id)" "${c1#S-}"
 eq "sprints(race): source sprint stays open" "$(sqlite3 "$TB_DB" "SELECT state FROM sprints WHERE id=${c1#S-};")" "planned"
+unset TB_TEST_HOOKS
 eq "sprints: close twice fails" "$($TB sprint-close "$c1" >/dev/null; rc $TB sprint-close "$c1")" "1"
 # 履歴(task_events)にスプリントとポイントの変化が残る
 h1=$($TB sprint-add -p sp -n hist); ht=$($TB add -p sp -t hist-task)

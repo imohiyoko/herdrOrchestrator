@@ -203,12 +203,17 @@ func (s *DB) setupSession() error {
 		if t == "config" || t == "config_changes" {
 			cond = "IN (" + q + ", '*')"
 		}
-		stmts := []string{
-			fmt.Sprintf("CREATE TEMP VIEW %s AS SELECT * FROM main.%s WHERE herdr_session=%s", t, t, q),
+		var stmts []string
+		// task_events だけはビューを作らない(db.sh の session_setup と同じ): 履歴を書く一時トリガーは表を main. 付きで書けず、
+		// 同じ名前のビューがあるとそちらに当たる。読む側は main.task_events を herdr_session で絞る
+		if t != "task_events" {
+			stmts = append(stmts, fmt.Sprintf("CREATE TEMP VIEW %s AS SELECT * FROM main.%s WHERE herdr_session=%s", t, t, q))
+		}
+		stmts = append(stmts,
 			fmt.Sprintf("CREATE TEMP TRIGGER _tb_guard_%s_i BEFORE INSERT ON main.%s WHEN NOT (NEW.herdr_session %s) BEGIN SELECT RAISE(ABORT,'%s(%s)'); END", t, t, cond, m, t),
 			fmt.Sprintf("CREATE TEMP TRIGGER _tb_guard_%s_u BEFORE UPDATE ON main.%s WHEN NOT (OLD.herdr_session %s AND NEW.herdr_session %s) BEGIN SELECT RAISE(ABORT,'%s(%s)'); END", t, t, cond, cond, m, t),
 			fmt.Sprintf("CREATE TEMP TRIGGER _tb_guard_%s_d BEFORE DELETE ON main.%s WHEN NOT (OLD.herdr_session %s) BEGIN SELECT RAISE(ABORT,'%s(%s)'); END", t, t, cond, m, t),
-		}
+		)
 		for _, st := range stmts {
 			if _, err := s.Exec(st); err != nil {
 				return fmt.Errorf("store: セッションの準備(%s): %w", t, err)
@@ -298,4 +303,29 @@ func Each(db *sql.DB, q string, args []any, fn func(cols []string, vals []any) e
 		}
 	}
 	return rows.Err()
+}
+
+// RaceHook はテストだけの口(TB_TEST_HOOKS=1 のときだけ動く): 書き込みトランザクション(BEGIN IMMEDIATE)の直前に、
+// 別の接続で RACE_SQL を 1 度だけ確定させる(RACE_MARK のファイルが無いときだけ。作ってから流す)。
+// bash 版のテストが PATH に置く sqlite3 の包みと同じ動き(taskboard/test/cases/11_tickets.sh・12_sprints.sh の並行の検査)。
+func (s *DB) RaceHook() {
+	if os.Getenv("TB_TEST_HOOKS") != "1" {
+		return
+	}
+	q, mark := os.Getenv("RACE_SQL"), os.Getenv("RACE_MARK")
+	if q == "" || mark == "" {
+		return
+	}
+	if _, err := os.Stat(mark); err == nil {
+		return
+	}
+	if err := os.WriteFile(mark, nil, 0o600); err != nil {
+		return
+	}
+	d, err := sql.Open("sqlite", s.Path+"?_pragma=busy_timeout("+strconv.Itoa(BusyTimeoutMS)+")")
+	if err != nil {
+		return
+	}
+	defer d.Close()
+	_, _ = d.Exec(q)
 }
