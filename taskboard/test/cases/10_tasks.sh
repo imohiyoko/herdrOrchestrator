@@ -61,3 +61,36 @@ eq "bad parent rejected" "$(rc $TB add -p beta -t x --parent T-beta-999)" "1"
 $TB block $b2 -m "wait" >/dev/null
 eq "block" "$($TB list -p beta -s blocked | cut -f1,2)" "$(printf '%s\tblocked' "$b2")"
 eq "done task can't be blocked" "$(rc $TB block $a1)" "1"
+
+# --- claim の上書き防止: 担当が空か --owner と同じ todo だけ取れる
+cg_state() { $TB show "$1" | jq -r '.status+"/"+(.owner_agent // "")'; }
+c0=$($TB add -p cg -t "unowned")
+eq "claim guard: unowned todo → ok" "$(rc $TB claim $c0 --owner w1)" "0"
+c1=$($TB add -p cg -t "empty owner"); sqlite3 "$TB_DB" "UPDATE tasks SET owner_agent='' WHERE id='$c1';"
+eq "claim guard: empty-string owner → ok" "$(rc $TB claim $c1 --owner w1)" "0"
+c2=$($TB add -p cg -t "same owner" --owner w1)
+eq "claim guard: assigned to the same agent → ok" "$(rc $TB claim $c2 --owner w1)" "0"
+c3=$($TB add -p cg -t "other owner" --owner w1); cg_t0=$($TB show $c3 | jq -r .updated_at); cg_n0=$(sqlite3 "$TB_DB" "SELECT COUNT(*) FROM task_events WHERE task_id='$c3';" 2>/dev/null || echo 0)
+eq "claim guard: assigned to another agent → fails" "$(rc $TB claim $c3 --owner w2)" "1"
+eq "claim guard: failed claim changes nothing" "$(cg_state $c3) $($TB show $c3 | jq -r .updated_at) $(sqlite3 "$TB_DB" "SELECT COUNT(*) FROM task_events WHERE task_id='$c3';" 2>/dev/null || echo 0)" "todo/w1 $cg_t0 $cg_n0"
+eq "claim guard: reason points to reassignment" "$($TB claim $c3 --owner w2 2>&1 | grep -c 'tb update .* --owner')" "1"
+eq "claim guard: reassign with update, then claim" "$($TB update $c3 --owner w2 >/dev/null; rc $TB claim $c3 --owner w2) $(cg_state $c3)" "0 in_progress/w2"
+eq "claim guard: status not todo keeps the old reason" "$($TB claim $c3 --owner w2 2>&1 | grep -c 'todo ではない')" "1"
+# two claims run one after the other; only the first succeeds (the condition sits in the UPDATE WHERE, so it is atomic)
+c4=$($TB add -p cg -t "second claim on the same todo")
+cg_a=$(rc $TB claim $c4 --owner wa); cg_b=$(rc $TB claim $c4 --owner wb)
+eq "claim guard: two sequential claims on the same unowned todo → only the first succeeds" "$cg_a $cg_b $(cg_state $c4)" "0 1 in_progress/wa"
+c5=$($TB add -p cg -t "pool text case" --owner w9)
+eq "claim guard: following a pool-style claim on an assigned todo fails and leaves it" "$(rc $TB claim $c5 --owner w1 --session s9) $(cg_state $c5)" "1 todo/w9"
+
+# --- 状態を別名にした環境でも、担当ガードと理由の分け方は分類で効く(todo の分類 = backlog、active の分類 = doing)
+_cg_saved=${TB_STATUSES-__unset__}
+export TB_STATUSES=$TMP/claim-guard-statuses.conf
+printf '%s\n' 'backlog todo' 'doing active' 'shipped done' 'dropped cancelled' >"$TB_STATUSES"
+ca1=$($TB add -p cga -t "alias, other owner" --owner w1)
+eq "claim guard (alias statuses): assigned to another agent → fails and keeps the alias state" "$(rc $TB claim $ca1 --owner w2) $(cg_state $ca1)" "1 backlog/w1"
+eq "claim guard (alias statuses): the reason is the assignment, not the status" "$($TB claim $ca1 --owner w2 2>&1 | grep -c '割り当て済み')" "1"
+eq "claim guard (alias statuses): unowned and same-owner claims pass" "$(rc $TB claim $($TB add -p cga -t "alias, unowned") --owner w1) $(rc $TB claim $($TB add -p cga -t "alias, same owner" --owner w1) --owner w1)" "0 0"
+$TB claim $ca1 --owner w1 >/dev/null
+eq "claim guard (alias statuses): a task already in the active class reports the status reason" "$($TB claim $ca1 --owner w1 2>&1 | grep -c '割り当て済み') $($TB claim $ca1 --owner w1 2>&1 | grep -c 'backlog')" "0 1"
+if [[ $_cg_saved == __unset__ ]]; then unset TB_STATUSES; else export TB_STATUSES=$_cg_saved; fi
