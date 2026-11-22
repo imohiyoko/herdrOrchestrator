@@ -191,3 +191,21 @@ cmd_proposal-resolve() {
   sql "UPDATE main.proposals SET status=$(q "$st"), note=NULLIF($(q "$note"),''), resolved_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$id;"
   echo "P-$id $st"
 }
+
+# tb review <pack|submit>(サービスの名前。古い名前 review-pack / review-submit も残す)。submit の本体は gate.sh(記録の形を gate と共有する)
+cmd_review() {
+  if [[ $# -eq 0 ]]; then review_usage; exit 2; fi
+  local sub=$1; shift
+  case $sub in
+    pack|submit) "cmd_review-$sub" "$@";;
+    help|-h|--help) review_usage;;
+    *) usage "review: 不明なサブコマンド $sub(pack / submit)";;
+  esac
+}
+review_usage() {
+  cat <<'USAGE'
+tb review pack [--since ISO8601] [--mark]   会計役に渡すレビュー材料(集計と上位だけ)
+tb review submit <task-id> --lineage L --sha S --blocker N --should N --verdict pass|fail [--pr o/r#n] [--evidence PATH]   レビュー結果を記録する
+(古い名前 tb review-pack / tb review-submit も同じに使える)
+USAGE
+}

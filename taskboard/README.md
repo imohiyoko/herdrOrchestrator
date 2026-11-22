@@ -756,7 +756,7 @@ tb agent-shed [--count N] [--json]        # 絞る候補の一覧。何も止め
 記録を見直し、役割(プロンプト)の改善を設定役(`projects` の `proposal=<名前>` の行。無ければ `TB_HR_NAME`、既定 `hr`)に提案する。提案を閉じられるのは設定役と人。設定役が `roles/` を直す(`role:change` の承認規則に従う)。
 
 ```bash
-tb review-pack [--since ISO] [--mark]   # レビュー材料。生ログではなく集計と上位だけ(トークン節約)。省略時は前回 --mark より後
+tb review pack [--since ISO] [--mark]   # レビュー材料。生ログではなく集計と上位だけ(トークン節約)。省略時は前回 --mark より後
 tb proposal add --role <roles のファイル|-> --title T (--text X | --text-file F)   # 会計役。設定役へすぐ送る(使用中なら digest が再送)
 tb proposal list [--status open|applied|rejected]
 tb proposal show P-<n>
@@ -766,7 +766,7 @@ tb proposal resolve P-<n> --status applied|rejected [--note N]   # 設定役か�
 **提案はチケット**(ADR 0003)。1 件ごとに project `proposal`・ラベル `proposal` と `role:<ファイル名>`(全体なら `role:-`)のチケット(`T-proposal-NNN`)ができ、担当は設定役。
 `open` は `todo`、`applied` / `rejected` は `done`(要約に「適用」/「見送り」、見送りはラベル `rejected` も付く)。状態は `tb proposal resolve` だけが変える。
 
-`review-pack` の中身: 送信の種類別件数と平均文字数、送れなかった宛先、長い送信、tb message send の拒否・承認待ち、何度も人が承認した操作、
+`tb review pack` の中身: 送信の種類別件数と平均文字数、送れなかった宛先、長い送信、tb message send の拒否・承認待ち、何度も人が承認した操作、
 報告の種類と質問の例、digest の大きさ、アラートの状態・重複・low 判定・解析時間、観測、役割の配布(compact 回数)、定期実行の action 別件数、提案の状況。
 
 ## 役割の配布(roles)
