@@ -17,7 +17,7 @@ shed_add() {  # $1=グループ $2=名前
   local k open cmd="tb agent-stop $2"
   k=$(killable_of "$2")
   [[ $k != protected ]] || return 0
-  open=$(sql "SELECT COUNT(*) FROM tasks WHERE owner_agent=$(q "$2") AND status IN ($OPEN_TASK_STATUSES);")
+  open=$(sql "SELECT COUNT(*) FROM tasks WHERE owner_agent=$(q "$2") AND status IN ($ST_HELD_SQL);")
   [[ $k == yes && $open == 0 ]] || cmd+=" --force"
   SHED_OUT+="$1"$'\t'"$2"$'\t'"killable=$k"$'\t'"$cmd"$'\n'
 }
@@ -41,13 +41,13 @@ cmd_agent-shed() {
     [[ $st == idle || $st == done ]] || continue
     shed_add done-idle "$name"
   done < <(sql "SELECT a.name FROM agents a WHERE a.state='running'
-      AND EXISTS (SELECT 1 FROM tasks t WHERE t.owner_agent=a.name AND t.status IN ('done','cancelled'))
-      AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.owner_agent=a.name AND t.status IN ($OPEN_TASK_STATUSES)) ORDER BY a.name;")
+      AND EXISTS (SELECT 1 FROM tasks t WHERE t.owner_agent=a.name AND t.status IN ($ST_CLOSED_SQL))
+      AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.owner_agent=a.name AND t.status IN ($ST_HELD_SQL)) ORDER BY a.name;")
   # 2. 止めてよいと判定されている(stale でない)
   while IFS= read -r name; do
     [[ -n $name && $conductors != *" $name "* ]] || continue
     [[ $(killable_of "$name") == yes ]] || continue
-    [[ -z $(sql "SELECT 1 FROM tasks WHERE owner_agent=$(q "$name") AND status IN ($OPEN_TASK_STATUSES) LIMIT 1;") ]] || continue
+    [[ -z $(sql "SELECT 1 FROM tasks WHERE owner_agent=$(q "$name") AND status IN ($ST_HELD_SQL) LIMIT 1;") ]] || continue
     shed_add killable "$name"
   done < <(sql "SELECT name FROM agents WHERE state='running' AND killable='yes' ORDER BY name;")
   # 3. 解析役(解析中のものは除く)と、親が終わった子
@@ -62,7 +62,7 @@ cmd_agent-shed() {
     [[ -n $name ]] && shed_add orphan "$name"
   done < <(sql "SELECT a.name FROM agents a WHERE a.state='running' AND a.spawned_by IS NOT NULL
       AND (COALESCE((SELECT p.state FROM agents p WHERE p.name=a.spawned_by),'stopped')!='running'
-           OR EXISTS (SELECT 1 FROM tasks t WHERE t.id=a.spawn_task AND t.status IN ('done','cancelled'))) ORDER BY a.name;")
+           OR EXISTS (SELECT 1 FROM tasks t WHERE t.id=a.spawn_task AND t.status IN ($ST_CLOSED_SQL))) ORDER BY a.name;")
   local out=$SHED_OUT
   ((count == 0)) || out=$(printf '%s' "$SHED_OUT" | head -n "$count")
   [[ -n $out ]] || return 0

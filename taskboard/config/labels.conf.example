@@ -5,7 +5,7 @@
 #
 # 設定があると:
 #   - tb add -l / tb update --label / --add-label で付けられるのは、ここに書いたラベルと tb 自身が付けるラベル
-#     (alert / proposal / rejected / deadline / role:*)だけ。ほかは終了コード 2 で断り、使えるラベルを出す
+#     (alert / proposal / rejected / role:* と、設定 system-labels の deadline。既定は deadline)だけ。ほかは終了コード 2 で断り、使えるラベルを出す
 #   - 外す(--remove-label)と絞り込み(tb list / board -l)は制限しない。設定より前に付いたラベルもそのまま残る
 #   - tb labels --defined で書いた順に件数と説明を出す。Web UI のタスク一覧の絞り込みにも、使われる前から出る
 # 緊急度はラベルではなく優先度(--priority highest|high|...)で表す。

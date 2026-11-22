@@ -7,8 +7,12 @@ webui/app/*.py の文字列リテラルのうち SELECT で始まるものを集
 import ast
 import glob
 import os
+import re
 import sqlite3
 import sys
+
+# SQL の中の状態の一覧の置き場(__CLOSED_STATUSES__ など。webui/app/data.py の stq と tb が実行の前に埋める)は仮の値で埋める
+ST_TOKEN = re.compile(r"__[A-Z]+_STATUSES__")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 db = sqlite3.connect(":memory:")
@@ -20,7 +24,7 @@ for path in sorted(glob.glob(os.path.join(ROOT, "webui", "app", "*.py"))):
     for node in ast.walk(ast.parse(open(path, encoding="utf-8").read())):
         if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
             continue
-        sql = node.value.strip()
+        sql = ST_TOKEN.sub("'x'", node.value.strip())
         if not sql.upper().startswith("SELECT ") or " FROM " not in sql.upper():
             continue
         # 後ろに WHERE などを足して組み立てる文もあるので、文として閉じていなくても FROM 句までで確かめる
@@ -33,7 +37,7 @@ for path in sorted(glob.glob(os.path.join(ROOT, "webui", "app", "*.py"))):
             print(f"FAIL {os.path.basename(path)}:{node.lineno} {ex}\n     {sql[:160]}")
 # taskboard/sql/*.sql(tb と webui が同じものを読む)もそのまま通るか
 for path in sorted(glob.glob(os.path.join(ROOT, "taskboard", "sql", "*.sql"))):
-    sql = "\n".join(ln for ln in open(path, encoding="utf-8").read().splitlines() if not ln.startswith("--"))
+    sql = ST_TOKEN.sub("'x'", "\n".join(ln for ln in open(path, encoding="utf-8").read().splitlines() if not ln.startswith("--")))
     found += 1
     try:
         db.execute("EXPLAIN " + sql)

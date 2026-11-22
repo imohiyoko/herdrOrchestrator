@@ -11,7 +11,7 @@ from .config import JOB_RE, REFRESH_SEC, SCHED_LOGS, STALL_MIN, TASK_STALE_HOURS
 from .sanitize import clean, e
 from . import graph
 from .herdr import agent_key, agent_session, get_agents, read_agent, workspace_label
-from .data import badge_count, defined_labels, has_resolution, parse_ts, NOTIFY_POLL_SEC, QUEUED_WARN_SEC, outbox_rows, activity_for, agent_ops, agent_registry, registry_row, stopped_agents, db_conn, needs_human, parse_jsonl, q, stalled, tail_lines, tasks_for_agent, urgent_items, held_message, held_messages, reminder_href, reminders_last, LEDGER_MAX, LEDGER_RESULTS, approval_history, ledger_kinds, ledger_rows, ledger_summary
+from .data import badge_count, board_columns, defined_labels, st_main, st_names, status_names, has_resolution, parse_ts, NOTIFY_POLL_SEC, QUEUED_WARN_SEC, outbox_rows, activity_for, agent_ops, agent_registry, registry_row, stopped_agents, db_conn, needs_human, parse_jsonl, q, stalled, tail_lines, tasks_for_agent, urgent_items, held_message, held_messages, reminder_href, reminders_last, LEDGER_MAX, LEDGER_RESULTS, approval_history, ledger_kinds, ledger_rows, ledger_summary
 from .actions import NOTE_MAX
 from .jobview import agent_state, command_summary, job_about, job_defs, job_summary, mask, next_runs, prompt_file, send_task_decision
 from .jobs import DAY_PRESETS, DAY_TOKENS, INTERVAL_UNITS, interval_sec, interval_text, job_info, job_last, job_names, unimported_jobs
@@ -139,7 +139,7 @@ def page_overview(_qs):
         " / ".join(f'{state_html(k)}: {v}' for k, v in sorted(counts.items())) or "<p class=note>(なし)</p>")
     body += f"<h2>滞留 (working のまま {STALL_MIN} 分超)</h2>" + table(
         ["agent", "最終入力"], [[alink(a), e(act.get("last_prompt_at"))] for a, act in stall])
-    done = q("SELECT id,project,title,owner_agent,updated_at FROM tasks WHERE status='done' "
+    done = q("SELECT id,project,title,owner_agent,updated_at FROM tasks WHERE status IN (__DONE_STATUSES__) "
              "ORDER BY updated_at DESC LIMIT 5")
     body += "<h2>直近の完了</h2>" + table(
         ["タスク", "PJ", "題", "担当", "更新"],
@@ -349,10 +349,10 @@ def page_agent(key):
     return f"agent: {clean(agent_key(a))}", body
 
 
-TASK_STATUSES = ["todo", "in_progress", "review", "done", "blocked", "cancelled"]
+# チケットの状態は設定 statuses から読む(data.statuses。tb と同じ)。ここでは名前ではなく分類で判断する
 
 
-TASK_SORTS = {"": ("優先順(未対応の報告 → blocked → in_progress → review → todo → done・cancelled)", None),
+TASK_SORTS = {"": ("優先順(未対応の報告 → 詰まり → 作業中 → 確認待ち → 未着手 → 閉じたもの)", None),
               "project": ("PJ ごと・更新が新しい順", "project, updated_at DESC"),
               "oldest": ("更新が古い順", "updated_at ASC"),
               "created": ("作成が新しい順", "created_at DESC"), "id": ("タスク ID 順", "id ASC"),
@@ -368,7 +368,10 @@ DUE_SOON_DAYS = 3        # 「期限間近」の既定の日数(今日〜N 日�
 DUE_DAYS_MAX = 365
 DUE_VIEWS = {"overdue": "期限切れ", "soon": "期限間近"}
 # 既定の並び: 人が見るべきものを先に(300 件で切れても blocked などが残る)。未対応の報告があるものは state に関わらず先頭
-STATUS_RANK = ("CASE status WHEN 'blocked' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'review' THEN 3 WHEN 'todo' THEN 4 ELSE 5 END")
+def status_rank():
+    """既定の並びの順位(分類 blocked → active → review → todo → それ以外)。"""
+    return ("CASE WHEN status IN (__BLOCKED_STATUSES__) THEN 1 WHEN status IN (__ACTIVE_STATUSES__) THEN 2"
+            " WHEN status IN (__REVIEW_STATUSES__) THEN 3 WHEN status IN (__TODO_STATUSES__) THEN 4 ELSE 5 END")
 OWNER_RE = re.compile(r"[A-Za-z0-9._-]{1,64}")
 TASK_LIST_MAX = 300
 TITLE_MAX = 80
@@ -382,8 +385,8 @@ def _head(text, n):
 
 
 def task_stale(t, now=None):
-    """in_progress のまま TASK_STALE_HOURS を超えて更新がない(経過時間 or None)。"""
-    if t.get("status") != "in_progress":
+    """作業中(分類 active)のまま TASK_STALE_HOURS を超えて更新がない(経過時間 or None)。"""
+    if t.get("status") not in st_names("active"):
         return None
     u = parse_ts(t.get("updated_at"))
     if not u:
@@ -398,9 +401,9 @@ def today_str():
 
 
 def due_state(t, today=None, days=DUE_SOON_DAYS):
-    """期日の状態: "overdue"(今日より前)/ "soon"(今日〜days 日後)/ None。期日なし・done・cancelled は None。"""
+    """期日の状態: "overdue"(今日より前)/ "soon"(今日〜days 日後)/ None。期日なし・閉じたもの(分類 done / cancelled)は None。"""
     d = t.get("due")
-    if not d or t.get("status") in ("done", "cancelled") or not isinstance(d, str):
+    if not d or t.get("status") in st_names("done", "cancelled") or not isinstance(d, str):
         return None
     today = today or today_str()
     if d < today:
@@ -478,8 +481,9 @@ def page_tasks(qs, ctx=None):
         ttype = prio = label = ""
         if sort == "priority":
             sort = ""
-    if st and st not in TASK_STATUSES:
-        errs.append("状態は todo / in_progress / review / done / blocked / cancelled のどれかです"); st = ""
+    task_statuses = status_names()
+    if st and st not in task_statuses:
+        errs.append("状態は " + " / ".join(task_statuses) + " のどれかです"); st = ""
     if owner and not OWNER_RE.fullmatch(owner):
         errs.append("担当は英数字と . _ - だけです"); owner = ""
     if sort not in TASK_SORTS:
@@ -499,24 +503,24 @@ def page_tasks(qs, ctx=None):
         base_w.append("EXISTS (SELECT 1 FROM json_each(tasks.labels) WHERE value=?)"); base_p.append(label)
     today = today_str()
     if dview == "overdue":   # 期日なし・done・cancelled は出さない(tb list --overdue と同じ)
-        base_w += ["due IS NOT NULL", "due<?", "status NOT IN ('done','cancelled')"]; base_p.append(today)
+        base_w += ["due IS NOT NULL", "due<?", "status NOT IN (__CLOSED_STATUSES__)"]; base_p.append(today)
     elif dview == "soon":
         end = (datetime.strptime(today, "%Y-%m-%d") + timedelta(days=days)).strftime("%Y-%m-%d")
-        base_w += ["due IS NOT NULL", "due>=?", "due<=?", "status NOT IN ('done','cancelled')"]; base_p += [today, end]
+        base_w += ["due IS NOT NULL", "due>=?", "due<=?", "status NOT IN (__CLOSED_STATUSES__)"]; base_p += [today, end]
     where, params = list(base_w), list(base_p)
     if st:
         where.append("status=?"); params.append(st)
-    # 停滞は in_progress で最終更新が古いもの。時刻は ISO(UTC)の文字列比較で絞る
+    # 停滞は作業中(分類 active)で最終更新が古いもの。時刻は ISO(UTC)の文字列比較で絞る
     if stale:
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=TASK_STALE_HOURS)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        where += ["status='in_progress'", "updated_at<?"]; params.append(cutoff)
+        where += ["status IN (__ACTIVE_STATUSES__)", "updated_at<?"]; params.append(cutoff)
     wh = (" WHERE " + " AND ".join(where)) if where else ""
     if TASK_SORTS[sort][1]:
         order = TASK_SORTS[sort][1]
     else:   # 優先順。resolved_at 列が無い DB では未対応の報告の優先だけ使えない
         open_q = ("(EXISTS (SELECT 1 FROM comments c WHERE c.task_id=tasks.id AND c.kind IN ('question','blocked') AND c.resolved_at IS NULL"
-                  " AND tasks.status NOT IN ('done','cancelled'))) DESC, ") if has_resolution() else ""
-        order = open_q + STATUS_RANK + ", project, updated_at DESC"
+                  " AND tasks.status NOT IN (__CLOSED_STATUSES__))) DESC, ") if has_resolution() else ""
+        order = open_q + status_rank() + ", project, updated_at DESC"
     rows = q("SELECT * FROM tasks" + wh + " ORDER BY " + order + " LIMIT " + str(TASK_LIST_MAX), params)
     total = (q("SELECT COUNT(*) AS n FROM tasks" + wh, params) or [{"n": len(rows)}])[0]["n"]
     summ = {r["status"]: r["n"] for r in q(
@@ -536,23 +540,24 @@ def page_tasks(qs, ctx=None):
         d.update(kw)
         d = {k: v for k, v in d.items() if v}
         return "/tasks" + ("?" + urlencode(d) if d else "")
-    cells = [f'<a href="{e(href(status=s))}">{e(s)} {summ.get(s, 0)}</a>' for s in TASK_STATUSES]
+    # 設定から外した状態のチケットが残っていれば、その件数も後ろに出す(黙って見えなくしない)
+    cells = [f'<a href="{e(href(status=s))}">{e(s)} {summ.get(s, 0)}</a>' for s in task_statuses + sorted(x for x in summ if x not in task_statuses)]
     body = err_html("。".join(errs)) * bool(errs)
     if hd:
-        n_over = q("SELECT COUNT(*) AS n FROM tasks WHERE due IS NOT NULL AND due<? AND status NOT IN ('done','cancelled')", (today,))[0]["n"]
+        n_over = q("SELECT COUNT(*) AS n FROM tasks WHERE due IS NOT NULL AND due<? AND status NOT IN (__CLOSED_STATUSES__)", (today,))[0]["n"]
         soon_end = (datetime.strptime(today, "%Y-%m-%d") + timedelta(days=DUE_SOON_DAYS)).strftime("%Y-%m-%d")
-        n_soon = q("SELECT COUNT(*) AS n FROM tasks WHERE due IS NOT NULL AND due>=? AND due<=? AND status NOT IN ('done','cancelled')", (today, soon_end))[0]["n"]
+        n_soon = q("SELECT COUNT(*) AS n FROM tasks WHERE due IS NOT NULL AND due>=? AND due<=? AND status NOT IN (__CLOSED_STATUSES__)", (today, soon_end))[0]["n"]
         if n_over or n_soon:
             body += (f'<p><a href="/tasks?due=overdue&amp;sort=due"><span class={"err" if n_over else "note"}>期限切れ {n_over}</span></a> / '
                      f'<a href="/tasks?due=soon&amp;sort=due">期限間近({DUE_SOON_DAYS} 日以内){n_soon}</a>'
-                     f' <span class=note>(今日 = {e(today)}、done・cancelled は数えない)</span></p>')
+                     f' <span class=note>(今日 = {e(today)}、閉じたもの({e(" / ".join(st_names("done", "cancelled")))})は数えない)</span></p>')
     if not db_conn_ok():
         body += '<p class=err>タスク DB がありません(または開けません)</p>'
     body += ("<h2>状態の件数</h2><p>" + " / ".join(cells) + f' / <a href="{e(href(status=""))}">全部 {sum(summ.values())}</a></p>'
              '<p class=note>件数は PJ・担当・未報告の絞り込みを反映し、状態と「停滞だけ」は反映しません。</p>')
     popts = '<option value="">(すべて)</option>' + "".join(f'<option value="{e(p_)}"{" selected" if p_ == proj else ""}>{e(p_)}</option>' for p_ in projects)
     oopts = '<option value="">(すべて)</option>' + "".join(f'<option value="{e(o)}"{" selected" if o == owner else ""}>{e(o)}</option>' for o in owners)
-    sopts = '<option value="">(すべて)</option>' + "".join(f'<option value="{s_}"{" selected" if s_ == st else ""}>{s_}</option>' for s_ in TASK_STATUSES)
+    sopts = '<option value="">(すべて)</option>' + "".join(f'<option value="{e(s_)}"{" selected" if s_ == st else ""}>{e(s_)}</option>' for s_ in task_statuses)
     ropts = "".join(f'<option value="{k}"{" selected" if k == sort else ""}>{e(v[0])}</option>' for k, v in TASK_SORTS.items()
                     if (tf or k != "priority") and (hd or k != "due"))
     topts = '<option value="">(すべて)</option>' + "".join(f'<option value="{x}"{" selected" if x == ttype else ""}>{x}</option>' for x in TASK_TYPES)
@@ -568,7 +573,7 @@ def page_tasks(qs, ctx=None):
              f'<label>PJ <select name=project>{popts}</select></label> <label>担当 <select name=owner>{oopts}</select></label> '
              f'<label>状態 <select name=status>{sopts}</select></label> ' + tsel +
              f'<label><input type=checkbox name=unreported value=1{" checked" if unrep else ""}> 未報告だけ</label> '
-             f'<label><input type=checkbox name=stale value=1{" checked" if stale else ""}> 停滞だけ({TASK_STALE_HOURS} 時間超の in_progress)</label> '
+             f'<label><input type=checkbox name=stale value=1{" checked" if stale else ""}> 停滞だけ({TASK_STALE_HOURS} 時間超の {e(st_main("active"))})</label> '
              f'<label>並び <select name=sort>{ropts}</select></label> '
              '<button type=submit>絞り込む</button> <a href="/tasks">解除</a></p></form>')
     now = datetime.now(timezone.utc)
@@ -585,7 +590,7 @@ def page_tasks(qs, ctx=None):
                     e(t["created_at"]), e(t["updated_at"]), mark])
     if total > len(rows):
         body += (f'<p class=err>{total} 件のうち {len(rows)} 件だけ表示しています(上限 {TASK_LIST_MAX} 件)。'
-                 '既定の並びは未対応の報告・blocked・in_progress を先に出します。PJ・担当・状態などで絞り込むと残りを見られます。</p>')
+                 '既定の並びは未対応の報告・詰まり・作業中を先に出します。PJ・担当・状態などで絞り込むと残りを見られます。</p>')
     body += table(["タスク", "PJ", "種別", "優先度", "期日", "題(先頭 80 文字)", "ラベル", "状態", "担当", "親 / 子", "session_id",
                    "報告(種別ごとの件数)", "成果物", "報告済み", "作成", "更新", "目印"], out)
     body += (f'<p class=note>最大 {TASK_LIST_MAX} 件。「報告済み」は tb report で指揮官に届いたもの。未対応は人がまだ「対応済み」にしていない question / blocked。'
@@ -642,7 +647,6 @@ def has_sprints():
 
 
 SPRINT_RE = re.compile(r"S-[0-9]{1,9}")
-BOARD_COLS = ["todo", "in_progress", "review", "blocked", "done", "cancelled"]
 
 
 def page_board(qs, ctx=None):
@@ -657,10 +661,10 @@ def page_board(qs, ctx=None):
         errs.append("スプリントは S-<番号> です"); sid = ""
     if label and not LABEL_RE.fullmatch(label):
         errs.append("ラベルは 40 文字までで、空白・カンマ・引用符を含みません"); label = ""
-    # cancelled(取り消し)は件数・ポイントの分母に入れない(tb sprints と同じ)
-    sprints = q("SELECT s.*, COALESCE(SUM(t.id IS NOT NULL AND t.status!='cancelled'),0) AS n, SUM(t.status='done') AS done_n,"
-                " COALESCE(SUM(CASE WHEN t.status!='cancelled' THEN t.points END),0) AS pts,"
-                " COALESCE(SUM(CASE WHEN t.status='done' THEN t.points END),0) AS done_pts"
+    # 取り消し(分類 cancelled)は件数・ポイントの分母に入れない(tb sprints と同じ)
+    sprints = q("SELECT s.*, COALESCE(SUM(t.id IS NOT NULL AND t.status NOT IN (__CANCELLED_STATUSES__)),0) AS n, SUM(t.status IN (__DONE_STATUSES__)) AS done_n,"
+                " COALESCE(SUM(CASE WHEN t.status NOT IN (__CANCELLED_STATUSES__) THEN t.points END),0) AS pts,"
+                " COALESCE(SUM(CASE WHEN t.status IN (__DONE_STATUSES__) THEN t.points END),0) AS done_pts"
                 " FROM sprints s LEFT JOIN tasks t ON t.sprint_id=s.id" + (" WHERE s.project=?" if proj else "") +
                 " GROUP BY s.id ORDER BY CASE s.state WHEN 'active' THEN 1 WHEN 'planned' THEN 2 ELSE 3 END, s.project, s.id DESC",
                 (proj,) if proj else ())
@@ -699,8 +703,10 @@ def page_board(qs, ctx=None):
             return (f'<div class=card>{tlink(t["id"])} {priority_html(t.get("priority"))} <span class=note>{e(t.get("type") or "")}</span>{pts}<br>'
                     f'{e(_head(t["title"], TITLE_MAX))}<br><span class=note>{e(t.get("owner_agent") or "-")}</span> '
                     f'{labels_html(t.get("labels"), lambda label: "/board?" + urlencode({"sprint": "S-" + str(cid), "label": label}))}</div>')
-        cols = [[card(t) for t in rows if t["status"] == c] for c in BOARD_COLS]
-        body += table([f"{c} ({len(cs)})" for c, cs in zip(BOARD_COLS, cols)], [["".join(cs) or "-" for cs in cols]])
+        bcols = board_columns()
+        bcols += sorted({t["status"] for t in rows} - set(bcols))   # 設定から外した状態のカードも見えるように後ろに足す
+        cols = [[card(t) for t in rows if t["status"] == c] for c in bcols]
+        body += table([f"{e(c)} ({len(cs)})" for c, cs in zip(bcols, cols)], [["".join(cs) or "-" for cs in cols]])
         body += ("<p class=note>読み取りのみ。カードの移動・スプリントへの出し入れは手元で <code>tb update &lt;id&gt; --status …</code> / "
                  "<code>--sprint S-n</code>、閉じるのは <code>tb sprint-close S-n [--carry S-m]</code>。</p>")
     body += "<h2>スプリント一覧</h2>" + table(["スプリント", "PJ", "名前", "状態", "期間", "完了 / 件数", "ポイント"],
@@ -786,7 +792,7 @@ def page_task(tid, qs=None, ctx=None):
     info.append(("note", e(_head(t.get("note"), REPORT_MAX))))
     sh = task_stale(t)
     if sh is not None:
-        info.append(("目印", f'<span class=warn>停滞: in_progress のまま {sh} 時間更新がありません</span>'))
+        info.append(("目印", f'<span class=warn>停滞: {e(t.get("status"))} のまま {sh} 時間更新がありません</span>'))
     info.append(("成果物", "<br>".join(doc_link(r, raw) for r, raw in docs.task_refs(t["id"], t["deliverables"])) or "-"))
     body = resolve_notice(qs or {}) + "<table>" + "".join(f"<tr><th>{k}</th><td>{v}</td></tr>" for k, v in info) + "</table>"
     kids = q("SELECT id, title, status, owner_agent, updated_at FROM tasks WHERE parent_id=? ORDER BY id", (tid,))

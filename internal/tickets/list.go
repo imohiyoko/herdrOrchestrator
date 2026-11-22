@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// 値の一覧(taskboard/lib/core.sh と同じ)
+// 値の一覧(taskboard/lib/core.sh と同じ)。Statuses は組み込みの状態(設定 statuses が無いとき。statuses.go)
 var (
 	Statuses   = []string{"todo", "in_progress", "review", "done", "blocked", "cancelled"}
 	Types      = []string{"epic", "story", "task", "bug", "subtask"}

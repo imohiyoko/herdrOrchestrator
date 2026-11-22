@@ -2061,6 +2061,55 @@ for _k, _v in (("WEBUI_TB_DB", _old_db), ("HERDR_SESSION", _old_hs)):
     else:
         os.environ[_k] = _v
 
+# ================= チケットの状態は設定 statuses から読む(tb の lib/core.sh と同じ。名前ではなく分類で判断する)
+_stdb = os.path.join(TMP, "statuses.db")
+make_db(_stdb)
+_old_db, _old_hs = os.environ.get("WEBUI_TB_DB"), os.environ.get("HERDR_SESSION")
+_old_cache = _data.STATUS_CACHE_SEC
+os.environ["WEBUI_TB_DB"] = _stdb
+os.environ["HERDR_SESSION"] = "default"
+_data.STATUS_CACHE_SEC = 0   # 設定を書き換えながら確かめる
+from app import views as _vw  # noqa: E402
+try:
+    check("statuses: 設定が無ければ組み込みの 6 つ", _data.status_names() == ["todo", "in_progress", "review", "done", "blocked", "cancelled"]
+          and _data.board_columns() == ["todo", "in_progress", "review", "blocked", "done", "cancelled"], str(_data.status_names()))
+    _c = sqlite3.connect(_stdb)
+    _c.execute("INSERT INTO config VALUES ('*','statuses','backlog todo = 未着手\ndoing active\nshipped done\nqa review\ndropped cancelled  # 取り消し','human','t')")
+    _c.execute("INSERT INTO tasks (id,project,title,status,owner_agent,created_at,updated_at,herdr_session) VALUES "
+               "('T-s-001','s','作業中','doing','alpha','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','default'),"
+               "('T-s-002','s','期限切れ','backlog',NULL,'t','t','default'),('T-s-003','s','閉じた','shipped',NULL,'t','t','default')")
+    _c.execute("UPDATE tasks SET due='2000-01-01' WHERE id IN ('T-s-002','T-s-003')")
+    _c.execute("INSERT INTO agents (herdr_session,name,state,created_by,created_at,updated_at) VALUES ('default','alpha','running','human','t','t')")
+    _c.commit(); _c.close()
+    check("statuses: 設定の順の一覧", _data.status_names() == ["backlog", "doing", "shipped", "qa", "dropped"], str(_data.status_names()))
+    check("statuses: ボードは分類の順", _data.board_columns() == ["backlog", "doing", "qa", "shipped", "dropped"], str(_data.board_columns()))
+    check("statuses: 組み込みの名前も分類で数える", _data.st_names("active") == ["doing", "in_progress"] and _data.st_main("blocked") == "blocked",
+          str(_data.st_names("active")))
+    check("statuses: SQL の置き場を埋める", _data.stq("x IN (__CLOSED_STATUSES__)") == "x IN ('shipped','dropped','done','cancelled')", _data.stq("x IN (__CLOSED_STATUSES__)"))
+    check("statuses: 作業中の分類で停滞を判断", _vw.task_stale({"status": "doing", "updated_at": "2026-01-01T00:00:00Z"}) is not None
+          and _vw.task_stale({"status": "backlog", "updated_at": "2026-01-01T00:00:00Z"}) is None)
+    check("statuses: 閉じた分類は期限切れにしない", _vw.due_state({"status": "shipped", "due": "2000-01-01"}) is None
+          and _vw.due_state({"status": "backlog", "due": "2000-01-01"}) == "overdue")
+    _ka = {r["name"]: r for r in _data.q(_data.KILLABLE_SQL)}
+    check("statuses: agent の未完了タスクも分類で数える(T-1 の in_progress と doing)", _ka["alpha"]["open_tasks"] == 2, str(_ka.get("alpha")))
+    _tt, _tb = _vw.page_tasks({})
+    check("statuses: タスク一覧の選択肢と件数は設定の状態", '<option value="backlog">' in _tb and "dropped 0" in _tb and "in_progress 1" in _tb, _tb[:400])
+    _tt, _tb = _vw.page_tasks({"status": ["todo"]})
+    check("statuses: 設定に無い状態での絞り込みは断る", "状態は backlog / doing / shipped / qa / dropped のどれかです" in _tb)
+    _tt, _tb = _vw.page_tasks({"due": ["overdue"]})
+    check("statuses: 期限切れは閉じた分類を数えない", "T-s-002" in _tb and "T-s-003" not in _tb)
+    _c = sqlite3.connect(_stdb)
+    _c.execute("UPDATE config SET body='broken' WHERE key='statuses'")
+    _c.commit(); _c.close()
+    check("statuses: 不正な本文なら組み込みに戻る", _data.status_names()[0] == "todo")
+finally:
+    _data.STATUS_CACHE_SEC = _old_cache
+    for _k, _v in (("WEBUI_TB_DB", _old_db), ("HERDR_SESSION", _old_hs)):
+        if _v is None:
+            os.environ.pop(_k, None)
+        else:
+            os.environ[_k] = _v
+
 print()
 print("FAILED: " + ", ".join(fails) if fails else "all passed")
 sys.exit(1 if fails else 0)

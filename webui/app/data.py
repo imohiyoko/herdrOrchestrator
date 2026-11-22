@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sqlite3
+import time
 from contextlib import contextmanager
 from fnmatch import fnmatchcase
 from datetime import datetime, timedelta, timezone
@@ -113,6 +114,8 @@ def q_checked(sql, params=()):
     if c is None:
         return [], False
     try:
+        if "_STATUSES__" in sql:   # 状態の一覧の置き場(__CLOSED_STATUSES__ など)を設定 statuses の値で埋める(stq)
+            sql = stq(sql)
         return [dict(r) for r in c.execute(sql, params).fetchall()], True
     except sqlite3.Error:
         return [], False
@@ -131,7 +134,8 @@ def q(sql, params=()):
 CONFIG_KEYS = {"projects": (("TB_CONFIG",), "projects.conf"),
                "approvals": (("WEBUI_APPROVALS", "TB_APPROVALS"), "approvals.conf"),
                "protect": (("TB_PROTECT",), "protect.conf"),
-               "labels": (("TB_LABELS",), "labels.conf")}
+               "labels": (("TB_LABELS",), "labels.conf"),
+               "statuses": (("TB_STATUSES",), "statuses.conf")}
 CONFIG_MAX = 262144
 
 
@@ -201,7 +205,7 @@ def needs_human():
     comments = q(
         "SELECT c.*, t.status AS task_status, t.title AS task_title FROM comments c "
         "LEFT JOIN tasks t ON t.id=c.task_id WHERE c.kind IN ('question','blocked') "
-        "AND COALESCE(t.status,'') NOT IN ('done','cancelled')" + (" AND c.resolved_at IS NULL" if has_resolution() else "") +
+        "AND COALESCE(t.status,'') NOT IN (__CLOSED_STATUSES__)" + (" AND c.resolved_at IS NULL" if has_resolution() else "") +
         " ORDER BY c.id DESC LIMIT 100")
     proxies = q("SELECT * FROM proxy_requests WHERE status='pending-human' ORDER BY id DESC LIMIT 100")
     agents, _ = get_agents()
@@ -247,9 +251,9 @@ def tasks_for_agent(a):
     name, sid = a.get("name"), agent_session(a)
     rows = []
     if name:
-        rows += q("SELECT * FROM tasks WHERE owner_agent=? AND status NOT IN ('done','cancelled') ORDER BY updated_at DESC", (name,))
+        rows += q("SELECT * FROM tasks WHERE owner_agent=? AND status NOT IN (__CLOSED_STATUSES__) ORDER BY updated_at DESC", (name,))
     if sid:
-        rows += [r for r in q("SELECT * FROM tasks WHERE session_id=? AND status NOT IN ('done','cancelled') ORDER BY updated_at DESC", (sid,))
+        rows += [r for r in q("SELECT * FROM tasks WHERE session_id=? AND status NOT IN (__CLOSED_STATUSES__) ORDER BY updated_at DESC", (sid,))
                  if r["id"] not in {x["id"] for x in rows}]
     return rows
 
@@ -260,7 +264,7 @@ KILLABLE_SQL = """SELECT a.*, CASE WHEN a.killable!='yes' THEN a.killable
       WHEN EXISTS (SELECT 1 FROM agent_activity aa WHERE (aa.session_id=a.session_id OR aa.pane_id=a.pane_id)
                    AND julianday(aa.last_prompt_at) > julianday(a.killable_at)) THEN 'stale'
       ELSE 'yes' END AS killable_now,
-    (SELECT COUNT(*) FROM tasks t WHERE t.owner_agent=a.name AND t.status IN ('in_progress','review','blocked')) AS open_tasks
+    (SELECT COUNT(*) FROM tasks t WHERE t.owner_agent=a.name AND t.status IN (__HELD_STATUSES__)) AS open_tasks
     FROM agents a"""
 
 
@@ -277,6 +281,116 @@ def protect_rules():
         k = k.strip()
         rules.append((k, v.strip() or "protect: " + k))
     return rules
+
+
+# ---- チケットの状態(設定 statuses。tb の lib/core.sh の statuses_load と同じ読み方)----
+# 1 行 1 つ「<状態> <分類> [= 説明]」。分類は STATUS_CATEGORIES のどれか。無い・不正なら組み込みの 6 つ。
+# 組み込みの名前は、設定に書かなくても組み込みの分類として数える(アラート・提案のチケットは DB のトリガーがこの名前で書く)
+STATUS_CATEGORIES = ("todo", "active", "review", "blocked", "done", "cancelled")
+STATUS_BUILTIN = (("todo", "todo"), ("in_progress", "active"), ("review", "review"),
+                  ("done", "done"), ("blocked", "blocked"), ("cancelled", "cancelled"))
+_STATUS_BAD = re.compile(r"[,\"'`\\*?\[\]]")
+
+
+def parse_statuses(text):
+    """本文 → [(状態, 分類, 説明)](書いた順)。不正な行・必要な分類の欠けがあれば None(tb は書く前に断る)。"""
+    out, seen = [], set()
+    for line in (text or "").splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        line, _sep, desc = line.partition("=")
+        parts = line.split()
+        if len(parts) != 2:
+            return None
+        k, c = parts
+        if len(k) > 30 or _STATUS_BAD.search(k) or c not in STATUS_CATEGORIES or k in seen:
+            return None
+        seen.add(k)
+        out.append((k, c, desc.strip()))
+    cats = {c for _k, c, _d in out}
+    if not out or not {"todo", "active", "done"} <= cats:
+        return None
+    return out
+
+
+_STATUS_CACHE = {}
+STATUS_CACHE_SEC = 2.0   # 1 画面の中で何度も引くので、セッションごとに短いあいだ覚えておく
+
+
+def statuses():
+    """(設定した状態 [(状態, 分類, 説明)], {状態: 分類}(組み込みの名前を含む))。"""
+    key = (reqctx.session(), os.environ.get("TB_STATUSES", ""), os.environ.get("TB_CONFIG_DIR", ""), TB_DB())
+    now = time.monotonic()
+    hit = _STATUS_CACHE.get(key)
+    if hit and now - hit[0] < STATUS_CACHE_SEC:
+        return hit[1]
+    val = _statuses_read()
+    _STATUS_CACHE.clear()
+    _STATUS_CACHE[key] = (now, val)
+    return val
+
+
+def _statuses_read():
+    text, _src = config_text("statuses")
+    rows = parse_statuses(text) if text is not None else None
+    if rows is None:
+        rows = [(k, c, "") for k, c in STATUS_BUILTIN]
+    cat = {k: c for k, c, _d in rows}
+    for k, c in STATUS_BUILTIN:
+        cat.setdefault(k, c)
+    return rows, cat
+
+
+def status_names():
+    """設定した状態の名前(書いた順)。絞り込みの選択肢と件数の並び。"""
+    return [k for k, _c, _d in statuses()[0]]
+
+
+def board_columns():
+    """ボードの列: 分類の順、同じ分類は書いた順(tb board と同じ)。"""
+    rows = statuses()[0]
+    return [k for c0 in STATUS_CATEGORIES for k, c, _d in rows if c == c0]
+
+
+def st_names(*cats):
+    """その分類の状態(設定した順の後に組み込みの名前)。"""
+    rows, cat = statuses()
+    out = []
+    for k in [k for k, _c, _d in rows] + [k for k, _c in STATUS_BUILTIN]:
+        if k not in out and cat.get(k) in cats:
+            out.append(k)
+    return out
+
+
+def st_sql(*cats):
+    """SQL の IN (...) の中身('a','b')。当たる状態が無ければ NULL。"""
+    return ",".join("'" + k.replace("'", "''") + "'" for k in st_names(*cats)) or "NULL"
+
+
+# SQL の中の状態の一覧の置き場。q / q_checked が実行の前に埋める(SQL を 1 つの文字列のまま書けるように。tests/test_webui_queries.py)
+#   __CLOSED_STATUSES__ = 分類 done・cancelled、__HELD_STATUSES__ = active・review・blocked(担当が持っている)、
+#   __<分類>_STATUSES__ = その分類だけ(__DONE_STATUSES__ など)。taskboard/sql/agent_edges.sql も同じ置き場を使う
+STATUS_GROUPS = {"CLOSED": ("done", "cancelled"), "HELD": ("active", "review", "blocked")}
+_ST_TOKEN = re.compile(r"__([A-Z]+)_STATUSES__")
+
+
+def stq(sql):
+    def one(m):
+        g = m.group(1)
+        cats = STATUS_GROUPS.get(g) or ((g.lower(),) if g.lower() in STATUS_CATEGORIES else None)
+        if cats is None:
+            raise ValueError("unknown status token: " + m.group(0))
+        return st_sql(*cats)
+    return _ST_TOKEN.sub(one, sql)
+
+
+def st_main(cat):
+    """その分類の代表の名前(設定でその分類の最初に書いたもの。無ければ組み込みの名前)。"""
+    for k, c, _d in statuses()[0]:
+        if c == cat:
+            return k
+    return next(k for k, c in STATUS_BUILTIN if c == cat)
 
 
 def defined_labels():

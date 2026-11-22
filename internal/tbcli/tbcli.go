@@ -55,7 +55,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	var err error
 	switch args[0] {
 	case "list":
-		err = cmdList(args[1:], w)
+		err = cmdList(args[1:], w, stderr)
 	default:
 		err = usage("Go 版には無いコマンド: %s", args[0])
 	}
@@ -139,13 +139,18 @@ func labels(arg string) ([]string, error) {
 	return slices.Compact(out), nil
 }
 
-func cmdList(args []string, w io.Writer) error {
+func cmdList(args []string, w, stderr io.Writer) error {
 	// tb と同じく、引数を読む前に DB を開く(版上げも先に済む)
 	db, err := openDB()
 	if err != nil {
 		return err
 	}
 	defer db.Close()
+	st := tickets.LoadStatuses(db.DB, db.Session) // 設定 statuses(閉じた状態と、--status に使える状態)
+	if st.Broken {
+		fmt.Fprintln(stderr, "tb: 設定 statuses に不正な行があるので組み込みの状態を使います(tb config edit statuses で直す)")
+	}
+	closed := st.SQLList("done", "cancelled")
 	var f tickets.Filter
 	project, status, sort := "", "", ""
 	long, js := false, false
@@ -215,7 +220,7 @@ func cmdList(args []string, w io.Writer) error {
 				if n == "" {
 					n = "0"
 				}
-				f.Add("due IS NOT NULL AND due >= ? AND due <= date(?, '+"+n+" days') AND status NOT IN ('done','cancelled')", td, td)
+				f.Add("due IS NOT NULL AND due >= ? AND due <= date(?, '+"+n+" days') AND status NOT IN ("+closed+")", td, td)
 			case "--sort":
 				sort = v
 			}
@@ -224,7 +229,7 @@ func cmdList(args []string, w io.Writer) error {
 			if err != nil {
 				return err
 			}
-			f.Add("due IS NOT NULL AND due < ? AND status NOT IN ('done','cancelled')", td)
+			f.Add("due IS NOT NULL AND due < ? AND status NOT IN ("+closed+")", td)
 		case "--has-due":
 			f.Add("due IS NOT NULL")
 		case "--long":
@@ -239,7 +244,7 @@ func cmdList(args []string, w io.Writer) error {
 		f.Add("project=?", project)
 	}
 	if status != "" {
-		if err := oneOf(tickets.Statuses, status, "status"); err != nil {
+		if err := oneOf(st.Names, status, "status"); err != nil {
 			return err
 		}
 		f.Add("status=?", status)

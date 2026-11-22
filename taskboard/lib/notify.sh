@@ -457,7 +457,7 @@ notify_periodic() {
       (SELECT COUNT(*) FROM agents WHERE state='running'),
       (SELECT COUNT(*) FROM alerts WHERE status NOT IN ('closed')),
       (SELECT COUNT(*) FROM comments WHERE kind IN ('question','blocked') AND resolved_at IS NULL),
-      (SELECT COUNT(*) FROM tasks WHERE status IN ('in_progress','review')),
+      (SELECT COUNT(*) FROM tasks WHERE status IN ($(st_sql active review))),
       COALESCE((SELECT value FROM notify_seen WHERE key='summary-last'), '');") || return 1
   # 承認待ち(L-/O- の番号と件数だけ)
   if [[ $ids != "$last" ]]; then

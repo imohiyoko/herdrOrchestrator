@@ -7,6 +7,7 @@
 12_sprints.sh 9
 13_due_events.sh 3
 13_events.sh 8
+15_statuses.sh 12
 20_proxy.sh 0
 30_activity.sh 9
 40_comments.sh 12

@@ -35,7 +35,7 @@ tb_go() {
   command -v "$hc" >/dev/null || die "TB_IMPL=go ですが herdrctl が見つかりません: $hc"
   have=$("$hc" tb --commands) || die "herdrctl tb --commands に失敗しました: $hc"
   [[ " $have " == *" $1 "* ]] || return 0
-  TB_DB=$DB HERDR_SESSION=$(herdr_session_name) HERDR_SOCKET_PATH='' exec "$hc" tb "$@"
+  TB_DB=$DB TB_CONFIG_DIR=$CONFIG_DIR HERDR_SESSION=$(herdr_session_name) HERDR_SOCKET_PATH='' exec "$hc" tb "$@"   # TB_CONFIG_DIR: checkout の設定ファイル(statuses.conf など)
 }
 
 main() {
@@ -53,6 +53,7 @@ main() {
   need_tools
   init_db || die "DB を開けないか、スキーマの移行に失敗しました: $DB"
   session_setup_load   # sql() のビューと見張り(lib/db.sh)
+  statuses_load        # チケットの状態と分類(設定 statuses。lib/core.sh)
   "cmd_$cmd" "$@"
 }
 main "$@"

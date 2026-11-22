@@ -22,8 +22,9 @@ labels_json() {
 # 設定が無ければ今までどおり自由に付けられる。外す(--remove-label)・絞り込む(list / board -l)は制限しない。
 # 書式: 1 行 1 つ「<ラベル> [= 説明]」。# 以降はコメント。書くのは人だけ(tb config set / edit labels)
 # tb 自身が付けるラベル(アラート・提案・期限の取り込み)は設定に書かなくても付けられる
-SYSTEM_LABELS="alert proposal rejected deadline"
-system_label() { [[ " $SYSTEM_LABELS " == *" $1 "* || $1 == role:* ]]; }
+# deadline の名前は設定 system-labels で変えられる(lib/core.sh の system_label_of)。alert / proposal / rejected / role:* は DB のトリガーが付けるので固定
+SYSTEM_LABELS="alert proposal rejected"
+system_label() { [[ " $SYSTEM_LABELS " == *" $1 "* || $1 == role:* || $1 == "$(system_label_of deadline)" ]]; }
 
 config_validate_labels() {  # $1=本文
   local line k n=0 bad="" seen=" "
@@ -187,9 +188,9 @@ cmd_add() {
   local n=$(now) p out; p=$(q "$project")
   # 採番と挿入を 1 文で行い、同時 add でも重複しないようにする。親の種別の規則も同じ文で確かめる(HAVING)
   # ID は DB 全体で一意(採番は全セッションの行を見る。ここだけ herdr_session で絞らない)
-  out=$(sql "BEGIN IMMEDIATE; INSERT INTO main.tasks (id, project, title, owner_agent, session_id, account, parent_id, type, priority, labels, description, refs, due, sprint_id, points, created_at, updated_at, herdr_session)
+  out=$(sql "BEGIN IMMEDIATE; INSERT INTO main.tasks (id, project, title, status, owner_agent, session_id, account, parent_id, type, priority, labels, description, refs, due, sprint_id, points, created_at, updated_at, herdr_session)
        SELECT 'T-'||$p||'-'||printf('%03d', COALESCE(MAX(CAST(substr(id, length($p)+4) AS INTEGER)),0)+1),
-              $p, $(q "$title"), NULLIF($(q "$owner"),''), NULLIF($(q "$session"),''), NULLIF($(q "$account"),''),
+              $p, $(q "$title"), $(q "$(st_main todo)"), NULLIF($(q "$owner"),''), NULLIF($(q "$session"),''), NULLIF($(q "$account"),''),
               NULLIF($(q "$parent"),''), $(q "$type"), $(q "$priority"), $(q "$lj"), NULLIF($(q "$desc"),''), $(q "$rj"), NULLIF($(q "$due"),''),
               CAST(NULLIF($(q "$sid"),'') AS INTEGER), CAST(NULLIF($(q "$points"),'') AS INTEGER),
               $(q "$n"), $(q "$n"), $SQS
@@ -222,10 +223,10 @@ cmd_list() {
       --sprint)     need_arg "$@"   # S-<n> か backlog(スプリントに入っていないもの)
                     if [[ $2 == backlog ]]; then where+=" AND sprint_id IS NULL"; else valid_sprint "$2"; where+=" AND sprint_id=${2#S-}"; fi
                     shift 2;;
-      --overdue)    td=$(today) || exit $?; where+=" AND due IS NOT NULL AND due < $(q "$td") AND status NOT IN ('done','cancelled')"; shift;;
+      --overdue)    td=$(today) || exit $?; where+=" AND due IS NOT NULL AND due < $(q "$td") AND status NOT IN ($ST_CLOSED_SQL)"; shift;;
       --due-within) need_arg "$@"; [[ $2 =~ ^[0-9]{1,4}$ ]] || usage "list: --due-within は 0〜9999 の日数: $2"
                     td=$(today) || exit $?
-                    where+=" AND due IS NOT NULL AND due >= $(q "$td") AND due <= date($(q "$td"), '+$((10#$2)) days') AND status NOT IN ('done','cancelled')"; shift 2;;
+                    where+=" AND due IS NOT NULL AND due >= $(q "$td") AND due <= date($(q "$td"), '+$((10#$2)) days') AND status NOT IN ($ST_CLOSED_SQL)"; shift 2;;
       --has-due)    where+=" AND due IS NOT NULL"; shift;;
       --sort)       need_arg "$@"; sort=$2; shift 2;;
       --long)       long=1; shift;;
@@ -300,14 +301,14 @@ cmd_claim() {
   special_ticket_guard "$id" "tb claim"
   local blockers
   blockers=$(sql "SELECT group_concat(t.id||'('||t.status||')', ', ') FROM task_links l JOIN tasks t ON t.id=l.from_id
-                  WHERE l.to_id=$(q "$id") AND l.link_type='blocks' AND t.status NOT IN ('done','cancelled');")
+                  WHERE l.to_id=$(q "$id") AND l.link_type='blocks' AND t.status NOT IN ($ST_CLOSED_SQL);")
   [[ -z $blockers ]] || die "claim できません(先に終わらせるタスクがあります: $blockers): $id"
   local changed; event_actor_resolve
-  changed=$(sql "UPDATE main.tasks SET status='in_progress', owner_agent=$(q "$owner"),
+  changed=$(sql "UPDATE main.tasks SET status=$(q "$(st_main active)"), owner_agent=$(q "$owner"),
       session_id=COALESCE(NULLIF($(q "$session"),''), session_id),
       account=COALESCE(NULLIF($(q "$account"),''), account), updated_at=$(q "$(now)")
-    WHERE herdr_session=$SQS AND id=$(q "$id") AND status='todo'; SELECT changes();")
-  [[ $changed == 1 ]] || die "claim できません(status が todo ではない): $id"
+    WHERE herdr_session=$SQS AND id=$(q "$id") AND status IN ($ST_TODO_SQL); SELECT changes();")
+  [[ $changed == 1 ]] || die "claim できません(status が $(st_names todo | sed 's/ / \/ /g') ではない): $id"
   notify_rules_hook
   echo "$id claimed by $owner"
 }
@@ -321,8 +322,8 @@ cmd_update() {
   while [[ $# -gt 0 ]]; do
     case $1 in
       --status)  need_arg "$@"; valid_status "$2"
-                 [[ $2 != done ]] || usage "update: done にするには tb done を使う(deliverables と要約が必須)"
-                 [[ $2 != cancelled ]] || usage "update: cancelled にするには tb cancel を使う"
+                 ! st_is "$2" done || usage "update: $2 にするには tb done を使う(deliverables と要約が必須)"
+                 ! st_is "$2" cancelled || usage "update: $2 にするには tb cancel を使う"
                  sets+=("status=$(q "$2")"); shift 2;;
       --title)   need_arg "$@"; blank "$2" && usage "update: title が空です"; sets+=("title=$(q "$2")"); shift 2;;
       --owner)   need_arg "$@"; sets+=("owner_agent=NULLIF($(q "$2"),'')"); shift 2;;
@@ -387,7 +388,7 @@ cmd_update() {
   fi
   event_actor_resolve
   local IFS=,
-  n=$(sql "BEGIN IMMEDIATE; UPDATE main.tasks SET ${sets[*]}, updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id") AND status NOT IN ('done','cancelled')$guard$sguard;
+  n=$(sql "BEGIN IMMEDIATE; UPDATE main.tasks SET ${sets[*]}, updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id") AND status NOT IN ($ST_CLOSED_SQL)$guard$sguard;
            SELECT changes(); COMMIT;")
   unset IFS
   if [[ $n != 1 ]]; then
@@ -417,13 +418,13 @@ cmd_done() {
   blank "$summary" && usage "done: 要約(-m)が必須です"
   local row cur dj changed
   row=$(require_task "$id"); cur=$(jq -r .status <<<"$row")
-  [[ $cur != done ]] || die "すでに done です: $id"
-  [[ $cur != cancelled ]] || die "cancelled のタスクは done にできません: $id"
+  ! st_is "$cur" done || die "すでに $cur です: $id"
+  ! st_is "$cur" cancelled || die "$cur のタスクは done にできません: $id"
   special_ticket_guard "$id" "tb done"
   dj=$(jq -nc '$ARGS.positional' --args "${dels[@]}")
   event_actor_resolve
-  changed=$(sql "UPDATE main.tasks SET status='done', deliverables=$(q "$dj"), summary=$(q "$summary"),
-         reported_at=NULL, updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id") AND status NOT IN ('done','cancelled'); SELECT changes();")
+  changed=$(sql "UPDATE main.tasks SET status=$(q "$(st_main done)"), deliverables=$(q "$dj"), summary=$(q "$summary"),
+         reported_at=NULL, updated_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=$(q "$id") AND status NOT IN ($ST_CLOSED_SQL); SELECT changes();")
   [[ $changed == 1 ]] || die "done できません(並行して閉じられました): $id"
   notify_hook notify_hook_task_done "$id"
   notify_rules_hook
@@ -445,11 +446,11 @@ cmd_block() {
   [[ " $CLOSED_STATUSES " != *" $cur "* ]] || die "$cur のタスクは block できません: $id"
   special_ticket_guard "$id" "tb block"
   event_actor_resolve
-  changed=$(sql "UPDATE main.tasks SET status='blocked', note=NULLIF($(q "$reason"),''), updated_at=$(q "$(now)")
-    WHERE herdr_session=$SQS AND id=$(q "$id") AND status NOT IN ('done','cancelled'); SELECT changes();")
+  changed=$(sql "UPDATE main.tasks SET status=$(q "$(st_main blocked)"), note=NULLIF($(q "$reason"),''), updated_at=$(q "$(now)")
+    WHERE herdr_session=$SQS AND id=$(q "$id") AND status NOT IN ($ST_CLOSED_SQL); SELECT changes();")
   [[ $changed == 1 ]] || die "block できません(並行して閉じられました): $id"
   notify_rules_hook
-  echo "$id blocked"
+  echo "$id $(st_main blocked)"
 }
 
 # ---------- cancel ----------
@@ -470,11 +471,11 @@ cmd_cancel() {
   special_ticket_guard "$id" "tb cancel"
   event_actor_resolve
   t=$(now)
-  changed=$(sql "UPDATE main.tasks SET status='cancelled', summary=NULLIF($(q "$reason"),''), reported_at=$(q "$t"), updated_at=$(q "$t")
-    WHERE herdr_session=$SQS AND id=$(q "$id") AND status NOT IN ('done','cancelled'); SELECT changes();")
+  changed=$(sql "UPDATE main.tasks SET status=$(q "$(st_main cancelled)"), summary=NULLIF($(q "$reason"),''), reported_at=$(q "$t"), updated_at=$(q "$t")
+    WHERE herdr_session=$SQS AND id=$(q "$id") AND status NOT IN ($ST_CLOSED_SQL); SELECT changes();")
   [[ $changed == 1 ]] || die "cancel できません(並行して閉じられました): $id"
   notify_rules_hook
-  echo "$id cancelled"
+  echo "$id $(st_main cancelled)"
 }
 
 # ---------- report ----------
@@ -487,7 +488,7 @@ cmd_report() {
   status=$(jq -r .status <<<"$row"); project=$(jq -r .project <<<"$row")
   summary=$(jq -r '.summary // ""' <<<"$row"); reported=$(jq -r '.reported_at // ""' <<<"$row")
   paths=$(jq -r '.deliverables | fromjson | join(", ")' <<<"$row")
-  [[ $status == done ]] || die "done ではないタスクは report できません($status): $id"
+  st_is "$status" done || die "done ではないタスクは report できません($status): $id"
   if [[ -n $reported ]]; then echo "$id は報告済みです($reported)"; return 0; fi
 
   target=$(target_for "$project")
@@ -516,7 +517,7 @@ cmd_pending() {
     esac
   done
   # 未配送の done コメントがあるタスクは C-<n> の行で出す(同じ報告を 2 回送らない)
-  local where="status='done' AND (reported_at IS NULL OR reported_at='') AND NOT EXISTS (SELECT 1 FROM comments c WHERE c.task_id=tasks.id AND c.kind='done' AND c.delivered_at IS NULL)"
+  local where="status IN ($ST_DONE_SQL) AND (reported_at IS NULL OR reported_at='') AND NOT EXISTS (SELECT 1 FROM comments c WHERE c.task_id=tasks.id AND c.kind='done' AND c.delivered_at IS NULL)"
   case $mode in
     ids)  sql "SELECT id FROM tasks WHERE ($where) ORDER BY updated_at, id;"
           sql "SELECT 'C-'||id FROM comments WHERE delivered_at IS NULL ORDER BY id;";;
@@ -609,13 +610,13 @@ cmd_labels() {
     defs=$(defined_labels) || die "用意したラベルはありません(設定 labels が無いので、ラベルは自由に付けられます。用意するのは人: tb config edit labels)"
     dj=$(jq -Rnc '[inputs | select(length > 0) | (capture("^(?<label>[^\t]*)\t(?<description>.*)$"; "s") // {label: ., description: ""})]' <<<"$defs")
     local qs="WITH d AS (SELECT key AS ord, json_extract(value,'\$.label') AS label, json_extract(value,'\$.description') AS description FROM json_each($(q "$dj")))
-              SELECT d.label, COALESCE(SUM(t.id IS NOT NULL AND t.status NOT IN ('done','cancelled')), 0) AS open, COUNT(t.id) AS total, d.description
+              SELECT d.label, COALESCE(SUM(t.id IS NOT NULL AND t.status NOT IN ($ST_CLOSED_SQL)), 0) AS open, COUNT(t.id) AS total, d.description
               FROM d LEFT JOIN (SELECT t.id, t.status, j.value AS lv FROM tasks t, json_each(t.labels) j WHERE ($where)) t ON t.lv = d.label
               GROUP BY d.ord ORDER BY d.ord;"
     if ((json)); then sql -json "$qs" | jq -c '(. // [])[]'; else sql -separator $'\t' "$qs"; fi
     return
   fi
-  local qs="SELECT j.value AS label, SUM(t.status NOT IN ('done','cancelled')) AS open, COUNT(*) AS total
+  local qs="SELECT j.value AS label, SUM(t.status NOT IN ($ST_CLOSED_SQL)) AS open, COUNT(*) AS total
             FROM tasks t, json_each(t.labels) j WHERE ($where) GROUP BY j.value ORDER BY j.value;"
   if ((json)); then sql -json "$qs" | jq -c '(. // [])[]'; else sql -separator $'\t' "$qs"; fi
 }
@@ -676,7 +677,7 @@ cmd_sprint-close() {
   [[ $to == NULL ]] || ok+=" AND EXISTS (SELECT 1 FROM main.sprints WHERE herdr_session=$SQS AND id=$to AND state!='closed')"
   out=$(sql "BEGIN IMMEDIATE;
     UPDATE main.tasks SET sprint_id=$to, updated_at=$(q "$(now)")
-      WHERE herdr_session=$SQS AND sprint_id=${id#S-} AND status NOT IN ('done','cancelled') AND $ok;
+      WHERE herdr_session=$SQS AND sprint_id=${id#S-} AND status NOT IN ($ST_CLOSED_SQL) AND $ok;
     SELECT changes();
     UPDATE main.sprints SET state='closed', closed_at=$(q "$(now)") WHERE herdr_session=$SQS AND id=${id#S-} AND $ok;
     SELECT changes();
@@ -699,8 +700,8 @@ cmd_sprints() {
     esac
   done
   local qs="SELECT 'S-'||s.id AS id, s.state, s.project, s.name, s.start_date, s.end_date, s.goal,
-              COALESCE(SUM(t.id IS NOT NULL AND t.status!='cancelled'),0) AS tasks, SUM(t.status='done') AS done,
-              COALESCE(SUM(CASE WHEN t.status!='cancelled' THEN t.points END),0) AS points, COALESCE(SUM(CASE WHEN t.status='done' THEN t.points END),0) AS done_points
+              COALESCE(SUM(t.id IS NOT NULL AND t.status NOT IN ($ST_CANCELLED_SQL)),0) AS tasks, SUM(t.status IN ($ST_DONE_SQL)) AS done,
+              COALESCE(SUM(CASE WHEN t.status NOT IN ($ST_CANCELLED_SQL) THEN t.points END),0) AS points, COALESCE(SUM(CASE WHEN t.status IN ($ST_DONE_SQL) THEN t.points END),0) AS done_points
             FROM sprints s LEFT JOIN tasks t ON t.sprint_id=s.id WHERE ($where)
             GROUP BY s.id ORDER BY s.project, CASE s.state WHEN 'active' THEN 1 WHEN 'planned' THEN 2 ELSE 3 END, s.id"
   if ((json)); then sql -json "$qs;" | jq -c '(. // [])[] | .done //= 0'
@@ -730,15 +731,17 @@ cmd_board() {
   local row; row=$(sprint_row "$sid")
   local qs="SELECT id, status, type, priority, COALESCE(owner_agent,'-') AS owner, points, labels, title FROM tasks
             WHERE sprint_id=${sid#S-}$where ORDER BY $PRIORITY_RANK, id"
+  # 列は設定 statuses の状態(分類の順)。設定から外した状態のチケットが残っていれば、その列も後ろに足す(黙って見えなくしない)
+  local c cols=$ST_BOARD
+  while IFS= read -r c; do [[ -z $c || " $cols " == *" $c "* ]] || cols+=" $c"; done < <(sql "SELECT DISTINCT status FROM ($qs) ORDER BY status;")
   if ((json)); then
-    sql -json "$qs;" | jq -sc --argjson s "$row" --arg sid "$sid" \
+    sql -json "$qs;" | jq -sc --argjson s "$row" --arg sid "$sid" --arg cols "$cols" \
       '(.[0] // []) as $t | {sprint: ($s | .id = $sid | del(.herdr_session)),
-        columns: ([("todo","in_progress","review","blocked","done","cancelled") as $c | {key: $c, value: [$t[] | select(.status == $c) | .labels |= fromjson]}] | from_entries)}'
+        columns: ([$cols | split(" ")[] as $c | {key: $c, value: [$t[] | select(.status == $c) | .labels |= fromjson]}] | from_entries)}'
     return
   fi
   jq -r --arg sid "$sid" '"\($sid) \(.name) [\(.state)] \(.start_date // "-")..\(.end_date // "-")" + (if .goal then "\n目標: \(.goal)" else "" end)' <<<"$row"
-  local c
-  for c in todo in_progress review blocked done cancelled; do
+  for c in $cols; do
     printf '\n== %s ==\n' "$c"
     sql -separator $'\t' "SELECT id, priority, owner, COALESCE(points,'-'), replace(title, char(10), ' ') FROM ($qs) WHERE status=$(q "$c");"
   done
@@ -811,11 +814,11 @@ due_scan_sql() {  # $1=今日 $2=日数 [$3=project] → "overdue <n> due_soon <
   sql "BEGIN IMMEDIATE;
     INSERT INTO main.task_events (herdr_session, task_id, kind, old, new, actor, ref, created_at)
       SELECT $SQS, t.id, 'overdue', NULL, t.due, 'system', $day, $ts FROM tasks t
-      WHERE t.due IS NOT NULL AND t.status NOT IN ('done','cancelled') AND t.due < $(q "$td")$pw AND $(printf "$seen" "'overdue'") ORDER BY t.due, t.id;
+      WHERE t.due IS NOT NULL AND t.status NOT IN ($ST_CLOSED_SQL) AND t.due < $(q "$td")$pw AND $(printf "$seen" "'overdue'") ORDER BY t.due, t.id;
     SELECT 'overdue ' || changes();
     INSERT INTO main.task_events (herdr_session, task_id, kind, old, new, actor, ref, created_at)
       SELECT $SQS, t.id, 'due_soon', NULL, t.due, 'system', $day, $ts FROM tasks t
-      WHERE t.due IS NOT NULL AND t.status NOT IN ('done','cancelled') AND t.due >= $(q "$td") AND t.due <= date($(q "$td"), '+$within days')
+      WHERE t.due IS NOT NULL AND t.status NOT IN ($ST_CLOSED_SQL) AND t.due >= $(q "$td") AND t.due <= date($(q "$td"), '+$within days')
        $pw AND $(printf "$seen" "'due_soon'") ORDER BY t.due, t.id;
     SELECT 'due_soon ' || changes();
     COMMIT;" | paste -sd' ' -

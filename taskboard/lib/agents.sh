@@ -20,7 +20,6 @@ MODEL_RE='^[A-Za-z0-9._:-]{1,64}$'
 ROLE_RE='^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
 SWEEPER_PAT=${TB_SWEEPER_PATTERN:-sweeper*}
 AGENT_CWD=${TB_AGENT_CWD:-$TB_ROOT/..}
-OPEN_TASK_STATUSES="'in_progress','review','blocked'"
 
 valid_agent_name() { [[ $1 != human && $1 =~ $AGENT_NAME_RE ]] || usage "agent 名は英小文字で始まり、英小文字・数字・_・- の 32 字以内(human は予約名): $1"; }
 valid_lid() { [[ $1 =~ ^L-[0-9]+$ ]] || usage "操作 ID は L-<数字>: $1"; }
@@ -242,7 +241,7 @@ do_agent_stop() {  # name force by
   fi
   if [[ $force != 1 ]]; then
     k=$(killable_of "$name")
-    open=$(sql "SELECT group_concat(id, ' ') FROM tasks WHERE owner_agent=$(q "$name") AND status IN ($OPEN_TASK_STATUSES);")
+    open=$(sql "SELECT group_concat(id, ' ') FROM tasks WHERE owner_agent=$(q "$name") AND status IN ($ST_HELD_SQL);")
     if [[ $k != yes || -n $open ]]; then
       OP_OUT="$name は止めてよいと判定されていません(killable=$k${open:+、未完了タスク $open})。判定役に付けてもらうか(tb agent-flag)、人が --force で止めます"
       return 1
@@ -310,9 +309,9 @@ do_agent_restart() {  # name prompt by
   status=$(jq -r '.agent_status // ""' <<<"$row")
   [[ -n $pane ]] || { OP_OUT="$name の pane が分かりません"; return 1; }
   case $status in idle|done) ;; *) OP_OUT="$name は ${status:-状態不明} のため再起動しません(idle か done のときだけ)"; return 1;; esac
-  open=$(sql "SELECT group_concat(id, ' ') FROM tasks WHERE owner_agent=$(q "$name") AND status='in_progress';")
+  open=$(sql "SELECT group_concat(id, ' ') FROM tasks WHERE owner_agent=$(q "$name") AND status IN ($ST_ACTIVE_SQL);")
   if [[ -n $open ]] && blank "$prompt"; then
-    OP_OUT="$name は in_progress のタスク($open)を持っています。再開メモを --prompt で渡したときだけ再起動できます"; return 1
+    OP_OUT="$name は $(st_main active) のタスク($open)を持っています。再開メモを --prompt で渡したときだけ再起動できます"; return 1
   fi
   [[ -n $old_sess ]] || old_sess=$(sql "SELECT COALESCE(session_id,'') FROM agents WHERE name=$(q "$name");")
   cwd=$(sql "SELECT COALESCE(cwd,'') FROM agents WHERE name=$(q "$name");")
@@ -532,7 +531,8 @@ EDGES_SQL=$TB_ROOT/sql/agent_edges.sql
 agent_edges() {
   local rows projects map="{}" p
   # 共有の SQL は表の名前のまま書いてあるので、同じ名前の CTE(このセッションの行だけ)を前に置いて絞る(Web UI は一時ビューで同じことをする)
-  rows=$(sql -json "$(grep -v '^--' "$EDGES_SQL");")   # 表の名前はこのセッションのビュー || return 1
+  local qs; qs=$(grep -v '^--' "$EDGES_SQL"); qs=${qs//__HELD_STATUSES__/$ST_HELD_SQL}
+  rows=$(sql -json "$qs;")   # 表の名前はこのセッションのビュー || return 1
   [[ -n $rows ]] || rows="[]"
   projects=$(jq -r '[.[] | .project // empty] | unique[]' <<<"$rows")
   while IFS= read -r p; do
@@ -570,9 +570,9 @@ cmd_agents() {
   local rows name k status
   rows=$(sql -json "SELECT a.name, a.state, a.pane_id, a.session_id, a.cwd, a.model, a.role, a.killable_reason, a.killable_by, a.killable_at,
       a.created_by, a.created_at, a.stopped_at, a.spawned_by, a.spawn_task,
-      (SELECT COUNT(*) FROM tasks t WHERE t.owner_agent=a.name AND t.status IN ($OPEN_TASK_STATUSES)) AS open_tasks,
+      (SELECT COUNT(*) FROM tasks t WHERE t.owner_agent=a.name AND t.status IN ($ST_HELD_SQL)) AS open_tasks,
       (SELECT COUNT(*) FROM comments c LEFT JOIN tasks t ON t.id=c.task_id WHERE c.from_name=a.name AND c.kind IN ('question','blocked')
-         AND c.resolved_at IS NULL AND COALESCE(t.status,'') NOT IN ('done','cancelled')) AS open_questions,
+         AND c.resolved_at IS NULL AND COALESCE(t.status,'') NOT IN ($ST_CLOSED_SQL)) AS open_questions,
       aa.last_prompt_at, aa.last_stop_at,
       CASE WHEN aa.last_stop_at IS NOT NULL AND (aa.last_prompt_at IS NULL OR aa.last_stop_at >= aa.last_prompt_at)
            THEN CAST((julianday('now') - julianday(aa.last_stop_at)) * 1440 AS INTEGER) END AS idle_min
