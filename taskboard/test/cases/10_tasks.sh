@@ -82,3 +82,15 @@ cg_a=$(rc $TB claim $c4 --owner wa); cg_b=$(rc $TB claim $c4 --owner wb)
 eq "claim guard: two sequential claims on the same unowned todo → only the first succeeds" "$cg_a $cg_b $(cg_state $c4)" "0 1 in_progress/wa"
 c5=$($TB add -p cg -t "pool text case" --owner w9)
 eq "claim guard: following a pool-style claim on an assigned todo fails and leaves it" "$(rc $TB claim $c5 --owner w1 --session s9) $(cg_state $c5)" "1 todo/w9"
+
+# --- 状態を別名にした環境でも、担当ガードと理由の分け方は分類で効く(todo の分類 = backlog、active の分類 = doing)
+_cg_saved=${TB_STATUSES-__unset__}
+export TB_STATUSES=$TMP/claim-guard-statuses.conf
+printf '%s\n' 'backlog todo' 'doing active' 'shipped done' 'dropped cancelled' >"$TB_STATUSES"
+ca1=$($TB add -p cga -t "alias, other owner" --owner w1)
+eq "claim guard (alias statuses): assigned to another agent → fails and keeps the alias state" "$(rc $TB claim $ca1 --owner w2) $(cg_state $ca1)" "1 backlog/w1"
+eq "claim guard (alias statuses): the reason is the assignment, not the status" "$($TB claim $ca1 --owner w2 2>&1 | grep -c '割り当て済み')" "1"
+eq "claim guard (alias statuses): unowned and same-owner claims pass" "$(rc $TB claim $($TB add -p cga -t "alias, unowned") --owner w1) $(rc $TB claim $($TB add -p cga -t "alias, same owner" --owner w1) --owner w1)" "0 0"
+$TB claim $ca1 --owner w1 >/dev/null
+eq "claim guard (alias statuses): a task already in the active class reports the status reason" "$($TB claim $ca1 --owner w1 2>&1 | grep -c '割り当て済み') $($TB claim $ca1 --owner w1 2>&1 | grep -c 'backlog')" "0 1"
+if [[ $_cg_saved == __unset__ ]]; then unset TB_STATUSES; else export TB_STATUSES=$_cg_saved; fi

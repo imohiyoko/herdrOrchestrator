@@ -4,6 +4,7 @@
 
 - 自分の分野のチケットは `tb list -l <ラベル> --long` で絞って見る。中身・受け入れ条件・先行タスクは `tb show <task-id>`(`links.blocked_by` が done でないと claim できない)
 - 着手: `tb claim <task-id> --owner <自分の agent 名> --session <session id>`
+  指揮役が別の名前の担当で作った todo は claim が失敗する(「割り当て済み」)。付け替えは `tb update <task-id> --owner <自分の agent 名>`
 - 途中経過は `tb comment <task-id> --kind progress --text '...'`(10 分おきにまとめて指揮官に届く)
 - 終わったら `tb done <task-id> -d <成果物> -m '要約'` と `tb comment <task-id> --kind done --text '要約' --deliverables '<成果物>'`
   `done` にする前に、docs か task の summary に次を残す: ① 何をしたか(変更した場所・PR 番号) ② 未完了のことと次の注意点 ③ 次にこの件を見るなら誰(どの役割・どの agent)か
