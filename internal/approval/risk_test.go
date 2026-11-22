@@ -14,6 +14,9 @@ func TestRiskMatchesBash(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("bash の risk.sh と比べる")
 	}
+	if out, err := exec.Command("bash", "-c", `echo "${BASH_VERSINFO[0]}"`).Output(); err != nil || len(out) == 0 || out[0] < '4' || out[0] > '9' {
+		t.Skipf("bash 4 以上が無い(%q。tb の bash 版は 4 以上が前提)", out)
+	}
 	lib, _ := filepath.Abs("../../taskboard/lib/risk.sh")
 	if _, err := os.Stat(lib); err != nil {
 		t.Skip("risk.sh が無い")
