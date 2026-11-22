@@ -74,7 +74,7 @@ tb recipe-run <名前> [--target A] [--task T-..] [--dry-run] [<名前>=<値> ..
 # 架空の例: 自分を安全に再起動する
 desc 自分を安全に再起動する
 risk low                                   # 宣言(参考)。中の部品の最大より低ければ最大になる
-arg note? text:500                         # 実行のときに note=<値> で渡す(? は省略可)
+arg note? text:500                         # 実行のときに note=<値> で渡す(? は省略可。agent 型は宣言できない)
 step agent-status  target=$requester
 step wait-idle     target=$requester timeout=60
 step agent-restart target=$requester prompt=$note
@@ -82,6 +82,9 @@ step agent-restart target=$requester prompt=$note
 
 - 書けるのは `desc` / `risk` / `arg` / `step` だけ。条件分岐・ループ・シェルは書けない
 - 値はリテラル(空白と `$` を含まない 1 語)か、`$requester`(依頼者)/ `$target`(対象)/ `$<宣言した引数>` の 1 語
+- 部品の `agent` 型の引数に書けるのは `$requester` か `$target` だけ(リテラルの agent 名も、宣言した引数も不可。`agent` 型の arg は宣言できない)。
+  部品が向く agent は、いつも依頼者か、操作名 `recipe:<名前>:<対象>` の対象になる。他者に向けるのは `--target` で、その対象で判定される。
+  実行のときも同じことを確かめ直す(登録の検査をすり抜けた行でも、依頼者・対象以外には向けない)
 - `$requester` / `$target` は `agent` 型の引数にだけ。宣言した引数の型は、渡す先の部品の引数と同じ種類にする(`text` なら `text`)
 - 名前は英小文字で始まる英小文字・数字・`-` の 32 字以内。**`:` は使えない**(操作名を最後の `:` で分けるため)
 - step は 16 個まで、arg は 8 個まで。登録のときに全部を検査し、1 つでも通らなければ登録しない(終了コード 2。理由を行ごとに出す)
@@ -125,8 +128,6 @@ actor は依頼者(agent 名か `human`)。
 
 ### 気をつけること
 
-- 宣言した `agent` 型の引数を使うと、操作名の対象(`--target`)とは別の agent を部品に渡せる。判定の操作名がある部品は部品ごとの判定で止まるが、
-  判定の操作名が無い読み取りの部品(`agent-status` / `wait-idle` / `task-show`)は、そのまま通る(`tb agents` などで既に読める範囲)
 - `#` から行末は注釈なので、リテラルの値に `#` は書けない(引数で渡す)
 
 ## これから(段 3・段 4)

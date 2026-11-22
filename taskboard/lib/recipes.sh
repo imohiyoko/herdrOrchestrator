@@ -200,6 +200,7 @@ cmd_part-risk() {
 #   risk <low|mid|high|human-only>   宣言(参考)。中の部品の最大より低ければ、最大になる(下げられない)
 #   arg <名前>[?] <型>         実行のときに <名前>=<値> で渡す引数(? は省略可)。型は部品と同じ書き方
 #   step <部品> [<名前>=<値> ...]   値はリテラル(空白と $ を含まない)か、$requester(依頼者)/ $target(対象)/ $<宣言した引数> の 1 語
+#   部品の agent 型の引数に書けるのは $requester か $target だけ(部品が向く agent は、いつも依頼者か操作名の対象)。agent 型の arg は宣言できない
 # 条件分岐・ループ・シェルは書けない。部品は直接呼び、シェルを経由しない
 # ======================================================================
 RECIPE_NAME_RE='^[a-z][a-z0-9-]{0,31}$'
@@ -239,6 +240,7 @@ recipe_parse() {  # $1=本文
         [[ $nm =~ ^[a-z][a-z0-9_]{0,15}$ && $nm != requester && $nm != target ]] || { err+="${n} 行目: 引数の名前は英小文字で始まる 16 字まで(requester / target は予約): $nm"$'\n'; continue; }
         [[ -z ${RCP_ARGT[$nm]+x} ]] || { err+="${n} 行目: 引数 $nm が 2 回あります"$'\n'; continue; }
         part_type_ok "$t" || { err+="${n} 行目: 引数 $nm の型が不正です: $t"$'\n'; continue; }
+        [[ $t != agent ]] || { err+="${n} 行目: agent 型の引数は宣言できません(対象は --target で渡し、step では \$target と書きます): $nm"$'\n'; continue; }
         RCP_ARGT[$nm]=$t; RCP_ARGN+=("$nm$opt");;
       step)
         read -ra toks <<<"$rest"
@@ -256,6 +258,10 @@ recipe_parse() {  # $1=本文
             [[ ${spec%%:*} == "$k?" ]] && { pt=${spec#*:}; popt=1; }
           done
           [[ -n $pt ]] || { err+="${n} 行目: 部品 $part に引数 $k はありません(使えるのは: ${PART_ARGS[$part]:-なし})"$'\n'; ok=0; continue; }
+          # agent 型の引数は依頼者か対象だけ(操作名 recipe:<名前>:<対象> の対象と食い違わないように。他者を対象にするのは --target)
+          if [[ $pt == agent && $v != '$requester' && $v != '$target' ]]; then
+            err+="${n} 行目: $part の $k(agent 型)に書けるのは \$requester か \$target だけです: $v"$'\n'; ok=0; continue
+          fi
           if [[ $v == \$* ]]; then
             case ${v#\$} in
               requester|target) [[ $pt == agent ]] || { err+="${n} 行目: $v は agent 型の引数にだけ使えます($part の $k は $pt)"$'\n'; ok=0; };;
@@ -466,6 +472,15 @@ cmd_recipe-run() {
     [[ -z $2 ]] || echo "tb: recipe-run: $2" >&2
     return "$1"
   }
+  _rr_agents_ok() {  # $1=部品(PART_VAL に引数)。agent 型の値が依頼者か対象でなければ 1(登録の検査をすり抜けた行への備え)
+    local spec k
+    for spec in ${PART_ARGS[$1]}; do
+      [[ ${spec#*:} == agent ]] || continue
+      k=${spec%%:*}; k=${k%\?}
+      [[ -z ${PART_VAL[$k]+x} || ${PART_VAL[$k]} == "$REQ_BY" || ${PART_VAL[$k]} == "$target" ]] && continue
+      PART_ERR="$1 の $k(${PART_VAL[$k]})は依頼者でも対象でもありません"; return 1
+    done
+  }
   row=$(recipe_row "$name")
   if [[ -z $row ]]; then
     ((dry)) || RUN_EID=$(recipe_event recipe_run "" "$name target=$target" "$op")
@@ -515,6 +530,7 @@ cmd_recipe-run() {
     done
     verdict=allow; rule=""
     if ! part_args_check "$part" "${kvs[@]}"; then verdict=deny; rule=$PART_ERR; stoprc=4
+    elif ! _rr_agents_ok "$part"; then verdict=deny; rule=$PART_ERR; stoprc=4
     elif part_human_only "$part" && [[ $REQ_BY != human ]]; then verdict=deny; rule="人だけの部品(コードで固定)"; stoprc=4
     else
       while IFS= read -r k; do

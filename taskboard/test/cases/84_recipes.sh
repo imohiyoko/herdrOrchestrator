@@ -35,23 +35,26 @@ _bad() { local n=$1; shift; printf '%s' "$*" | "$TB" recipe-set "$n" >/dev/null 
 eq "recipe-set: 名前に : は使えない" "$(rc "$TB" recipe-set 'a:b' <<<"$LOOK")" "2"
 eq "recipe-set: 名前は英小文字で始まる" "$(rc "$TB" recipe-set 'Ab' <<<"$LOOK") $(rc "$TB" recipe-set '1a' <<<"$LOOK") $(rc "$TB" recipe-set 'a_b' <<<"$LOOK")" "2 2 2"
 eq "recipe-set: 一覧にない部品" "$(_bad b1 'step no-such-part')" "2:0"
-eq "recipe-set: 書けない行(シェルなど)" "$(_bad b2 $'step agent-status target=w1\nrun rm -rf /')" "2:0"
-eq "recipe-set: 宣言していない \$引数" "$(_bad b3 'step agent-status target=$who')" "2:0"
-eq "recipe-set: arg は step より前に書く" "$(_bad b4 $'step agent-status target=$who\narg who agent')" "2:0"
-eq "recipe-set: リテラルが部品の型に合わない" "$(_bad b5 'step wait-idle target=w1 timeout=9999')" "2:0"
-eq "recipe-set: 値の中の \$ は書けない" "$(_bad b6 'step agent-status target=w$x')" "2:0"
-eq "recipe-set: \$requester は agent 型の引数にだけ" "$(_bad b7 'step send-info to=w1 text=$requester')" "2:0"
-eq "recipe-set: 宣言の型が部品の型と合わない" "$(_bad b8 $'arg t text:10\nstep agent-status target=$t')" "2:0"
-eq "recipe-set: 部品の必須の引数が無い" "$(_bad b9 'step wait-idle target=w1')" "2:0"
-eq "recipe-set: 部品に無い引数" "$(_bad b10 'step agent-status target=w1 extra=1')" "2:0"
+eq "recipe-set: 書けない行(シェルなど)" "$(_bad b2 $'step agent-status target=$target\nrun rm -rf /')" "2:0"
+eq "recipe-set: 宣言していない \$引数" "$(_bad b3 'step wait-idle target=$target timeout=$secs')" "2:0"
+eq "recipe-set: arg は step より前に書く" "$(_bad b4 $'step wait-idle target=$target timeout=$secs\narg secs int:1-60')" "2:0"
+eq "recipe-set: リテラルが部品の型に合わない" "$(_bad b5 'step wait-idle target=$target timeout=9999')" "2:0"
+eq "recipe-set: 値の中の \$ は書けない" "$(_bad b6 'step send-info to=$target text=a$x')" "2:0"
+eq "recipe-set: \$requester は agent 型の引数にだけ" "$(_bad b7 'step send-info to=$target text=$requester')" "2:0"
+eq "recipe-set: 宣言の型が部品の型と合わない" "$(_bad b8 $'arg t text:10\nstep wait-idle target=$target timeout=$t')" "2:0"
+eq "recipe-set: 部品の必須の引数が無い" "$(_bad b9 'step wait-idle target=$target')" "2:0"
+eq "recipe-set: 部品に無い引数" "$(_bad b10 'step agent-status target=$target extra=1')" "2:0"
 eq "recipe-set: step が無い" "$(_bad b11 'desc 何もしない')" "2:0"
-eq "recipe-set: step は 16 個まで" "$(_bad b12 "$(for i in $(seq 17); do echo 'step agent-status target=w1'; done)")" "2:0"
+eq "recipe-set: step は 16 個まで" "$(_bad b12 "$(for i in $(seq 17); do echo 'step agent-status target=$target'; done)")" "2:0"
 eq "recipe-set: 予約の引数名(requester / target)は宣言できない" "$(_bad b13 $'arg target agent\nstep agent-status target=$target')" "2:0"
-eq "recipe-set: 不正な宣言 risk" "$(_bad b14 $'risk none\nstep agent-status target=w1')" "2:0"
-eq "recipe-set: 引数の名前が 2 回" "$(_bad b15 $'arg a agent\narg a agent\nstep agent-status target=$a')" "2:0"
-eq "recipe-set: step の中で同じ引数が 2 回" "$(_bad b17 'step agent-status target=w1 target=w2')" "2:0"
-eq "recipe-set: 省略できる引数を、省略できない部品の引数に渡せない" "$(_bad b18 $'arg who? agent\nstep agent-status target=$who')" "2:0"
-eq "recipe-set: 省略できる引数を、省略できる部品の引数には渡せる" "$($TB recipe-set b19 <<<$'arg note? text:10\nstep agent-revive target=w1 prompt=$note' >/dev/null; rsql "SELECT count(*) FROM recipes WHERE name='b19';"; $TB recipe-rm b19 >/dev/null)" "1"
+eq "recipe-set: 不正な宣言 risk" "$(_bad b14 $'risk none\nstep agent-status target=$target')" "2:0"
+eq "recipe-set: 引数の名前が 2 回" "$(_bad b15 $'arg a int:1-9\narg a int:1-9\nstep wait-idle target=$target timeout=$a')" "2:0"
+eq "recipe-set: step の中で同じ引数が 2 回" "$(_bad b17 'step agent-status target=$target target=$requester')" "2:0"
+eq "recipe-set: 省略できる引数を、省略できない部品の引数に渡せない" "$(_bad b18 $'arg secs? int:1-60\nstep wait-idle target=$target timeout=$secs')" "2:0"
+eq "recipe-set: 省略できる引数を、省略できる部品の引数には渡せる" "$($TB recipe-set b19 <<<$'arg note? text:10\nstep agent-revive target=$target prompt=$note' >/dev/null; rsql "SELECT count(*) FROM recipes WHERE name='b19';"; $TB recipe-rm b19 >/dev/null)" "1"
+eq "recipe-set: agent 型の引数にリテラルの agent 名は書けない" "$(_bad b20 'step agent-status target=lead')" "2:0"
+eq "recipe-set: agent 型の引数は宣言できない(対象は --target)" "$(_bad b21 $'arg who agent\nstep agent-status target=$target')" "2:0"
+eq "recipe-set: 理由を出す" "$(printf 'step agent-status target=lead\n' | $TB recipe-set b22 2>&1 | grep -c '\$requester か \$target だけ')" "1"
 eq "recipe-set: 検査を通らないと履歴も残らない" "$(rsql "SELECT count(*) FROM recipe_changes WHERE name LIKE 'b%' AND name != 'b19';")" "0"
 eq "recipe-set: 理由を行ごとに出す" "$(printf 'step no-such-part\nfoo\n' | $TB recipe-set b16 2>&1 | grep -c '行目')" "2"
 
@@ -125,13 +128,13 @@ eq "recipe-run: 人の端末なら人だけの判定は通る(段 2 では副作
 # --- 引数
 eq "recipe-run: 宣言していない引数は 2" "$(asw1 rc "$TB" recipe-run rs bogus=1)" "2"
 eq "recipe-run: 宣言の型に合わない値は 2" "$(asw1 rc "$TB" recipe-run rs "note=$(printf 'x%.0s' $(seq 501))")" "2"
-eq "recipe-run: 必須の引数が無いと 2" "$($TB recipe-set need <<<$'arg who agent\nstep agent-status target=$who' >/dev/null; asw1 rc "$TB" recipe-run need)" "2"
-eq "recipe-run: 引数を渡せば部品に入る" "$(: >"$FAKE_LOG"; asw1 "$TB" recipe-run need who=lead | tail -1; grep '^get ' "$FAKE_LOG")" "lead idle
-get lead"
+eq "recipe-run: 必須の引数が無いと 2" "$($TB recipe-set need <<<$'arg secs int:1-60\nstep wait-idle target=$target timeout=$secs' >/dev/null; asw1 rc "$TB" recipe-run need)" "2"
+eq "recipe-run: 引数を渡せば部品に入る" "$(: >"$FAKE_LOG"; asw1 "$TB" recipe-run need secs=3 | tail -1; grep -c '^get w1' "$FAKE_LOG")" "w1 idle
+1"
 eq "recipe-run: 人の端末は --target が要る" "$(rc "$TB" recipe-run look)" "2"
 eq "recipe-run: 人の端末から \$requester を使うレシピは 4" "$(rc "$TB" recipe-run rs --target w1)" "4"
 eq "recipe-run: --target は agent 名だけ(シェルに渡さない)" "$(rc "$TB" recipe-run look --target "w1\$(touch $TMP/rc-pwn)") $(rc "$TB" recipe-run look --target human) $([[ -e $TMP/rc-pwn ]] && echo pwned || echo safe)" "2 2 safe"
-eq "recipe-run: 引数の値もシェルに渡さない" "$(asw1 rc "$TB" recipe-run need "who=\$(touch $TMP/rc-pwn2)"; [[ -e $TMP/rc-pwn2 ]] && echo pwned || echo safe)" "2
+eq "recipe-run: 引数の値もシェルに渡さない" "$(asw1 rc "$TB" recipe-run need "secs=\$(touch $TMP/rc-pwn2)"; [[ -e $TMP/rc-pwn2 ]] && echo pwned || echo safe)" "2
 safe"
 
 # --- 途中で失敗したら残りは続行しない
@@ -151,6 +154,11 @@ eq "recipe-run: 無いチケットは 1" "$(asw1 rc "$TB" recipe-run look --task
 rsql "INSERT INTO recipes (herdr_session, name, body, risk, steps, updated_by, updated_at) VALUES ('default','gone','step removed-part target=w1','low',1,'human','2026-01-01T00:00:00Z');"
 eq "recipe-run: 今のコードで検査を通らないレシピは 4" "$(asw1 rc "$TB" recipe-run gone)" "4"
 eq "recipe-list: 検査を通らないレシピは invalid" "$($TB recipe-list | awk -F'\t' '$1 == "gone" {print $2}')" "invalid!"
+
+# --- 登録の検査をすり抜けた行(直接書かれた DB など)でも、依頼者・対象以外の agent には部品を向けない
+rsql "INSERT INTO recipes (herdr_session, name, body, risk, steps, updated_by, updated_at) VALUES ('default','sneak','step agent-status target=lead','low',1,'human','2026-01-01T00:00:00Z');"
+: >"$FAKE_LOG"
+eq "recipe-run: 登録の検査を通らない行(リテラルの agent 名)は 4 で、何も読まない" "$(asw1 rc "$TB" recipe-run sneak) $(gets)" "4 0"
 
 # --- 削除
 eq "recipe-rm: agent の pane からは断る" "$(asw1 rc "$TB" recipe-rm look)" "1"
