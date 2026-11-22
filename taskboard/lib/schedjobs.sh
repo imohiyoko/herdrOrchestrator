@@ -26,7 +26,8 @@ sj_lookup() {  # $1=job $2=settings なら 1
   sj_files_ok || return 1
   if [[ $2 == 1 ]]; then f=$SJ_DIR/settings/$1.settings; else f=$SJ_DIR/jobs/$1.conf; fi
   [[ -f $f && ! -L $f ]] || return 1
-  SJ_BODY=$(cat "$f"); SJ_SRC="file:$f"
+  SJ_BODY=$(cat "$f" 2>/dev/null) || return 1   # 読めないファイルは無いものとする(空の本文として使わない)
+  SJ_SRC="file:$f"
 }
 
 # scheduler が読めるか(show.sh を一時のディレクトリで動かす。DB は見せない)。$1=job $2=conf の本文 $3=settings の本文(空なら無し)
@@ -135,7 +136,7 @@ sj_change() {
     edit)
       tmp=$(mktemp); { sj_lookup "$SJ_JOB" "$SJ_SET" && printf '%s\n' "$SJ_BODY"; } >"$tmp" || true
       "${VISUAL:-${EDITOR:-vi}}" "$tmp" || { rm -f "$tmp"; die "編集を中止しました"; }
-      body=$(cat "$tmp"); rm -f "$tmp";;
+      body=$(cat "$tmp") || { rm -f "$tmp"; die "編集した本文を読めません: $tmp"; }; rm -f "$tmp";;
   esac
   # scheduler が読めることを確かめてから書く(設定なら今の定義と組み合わせて)
   if ((SJ_SET)); then
@@ -176,7 +177,8 @@ sj_import() {
       echo "$j: DB に行が既にあるので飛ばします(jobs/$j.conf はそのまま)"; continue
     fi
     [[ ! -L $sf ]] || { echo "$j: settings/$j.settings がシンボリックリンクなので飛ばします"; continue; }
-    conf=$(cat "$f"); settings=""; [[ -f $sf ]] && settings=$(cat "$sf")
+    conf=$(cat "$f" 2>/dev/null) || die "読めません: $f"
+    settings=""; if [[ -f $sf ]]; then settings=$(cat "$sf" 2>/dev/null) || die "読めません: $sf"; fi   # 読めない上書き設定(ENABLED=0 など)を落として取り込まない
     sj_check "$j" "$conf" "$settings" || { echo "$j: scheduler が読めない定義なので飛ばします"; continue; }
     n=$((n + 1))
     if ((dry)); then echo "$j: jobs/$j.conf${settings:+ と settings/$j.settings} を取り込みます"; continue; fi

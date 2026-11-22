@@ -51,6 +51,19 @@ eq "sched-job import: history says import" "$(SJB sched-job history j3 | cut -f3
 printf 'COMMAND=%s\nWINDOW=00:00-23:59\nINTERVAL_MIN=2\n' "'echo hi'" >"$TB_SCHED_DIR/jobs/j3.conf"
 eq "sched-job import: existing row is skipped, file kept" "$(XDG_STATE_HOME=$TMP/sjstate SJB sched-job import j3 | grep -c '既にある') $(ls "$TB_SCHED_DIR/jobs" | grep -c j3)" "1 1"
 rm -f "$TB_SCHED_DIR/jobs/j3.conf"
+# 読めないファイルは取り込まない(上書き設定の ENABLED=0 などを落とさない)
+if [[ $(id -u) -eq 0 ]]; then
+  echo "skip sched-job import: unreadable files(root はファイルの権限を無視して読めるため確かめられない)"
+else
+  printf '%s\n' "$J1" >"$TB_SCHED_DIR/jobs/j4.conf"; printf 'ENABLED=0\n' >"$TB_SCHED_DIR/settings/j4.settings"; chmod 000 "$TB_SCHED_DIR/settings/j4.settings"
+  eq "sched-job import: unreadable settings → refused, nothing written" "$(XDG_STATE_HOME=$TMP/sjstate SJB sched-job import j4 2>&1 >/dev/null; echo "rc=$?") $(SJB sched-job list | grep -c '^j4	db')" "tb: 読めません: $TB_SCHED_DIR/settings/j4.settings
+rc=1 0"
+  chmod 000 "$TB_SCHED_DIR/jobs/j4.conf"
+  eq "sched-job import: unreadable conf → refused" "$(XDG_STATE_HOME=$TMP/sjstate SJB sched-job import j4 2>&1 >/dev/null; echo "rc=$?")" "tb: 読めません: $TB_SCHED_DIR/jobs/j4.conf
+rc=1"
+  eq "sched-job show: unreadable file is not an empty body" "$(SCHED_FILE_FALLBACK=1 SJB sched-job show j4 >/dev/null 2>&1; echo $?)" "1"
+  chmod 644 "$TB_SCHED_DIR/jobs/j4.conf" "$TB_SCHED_DIR/settings/j4.settings"; rm -f "$TB_SCHED_DIR/jobs/j4.conf" "$TB_SCHED_DIR/settings/j4.settings"
+fi
 # tb digest の見張り(schedwatch)も DB のジョブを見る
 printf 'ENABLED=0\n' | SJB sched-job set j3 --settings >/dev/null
 NOWE=1800000000
