@@ -67,6 +67,7 @@
 97_kind_adapter.sh 22
 97_org.sh 17
 97_agent_read_contract.sh 4
+97_roles_contract.sh 5
 97_peek.sh 2
 97_roles_db.sh 5
 97_roles_multi.sh 5

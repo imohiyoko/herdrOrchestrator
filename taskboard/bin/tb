@@ -50,6 +50,11 @@ tb_go_quiet() {
   [[ " $have " == *" $1 "* ]] || return 0
   tb_go_exec "$hc" "$@" >/dev/null 2>&1
 }
+# hook 用(role-context): herdrctl がそのコマンドを持つか(無い・失敗なら 1。die しない)
+tb_go_has() {
+  local have; have=$("${TB_HERDRCTL:-herdrctl}" tb --commands 2>/dev/null) || return 1
+  [[ " $have " == *" $1 "* ]]
+}
 
 main() {
   local cmd=${1:-help}; shift || true
@@ -57,7 +62,10 @@ main() {
     help|-h|--help) cmd_help; return 0;;
     whoami) cmd_whoami "$@"; return $?;;   # 読み取りだけ。DB を開かない(壊れた DB でも今の向き先を確かめられる)
     touch) [[ ${TB_IMPL:-bash} != go ]] || tb_go_quiet touch "$@"; cmd_touch "$@"; return 0;;   # 常に 0。ツールの有無チェックや init_db の失敗でも止めない
-    role-context) ( need_tools && init_db ) >/dev/null 2>&1 && session_setup_load && cmd_role-context "$@" 2>/dev/null; return 0;;   # hook 用。常に 0
+    role-context) ( need_tools && init_db ) >/dev/null 2>&1 && session_setup_load || return 0   # hook 用。常に 0
+      if [[ ${TB_IMPL:-bash} == go ]] && tb_go_has role-context; then ( tb_go_exec "${TB_HERDRCTL:-herdrctl}" role-context "$@" ) 2>/dev/null
+      else cmd_role-context "$@" 2>/dev/null; fi
+      return 0;;
   esac
   # ADR 0002 の手順 3: TB_IMPL=go なら、Go に移し終えたコマンド(herdrctl tb --commands)は herdrctl に渡す。既定は bash
   if [[ ${TB_IMPL:-bash} == go ]]; then tb_go "$cmd" "$@"; fi
