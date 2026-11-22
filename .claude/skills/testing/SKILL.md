@@ -39,6 +39,8 @@ description: このリポジトリでテストを設計・追加・修正・実�
 - 判定の部品: `eq "<名前>" "<実際>" "<期待>"`、`rc <コマンド>`(終了コードを出す)、`ok` / `ng`、`prompts`(送信の数)。名前はケースの中で一意に、何が成り立つべきかを書く(例: `"claim twice fails"`)
 - **前のケースの状態を使わない**。自分のケースで使う project 名(例: `-p tk`)、DB(`export TB_DB=$TMP/<名前>.db`)、設定ファイル(`$TMP/<名前>.conf`)を自分で用意する。先頭のコメントに「project は tk / tk2 だけを使う」のように書く
 - 環境変数を変えたら、同じユニットの後続に漏らさないよう最後に戻す(`_saved_db=$TB_DB` … `export TB_DB=$_saved_db`)。`HERDR_PANE_ID` を外す・戻す型は `12_conv.sh` を見る
+  - 「元は設定されていなかった」も戻す。`unset` や `export X=...` をする変数は、先頭で `_saved_env=$(declare -p A B C 2>/dev/null)` と保存し、最後に `unset A B C` してから `eval "$_saved_env"` で戻す(`84_recipe_runner.sh`。ケースは run.sh の最上位で source されるので大域に戻る。`declare -` を `declare -g` に置き換えると、export していない変数の `declare --` が壊れる)。`X=${X-}` で保存して `unset` で戻すだけだと、元の値が消える
+  - ケースの中の関数(例: `rr_reset`)が `unset` する変数も、戻す対象に入れる
 - ケースの中で `c`・`out` などの変数は自由に使ってよい(runner の変数は `__` 始まり)
 - どのユニットも最後に `99_zzz_session_sweep.sh` が流れ、テスト中に書かれた **すべての行に `herdr_session` が入っているか** を見る。新しい表・INSERT はセッション列を埋める
 - どうしても前のケースの変数や DB を使うなら、`taskboard/test/groups` に「名前: 前のケース 後のケース」と 1 行足す(今は tasks / alerts / gate の 3 組だけ。増やすと並列で縮まなくなるので最後の手段)
@@ -57,6 +59,24 @@ bash taskboard/test/run.sh --units               # ユニットの一覧(groups 
 
 本物の代わりに呼ばれ、呼ばれ方を `$FAKE_LOG` に 1 行ずつ書く(`prompt <宛先>\t<本文>`、`get <名前>` など)。振る舞いは環境変数で変える: `FAKE_STATUS`(idle / working / blocked / unknown / missing)、`FAKE_PROMPT_RC`(送信の成否)、`FAKE_AGENTS`(agent 一覧の JSON)、`FAKE_READY_AFTER`、`FAKE_DYNAMIC` など。新しい herdr のコマンドを使うなら、ここに足す。
 
+### よく漏れる観点
+
+- **値に空白・改行・タブ・`=` を入れる**。bash で値を配列に読む所(`mapfile -t`、`read`)は改行で分かれる。text 型など改行を受ける値は、受け付ける所だけでなく、DB や JSON を通って別の所で読み直す所まで通す(`jq -j '... \u0000'` と `mapfile -d ''` のように、値に含まれない区切りを使う)
+- **期限・時間切れは、取り出すたび・実行の時点で効くか**。最初に 1 回だけ見ていると、前の処理に時間がかかったあいだに期限を過ぎたものが通る。`sleep` で待たず、DB の時刻を `strftime('%Y-%m-%dT%H:%M:%fZ','now','-99.5 seconds')` のように今から少し前にずらし、前の処理の時間は短い `timeout` の部品で作る
+- **疑似 herdr の状態は操作で変わる**。`FAKE_DYNAMIC=1` で agent を止める・戻すと pane が変わるので、後の節で同じ pane(`HERDR_PANE_ID=wW:p1` など)を使うなら、節の頭で `FAKE_AGENTS` と `$FAKE_LOG.*` を作り直す。作り直さないと、pane の agent が見つからず人の端末として扱われ、関係のない所で落ちる
+- **人と agent の両方から**呼ぶ。権限の分かれ目(人だけ・依頼者だけ)は、通る側と止まる側の両方を確かめる
+
+### 直す前に落ちることを確かめる
+
+足したテストが、直す前のコードで FAIL することを確かめる。直したファイルだけを一時的に戻して流し、元に戻す:
+
+```bash
+cp taskboard/lib/recipes.sh /tmp/fixed.sh
+git show HEAD:taskboard/lib/recipes.sh > taskboard/lib/recipes.sh
+bash taskboard/test/run.sh 84_recipe_runner.sh   # 足したテストだけが FAIL する
+cp /tmp/fixed.sh taskboard/lib/recipes.sh
+```
+
 ### CI の組と weights
 
 CI は `--shard 1of4` … `4of4` を別のジョブで流す。組は `taskboard/test/weights`(ケースごとの秒数)で自動で分ける。weights に無いケースは 10 秒とみなすので、**重いケースを足したら `bash taskboard/test/run.sh --timings` で weights を書き直してコミットする**(bash 5 以上)。1 ケースが 1 分を超えるなら、独立した節ごとにファイルを分けると CI が縮む。
@@ -69,6 +89,8 @@ tb のケースは Go 版(herdrctl)の仕様書でもある。CI の `tb contrac
 go build -o /tmp/herdrctl ./cmd/herdrctl
 TB_IMPL=go TB_HERDRCTL=/tmp/herdrctl bash taskboard/test/run.sh
 ```
+
+herdrctl を作らずに `TB_IMPL=go` で流すと、ほとんどのケースが「herdrctl が見つかりません」で落ちる(コードの問題ではない)。
 
 コマンドを Go に移すときは、ケースを書き換えずにこれが通ること。bash 側の出力(列の順・空白・終了コード)を変えたら、Go 側も合わせる。
 
