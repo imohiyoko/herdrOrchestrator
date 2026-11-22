@@ -210,3 +210,44 @@ func (r *Roles) Match(name, pat string) int {
 	}
 	return 0
 }
+
+// ProtectReason は protect_reason(設定 protect で保護されていれば理由と true)。role:<glob> の行は a の役割と比べる。
+func (r *Roles) ProtectReason(a string) (string, bool) {
+	body, _, ok := config.Lookup(r.DB, r.Session, "protect")
+	if !ok {
+		return "", false
+	}
+	var have []string
+	loaded := false
+	for _, line := range config.Lines(body) {
+		line = config.Trim(config.StripComment(line))
+		if line == "" {
+			continue
+		}
+		k, v, has := strings.Cut(line, "=")
+		k = config.Trim(k)
+		if has {
+			v = config.Trim(v)
+		}
+		why := v
+		if why == "" {
+			why = "protect: " + k
+		}
+		if strings.HasPrefix(k, "role:") {
+			if !loaded {
+				loaded = true
+				if s, _ := r.NameOf(a); s != "" {
+					have = strings.Split(s, ",")
+				}
+			}
+			for _, x := range have {
+				if util.Glob(k[len("role:"):], x) {
+					return why, true
+				}
+			}
+		} else if util.Glob(k, a) {
+			return why, true
+		}
+	}
+	return "", false
+}
