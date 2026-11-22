@@ -53,34 +53,53 @@ config_db_row() {  # $1=キー → "<s|*>:<本文>"(このセッションの行�
   [[ -f $DB ]] || return 0
   sqlite3 -readonly -batch -cmd ".timeout ${SQL_TIMEOUT:-5000}" "$DB" \
     "SELECT CASE herdr_session WHEN '*' THEN '*' ELSE 's' END || ':' || body FROM config
-       WHERE key=$(q "$1") AND herdr_session IN ($SQS, '*') ORDER BY herdr_session='*' LIMIT 1;" 2>/dev/null || true
+       WHERE key=$(q "$1") AND herdr_session IN ($SQS, '*') ORDER BY herdr_session='*' LIMIT 1;" 2>/dev/null && return 0
+  # 表がまだ無い DB は「行が無い」と同じ(config そのものが無いかは sqlite_master で確かめる。誤りの文面では見分けない)。
+  # それ以外の失敗(壊れた DB・ロックの待ち切れ・config が参照する表が無いなど)は 1 を返す(呼ぶ側が CFG_ERR に残す)
+  [[ $(sqlite3 -readonly -batch -cmd ".timeout ${SQL_TIMEOUT:-5000}" "$DB" "SELECT count(*) FROM sqlite_master WHERE name='config';" 2>/dev/null) == 0 ]] && return 0
+  return 1
 }
 
 # config_lookup <キー>: 見つかれば 0 で CFG_BODY(本文)と CFG_SRC(出どころ)を入れる。どこにも無ければ 1(CFG_SRC は none)
+# 読めなかった(ファイルの読み取りや DB の問い合わせが失敗した)ときは CFG_ERR に何が読めなかったかを入れる(読めたときは空)。
+# 多くの機能は従来どおり次の出どころへ進む。権限の判定(lib/perms.sh)は CFG_ERR を見て fail-closed にする
 # 1 プロセスの中では引いた結果を覚えておく(書いたら config_forget)
 config_lookup() {
-  local key=$1 cv="CFGC_${1//-/_}" sv="CFGS_${1//-/_}" f r
-  if [[ -n ${!sv:-} ]]; then CFG_BODY=${!cv}; CFG_SRC=${!sv}; [[ $CFG_SRC != none ]]; return; fi
+  local key=$1 cv="CFGC_${1//-/_}" sv="CFGS_${1//-/_}" ev="CFGE_${1//-/_}" f r
+  if [[ -n ${!sv:-} ]]; then CFG_BODY=${!cv}; CFG_SRC=${!sv}; CFG_ERR=${!ev}; [[ $CFG_SRC != none ]]; return; fi
   config_key_info "$key" || return 2
-  CFG_BODY=""; CFG_SRC=none
+  CFG_BODY=""; CFG_SRC=none; CFG_ERR=""
   f=${!CFG_ENV:-}
   if [[ -n $f ]]; then
-    if [[ -f $f ]]; then CFG_BODY=$(cat "$f"); CFG_SRC="file:$f"
-    elif ((CFG_EXAMPLE)) && [[ -f $f.example ]]; then CFG_BODY=$(cat "$f.example"); CFG_SRC="example:$f.example"; fi
+    if [[ -f $f ]]; then CFG_BODY=$(cat "$f" 2>/dev/null) || CFG_ERR="file:$f"; CFG_SRC="file:$f"
+    elif ((CFG_EXAMPLE)) && [[ -f $f.example ]]; then CFG_BODY=$(cat "$f.example" 2>/dev/null) || CFG_ERR="example:$f.example"; CFG_SRC="example:$f.example"
+    elif config_unreachable "$f"; then CFG_ERR="dir:${f%/*}"; fi
   else
-    r=$(config_db_row "$key")
+    r=$(config_db_row "$key") || CFG_ERR="db:$DB"
     if [[ -n $r ]]; then
       CFG_BODY=${r#?:}; if [[ ${r:0:1} == '*' ]]; then CFG_SRC="db:*"; else CFG_SRC="db:$SESS"; fi
     else
       f=$CONFIG_DIR/$CFG_FILE
-      if [[ -f $f ]]; then CFG_BODY=$(cat "$f"); CFG_SRC="file:$f"
-      elif ((CFG_EXAMPLE)) && [[ -f $f.example ]]; then CFG_BODY=$(cat "$f.example"); CFG_SRC="example:$f.example"; fi
+      if [[ -f $f ]]; then CFG_BODY=$(cat "$f" 2>/dev/null) || CFG_ERR+="${CFG_ERR:+ }file:$f"; CFG_SRC="file:$f"
+      elif ((CFG_EXAMPLE)) && [[ -f $f.example ]]; then CFG_BODY=$(cat "$f.example" 2>/dev/null) || CFG_ERR+="${CFG_ERR:+ }example:$f.example"; CFG_SRC="example:$f.example"
+      elif config_unreachable "$f"; then CFG_ERR+="${CFG_ERR:+ }dir:${f%/*}"; fi
     fi
   fi
-  printf -v "$cv" '%s' "$CFG_BODY"; printf -v "$sv" '%s' "$CFG_SRC"
+  printf -v "$cv" '%s' "$CFG_BODY"; printf -v "$sv" '%s' "$CFG_SRC"; printf -v "$ev" '%s' "$CFG_ERR"
   [[ $CFG_SRC != none ]]
 }
-config_forget() { unset "CFGC_${1//-/_}" "CFGS_${1//-/_}"; }
+# ファイルがあるかどうかを確かめられない(途中のディレクトリの中を見られない)。「ファイルが無い」とは分ける。
+# 上へたどって最初に見えたもの(-e)が、中を見られるディレクトリなら本当に無い。そうでなければ確かめられない
+config_unreachable() {
+  local d=$1
+  while [[ $d == */* ]]; do
+    d=${d%/*}; [[ -n $d ]] || d=/
+    if [[ -e $d ]]; then [[ ! -d $d || ! -x $d ]]; return; fi
+    [[ $d != / ]] || break
+  done
+  return 1
+}
+config_forget() { unset "CFGC_${1//-/_}" "CFGS_${1//-/_}" "CFGE_${1//-/_}"; }
 
 # ---------- agent に返す文面(設定 messages)----------
 # 拒否・催促・依頼など、agent の次の動きを導く文面には識別子(コード)を付け、設定 messages の行で差し替えられるようにする。

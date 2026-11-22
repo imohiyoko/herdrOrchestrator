@@ -416,6 +416,16 @@ tb approval reject O-<n>
   tb が承認判定に渡す操作名を増やしたら、カタログにも足す(`test/cases/82_catalog.sh` が、コード中の操作名の載り漏れと、既定の approvals.conf の未知の規則を検出する)
 - tb が強制するのは `tb message send` だけ。ほかの操作(役割の変更・セットアップの書き込みなど)は、agent が `tb approval check <操作>` を見て、`ask` なら人に聞く
 
+### コマンドの権限段階(ADR 0006)
+
+tb の全コマンドは表 `perms/commands.tbl` に行を持ち、段階で止めるかが決まる(bash の `bin/tb` と herdrctl の両方)。確かめる場所は行ごとに、入口(`entry`)、コマンドの中の `require_human` の分かれ道(`inner`。`--dry-run` などは人だけにしない)、確かめない(`none`。hook と `help` / `whoami`。設定で段階を書いても効かない)のどれか。段階は 4 つ: `allow`(agent がすぐ実行)/ `ask-any`(agent か人のレビューが要る)/ `ask-human`(人の LGTM が要る)/ `only-human`(人の端末からだけ)。人の端末からは、どの段階でも実行できる。
+
+- 既定と下限は `perms/commands.tbl`(コードの一部。コマンドごとに 1 行。古い名前も同じ操作名に寄せる)。既定は今までの振る舞いと同じ(人だけだったものは `only-human`、ほかは `allow`)
+- 変えるのは設定 `approvals` の `cmd:<サービス>:<動詞> = <段階>` の行(例: `cmd:ticket:cancel = ask-human`)。`ask` は `ask-any` と同じ。下限より緩い値は下限になる(下限は今はすべて `allow` なので、どのコマンドも設定で緩められる)
+- コマンドの中の「人だけ」の確かめ(`require_human`)も、この表と設定で決まる
+- `ask-any` / `ask-human` の承認待ち(P-<n>)はまだ無い。いまは agent からの実行を終了コード 20 で止める
+- コマンドを足したら表にも行を足す(足し忘れはテスト `test/cases/03_perms.sh` と `internal/kernel/perms` が落とす)
+
 ## 部品とレシピ(ADR 0005)
 
 新しい使い道を、専用のコマンドを足す代わりに「部品の並び(レシピ)」で作れるようにする(段階的に実装中)。部品の一覧・引数の型・リスク階層は

@@ -45,7 +45,7 @@ BASE=(
 # gtf <除く行の接頭辞|-> [足す行...] → 基準から接頭辞の行を除いて、足した行を加えた事実
 gtf() { local drop=$1; shift; local l; for l in "${BASE[@]}"; do [[ $drop != - && $l == "$drop"* ]] || printf '%s\n' "$l"; done; printf '%s\n' "$@"; }
 # 設定の無いツリーと、実設定のあるツリーを $TMP に作って tb を呼ぶ(実チェックアウトの config の有無に左右されない)
-mkiso() { mkdir -p "$1/taskboard" "$1/lib" "$1/roles"; cp -R "$HERE/../bin" "$HERE/../lib" "$HERE/../schema" "$HERE/../sql" "$1/taskboard/"; cp "$HERE/../../lib/"*.sh "$1/lib/"; mkdir -p "$1/taskboard/config"; }
+mkiso() { mkdir -p "$1/taskboard" "$1/lib" "$1/roles"; cp -R "$HERE/../bin" "$HERE/../lib" "$HERE/../schema" "$HERE/../sql" "$HERE/../perms" "$1/taskboard/"; cp "$HERE/../../lib/"*.sh "$1/lib/"; mkdir -p "$1/taskboard/config"; }
 # Go 版(TB_IMPL=go)は lib を source できないので、gt は隔離ツリーに設定と記録を置いて tb gate evaluate で同じ評価をする
 GTGO=$GT/iso-go; mkiso "$GTGO"; mkdir -p "$GTGO/taskboard/data"
 gtcp() { rm -f "$2"; if [[ -e $1 || -L $1 ]]; then cp -P "$1" "$2"; fi; }

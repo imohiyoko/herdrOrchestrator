@@ -1,6 +1,6 @@
 # ADR 0006: tb の全コマンドに共通の権限段階を割り当て、設定で変えられるようにする
 
-- 状態: Proposed
+- 状態: Accepted(2026-11-22。人が PR 193 をマージし、続きの実装を依頼。段 2 の表と門から実装)
 - 日付: 2026-11-22
 
 ## 要旨
@@ -10,7 +10,7 @@
   1. **段階を 1 つの物差しにする**: `allow`(agent がすぐ実行)/ `ask-any`(別の agent か人のレビューが要る)/ `ask-human`(人の LGTM が要る)/ `only-human`(人の端末からだけ)。レビューを**与える**権限は、段階とは別の軸で、既存の `grants` の `approve:<操作>` で決める。
   2. **全コマンドに既定の段階をコードで持つ**。操作名は `cmd:<サービス>:<動詞>`(新しい名前の形。古い名前は同じ操作名に寄せる)。
   3. **変えるのは既存の `approvals` の行**(`cmd:ticket:add = ask-any` など)。判定の仕組みは増やさない(ADR 0005 と同じ考え)。
-  4. **守り**: コマンドごとに、コードが持つ**下限**(これより緩められない段階)を置く。権限そのものを書き換えるコマンド(設定・承認規則・レシピの登録など)の下限は `only-human`。分からないときは厳しい側に倒す。
+  4. **守り**: コマンドごとに、コードが持つ**下限**(これより緩められない段階)の列を置く。**下限は今はすべて `allow`**(人が決めた。スキルなどを入れながら運用を見て、設定で段階を調整する)。守りが要る操作が分かったら、表の下限を上げる。
 - **段階**: 既定値は今の振る舞いと同じにする(何も変わらない状態で入れる)。そのうえで、人が設定で緩めたり締めたりする。
 
 ## 状況(Context)
@@ -66,8 +66,9 @@ cmd:<サービス>:<動詞>          例: cmd:ticket:add、cmd:config:set、cmd:
 |---|---|---|
 | D. 確かめない(読み取り・チケットの作業) | `allow` | `allow` |
 | B. 中で操作の判定をする(`message send`、`agent-stop`、`agent-spawn`、`peek` など) | `allow`(中の判定に任せる) | `allow` |
-| A. 人だけ(下の「自己の権限に関わるもの」以外。例: `resolve`、`reopen`、`pr-queue approve`、`nudge`、`notify on/off`、`alert-close`) | `only-human` | `ask-human`(人が設定で `ask-human` までは緩められる) |
-| A. 人だけのうち、**権限・設定そのものを書き換える**もの(`config set/edit/unset/import`、`approval allow/ask`、`recipe-set/rm`、`limits set/mode/unset`、`spawn-unfreeze`、`db-import`、`job set/edit/unset/import`、`role-unset`、`system-send`) | `only-human` | **`only-human`(固定。設定で変えられない)** |
+| A. 人だけ(例: `resolve`、`reopen`、`pr-queue approve`、`nudge`、`notify on/off`、`alert-close`、`config set/edit/unset/import`、`approval allow/ask`、`recipe-set/rm`、`limits set/mode/unset`) | `only-human` | `allow`(人が設定でどこまでも緩められる) |
+
+下限は、実装の時点で人が「全部 `allow`。スキルなどを入れて問題なければ調整する」と決めた(当初の案は、権限・設定を書き換えるコマンドを `only-human` 固定、ほかの人だけのコマンドを `ask-human` までとしていた)。下限で丸める仕組みと列は残し、守りが要る操作が分かったら表の下限を上げる。
 
 - **締める**(例: `cmd:ticket:cancel = ask-human`)のは、どのコマンドでもいつでもできる。
 - **緩める**のは下限まで。下限より緩い行は効かせず、`tb approval show` と `tb config set` の検査で警告する。
@@ -79,7 +80,7 @@ cmd:<サービス>:<動詞>          例: cmd:ticket:add、cmd:config:set、cmd:
 ```
 # 例
 cmd:ticket:cancel  = ask-human   # worker に勝手に取り消させない
-cmd:ticket:resolve = ask-any     # 下限が ask-human なので効かない(警告)
+cmd:ticket:resolve = ask-any     # 人だけの既定を、別の agent のレビューで実行できるように緩める
 cmd:conv:*         = ask-any
 send:task:*        = ask         # 既存の行(ask = ask-any)
 ```
@@ -99,7 +100,8 @@ send:task:*        = ask         # 既存の行(ask = ask-any)
 ### 6. 判定の場所
 
 - **bash**: `taskboard/bin/tb` の `main` で、`cmd_<名前>` を呼ぶ直前(DB を開いた後)に門を 1 回通す。今は `TB_IMPL=go` のとき門より前に herdrctl へ渡すので、**門を herdrctl 側にも同じに置く**(`internal/approval` に `Gate`、`internal/tbcli` の入口で呼ぶ)。
-- 2 語目(動詞)で分けるコマンドは、門が 2 語目まで読んで操作名を決める。動詞が分からないとき(使い方の誤り)は、門を通さずにコマンドに任せる(使い方の誤りは終了コード 2 のまま)。
+- 2 語目(動詞)で分けるコマンドは、門が 3 語目まで読んで操作名を決める(長いほうから)。動詞が表に無いとき(使い方の誤り・古い形の引数)は、そのコマンドの 1 語の行で判定する(実装で変更: 門を通さずに渡すと、古い形の引数を受けるコマンドで段階を逃れられるため。厳しい側に倒し、agent では使い方の誤りが 2 ではなく 1 か 20 になることがある)。
+- `TB_IMPL=go` で herdrctl に渡すときは、herdrctl が門を持つ版か(`herdrctl tb --features` に `perms`)を確かめ、持たなければ渡さない。
 - 各コマンドの中の `require_human` は、門に置き換えた後に外す(段 2)。外すまでは両方が効く(厳しい側)。
 - fail-closed: 表・設定・台帳が読めない、pane の持ち主を確かめられないときは、`only-human` として扱う。
 
@@ -145,7 +147,7 @@ send:task:*        = ask         # 既存の行(ask = ask-any)
 
 1. **段階の数と名前**: `allow` / `ask-any` / `ask-human` / `only-human` の 4 つにし、「レビューを与える権限」は `grants` の `approve:` に任せるか(推奨)。
 2. **既存の `ask` の意味**: `ask-any` の別名にするか(推奨。今の振る舞いが変わらない)、`ask-human` にするか(委任していた承認が効かなくなる)。
-3. **下限**: 上の 3 の表のとおり、権限・設定を書き換えるコマンドは `only-human` 固定、ほかの人だけのコマンドは `ask-human` まで緩められる、でよいか。
+3. **下限**: 決定済み。今はすべて `allow`(上の 3)。
 4. **承認後の実行**: 依頼者が打ち直す(推奨)か、承認者が代わりに実行するか。
 
 ## 確認できていないこと・推測

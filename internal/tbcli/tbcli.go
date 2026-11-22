@@ -16,12 +16,16 @@ import (
 	"unicode/utf8"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/env"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/perms"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
 )
 
 // Commands は Go に移し終えたコマンド。bin/tb はこの一覧(herdrctl tb --commands)を見て渡すかを決める。
 var Commands = []string{"activity", "allow", "approval", "approve", "ask", "board", "config", "conv", "conv-candidate-add", "conv-candidate-adopt", "conv-candidate-reject", "conv-draft", "conv-gate", "conv-incident", "conv-kinds", "conv-learn-purge", "conv-ledger", "conv-length", "conv-lint", "conv-pair-add", "conv-pair-show", "conv-pairs", "conv-patterns", "conv-route", "conv-routes-set", "conv-scan", "conv-stage", "conv-stage-log", "conv-stage-reset", "conv-stage-set", "conv-voice", "conv-voice-check", "due-scan", "events", "flush", "gate", "handoff", "history", "inbox", "inbox-read", "job", "labels", "list", "message", "notify", "nudge", "outbox", "pr", "pr-queue", "pr-watch", "proposal", "proposal-resolve", "proposals", "proxy", "proxy-check", "proxy-list", "proxy-request", "proxy-resolve", "reject", "reminder", "reminders", "review", "review-pack", "review-submit", "sched-job", "send", "show", "sprints", "touch", "tree"}
+
+// Features は bin/tb が渡す前に確かめる機能(perms = 権限段階の門。ADR 0006)。
+var Features = []string{"perms"}
 
 // 終了コード(tb と同じ)
 const (
@@ -47,9 +51,21 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "tb: コマンドがありません")
 		return exitUsage
 	}
+	if args[0] == "--features" {
+		// bin/tb が渡す前に確かめる(古い herdrctl に渡すと権限段階の門を通らない。ADR 0006)
+		fmt.Fprintln(stdout, strings.Join(Features, " "))
+		return 0
+	}
 	if args[0] == "--commands" {
 		fmt.Fprintln(stdout, strings.Join(Commands, " "))
 		return 0
+	}
+	perms.OpenDB = permDB
+	if args[0] != "touch" {
+		// 権限段階の入口(ADR 0006。bash の main → perm_gate と同じ)
+		if err := permErr(perms.Gate(args, permDB)); err != nil {
+			return finish(err, stderr)
+		}
 	}
 	w := bufio.NewWriter(stdout)
 	var err error
@@ -132,6 +148,11 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		err = usage("Go 版には無いコマンド: %s", args[0])
 	}
 	w.Flush()
+	return finish(err, stderr)
+}
+
+// finish は err を tb の終了コードと標準エラーの文面にする。
+func finish(err error, stderr io.Writer) int {
 	if err == nil {
 		return 0
 	}

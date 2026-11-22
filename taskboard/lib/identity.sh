@@ -39,11 +39,4 @@ requester() {
   [[ $n != human ]] || die "agent 名 human は予約名です(人と区別できないため、この agent からの操作は受けません)"
   REQ_BY=${n:-human}
 }
-
-# 人の端末からの実行か(agent の pane からは承認・設定変更をさせない)
-require_human() {
-  local pane=${HERDR_PANE_ID:-} n
-  [[ -n $pane ]] || return 0
-  n=$(pane_owner_name "$pane") || die "$1: herdr agent list に失敗したため、人の端末からの実行か確かめられません"
-  [[ -z $n ]] || die "$1 は人が自分の端末で実行します(agent '$n' の pane からは実行できません)"
-}
+# require_human(人の端末からの実行か)は lib/perms.sh(ADR 0006 の権限段階の表で決まる)

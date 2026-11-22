@@ -1,6 +1,7 @@
 package tbcli
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -13,7 +14,7 @@ import (
 	"github.com/imohiyoko/herdrorchestrator/internal/jobs"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/config"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/env"
-	"github.com/imohiyoko/herdrorchestrator/internal/kernel/identity"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/perms"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 )
 
@@ -27,16 +28,27 @@ tb job history <job> [--settings]   変更の履歴
 (古い名前 tb sched-job も同じに使える。tb sched-job だけなら list)
 `
 
-// requireHuman は identity.RequireHuman の断りを tb の die にする。
+// requireHuman はコマンドの中の人だけの確かめ(bash の require_human)。段階は権限段階の表(ADR 0006)と設定 approvals の cmd: の行で決まる。
 func requireHuman(what string) error {
-	if err := identity.RequireHuman(what); err != nil {
-		var d *identity.Denied
-		if errors.As(err, &d) {
-			return die("%s", d.Msg)
-		}
-		return err
+	return permErr(perms.RequireHuman(what, permDB))
+}
+
+// permErr は perms の断りを tb の終了コード(1 か 20)にする。
+func permErr(err error) error {
+	var d *perms.Denied
+	if errors.As(err, &d) {
+		return &exit{d.Code, d.Msg}
 	}
-	return nil
+	return err
+}
+
+// permDB は権限段階が設定 approvals を読むときだけ開く DB。
+func permDB() (*sql.DB, string, func(), error) {
+	db, err := openDB()
+	if err != nil {
+		return nil, "", nil, err
+	}
+	return db.DB, db.Session, func() { db.Close() }, nil
 }
 
 // cmdJob は tb job <サブコマンド>。legacy(tb sched-job)ならサブコマンドが無いときは list。
