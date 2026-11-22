@@ -523,9 +523,9 @@ def urgent_items():
                           "label": "質問" if c["kind"] == "question" else "ブロック報告",
                           "title": _short(f"{c['task_id']} {c.get('task_title') or ''}", 80),
                           "body": _short(f"{c['from_name']}: {c['text']}"),
-                          "how": _short((f"{c['from_name']} に答える: 手元で tb send {c['from_name']} --kind answer --task {c['task_id']} --text '答え'"
+                          "how": _short((f"{c['from_name']} に答える: 手元で tb message send {c['from_name']} --kind answer --task {c['task_id']} --text '答え'"
                                          if c["kind"] == "question" else
-                                         f"止まっている原因を取り除くか、{c['from_name']} に指示を送る(手元で tb send {c['from_name']} --task {c['task_id']} --text '指示')")
+                                         f"止まっている原因を取り除くか、{c['from_name']} に指示を送る(手元で tb message send {c['from_name']} --task {c['task_id']} --text '指示')")
                                         + f"。済んだら「報告・承認待ち」の「対応済みにする」(手元なら tb resolve C-{c['id']})", 300),
                           "href": "/tasks/" + quote(str(c["task_id"]), safe=""), "ts": clean(c.get("created_at") or "")})
         for r in proxies:
@@ -601,7 +601,7 @@ def urgent_items():
     return cached("urgent", load)
 
 
-# ---- 保留した送信(inbox 表。tb send の delivery=hold)と、忘れているかもしれないもの(tb reminders --publish の結果)。読み取り専用
+# ---- 保留した送信(inbox 表。tb message send の delivery=hold)と、忘れているかもしれないもの(tb reminders --publish の結果)。読み取り専用
 HELD_MAX = 100
 HELD_TEXT_MAX = 20000
 _REM_PRIO = {1: "急ぎ", 2: "人の番", 3: "停滞", 4: "待ち・予定"}

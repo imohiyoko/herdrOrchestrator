@@ -19,7 +19,7 @@ import (
 	"github.com/imohiyoko/herdrorchestrator/internal/limits"
 )
 
-// 届け方(taskboard/lib/send.sh の delivery_mode / outbox_deliver)。送信のコマンド(tb send など)はまだ bash。
+// 届け方(taskboard/lib/send.sh の delivery_mode / outbox_deliver)。送信のコマンドは internal/tbcli の message.go。
 
 // DefaultTarget は core.sh の DEFAULT_TARGET。
 const DefaultTarget = "conductor"
@@ -383,6 +383,11 @@ func Deliver(j *approval.Judge, oid int64, inline bool, w, stderr io.Writer) Res
 		return Result{Code: 1}
 	}
 	return Result{}
+}
+
+// BlockNotice は block_notice(止めたことを送信者に返す文)。
+func BlockNotice(db *sql.DB, sess string, oid int64, target, kind, rule string) string {
+	return blockNotice(db, sess, oid, target, kind, rule)
 }
 
 func blockNotice(db *sql.DB, sess string, oid int64, target, kind, rule string) string {

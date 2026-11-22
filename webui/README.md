@@ -299,4 +299,4 @@ herdr は `tests/fake/herdr`(疑似)、DB・ログ・ログイン情報の置き
 - `PROMPT_FILE` の中身は、絶対パスで、`scheduler/`(と jobs の置き場)の配下の通常ファイルで、認証情報の置き場(`/docs` と同じ判定)でないときだけ表示する。相対パス・範囲外は、パスだけ表示して中身は読まない。
 - 本文・コマンドのトークンらしい文字列(`ghp_…`・`xox…-`・`AKIA…`・`Bearer …`・`token=…` など)と秘密鍵のブロックは `[マスク]` に置き換える。完全ではない(機密を含みうる画面)。
 - 見るのはこの webui のプロセスの `scheduler/jobs`・`scheduler/logs`(別 checkout のジョブは見えない)。
-- scheduler からの送信(`tb system-send`)は `approvals.conf` を見ず、人の承認待ちにならない(宛先が idle / done のときだけ自動で送る)。画面にはその旨と、参考として通常の `tb send` の判定(`send:task:<宛先>`)を出す。
+- scheduler からの送信(`tb system-send`)は `approvals.conf` を見ず、人の承認待ちにならない(宛先が idle / done のときだけ自動で送る)。画面にはその旨と、参考として通常の `tb message send` の判定(`send:task:<宛先>`)を出す。

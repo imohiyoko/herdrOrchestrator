@@ -148,7 +148,7 @@ def job_about(name):
 # COMMAND 型でよく使う tb のサブコマンドの説明(conf に説明が無いときの補い)
 TB_CMDS = (
     (r"\btb\s+notify\s+flush\b", "tb notify flush", "通知のキューを進める(承認待ち・定期まとめを Slack などへ送る。返事の無いものは再送)"),
-    (r"\btb\s+flush\b", "tb flush", "届かなかった送信(宛先が作業中など)を再送する"),
+    (r"\btb\s+(?:message\s+)?flush\b", "tb message flush", "届かなかった送信(宛先が作業中など)を再送する"),
     (r"\btb\s+digest\b", "tb digest", "worker から指揮官への報告をまとめて送る"),
     (r"\btb\s+pr-watch\b", "tb pr-watch", "許可したリポジトリの PR の動き(新規・approve・変更依頼・マージ)を通知に積む"),
     (r"\btb\s+compact-check\b", "tb compact-check", "文脈が大きくなった待機中の agent に /compact を送る"),

@@ -1,7 +1,7 @@
 # リスク評価による承認判定(allow / ask)の設計
 
 状態: 設計は決定済み。**第 1 段(評価を出すだけ)を実装済み**。第 2 段以降は別 PR。
-対象: `taskboard/`(`tb send` と `tb approval`)。パスは断りがなければ `taskboard/` 起点。
+対象: `taskboard/`(`tb message send` と `tb approval`)。パスは断りがなければ `taskboard/` 起点。
 
 ## 1 結論
 
@@ -66,11 +66,11 @@ risk-reason: unknown:sender.model +1 sender.model が不明(設定 risk:1)
 risk-warn: 緩め設定は第 3 段まで無効: ...
 ```
 
-送信者が人かどうか(pane の有無)の判定は、既存の `require_human` と同じ前提(`HERDR_PANE_ID` が空なら人)。`tb send` は pane から送信者を決めるので、この前提の影響は `tb approval` の参考表示だけに限られる。第 2 段で、人として評価されることが「緩む」方向に働く規則を足さない。
+送信者が人かどうか(pane の有無)の判定は、既存の `require_human` と同じ前提(`HERDR_PANE_ID` が空なら人)。`tb message send` は pane から送信者を決めるので、この前提の影響は `tb approval` の参考表示だけに限られる。第 2 段で、人として評価されることが「緩む」方向に働く規則を足さない。
 
 `--to` と `--text` を付けない `tb approval <操作>` は、従来の出力のまま(評価なし)。
 
-`tb send` は、outbox の `reason` の末尾に 1 行の評価
+`tb message send` は、outbox の `reason` の末尾に 1 行の評価
 (`risk: ask(参考。score 3/2) [R-02 +ask ...; ...]`)を追記する。スキーマは変えない。
 `status`・終了コード・配送は評価に影響されない。
 
@@ -162,7 +162,7 @@ R-06 を選ぶ理由: 台帳の状態だけで決まり、本文の書式で回�
 - ルール提案の宛先は人(専用の種別。設定役を経由しない)。
 - 第 3 段でも、評価は approvals.conf の既定 ask を上書きできない(approvals.conf が allow の範囲内だけ)。
 - 秘密らしき文字列の検査(R-03)は任意で既定は無効。入れるときは ask。deny は `routes.conf` に任せる。
-- 適用範囲は、まず `tb send` と `tb approval` だけ。
+- 適用範囲は、まず `tb message send` と `tb approval` だけ。
 - 不明時設定の緩めは、第 3 段まで効かせない。効いたら理由に出す。
 - 方式は点数方式の限定形。
 
