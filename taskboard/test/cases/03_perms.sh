@@ -1,0 +1,92 @@
+# shellcheck shell=bash
+# 権限段階(ADR 0006): 表 taskboard/perms/commands.tbl が全コマンドを覆っていること、入口と require_human が表と設定 approvals の cmd: の行で決まること。
+# project は pm だけを使う。DB と approvals は $TMP/perms.* を使う
+_saved_env=$(declare -p TB_DB TB_APPROVALS HERDR_PANE_ID FAKE_AGENTS 2>/dev/null)
+PM_ROOT=$(cd "$HERE/.." && pwd)
+PM_TBL=$PM_ROOT/perms/commands.tbl
+
+# ---------- 表が全コマンドを覆う(コマンドや require_human を足したら、表に行を足さないと落ちる)----------
+pm_rows() { sed 's/#.*//' "$PM_TBL" | awk 'NF == 5'; }
+pm_cmds=$( { grep -hoE '^cmd_[a-z][a-z0-9-]*\(\)' "$PM_ROOT"/lib/*.sh | sed 's/^cmd_//; s/()$//'; printf '%s\n' help whoami touch role-context; } | sort -u)
+pm_words=$(pm_rows | awk '{split($1, a, "."); print a[1]}' | sort -u)
+eq "perms: every tb command has a row in commands.tbl" "$(comm -23 <(printf '%s\n' "$pm_cmds") <(printf '%s\n' "$pm_words"))" ""
+eq "perms: every command in commands.tbl exists" "$(comm -13 <(printf '%s\n' "$pm_cmds") <(printf '%s\n' "$pm_words"))" ""
+eq "perms: every command has a one-word row (the fallback for other words)" \
+  "$(comm -23 <(printf '%s\n' "$pm_cmds") <(pm_rows | awk '$1 !~ /\./ {print $1}' | sort -u))" ""
+eq "perms: rows are well-formed (cmd:<service>:<verb>, known tiers, default >= floor, entry|inner|none)" \
+  "$(pm_rows | awk 'function r(t){return t=="allow"?0:t=="ask-any"?1:t=="ask-human"?2:t=="only-human"?3:-1}
+    $2 !~ /^cmd:[a-z]+:[a-z][a-z-]*$/ || r($3) < 0 || r($4) < 0 || r($3) < r($4) || $5 !~ /^(entry|inner|none)$/ {print}')" ""
+eq "perms: a path appears once" "$(pm_rows | awk '{print $1}' | sort | uniq -d)" ""
+eq "perms: the same operation has the same default and floor on every row" \
+  "$(pm_rows | awk '{k=$2; v=$3" "$4; if (k in seen && seen[k] != v) print k; seen[k]=v}')" ""
+eq "perms: service names come from the naming skill" \
+  "$(pm_rows | awk '{split($2, a, ":"); print a[2]}' | sort -u | grep -vxE 'ticket|team|notify|message|digest|agent|alert|review|proposal|pr|gate|approval|recipe|conv|reminder|job|proxy|activity|handoff|config')" ""
+
+# require_human の文面("tb <語...>")は、表の inner の行に当たる。$変数 は * とみなす(例: tb config $sub → config.*)
+pm_labels=$(grep -rhoE 'require_human "tb [^"]+"' "$PM_ROOT"/lib/*.sh | sed -E 's/^require_human "tb //; s/"$//' | sort -u)
+pm_inner=$(pm_rows | awk '$5 == "inner" {print $1}' | sort -u)
+pm_bad=""; pm_used=""
+while IFS= read -r l; do
+  [[ -n $l ]] || continue
+  pat=${l// /.}; pat=$(sed -E 's/\$\{?[A-Za-z_][A-Za-z0-9_]*\}?/*/g' <<<"$pat")
+  hit=0
+  while IFS= read -r p; do
+    # shellcheck disable=SC2053  # glob として比べる
+    [[ $p == $pat ]] && { hit=1; pm_used+="$p"$'\n'; }
+  done <<<"$pm_inner"
+  ((hit)) || pm_bad+="tb $l"$'\n'
+done <<<"$pm_labels"
+eq "perms: every require_human label has an inner row" "$pm_bad" ""
+eq "perms: every inner row is reached by a require_human label (bash)" \
+  "$(comm -23 <(printf '%s\n' "$pm_inner") <(printf '%s' "$pm_used" | sort -u))" ""
+eq "perms: the bash table is the one herdrctl embeds (no copy)" "$(ls "$PM_ROOT/perms")" "$(printf 'commands.tbl\nembed.go')"
+
+# ---------- 振る舞い ----------
+export TB_DB=$TMP/perms.db TB_APPROVALS=$TMP/perms.approvals
+export FAKE_AGENTS='[{"pane_id":"wW:p1","name":"pw1","agent_session":{"value":"s1"}}]'
+: >"$TB_APPROVALS"
+unset HERDR_PANE_ID
+t1=$($TB add -p pm -t "権限 1"); t2=$($TB add -p pm -t "権限 2"); t3=$($TB add -p pm -t "権限 3")
+export HERDR_PANE_ID=wW:p1
+eq "perms: agent runs an allow command (default)" "$(rc $TB cancel "$t1")" "0"
+eq "perms: default allow does not ask herdr who is calling (no extra herdr call)" "$(: >"$FAKE_LOG"; $TB list -p pm >/dev/null; grep -c '^list' "$FAKE_LOG" || true)" "0"
+
+printf 'cmd:ticket:cancel = ask-human\n' >"$TB_APPROVALS"
+eq "perms: tightened to ask-human → agent stops with 20" "$(rc $TB cancel "$t2")" "20"
+eq "perms: the old name and the service name share one operation" "$(rc $TB ticket cancel "$t2")" "20"
+eq "perms: the message names the operation and the rule" \
+  "$($TB cancel "$t2" 2>&1 >/dev/null | grep -c 'cmd:ticket:cancel = ask-human。approvals: cmd:ticket:cancel = ask-human')" "1"
+eq "perms: nothing was done" "$($TB show "$t2" | jq -r .status)" "todo"
+eq "perms: a human terminal is not stopped" "$(env -u HERDR_PANE_ID bash -c "$TB cancel $t2 >/dev/null 2>&1; echo \$?")" "0"
+eq "perms: a pane with no agent is a human" "$(HERDR_PANE_ID=wW:p9 rc $TB cancel "$t3")" "0"
+
+printf 'cmd:ticket:* = only-human\n' >"$TB_APPROVALS"
+eq "perms: a glob row applies (only-human → 1)" "$(rc $TB show "$t1")" "1"
+eq "perms: the gate also covers commands moved to herdrctl (tb list)" "$($TB list -p pm 2>&1 >/dev/null)" \
+  "tb: tb list は人が自分の端末で実行します(agent 'pw1' の pane からは実行できません)"
+eq "perms: only-human message is the old require_human one" \
+  "$($TB show "$t1" 2>&1 >/dev/null)" "tb: tb show は人が自分の端末で実行します(agent 'pw1' の pane からは実行できません)"
+printf '* = allow\nagent:* = allow\n' >"$TB_APPROVALS"
+eq "perms: rows without cmd: do not touch the command tiers" "$(rc $TB show "$t1")" "0"
+printf 'cmd:ticket:show = ask\n' >"$TB_APPROVALS"
+eq "perms: ask is ask-any (→ 20)" "$(rc $TB show "$t1")" "20"
+printf 'cmd:ticket:show = nonsense\n' >"$TB_APPROVALS"
+eq "perms: an unknown tier is ignored (default allow)" "$(rc $TB show "$t1")" "0"
+
+# 下限より緩められない。require_human の中の確かめも表で決まる
+printf 'cmd:config:* = allow\ncmd:ticket:resolve = allow\n' >"$TB_APPROVALS"
+eq "perms: config set stays only-human (floor)" "$($TB config set approvals </dev/null 2>&1 >/dev/null)" \
+  "tb: tb config set は人が自分の端末で実行します(agent 'pw1' の pane からは実行できません)"
+eq "perms: resolve cannot go below ask-human (→ 20, not run)" "$(rc $TB resolve C-1)" "20"
+eq "perms: the clamp is in the message" "$($TB resolve C-1 2>&1 | grep -c '下限 ask-human より緩いので ask-human')" "1"
+printf 'cmd:ticket:resolve = ask-human\n' >"$TB_APPROVALS"
+eq "perms: lowering only-human to its floor (ask-human) gives 20 instead of 1" "$(rc $TB resolve C-1)" "20"
+eq "perms: reopen is a separate operation (still only-human → 1)" "$(rc $TB reopen C-1)" "1"
+: >"$TB_APPROVALS"
+eq "perms: default require_human is unchanged (1 and the old message)" "$($TB resolve C-1 2>&1 >/dev/null)" \
+  "tb: tb resolve は人が自分の端末で実行します(agent 'pw1' の pane からは実行できません)"
+eq "perms: --dry-run paths that skip require_human still run (nudge --dry-run)" "$(rc $TB nudge --dry-run)" "0"
+eq "perms: herdr failure while checking → 1" "$(FAKE_LIST_FAIL=1 rc $TB resolve C-1)" "1"
+
+unset HERDR_PANE_ID FAKE_AGENTS
+eval "$_saved_env"

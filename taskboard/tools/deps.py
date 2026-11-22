@@ -16,7 +16,7 @@ LIB = os.path.join(HERE, '..', 'lib')
 ALLOW = os.path.join(HERE, 'deps-allow.txt')
 
 # 層(ADR 0004)。下の層は上の層を呼ばない。機能どうしは互いを呼ばない(許容リストで管理)
-KERNEL = {'db', 'core', 'config', 'transport', 'kinds', 'util', 'identity'}
+KERNEL = {'db', 'core', 'config', 'transport', 'kinds', 'util', 'identity', 'perms'}
 BUS = {'tasks', 'comments', 'notify', 'notifyrules'}
 
 def layer(m):

@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/env"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/perms"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
 )
@@ -50,6 +51,12 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	if args[0] == "--commands" {
 		fmt.Fprintln(stdout, strings.Join(Commands, " "))
 		return 0
+	}
+	if args[0] != "touch" {
+		// 権限段階の入口(ADR 0006。bash の main → perm_gate と同じ)
+		if err := permErr(perms.Gate(args, permDB)); err != nil {
+			return finish(err, stderr)
+		}
 	}
 	w := bufio.NewWriter(stdout)
 	var err error
@@ -98,6 +105,11 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		err = usage("Go 版には無いコマンド: %s", args[0])
 	}
 	w.Flush()
+	return finish(err, stderr)
+}
+
+// finish は err を tb の終了コードと標準エラーの文面にする。
+func finish(err error, stderr io.Writer) int {
 	if err == nil {
 		return 0
 	}
