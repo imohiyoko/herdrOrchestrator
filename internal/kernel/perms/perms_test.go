@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -183,8 +184,8 @@ func TestTierClampsToFloor(t *testing.T) {
 
 // 途中のディレクトリの中を見られず、設定ファイルがあるか確かめられないときも only-human(本当に無いときは既定のまま)。
 func TestTierFailsClosedOnUnsearchableDir(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root はディレクトリの権限を無視する")
+	if os.Geteuid() == 0 || runtime.GOOS == "windows" {
+		t.Skip("root はディレクトリの権限を無視する。Windows は chmod でディレクトリの中を見られなくできない")
 	}
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "a", "b"), 0o755); err != nil {
