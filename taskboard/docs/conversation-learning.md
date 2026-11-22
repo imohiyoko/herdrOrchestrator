@@ -9,7 +9,7 @@
 人が実際に送ったあとに、人が自分の端末で記録する。
 
 ```
-tb conv-pair-add --kind thanks --draft-file draft.txt --final-file sent.txt \
+tb conv pair-add --kind thanks --draft-file draft.txt --final-file sent.txt \
   --situation "依頼の完了の連絡" --intent "受け取ったと伝える" --posted \
   [--points-offered 3 --points-accepted 1]   # 声の役割の指摘の数と、人が受け入れた数(段階 1 の測定用)
 ```
@@ -26,7 +26,7 @@ tb conv-pair-add --kind thanks --draft-file draft.txt --final-file sent.txt \
 人の手直し 1 つを、候補(変更の向き)の証拠 1 つとして足す。説明は「何をどう変えたか」で、本文は写さない。
 
 ```
-tb conv-candidate-add --kind thanks --direction conclusion-first --desc "結論を先に置く" \
+tb conv candidate-add --kind thanks --direction conclusion-first --desc "結論を先に置く" \
   --evidence human-edit --pair pair-20261119062000-ab12 [--conclusion first --ending ... --avoid ...] [--permissive]
 ```
 
@@ -39,7 +39,7 @@ tb conv-candidate-add --kind thanks --direction conclusion-first --desc "結論�
 
 - 件数は「別々の状況」の数。同じ状況の組を何度足しても 1。同じ証拠の二重登録は無視する。
 - `conv-learn` の `threshold`(既定 3、2 未満は 2)以上で `proposed`。1 回の手直しは `candidate` 止まり。
-- 採用(`tb conv-candidate-adopt`)は人だけ、`proposed` だけ。許す方向の変更(`--permissive` が一度でも付いた候補)は
+- 採用(`tb conv candidate-adopt`)は人だけ、`proposed` だけ。許す方向の変更(`--permissive` が一度でも付いた候補)は
   `--approve-permissive` が要る。
 - 採用の前に、状況・意図・結び・避けることを検査する(`convtext.py scan`): URL・メール・@名前・チケットやレビューの番号・数字・
   英字の大文字で始まる語(名前の疑い)・`deny =` の語・長すぎる引用。置き換えの印(`<name>` `<n>` など)が残っていても断る。
@@ -57,31 +57,31 @@ $TB_CONV_STATE_DIR/
   incidents.tsv                事故の記録(下)
 ```
 
-戻し方: `tb conv-learn-purge [--kind K] --yes`(組と台帳を消す。patterns.conf の採用済みの行と段階の記録は残る)。
+戻し方: `tb conv learn-purge [--kind K] --yes`(組と台帳を消す。patterns.conf の採用済みの行と段階の記録は残る)。
 
 ## 3. 段階(#98)
 
 | 段階 | すること | 上げる条件(conv-stages の既定値) | 戻し方 |
 |---|---|---|---|
 | 0 | 下書きだけ。人が読み、直し、送る | - | - |
-| 1 | 声の役割が短い指摘を返す | 組の数 `min-pairs.1`(20) | `tb conv-stage-set <kind> 0` |
-| 2 | 下書きとして保存する(送らない) | `draft-save = available`、直近 `window-days`(28)日の組が `min-samples.2`(20)件以上で編集の割合の平均が `max-edit-ratio.2`(0.15)以下、採用したパターン `min-adopted.2`(3)以上、事故の無い日数 `quiet-days.2`(21) | `tb conv-stage-set <kind> 1` |
-| 3 | `stage3 =` の 種別:相手の区分 だけ、1 通ごとに人が 1 回承認すれば送れる | 段階 2 に `quiet-days.3`(42)日以上、その間事故なし、一覧に種別がある | `stage3 =` から消す(段階 2 の扱いに戻る)か `tb conv-stage-set <kind> 2` |
+| 1 | 声の役割が短い指摘を返す | 組の数 `min-pairs.1`(20) | `tb conv stage-set <kind> 0` |
+| 2 | 下書きとして保存する(送らない) | `draft-save = available`、直近 `window-days`(28)日の組が `min-samples.2`(20)件以上で編集の割合の平均が `max-edit-ratio.2`(0.15)以下、採用したパターン `min-adopted.2`(3)以上、事故の無い日数 `quiet-days.2`(21) | `tb conv stage-set <kind> 1` |
+| 3 | `stage3 =` の 種別:相手の区分 だけ、1 通ごとに人が 1 回承認すれば送れる | 段階 2 に `quiet-days.3`(42)日以上、その間事故なし、一覧に種別がある | `stage3 =` から消す(段階 2 の扱いに戻る)か `tb conv stage-set <kind> 2` |
 
-- 段階を変えるのは人だけ(`tb conv-stage-set <kind> <段階> --reason R`)。上げるのは 1 段ずつ。条件を満たさないときは断り、
-  人が判断して上げるなら `--override`(そのことも記録する)。変えるたびに、その時の測った値を `stage-log.tsv` に残す(`tb conv-stage-log`)。
+- 段階を変えるのは人だけ(`tb conv stage-set <kind> <段階> --reason R`)。上げるのは 1 段ずつ。条件を満たさないときは断り、
+  人が判断して上げるなら `--override`(そのことも記録する)。変えるたびに、その時の測った値を `stage-log.tsv` に残す(`tb conv stage-log`)。
 - **設定で決まる上限は `--override` でも越えない**: `high =` の種別(問題の指摘・断り・組織の外)は段階 1 まで。
   `draft-save` が `available` でなければ段階 2 にしない(メッセージの道具に下書き保存が無ければ段階 2 は飛ばす)。
   段階 3 は `stage3 =` の一覧にある種別だけ。
-- 全部を 1 回で戻す: `tb conv-stage-reset [--to 0|1] --reason R`。データは消さない。
-- 事故: `tb conv-incident <kind> --note N`(人だけ)。段階は変えず、事故の無い日数が 0 からになる。
+- 全部を 1 回で戻す: `tb conv stage-reset [--to 0|1] --reason R`。データは消さない。
+- 事故: `tb conv incident <kind> --note N`(人だけ)。段階は変えず、事故の無い日数が 0 からになる。
 
-### 判定(`tb conv-gate`)
+### 判定(`tb conv gate`)
 
 agent は保存・送信の前に必ず聞く。決まった表だけで判定し、model の判断は入れない。
 
 ```
-tb conv-gate <kind> --action draft|review|save-draft|post [--counterpart C] [--severity low|normal|high] \
+tb conv gate <kind> --action draft|review|save-draft|post [--counterpart C] [--severity low|normal|high] \
   [--source-vis private|team|org|external --dest-vis private|team|org|external]
 ```
 
@@ -91,7 +91,7 @@ tb conv-gate <kind> --action draft|review|save-draft|post [--counterpart C] [--s
   (`--source-vis` / `--dest-vis` が無ければ deny)。
 - `post` は段階 3 で一覧に載っていても `ask`(この 1 通を人が承認)。`allow` は返さない。送る・承認する・状態を変えるのは、どの段階でも人。
 
-## 測る値(`tb conv-stage --json`)
+## 測る値(`tb conv stage --json`)
 
 `pairs`(組の数)、`window_samples` / `window_edit_ratio`(直近の組の数と編集の割合の平均)、`adopted_patterns`、
 `quiet_days`(最後の事故から、無ければ最初の組から)、`days_at_stage`、`role_acceptance`(声の役割の指摘を人が受け入れた割合)。
