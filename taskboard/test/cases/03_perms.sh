@@ -13,6 +13,7 @@ eq "perms: every tb command has a row in commands.tbl" "$(comm -23 <(printf '%s\
 eq "perms: every command in commands.tbl exists" "$(comm -13 <(printf '%s\n' "$pm_cmds") <(printf '%s\n' "$pm_words"))" ""
 eq "perms: every command has a one-word row (the fallback for other words)" \
   "$(comm -23 <(printf '%s\n' "$pm_cmds") <(pm_rows | awk '$1 !~ /\./ {print $1}' | sort -u))" ""
+eq "perms: every non-comment line has exactly 5 columns" "$(sed 's/#.*//' "$PM_TBL" | awk 'NF != 0 && NF != 5')" ""
 eq "perms: rows are well-formed (cmd:<service>:<verb>, known tiers, default >= floor, entry|inner|none)" \
   "$(pm_rows | awk 'function r(t){return t=="allow"?0:t=="ask-any"?1:t=="ask-human"?2:t=="only-human"?3:-1}
     $2 !~ /^cmd:[a-z]+:[a-z][a-z-]*$/ || r($3) < 0 || r($4) < 0 || r($3) < r($4) || $5 !~ /^(entry|inner|none)$/ {print}')" ""
@@ -74,6 +75,13 @@ printf 'cmd:ticket:show = ask\n' >"$TB_APPROVALS"
 eq "perms: ask is ask-any (→ 20)" "$(rc $TB show "$t1")" "20"
 printf 'cmd:ticket:show = nonsense\n' >"$TB_APPROVALS"
 eq "perms: an unknown tier is ignored (default allow)" "$(rc $TB show "$t1")" "0"
+printf 'cmd:ticket:show = allow ask-any\ncmd:ticket:show = ask-human\n' >"$TB_APPROVALS"
+eq "perms: a value must be exactly one tier (the bad row is skipped, the next applies)" "$(rc $TB show "$t1")" "20"
+if [[ $(id -u) != 0 ]]; then
+  printf 'cmd:ticket:show = allow\n' >"$TB_APPROVALS"; chmod 000 "$TB_APPROVALS"
+  eq "perms: an approvals file that cannot be read → only-human (not the default)" "$(rc $TB show "$t1")" "1"
+  chmod 644 "$TB_APPROVALS"
+fi
 
 # 下限より緩められない。require_human の中の確かめも表で決まる
 printf 'cmd:config:* = allow\ncmd:ticket:resolve = allow\n' >"$TB_APPROVALS"
@@ -90,5 +98,9 @@ eq "perms: default require_human is unchanged (1 and the old message)" "$($TB re
 eq "perms: --dry-run paths that skip require_human still run (nudge --dry-run)" "$(rc $TB nudge --dry-run)" "0"
 eq "perms: herdr failure while checking → 1" "$(FAKE_LIST_FAIL=1 rc $TB resolve C-1)" "1"
 
-unset HERDR_PANE_ID FAKE_AGENTS
+# 古い herdrctl(権限段階の門が無い)には渡さない
+mkdir -p "$TMP/perms-oldhc"; printf '#!/bin/sh\n[ "$2" = --commands ] && echo list && exit 0\nexit 2\n' >"$TMP/perms-oldhc/herdrctl"; chmod +x "$TMP/perms-oldhc/herdrctl"
+eq "perms: TB_IMPL=go refuses an herdrctl without the perms feature" "$(TB_IMPL=go TB_HERDRCTL=$TMP/perms-oldhc/herdrctl $TB list -p pm 2>&1 >/dev/null | grep -c '権限段階(ADR 0006)を確かめられない')" "1"
+
+unset TB_DB TB_APPROVALS HERDR_PANE_ID FAKE_AGENTS
 eval "$_saved_env"

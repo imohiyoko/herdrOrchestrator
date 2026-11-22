@@ -418,7 +418,7 @@ tb approval reject O-<n>
 
 ### コマンドの権限段階(ADR 0006)
 
-tb の全コマンドは、実行の前に同じ入口で段階を確かめる(bash の `bin/tb` と herdrctl の両方)。段階は 4 つ: `allow`(agent がすぐ実行)/ `ask-any`(agent か人のレビューが要る)/ `ask-human`(人の LGTM が要る)/ `only-human`(人の端末からだけ)。人の端末からは、どの段階でも実行できる。
+tb の全コマンドは表 `perms/commands.tbl` に行を持ち、段階で止めるかが決まる(bash の `bin/tb` と herdrctl の両方)。確かめる場所は行ごとに、入口(`entry`)、コマンドの中の `require_human` の分かれ道(`inner`。`--dry-run` などは人だけにしない)、確かめない(`none`。hook と `help` / `whoami`。設定で段階を書いても効かない)のどれか。段階は 4 つ: `allow`(agent がすぐ実行)/ `ask-any`(agent か人のレビューが要る)/ `ask-human`(人の LGTM が要る)/ `only-human`(人の端末からだけ)。人の端末からは、どの段階でも実行できる。
 
 - 既定と下限は `perms/commands.tbl`(コードの一部。コマンドごとに 1 行。古い名前も同じ操作名に寄せる)。既定は今までの振る舞いと同じ(人だけだったものは `only-human`、ほかは `allow`)
 - 変えるのは設定 `approvals` の `cmd:<サービス>:<動詞> = <段階>` の行(例: `cmd:ticket:cancel = ask-human`)。`ask` は `ask-any` と同じ。下限より緩い値は下限になる(設定・承認規則・レシピの登録などは下限も `only-human` で、緩められない)

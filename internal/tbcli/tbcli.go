@@ -24,6 +24,9 @@ import (
 // Commands は Go に移し終えたコマンド。bin/tb はこの一覧(herdrctl tb --commands)を見て渡すかを決める。
 var Commands = []string{"activity", "allow", "approval", "approve", "ask", "config", "due-scan", "flush", "gate", "handoff", "inbox", "inbox-read", "job", "list", "message", "notify", "nudge", "outbox", "pr", "pr-queue", "pr-watch", "proposal", "proposal-resolve", "proposals", "proxy", "proxy-check", "proxy-list", "proxy-request", "proxy-resolve", "reject", "review", "review-pack", "review-submit", "reminder", "reminders", "sched-job", "send", "touch"}
 
+// Features は bin/tb が渡す前に確かめる機能(perms = 権限段階の門。ADR 0006)。
+var Features = []string{"perms"}
+
 // 終了コード(tb と同じ)
 const (
 	exitErr   = 1
@@ -47,6 +50,11 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "tb: コマンドがありません")
 		return exitUsage
+	}
+	if args[0] == "--features" {
+		// bin/tb が渡す前に確かめる(古い herdrctl に渡すと権限段階の門を通らない。ADR 0006)
+		fmt.Fprintln(stdout, strings.Join(Features, " "))
+		return 0
 	}
 	if args[0] == "--commands" {
 		fmt.Fprintln(stdout, strings.Join(Commands, " "))

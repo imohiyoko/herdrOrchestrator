@@ -4,7 +4,6 @@
 # 使うのは core・config・identity だけ。入口(bin/tb の main → perm_gate)と、コマンドの中の require_human が呼ぶ。
 
 PERM_TBL=$TB_ROOT/perms/commands.tbl
-PERM_TIERS="allow ask-any ask-human only-human"
 declare -gA PERM_OP=() PERM_DEF=() PERM_FLOOR=() PERM_WHERE=() PERM_OP_DEF=() PERM_OP_FLOOR=()
 PERM_LOADED=0
 PERM_TIER=""; PERM_RULE=""; PERM_PATH=""
@@ -50,12 +49,15 @@ perm_tier() {
   if [[ -z ${PERM_OP_DEF[$op]+x} ]]; then PERM_TIER=only-human; PERM_RULE="(表に無い操作: only-human)"; return 0; fi
   def=${PERM_OP_DEF[$op]}; floor=${PERM_OP_FLOOR[$op]}
   PERM_TIER=$def; PERM_RULE="(既定 $def)"
+  [[ $floor != only-human ]] || { PERM_TIER=only-human; PERM_RULE="(下限 only-human)"; return 0; }   # 設定では変わらない(設定を読まない)
   if config_has approvals; then
+    # ファイルはあるのに読めない(権限など)ときは、設定が無いのとは分けて only-human(fail-closed)
+    case $CFG_SRC in file:*|example:*) [[ -r ${CFG_SRC#*:} ]] || { PERM_TIER=only-human; PERM_RULE="(設定 approvals を読めない: ${CFG_SRC#*:})"; return 0; };; esac
     while IFS= read -r line || [[ -n $line ]]; do
       line=$(trim "${line%%#*}"); [[ $line == cmd:*=* ]] || continue
       k=$(trim "${line%%=*}"); v=$(trim "${line#*=}")
       [[ $v == ask ]] && v=ask-any   # 既存の ask は ask-any の別名
-      [[ " $PERM_TIERS " == *" $v "* ]] || continue
+      case $v in allow|ask-any|ask-human|only-human) ;; *) continue;; esac   # 段階の名前と完全に一致する値だけ
       # shellcheck disable=SC2053  # glob として比べる
       [[ $op == $k ]] || continue
       PERM_TIER=$v; PERM_RULE="approvals: $k = $v"; break

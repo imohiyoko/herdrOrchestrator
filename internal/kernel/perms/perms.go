@@ -86,8 +86,18 @@ func (t *Table) Tier(db *sql.DB, session, op string) (tier, rule string) {
 		return "only-human", "(表に無い操作: only-human)"
 	}
 	tier, rule = r.Default, "(既定 "+r.Default+")"
+	if r.Floor == "only-human" { // 設定では変わらない(設定を読まない)
+		return "only-human", "(下限 only-human)"
+	}
 	if db != nil {
-		if body, _, ok := config.Lookup(db, session, "approvals"); ok {
+		if body, src, ok := config.Lookup(db, session, "approvals"); ok {
+			// ファイルはあるのに読めない(権限など)ときは、設定が無いのとは分けて only-human(fail-closed)
+			if p, isFile := strings.CutPrefix(src, "file:"); isFile && !readable(p) {
+				return "only-human", "(設定 approvals を読めない: " + p + ")"
+			}
+			if p, isEx := strings.CutPrefix(src, "example:"); isEx && !readable(p) {
+				return "only-human", "(設定 approvals を読めない: " + p + ")"
+			}
 			for _, line := range strings.Split(body, "\n") {
 				if i := strings.IndexByte(line, '#'); i >= 0 {
 					line = line[:i]
@@ -114,6 +124,15 @@ func (t *Table) Tier(db *sql.DB, session, op string) (tier, rule string) {
 		tier = r.Floor
 	}
 	return tier, rule
+}
+
+func readable(p string) bool {
+	f, err := os.Open(p)
+	if err != nil {
+		return false
+	}
+	f.Close()
+	return true
 }
 
 func valid(v string) bool {
@@ -190,6 +209,9 @@ var OpenDB func() (*sql.DB, string, func(), error)
 func check(op, what string, openDB func() (*sql.DB, string, func(), error)) error {
 	if openDB == nil {
 		openDB = OpenDB
+	}
+	if r, ok := std.byOp[op]; !ok || r.Floor == "only-human" {
+		openDB = nil // 設定を読んでも段階は変わらない(DB を開かない)
 	}
 	var db *sql.DB
 	session := ""
