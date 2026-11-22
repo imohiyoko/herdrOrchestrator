@@ -1,6 +1,7 @@
 package config
 
 import (
+	"database/sql"
 	"fmt"
 	"regexp"
 	"slices"
@@ -75,4 +76,26 @@ func ValidateMessages(body string) string {
 		}
 	}
 	return bad.String()
+}
+
+// Msg は config.sh の msg: 設定 messages に <識別子> = <文面> があればそれを使い({名前} を値で置き換える)、無ければ def。
+// kv は 名前=値 の並び。
+func Msg(db *sql.DB, session, code, def string, kv ...string) string {
+	t := def
+	if body, _, ok := Lookup(db, session, "messages"); ok {
+		for _, line := range Lines(body) {
+			if !strings.Contains(line, "=") || strings.HasPrefix(Trim(line), "#") {
+				continue
+			}
+			k, v, _ := strings.Cut(line, "=")
+			if Trim(k) == code {
+				t = Trim(v)
+			}
+		}
+	}
+	for _, p := range kv {
+		k, v, _ := strings.Cut(p, "=")
+		t = strings.ReplaceAll(t, "{"+k+"}", v)
+	}
+	return t
 }

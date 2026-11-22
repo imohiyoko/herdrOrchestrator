@@ -150,7 +150,7 @@ special_ticket_guard() {  # $1=タスク ID $2=操作の名前
   local w; w=$(sql "SELECT 'A-'||alert_no FROM alert_details WHERE task_id=$(q "$1") UNION ALL SELECT 'P-'||proposal_no FROM proposal_details WHERE task_id=$(q "$1") LIMIT 1;" 2>/dev/null) || true
   case $w in
     A-*) die "$1 はアラート $w のチケットです。状態は tb alert-approve / alert-result / alert-close $w で変えます(閉じるのは人だけ。$2 では変えません)";;
-    P-*) die "$1 は提案 $w のチケットです。状態は tb proposal-resolve $w で変えます($2 では変えません)";;
+    P-*) die "$1 は提案 $w のチケットです。状態は tb proposal resolve $w で変えます($2 では変えません)";;
   esac
 }
 

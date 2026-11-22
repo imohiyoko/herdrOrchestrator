@@ -254,7 +254,7 @@ PATH の `tb` は 1 本の checkout の実体なので、**別セッションの
 
 ### 破壊的・送信系は対象を表示してから実行
 
-- 対象: `send` / `report` / `approve` / `reject` / `flush` / `allow` / `ask` / `agent-*`(spawn・stop・shed・restart など)/ `gate` / `pr-queue` / `proposal-resolve` など。
+- 対象: `send` / `report` / `approve` / `reject` / `flush` / `allow` / `ask` / `agent-*`(spawn・stop・shed・restart など)/ `gate` / `pr-queue` / `proposal resolve` など。
 - 実行の直前に「**対象: staging(選択による)。実行します**」を出す。`--yes` なしの確認プロンプトは、スクリプトと agent を止めるので**付けない**(P7 の推奨)。
 - 人のシェルで、選択が `current` ファイル(暗黙)から来ていて、かつ台帳が複数あるときだけ、書き込み系に限って **1 行を強調**して出す(明示した `--session` / env のときは出さない)。
 

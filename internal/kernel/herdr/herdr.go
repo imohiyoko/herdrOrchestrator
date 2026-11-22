@@ -36,6 +36,11 @@ func Agents() ([]Agent, error) {
 	if err != nil {
 		return nil, err
 	}
+	return ParseAgents(out)
+}
+
+// ParseAgents は herdr agent list の出力を読む(読めなければ err)。
+func ParseAgents(out []byte) ([]Agent, error) {
 	var r struct {
 		Result struct {
 			Agents []json.RawMessage `json:"agents"`
@@ -52,4 +57,9 @@ func Agents() ([]Agent, error) {
 		}
 	}
 	return as, nil
+}
+
+// CallCombined は herdr を実行し、標準出力と標準エラーをまとめて返す(out=$(herdr_call ... 2>&1) と同じ)。
+func CallCombined(args ...string) ([]byte, error) {
+	return exec.Command(Bin(), args...).CombinedOutput()
 }
