@@ -20,7 +20,7 @@ func TestTableMatchesBash(t *testing.T) {
 	if strings.TrimSpace(string(m[1])) != strings.TrimSpace(Table) {
 		t.Fatal("recipe.Table が recipes.sh の PARTS_TABLE と違います")
 	}
-	if _, err := Parse(Table); err != nil {
+	if _, err := ParseTable(Table); err != nil {
 		t.Fatal(err)
 	}
 }

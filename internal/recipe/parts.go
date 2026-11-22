@@ -59,8 +59,8 @@ var (
 
 func trim(s string) string { return config.Trim(s) }
 
-// Parse は表を読む(parts_load)。表の誤りはコードの誤りなのでエラーを返す。
-func Parse(table string) ([]Part, error) {
+// ParseTable は表を読む(parts_load)。表の誤りはコードの誤りなのでエラーを返す。
+func ParseTable(table string) ([]Part, error) {
 	var out []Part
 	seen := map[string]bool{}
 	for _, line := range strings.Split(table, "\n") {
@@ -96,7 +96,7 @@ func Parse(table string) ([]Part, error) {
 
 // Parts は部品の一覧(表の順)。
 func Parts() []Part {
-	ps, err := Parse(Table)
+	ps, err := ParseTable(Table)
 	if err != nil {
 		panic(err) // 表は固定。テストが確かめる
 	}
