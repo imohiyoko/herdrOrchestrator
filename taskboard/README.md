@@ -416,14 +416,18 @@ tb approval reject O-<n>
   tb が承認判定に渡す操作名を増やしたら、カタログにも足す(`test/cases/82_catalog.sh` が、コード中の操作名の載り漏れと、既定の approvals.conf の未知の規則を検出する)
 - tb が強制するのは `tb message send` だけ。ほかの操作(役割の変更・セットアップの書き込みなど)は、agent が `tb approval check <操作>` を見て、`ask` なら人に聞く
 
-### コマンドの権限段階(ADR 0006)
+### コマンドの認可(ADR 0006 / ADR 0007)
 
-tb の全コマンドは表 `perms/commands.tbl` に行を持ち、段階で止めるかが決まる(bash の `bin/tb` と herdrctl の両方)。確かめる場所は行ごとに、入口(`entry`)、コマンドの中の `require_human` の分かれ道(`inner`。`--dry-run` などは人だけにしない)、確かめない(`none`。hook と `help` / `whoami`。設定で段階を書いても効かない)のどれか。段階は 4 つ: `allow`(agent がすぐ実行)/ `ask-any`(agent か人のレビューが要る)/ `ask-human`(人の LGTM が要る)/ `only-human`(人の端末からだけ)。人の端末からは、どの段階でも実行できる。
+tb の全コマンドは表 `perms/commands.tbl` に行を持ち、呼び出し元(主体)と操作で止めるかが決まる(bash の `bin/tb` と herdrctl の両方)。確かめる場所は行ごとに、入口(`entry`)、コマンドの中の `require_human` の分かれ道(`inner`。`--dry-run` などは人だけにしない)、確かめない(`none`。hook と `help` / `whoami`。設定で書いても効かない)のどれか。効果は 4 つ: `allow`(すぐ実行)/ `ask-any`(agent か人のレビューが要る)/ `ask-human`(人の LGTM が要る)/ `deny`(実行しない)。人の端末からは、いつでも実行できる。
 
-- 既定と下限は `perms/commands.tbl`(コードの一部。コマンドごとに 1 行。古い名前も同じ操作名に寄せる)。既定は今までの振る舞いと同じ(人だけだったものは `only-human`、ほかは `allow`)
-- 変えるのは設定 `approvals` の `cmd:<サービス>:<動詞> = <段階>` の行(例: `cmd:ticket:cancel = ask-human`)。`ask` は `ask-any` と同じ。下限より緩い値は下限になる(下限は今はすべて `allow` なので、どのコマンドも設定で緩められる)
-- コマンドの中の「人だけ」の確かめ(`require_human`)も、この表と設定で決まる
-- `ask-any` / `ask-human` の承認待ち(P-<n>)はまだ無い。いまは agent からの実行を終了コード 20 で止める
+- 既定と下限は `perms/commands.tbl`(コードの一部。コマンドごとに 1 行。古い名前も同じ操作名に寄せる)。既定は今までの振る舞いと同じ(人だけだったものは agent に `deny`、ほかは `allow`)。下限は今はすべて `allow`
+- 変えるのは設定 `policy` の行だけ: `<主体> <操作> <対象> = <効果>`(`tb config set policy < 本文`。例は `config/policy.conf.example`)
+  - 主体は agent 名の glob か `@<役割>` か `*`。操作は `cmd:<サービス>:<動詞>` の glob。対象はコマンドでは `*`
+  - 当たる行のうち、**いちばん厳しい効果**を採る(行の順番は関係ない)。当たる行が無ければ表の既定
+  - 役割を確かめられない行は、締める向きにだけ効く。設定を読めないときは `deny`
+  - `human` と `system:<名前>` の行はまだ書けない(人は常に通る。system は ADR 0007 の段 1 から)
+- 設定 `approvals` の `cmd:` の行は使わない(`policy` に移した)。送信・停止などのほかの権限の設定も、ADR 0007 の段 3 で `policy` に移す
+- `ask-any` / `ask-human` の承認待ちはまだ無い。いまは agent からの実行を終了コード 20 で止める
 - コマンドを足したら表にも行を足す(足し忘れはテスト `test/cases/03_perms.sh` と `internal/kernel/perms` が落とす)
 
 ## 部品とレシピ(ADR 0005)

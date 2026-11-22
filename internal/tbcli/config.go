@@ -2,6 +2,7 @@ package tbcli
 
 import (
 	"fmt"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/perms"
 	"io"
 	"os"
 	"path/filepath"
@@ -34,6 +35,7 @@ func validators(st tickets.StatusSet) map[string]config.Validator {
 		"protect":       agents.ValidateProtect,
 		"role-models":   agents.ValidateRoleModels,
 		"org":           approval.ValidateOrg,
+		"policy":        perms.ValidatePolicy,
 	}
 }
 

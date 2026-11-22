@@ -36,7 +36,7 @@ tb_go() {
   have=$("$hc" tb --commands) || die "herdrctl tb --commands に失敗しました: $hc"
   [[ " $have " == *" $1 "* ]] || return 0
   # 権限段階の門(ADR 0006)を持たない古い herdrctl には渡さない(渡すと approvals の cmd: の行が効かない)
-  [[ " $("$hc" tb --features 2>/dev/null) " == *" perms "* ]] || die "herdrctl が古く、権限段階(ADR 0006)を確かめられないため渡しません: $hc(herdrctl を入れ直すか TB_IMPL=bash)"
+  [[ " $("$hc" tb --features 2>/dev/null) " == *" policy "* ]] || die "herdrctl が古く、認可(ADR 0007)を確かめられないため渡しません: $hc(herdrctl を入れ直すか TB_IMPL=bash)"
   tb_go_exec "$hc" "$@"
 }
 tb_go_exec() {  # $1=herdrctl, 残り=tb のコマンドと引数
@@ -67,7 +67,7 @@ main() {
   init_db || die "DB を開けないか、スキーマの移行に失敗しました: $DB"
   session_setup_load   # sql() のビューと見張り(lib/db.sh)
   statuses_load        # チケットの状態と分類(設定 statuses。lib/core.sh)
-  perm_gate "$cmd" "$@"   # 権限段階(ADR 0006。taskboard/perms/commands.tbl と設定 approvals の cmd: の行。lib/perms.sh)
+  perm_gate "$cmd" "$@"   # 認可(ADR 0006 / 0007。taskboard/perms/commands.tbl の既定と設定 policy の行。lib/perms.sh)
   "cmd_$cmd" "$@"
 }
 main "$@"

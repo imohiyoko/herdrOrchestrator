@@ -3,9 +3,12 @@
 package tbcli
 
 import (
+	"database/sql"
+
 	"bufio"
 	"errors"
 	"fmt"
+	"github.com/imohiyoko/herdrorchestrator/internal/agents"
 	"io"
 	"os"
 	"regexp"
@@ -23,7 +26,7 @@ import (
 var Commands = []string{"activity", "add", "allow", "approval", "approve", "ask", "block", "board", "can", "cancel", "claim", "comment", "comments", "config", "conv", "conv-candidate-add", "conv-candidate-adopt", "conv-candidate-reject", "conv-draft", "conv-gate", "conv-incident", "conv-kinds", "conv-learn-purge", "conv-ledger", "conv-length", "conv-lint", "conv-pair-add", "conv-pair-show", "conv-pairs", "conv-patterns", "conv-route", "conv-routes-set", "conv-scan", "conv-stage", "conv-stage-log", "conv-stage-reset", "conv-stage-set", "conv-voice", "conv-voice-check", "deadlines-import", "done", "due-scan", "events", "flush", "gate", "handoff", "history", "inbox", "inbox-read", "job", "labels", "limits", "link", "list", "message", "notify", "nudge", "org", "outbox", "peek", "pending", "pr", "pr-queue", "pr-watch", "proposal", "proposal-resolve", "proposals", "proxy", "proxy-check", "proxy-list", "proxy-request", "proxy-resolve", "reject", "reminder", "reminders", "reopen", "report", "resolve", "review", "review-pack", "review-submit", "sched-job", "send", "show", "sprint-add", "sprint-close", "sprint-start", "sprints", "ticket", "touch", "tree", "unlink", "update"}
 
 // Features は bin/tb が渡す前に確かめる機能(perms = 権限段階の門。ADR 0006)。
-var Features = []string{"perms"}
+var Features = []string{"perms", "policy"}
 
 // 終了コード(tb と同じ)
 const (
@@ -59,6 +62,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	perms.OpenDB = permDB
+	perms.NameMatch = func(db *sql.DB, session, name, pat string) int { return agents.NewRoles(db, session).Match(name, pat) }
 	if args[0] != "touch" {
 		// 権限段階の入口(ADR 0006。bash の main → perm_gate と同じ)
 		if err := permErr(perms.Gate(args, permDB)); err != nil {

@@ -160,6 +160,8 @@ name_matches() {  # $1=agent 名 $2=パターン
   fi
 }
 
+PERM_NAME_MATCH=name_matches   # 認可(lib/perms.sh)の主体・対象の @<役割> をこの関数で比べる
+
 # ROLE_FILES(配列。役割名)/ ROLE_FILE(先頭)/ ROLE_LABEL(hr.md,manager.md)/ ROLE_HASH / ROLE_TEXT を埋める。渡すものが無ければ 1
 # 複数のロールは _common のあとに順に足す
 ROLE_FILES=(); ROLE_LABEL=""

@@ -1,7 +1,7 @@
 # shellcheck shell=bash
-# 権限段階(ADR 0006): 表 taskboard/perms/commands.tbl が全コマンドを覆っていること、入口と require_human が表と設定 approvals の cmd: の行で決まること。
-# project は pm だけを使う。DB と approvals は $TMP/perms.* を使う
-_saved_env=$(declare -p TB_DB TB_APPROVALS HERDR_PANE_ID FAKE_AGENTS 2>/dev/null)
+# 認可(ADR 0006 / 0007): 表 taskboard/perms/commands.tbl が全コマンドを覆っていること、入口と require_human が表の既定と設定 policy の行で決まること。
+# project は pm だけを使う。DB と policy は $TMP/perms.* を使う
+_saved_env=$(declare -p TB_DB TB_POLICY TB_APPROVALS HERDR_PANE_ID FAKE_AGENTS 2>/dev/null)
 PM_ROOT=$(cd "$HERE/.." && pwd)
 PM_TBL=$PM_ROOT/perms/commands.tbl
 
@@ -15,7 +15,7 @@ eq "perms: every command has a one-word row (the fallback for other words)" \
   "$(comm -23 <(printf '%s\n' "$pm_cmds") <(pm_rows | awk '$1 !~ /\./ {print $1}' | sort -u))" ""
 eq "perms: every non-comment line has exactly 5 columns" "$(sed 's/#.*//' "$PM_TBL" | awk 'NF != 0 && NF != 5')" ""
 eq "perms: rows are well-formed (cmd:<service>:<verb>, known tiers, default >= floor, entry|inner|none)" \
-  "$(pm_rows | awk 'function r(t){return t=="allow"?0:t=="ask-any"?1:t=="ask-human"?2:t=="only-human"?3:-1}
+  "$(pm_rows | awk 'function r(t){return t=="allow"?0:t=="ask-any"?1:t=="ask-human"?2:t=="deny"?3:-1}
     $2 !~ /^cmd:[a-z]+:[a-z][a-z-]*$/ || r($3) < 0 || r($4) < 0 || r($3) < r($4) || $5 !~ /^(entry|inner|none)$/ {print}')" ""
 eq "perms: a path appears once" "$(pm_rows | awk '{print $1}' | sort | uniq -d)" ""
 eq "perms: the same operation has the same default and floor on every row" \
@@ -44,93 +44,98 @@ eq "perms: every inner operation is reached by a require_human label (bash)" \
   "$(pm_rows | awk '$5 == "inner" {print $2}' | sort -u | comm -23 - <(printf '%s\n' "$pm_used_ops"))" ""
 eq "perms: the bash table is the one herdrctl embeds (no copy)" "$(ls "$PM_ROOT/perms")" "$(printf 'commands.tbl\nembed.go')"
 
-# ---------- 振る舞い ----------
-export TB_DB=$TMP/perms.db TB_APPROVALS=$TMP/perms.approvals
-export FAKE_AGENTS='[{"pane_id":"wW:p1","name":"pw1","agent_session":{"value":"s1"}}]'
-: >"$TB_APPROVALS"
+# ---------- 振る舞い(設定 policy。ADR 0007)----------
+export TB_DB=$TMP/perms.db TB_POLICY=$TMP/perms.policy
+export FAKE_AGENTS='[{"pane_id":"wW:p1","name":"pw1","agent_session":{"value":"s1"}},{"pane_id":"wW:p2","name":"pw2","agent_session":{"value":"s2"}}]'
+: >"$TB_POLICY"
 unset HERDR_PANE_ID
 t1=$($TB add -p pm -t "権限 1"); t2=$($TB add -p pm -t "権限 2"); t3=$($TB add -p pm -t "権限 3")
 export HERDR_PANE_ID=wW:p1
 eq "perms: agent runs an allow command (default)" "$(rc $TB cancel "$t1")" "0"
 eq "perms: default allow does not ask herdr who is calling (no extra herdr call)" "$(: >"$FAKE_LOG"; $TB list -p pm >/dev/null; grep -c '^list' "$FAKE_LOG" || true)" "0"
 
-printf 'cmd:ticket:cancel = ask-human\n' >"$TB_APPROVALS"
-eq "perms: tightened to ask-human → agent stops with 20" "$(rc $TB cancel "$t2")" "20"
+printf 'pw1 cmd:ticket:cancel * = ask-human\n' >"$TB_POLICY"
+eq "perms: tightened to ask-human for pw1 → agent stops with 20" "$(rc $TB cancel "$t2")" "20"
 eq "perms: the old name and the service name share one operation" "$(rc $TB ticket cancel "$t2")" "20"
-eq "perms: the message names the operation and the rule" \
-  "$($TB cancel "$t2" 2>&1 >/dev/null | grep -c 'cmd:ticket:cancel = ask-human。approvals: cmd:ticket:cancel = ask-human')" "1"
+eq "perms: the message names the operation and the row" \
+  "$($TB cancel "$t2" 2>&1 >/dev/null | grep -c 'cmd:ticket:cancel = ask-human。policy: pw1 cmd:ticket:cancel \* = ask-human')" "1"
 eq "perms: nothing was done" "$($TB show "$t2" | jq -r .status)" "todo"
+eq "perms: a row for pw1 does not touch pw2" "$(HERDR_PANE_ID=wW:p2 rc $TB cancel "$t3")" "0"
 eq "perms: a human terminal is not stopped" "$(env -u HERDR_PANE_ID bash -c "$TB cancel $t2 >/dev/null 2>&1; echo \$?")" "0"
-eq "perms: a pane with no agent is a human" "$(HERDR_PANE_ID=wW:p9 rc $TB cancel "$t3")" "0"
 
-printf 'cmd:ticket:* = only-human\n' >"$TB_APPROVALS"
-eq "perms: a glob row applies (only-human → 1)" "$(rc $TB show "$t1")" "1"
+printf '* cmd:ticket:* * = deny\n' >"$TB_POLICY"
+eq "perms: a glob row applies (deny → 1)" "$(rc $TB show "$t1")" "1"
+eq "perms: a pane with no agent is a human (rows do not apply)" "$(HERDR_PANE_ID=wW:p9 rc $TB show "$t1")" "0"
 eq "perms: the gate also covers commands moved to herdrctl (tb list)" "$($TB list -p pm 2>&1 >/dev/null)" \
-  "tb: tb list は人が自分の端末で実行します(agent 'pw1' の pane からは実行できません)"
-eq "perms: only-human message is the old require_human one" \
-  "$($TB show "$t1" 2>&1 >/dev/null)" "tb: tb show は人が自分の端末で実行します(agent 'pw1' の pane からは実行できません)"
-printf '* = allow\nagent:* = allow\n' >"$TB_APPROVALS"
-eq "perms: rows without cmd: do not touch the command tiers" "$(rc $TB show "$t1")" "0"
-printf 'cmd:ticket:show = ask\n' >"$TB_APPROVALS"
-eq "perms: ask is ask-any (→ 20)" "$(rc $TB show "$t1")" "20"
-printf 'cmd:ticket:show = nonsense\n' >"$TB_APPROVALS"
-eq "perms: an unknown tier is ignored (default allow)" "$(rc $TB show "$t1")" "0"
-printf 'cmd:ticket:show = allow ask-any\ncmd:ticket:show = ask-human\n' >"$TB_APPROVALS"
-eq "perms: a value must be exactly one tier (the bad row is skipped, the next applies)" "$(rc $TB show "$t1")" "20"
+  "tb: tb list は実行できません(cmd:ticket:list = deny。policy: * cmd:ticket:* * = deny)(agent 'pw1')"
+printf 'pw* cmd:ticket:show * = allow\npw1 cmd:ticket:show * = ask-any\n' >"$TB_POLICY"
+eq "perms: the strictest matching row wins, whatever the order (→ 20)" "$(rc $TB show "$t1")" "20"
+printf 'pw1 cmd:ticket:show * = ask-any\npw* cmd:ticket:show * = allow\n' >"$TB_POLICY"
+eq "perms: the strictest matching row wins in the other order too" "$(rc $TB show "$t1")" "20"
+printf 'pw1 cmd:ticket:show * = nonsense\npw1 cmd:ticket:show = deny\n' >"$TB_POLICY"
+eq "perms: rows with an unknown effect or without 3 columns are ignored (default allow)" "$(rc $TB show "$t1")" "0"
+printf 'human cmd:ticket:show * = deny\n' >"$TB_POLICY"
+eq "perms: rows for human do not apply (agent default allow)" "$(rc $TB show "$t1")" "0"
+eq "perms: rows for human do not stop a human" "$(env -u HERDR_PANE_ID bash -c "$TB show $t1 >/dev/null 2>&1; echo \$?")" "0"
+eq "perms: config set refuses a human row" "$(printf 'human cmd:ticket:show * = deny\n' | env -u HERDR_PANE_ID $TB config set policy 2>&1 >/dev/null | grep -c '主体 human の行はまだ効きません')" "1"
+eq "perms: config set refuses an unknown effect" "$(printf 'pw1 cmd:ticket:show * = maybe\n' | env -u HERDR_PANE_ID $TB config set policy 2>&1 >/dev/null | grep -c '効果は allow / ask-any / ask-human / deny')" "1"
 if [[ $(id -u) != 0 ]]; then
-  printf 'cmd:ticket:show = allow\n' >"$TB_APPROVALS"; chmod 000 "$TB_APPROVALS"
-  eq "perms: an approvals file that cannot be read → only-human (not the default)" "$(rc $TB show "$t1")" "1"
-  chmod 644 "$TB_APPROVALS"
+  printf 'pw1 cmd:ticket:show * = allow\n' >"$TB_POLICY"; chmod 000 "$TB_POLICY"
+  eq "perms: a policy file that cannot be read → deny (not the default)" "$(rc $TB show "$t1")" "1"
+  chmod 644 "$TB_POLICY"
   # 置き場のディレクトリの中を見られない(ファイルがあるか確かめられない)のも、設定が無いのとは分ける
-  mkdir -p "$TMP/perms-noexec"; _pm_appr=$TB_APPROVALS; export TB_APPROVALS=$TMP/perms-noexec/approvals; chmod 000 "$TMP/perms-noexec"
-  eq "perms: an approvals dir that cannot be searched → only-human (not the default)" "$(rc $TB show "$t1")" "1"
+  mkdir -p "$TMP/perms-noexec"; _pm_pol=$TB_POLICY; export TB_POLICY=$TMP/perms-noexec/policy; chmod 000 "$TMP/perms-noexec"
+  eq "perms: a policy dir that cannot be searched → deny (not the default)" "$(rc $TB show "$t1")" "1"
   chmod 755 "$TMP/perms-noexec"
   # さらに上のディレクトリの中を見られないときも同じ
-  mkdir -p "$TMP/perms-noexec/a/b"; export TB_APPROVALS=$TMP/perms-noexec/a/b/approvals; chmod 000 "$TMP/perms-noexec/a"
-  eq "perms: an ancestor dir that cannot be searched → only-human" "$(rc $TB show "$t1")" "1"
+  mkdir -p "$TMP/perms-noexec/a/b"; export TB_POLICY=$TMP/perms-noexec/a/b/policy; chmod 000 "$TMP/perms-noexec/a"
+  eq "perms: an ancestor dir that cannot be searched → deny" "$(rc $TB show "$t1")" "1"
   chmod 755 "$TMP/perms-noexec/a"
-  export TB_APPROVALS=$TMP/perms-noexec/none/approvals
-  eq "perms: a missing approvals file (dirs searchable) is no config → default allow" "$(rc $TB show "$t1")" "0"
-  export TB_APPROVALS=$_pm_appr
+  export TB_POLICY=$TMP/perms-noexec/none/policy
+  eq "perms: a missing policy file (dirs searchable) is no config → default allow" "$(rc $TB show "$t1")" "0"
+  export TB_POLICY=$_pm_pol
 fi
 
 # 下限は今はすべて allow(表の下限の列で守りを足せる。下限で丸める処理は internal/kernel/perms のテストで確かめる)
 eq "perms: every floor in the table is allow (the human tunes tiers by config)" "$(pm_rows | awk '$4 != "allow"')" ""
-# require_human の中の確かめも表と設定で決まる。only-human の既定は設定で緩められる
-printf 'cmd:ticket:resolve = ask-human\n' >"$TB_APPROVALS"
-eq "perms: an only-human command loosened to ask-human → 20 instead of 1" "$(rc $TB resolve C-1)" "20"
-eq "perms: reopen is a separate operation (still only-human → 1)" "$(rc $TB reopen C-1)" "1"
-printf 'cmd:ticket:resolve = allow\n' >"$TB_APPROVALS"
-eq "perms: an only-human command loosened to allow → the command itself runs (no gate message)" \
-  "$($TB resolve C-1 2>&1 | grep -cE '人が自分の端末で|承認が要ります' || true)" "0"
-: >"$TB_APPROVALS"
+# require_human の中の確かめも表と設定で決まる。deny の既定は設定で緩められる
+printf '@nobody-role cmd:ticket:resolve * = allow\npw1 cmd:ticket:resolve * = ask-human\n' >"$TB_POLICY"
+eq "perms: a deny default loosened to ask-human → 20 instead of 1" "$(rc $TB resolve C-1)" "20"
+eq "perms: reopen is a separate operation (still deny → 1)" "$(rc $TB reopen C-1)" "1"
+printf 'pw1 cmd:ticket:resolve * = allow\n' >"$TB_POLICY"
+eq "perms: a deny default loosened to allow → the command itself runs (no gate message)" \
+  "$($TB resolve C-1 2>&1 | grep -cE '人が自分の端末で|承認が要ります|実行できません' || true)" "0"
+: >"$TB_POLICY"
 eq "perms: default require_human is unchanged (1 and the old message)" "$($TB resolve C-1 2>&1 >/dev/null)" \
   "tb: tb resolve は人が自分の端末で実行します(agent 'pw1' の pane からは実行できません)"
 eq "perms: --dry-run paths that skip require_human still run (nudge --dry-run)" "$(rc $TB nudge --dry-run)" "0"
 eq "perms: herdr failure while checking → 1" "$(FAKE_LIST_FAIL=1 rc $TB resolve C-1)" "1"
+printf 'pw1 cmd:ticket:show * = allow\n' >"$TB_POLICY"
+eq "perms: herdr failure while matching a row → 1" "$(FAKE_LIST_FAIL=1 rc $TB show "$t1")" "1"
+eq "perms: approvals cmd: rows no longer apply (moved to policy)" "$(: >"$TB_POLICY"; printf 'cmd:ticket:show = only-human\n' >"$TMP/perms.approvals"; TB_APPROVALS=$TMP/perms.approvals rc $TB show "$t1")" "0"
 
-# DB の設定を読めない(問い合わせが失敗する)ときは、設定が無いのとは分けて only-human(fail-closed)。表が無い・行が無いのは既定のまま
-unset TB_APPROVALS HERDR_PANE_ID; export TB_DB=$TMP/perms-dberr.db
+# DB の設定を読めない(問い合わせが失敗する)ときは、設定が無いのとは分けて deny(fail-closed)。表が無い・行が無いのは既定のまま
+unset TB_POLICY HERDR_PANE_ID; export TB_DB=$TMP/perms-dberr.db
 t4=$($TB add -p pm -t "権限 4")
 export HERDR_PANE_ID=wW:p1
-eq "perms: no approvals row in the DB → default allow" "$(rc $TB list -p pm)" "0"
+eq "perms: no policy row in the DB → default allow" "$(rc $TB list -p pm)" "0"
 # 読むと実行時に失敗する config(整数のあふれ)に差し替える
 sqlite3 "$TB_DB" "ALTER TABLE config RENAME TO config_real; CREATE VIEW config AS SELECT * FROM config_real WHERE abs(-9223372036854775808) IS NOT NULL;"
-eq "perms: a failed DB read of approvals → only-human (not the default)" "$(rc $TB cancel "$t4")" "1"
+eq "perms: a failed DB read of policy → deny (not the default)" "$(rc $TB cancel "$t4")" "1"
 eq "perms: a failed DB read also stops commands moved to herdrctl (tb list)" "$(rc $TB list -p pm)" "1"
 eq "perms: nothing was done" "$(env -u HERDR_PANE_ID $TB show "$t4" | jq -r .status)" "todo"
 # config が参照する別の表が無いのも失敗(config そのものが無いときだけ「設定が無い」)
 sqlite3 "$TB_DB" "DROP VIEW config; CREATE TABLE config_gone (key TEXT, herdr_session TEXT, body TEXT); CREATE VIEW config AS SELECT * FROM config_gone; DROP TABLE config_gone;"
-eq "perms: a config view over a missing table → only-human" "$(rc $TB cancel "$t4")" "1"
+eq "perms: a config view over a missing table → deny" "$(rc $TB cancel "$t4")" "1"
 sqlite3 "$TB_DB" "DROP VIEW config; CREATE TABLE \"config-gone\" (key TEXT, herdr_session TEXT, body TEXT); CREATE VIEW config AS SELECT * FROM \"config-gone\"; DROP TABLE \"config-gone\";"
-eq "perms: a config view over a missing table named config-… → only-human" "$(rc $TB cancel "$t4")" "1"
+eq "perms: a config view over a missing table named config-… → deny" "$(rc $TB cancel "$t4")" "1"
 sqlite3 "$TB_DB" "DROP VIEW config; CREATE TABLE \"config gone\" (key TEXT, herdr_session TEXT, body TEXT); CREATE VIEW config AS SELECT * FROM \"config gone\"; DROP TABLE \"config gone\";"
-eq "perms: a config view over a missing table named \"config gone\" → only-human" "$(rc $TB cancel "$t4")" "1"
-export TB_DB=$TMP/perms.db TB_APPROVALS=$TMP/perms.approvals
+eq "perms: a config view over a missing table named \"config gone\" → deny" "$(rc $TB cancel "$t4")" "1"
+export TB_DB=$TMP/perms.db TB_POLICY=$TMP/perms.policy
 
 # 古い herdrctl(権限段階の門が無い)には渡さない
 mkdir -p "$TMP/perms-oldhc"; printf '#!/bin/sh\n[ "$2" = --commands ] && echo list && exit 0\nexit 2\n' >"$TMP/perms-oldhc/herdrctl"; chmod +x "$TMP/perms-oldhc/herdrctl"
-eq "perms: TB_IMPL=go refuses an herdrctl without the perms feature" "$(TB_IMPL=go TB_HERDRCTL=$TMP/perms-oldhc/herdrctl $TB list -p pm 2>&1 >/dev/null | grep -c '権限段階(ADR 0006)を確かめられない')" "1"
+eq "perms: TB_IMPL=go refuses an herdrctl without the perms feature" "$(TB_IMPL=go TB_HERDRCTL=$TMP/perms-oldhc/herdrctl $TB list -p pm 2>&1 >/dev/null | grep -c '認可(ADR 0007)を確かめられない')" "1"
 
-unset TB_DB TB_APPROVALS HERDR_PANE_ID FAKE_AGENTS
+unset TB_DB TB_POLICY TB_APPROVALS HERDR_PANE_ID FAKE_AGENTS
 eval "$_saved_env"

@@ -20,10 +20,11 @@ type Key struct {
 }
 
 // Keys は config.sh の CONFIG_KEYS と同じ順。
-var Keys = []string{"projects", "approvals", "grants", "routes", "delivery", "limits", "notify", "notify-rules", "compact", "slash", "sched-watch", "spawn-policy", "role-models", "conv-routes", "conv-learn", "conv-stages", "protect", "org", "labels", "messages", "nudge", "statuses", "system-labels"}
+var Keys = []string{"projects", "policy", "approvals", "grants", "routes", "delivery", "limits", "notify", "notify-rules", "compact", "slash", "sched-watch", "spawn-policy", "role-models", "conv-routes", "conv-learn", "conv-stages", "protect", "org", "labels", "messages", "nudge", "statuses", "system-labels"}
 
 var keyInfo = map[string]Key{
 	"projects":      {"TB_CONFIG", "projects.conf", true},
+	"policy":        {"TB_POLICY", "policy.conf", false},
 	"approvals":     {"TB_APPROVALS", "approvals.conf", true},
 	"grants":        {"TB_GRANTS", "grants.conf", false},
 	"routes":        {"TB_ROUTES", "routes.conf", false},

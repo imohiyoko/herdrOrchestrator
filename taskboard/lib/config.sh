@@ -12,13 +12,14 @@
 # 書くのは人だけ。環境変数でファイルを明示しているときはそのファイルを、そうでなければ DB のこのセッションの行(--shared なら共通の行)を書く。
 
 CONFIG_DIR=${TB_CONFIG_DIR:-$TB_ROOT/config}   # checkout の設定ファイルの置き場(テストで差し替え)
-CONFIG_KEYS="projects approvals grants routes delivery limits notify notify-rules compact slash sched-watch spawn-policy role-models conv-routes conv-learn conv-stages protect org labels messages nudge statuses system-labels"
+CONFIG_KEYS="projects policy approvals grants routes delivery limits notify notify-rules compact slash sched-watch spawn-policy role-models conv-routes conv-learn conv-stages protect org labels messages nudge statuses system-labels"
 
 # キーの情報: CFG_ENV(上書きの環境変数)、CFG_FILE(checkout のファイル名)、CFG_EXAMPLE(1 なら .example も既定値として読む)
 config_key_info() {
   CFG_EXAMPLE=0
   case $1 in
     projects)     CFG_ENV=TB_CONFIG;          CFG_FILE=projects.conf; CFG_EXAMPLE=1;;
+    policy)       CFG_ENV=TB_POLICY;          CFG_FILE=policy.conf;;   # 認可(主体 × 操作 × 対象 → 効果。lib/perms.sh、ADR 0007)。.example は既定値にしない(無ければ表の既定)
     approvals)    CFG_ENV=TB_APPROVALS;       CFG_FILE=approvals.conf; CFG_EXAMPLE=1;;
     grants)       CFG_ENV=TB_GRANTS;          CFG_FILE=grants.conf;;
     routes)       CFG_ENV=TB_ROUTES;          CFG_FILE=routes.conf;;
