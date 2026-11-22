@@ -31,7 +31,7 @@ Go に移すサービスは、`.claude/skills/tb-command-naming` の形(`tb <サ
 | 3 | review / gate | `review pack/submit`(古い名前 `review-pack` `review-submit` も)と `gate evaluate/execute/ingest-review/ingest-events/reviewers`。設定と記録の置き場所は bash と同じく TB_ROOT の下に固定 | 済み |
 | 3 | pr | `pr queue add/list/show/approve/reject/retry/run/scan` と `pr watch`(古い名前 `pr-queue <サブコマンド>` `pr-watch` も)。利用者が書く正規表現(`body_first_line`・公開前検査の規則と例外)は bash と同じ意味になるよう `grep -E` で評価する | 済み |
 | 3 | alert / digest | | まだ(alert は解析役の起動が agent に依存するので agent の後) |
-| 4 | reminder | `reminder list/check/publish/scan/nudge`(古い名前 `reminders [--check / --publish]` `due-scan` `nudge` も) | 済み(`deadlines-import` はまだ bash の古い名前だけ。Go に移すのは続きの PR) |
+| 4 | reminder | `reminder list/check/publish/scan/nudge`(古い名前 `reminders [--check / --publish]` `due-scan` `nudge` も)と `deadlines-import` | 済み |
 | 4 | agent | | まだ |
 | 5 | conv | `conv route/routes-set/draft/voice/voice-check/length/kinds/patterns/lint`、学習の `conv pair-add/pairs/pair-show/candidate-add/ledger/candidate-adopt/candidate-reject/scan/learn-purge`、段階の `conv stage/stage-set/stage-reset/stage-log/incident/gate`(古い名前 `conv-<サブコマンド>` も)。文字列の一般化と検査(sanitize / scan / ratio)は bash と同じく `lib/convtext.py` を呼ぶ | 済み |
 | 5 | recipe | | まだ(ADR 0005 段 3 の後) |
