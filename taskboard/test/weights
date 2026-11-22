@@ -33,6 +33,7 @@
 75_ticket_state_contract.sh 3
 76_ticket_edit_contract.sh 3
 77_ticket_comment_contract.sh 3
+78_ticket_contract.sh 3
 72_conv_learn.sh 14
 80_approval_contract.sh 6
 80_approvals.sh 8

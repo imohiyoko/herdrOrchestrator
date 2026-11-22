@@ -9,6 +9,9 @@ import (
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/config"
 )
 
+// BuiltinCat は組み込みの状態の分類(組み込みでなければ空。core.sh の statuses_builtin_cat)。
+func BuiltinCat(k string) string { return builtinCat(k) }
+
 func builtinCat(k string) string {
 	for _, b := range builtin {
 		if b[0] == k {
