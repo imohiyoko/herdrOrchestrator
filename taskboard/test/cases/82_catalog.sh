@@ -97,7 +97,8 @@ _cat_problems() {
           [[ " $SEND_KINDS_CODE " == *" $op "* ]] || echo "実在しない(send の kind): $p"
         else
           lit=${p%:\*}   # agent:new:* → agent:new
-          grep -rqF -- "$lit" "$REPO"/internal "$TBROOT"/bin "$REPO"/roles "$REPO"/setup/examples "$REPO"/setup/CLAUDE.md || echo "実在しない(コード・roles・setup に出てこない): $p"
+          # internal/webui は Web UI の例(SAMPLE_OPS)に操作名を持つので、実在の確かめには数えない
+          grep -rqF --exclude-dir=webui -- "$lit" "$REPO"/internal "$TBROOT"/bin "$REPO"/roles "$REPO"/setup/examples "$REPO"/setup/CLAUDE.md || echo "実在しない(コード・roles・setup に出てこない): $p"
         fi;;
       unwired)   # 承認判定に渡っていないこと(渡るようになったら active にする)
         while IFS= read -r op; do

@@ -80,6 +80,33 @@ line 2', 'r1', '2026-01-01T00:00:00Z', NULL),
 INSERT INTO comments (task_id, kind, text, from_name, from_pane, from_session, created_at, resolved_at, resolved_note, herdr_session) VALUES
  ('T-p-1', 'blocked', 'resolved with note', 'alpha', 'p1', 's', '2026-01-02T00:00:00Z', '2026-01-02T02:00:00Z', 'メモ <i>', 'default'),
  ('T-p-1', 'progress', 'just info', 'alpha', 'p1', 's', '2026-01-02T00:00:00Z', NULL, NULL, 'default');
+INSERT INTO config (herdr_session, key, body, updated_by, updated_at) VALUES
+ ('default', 'policy', '* send:info * = allow   # 既定どおり <b>
+* send:task worker1 = allow
+* send:task @lead = ask-human
+* send:task @lead+hr = deny
+* agent:* * = allow
+* send:task ~child = deny
+* send:task worker? = allow
+worker2 send:task * = allow
+human * * = allow
+human send:[ab] * = deny
+system:x * * = deny
+* proxy:write * = deny
+* bogus:op * = allow
+* cmd:git * = allow
+* setup:hooks * = ask-any
+* agent:slash:compact * = allow
+bad line
+* a b c = maybe', 'human', '2026-01-01T00:00:00Z'),
+ ('default', 'role-map', 'worker* = lead  # 既定
+qa? = hr,lead
+bad', 'human', '2026-01-01T00:00:00Z'),
+ ('*', 'role:lead', '# lead', 'human', '2026-01-01T00:00:00Z');
+INSERT INTO approval_changes (pattern, value, created_at, herdr_session) VALUES
+ ('send:task:worker1', 'allow', '2026-01-01T00:00:00Z', 'default'), ('send:info:*', 'ask', '2026-01-02T00:00:00Z', 'default'),
+ ('send:task:worker1', 'ask', '2026-01-03T00:00:00Z', 'default'), ('agent:*', 'allow', '2026-01-04T00:00:00Z', 'default'),
+ ('agent:*', 'ask', '2026-01-05T00:00:00Z', 'other');
 INSERT INTO agents (herdr_session, name, kind, state, killable, created_by, created_at, updated_at) VALUES
  ('other', 'zeta', 'claude', 'running', 'no', 'human', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
 `
@@ -127,12 +154,14 @@ not json
 	os.WriteFile(filepath.Join(logs, "fine.log"), []byte(`{"action":"failed"}`+"\n"+`{"action":"sent"}`+"\n"), 0o644)
 	os.WriteFile(filepath.Join(logs, "noreason.log"), []byte(`{"action":"failed","ts":null}`+"\n"), 0o644)
 	os.WriteFile(filepath.Join(logs, "bad name.log"), []byte(`{"action":"failed"}`+"\n"), 0o644)
+	os.MkdirAll(filepath.Join(dir, "roles"), 0o755)
+	os.WriteFile(filepath.Join(dir, "roles", "hr.md"), []byte("# hr\n"), 0o644)
 	webui, _ := filepath.Abs("../../webui")
 	for k, v := range map[string]string{
 		"WEBUI_TB_DB": dbp, "HERDR_BIN": herdr, "WEBUI_SCHED_LOGS": logs, "HERDR_SESSION": "default",
 		"HERDR_SESSION_FILE": filepath.Join(dir, "none"), "HERDR_SOCKET_PATH": "", "HERDR_SESSION_FROM_FILE": "",
 		"TB_STATUSES": "", "TB_CONFIG_DIR": filepath.Join(dir, "config"), "WEBUI_ROOT": webui,
-		"XDG_STATE_HOME": filepath.Join(dir, "state"), "HOME": dir, "WEBUI_STATE_DIR": filepath.Join(dir, "state"),
+		"XDG_STATE_HOME": filepath.Join(dir, "state"), "WEBUI_POLICY": "", "TB_POLICY": "", "TB_ROLES": filepath.Join(dir, "roles"), "HOME": dir, "WEBUI_STATE_DIR": filepath.Join(dir, "state"),
 	} {
 		t.Setenv(k, v)
 	}
@@ -170,7 +199,11 @@ func TestPagesMatchPython(t *testing.T) {
 		"/ledger?target=bad%20name&from=2026/01/01&to=x&kind=nope&result=weird", "/ledger?to=2026-01-02&target=&target=alpha",
 		"/ledger?kind=%E5%A0%B1+%E5%91%8A", "/ledger?result=busy&to=2026-01-01",
 		"/inbox", "/inbox?held=1", "/inbox?held=3", "/inbox?held=x1", "/inbox?held=999&resolved=done", "/inbox?resolved=already",
-		"/inbox?resolved=%20done"}
+		"/inbox?resolved=%20done",
+		"/perms", "/perms?op=send:task:worker1", "/perms?op=send:task:worker9", "/perms?op=send:task:qa1", "/perms?op=agent:new:x",
+		"/perms?op=bad%20op", "/perms?op=setup:webui", "/perms?op=agent:slash:compact:w1", "/perms?kind=send&state=active&fallback=1",
+		"/perms?allowed=1&kind=bogus", "/perms?state=unwired", "/perms?pat=send:task:*&val=allow", "/perms?pat=*&val=allow",
+		"/perms?pat=send:info&val=ask", "/perms?pat=bad%20x&val=allow", "/perms?val=deny", "/perms?pat=proxy:write&val=allow"}
 	pj, _ := json.Marshal(paths)
 	c := exec.Command(py, "-c", pyRender, webui, string(pj))
 	raw, err := c.Output()
