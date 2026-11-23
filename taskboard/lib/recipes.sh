@@ -469,7 +469,8 @@ recipe_judge() {
           if [[ $REQ_BY == human ]]; then rule+="${rule:+ / }$k: 人の端末"; continue; fi
           approval_of "$k" "$REQ_BY"
           rule+="${rule:+ / }$k: $APPROVAL_RULE"
-          [[ $APPROVAL_VALUE == allow ]] || { verdict=ask; ((JUDGE_RC == 4)) || JUDGE_RC=20; }
+          if [[ $APPROVAL_VALUE == deny ]]; then verdict=deny; JUDGE_RC=4
+          elif [[ $APPROVAL_VALUE != allow ]]; then [[ $verdict == deny ]] || verdict=ask; ((JUDGE_RC == 4)) || JUDGE_RC=20; fi
         done < <(part_ops "$part")
         [[ -n $rule ]] || rule="判定の操作名なし(読み取り)"
       fi
@@ -615,11 +616,15 @@ cmd_recipe-run() {
     plan=$(jq -c --arg p "$part" --argjson a "$args" '. + [{part:$p, args:$a}]' <<<"$plan")
   done
 
-  # 判定 1: レシピの操作名。人の端末は承認なし。agent は approvals / grants(既存の判定のまま)
+  # 判定 1: レシピの操作名。人の端末は承認なし。agent は policy(recipe:<名前> <対象>)
   local verdict rule
   if [[ $REQ_BY == human ]]; then rule="人の端末"; verdict=allow
   else approval_of "$op" "$REQ_BY"; rule=$APPROVAL_RULE; verdict=$APPROVAL_VALUE; fi
   echo "recipe $name target=$RUN_TARGET risk=$RCP_RISK: $verdict($rule)"
+  if [[ $verdict == deny ]]; then
+    ((dry)) || recipe_event recipe_step "0 $op" "$verdict $rule" "E-$RUN_EID" >/dev/null
+    _rr_end 4 "$op は実行できません(deny。$rule)"; return
+  fi
   if [[ $verdict != allow ]]; then
     ((dry)) || recipe_event recipe_step "0 $op" "$verdict $rule" "E-$RUN_EID" >/dev/null
     _rr_end 20 "$op は人の承認が要ります($rule)。人が自分の端末で実行するか、人が allow にします"; return

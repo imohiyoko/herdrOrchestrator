@@ -3,10 +3,10 @@
 # --- 制限(tb limits / agent-shed / handoff / limits check の上限 / 各経路の強制)
 _saved_pane=${HERDR_PANE_ID-}; unset HERDR_PANE_ID
 _saved_am=${TB_ANALYST_MAX-}; unset TB_ANALYST_MAX
-export TB_DB=$TMP/limits.db TB_APPROVALS=$TMP/appr-lim.conf TB_SPAWN_RETRY_SEC=0 TB_AGENT_CWD=$TMP TB_ANALYST_RETRY_SEC=0
+export TB_DB=$TMP/limits.db TB_POLICY_A=$TMP/appr-lim.conf TB_SPAWN_RETRY_SEC=0 TB_AGENT_CWD=$TMP TB_ANALYST_RETRY_SEC=0
 export TB_LIMITS=$TMP/lim.conf TB_HANDOFF_DIR=$TMP/handoff TB_ROUTES=$TMP/lim-routes.conf
 printf 'allowed_roles = worker\n' >"$TMP/lim-spawn-default.conf"; export TB_SPAWN_POLICY=$TMP/lim-spawn-default.conf   # 役割の利用例(worker)を子に許す
-printf 'agent:spawn:* = allow\nagent:* = ask\nsend:*:* = allow\nalert:analyze = allow\n* = ask\n' >"$TB_APPROVALS"
+printf '* agent:spawn * = allow\n* send:* * = allow\n* alert:analyze * = allow\n' >"$TB_POLICY_A"
 printf 'conductor -> *\n' >"$TB_ROUTES"
 lg_ag() { printf '{"pane_id":"%s","name":"%s","agent_status":"%s","agent_session":{"value":"s-%s"},"cwd":"%s"}' "$2" "$1" "${3:-idle}" "$1" "$TMP"; }
 LG_C=$(lg_ag conductor wC:p1); LG_W1=$(lg_ag w1 wW:p1 working); LG_W2=$(lg_ag w2 wW:p2 idle); LG_W3=$(lg_ag w3 wW:p3 working)

@@ -3,8 +3,8 @@
 # --- agent の停止・復活・新規作成と判定フラグ
 eq "agents: analyst flagged killable after returning a result (90_alerts)" "$(sqlite3 "$TMP/alerts.db" "SELECT killable||' '||killable_by FROM agents WHERE name='analyst-A1';")" "yes tb"
 _saved_pane=${HERDR_PANE_ID-}; unset HERDR_PANE_ID
-export TB_DB=$TMP/agents.db TB_APPROVALS=$TMP/appr-agent.conf TB_SPAWN_RETRY_SEC=0 TB_AGENT_CWD=$TMP
-printf 'agent:* = ask\n* = ask\n' >"$TB_APPROVALS"
+export TB_DB=$TMP/agents.db TB_POLICY_A=$TMP/appr-agent.conf TB_SPAWN_RETRY_SEC=0 TB_AGENT_CWD=$TMP
+printf '* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
 A_C='{"pane_id":"wC:p1","name":"conductor","agent_status":"idle","agent_session":{"value":"sc"}}'
 A_W='{"pane_id":"wW:p1","name":"worker1","agent_status":"idle","agent_session":{"value":"s1"},"cwd":"/tmp"}'
 A_S='{"pane_id":"wS:p1","name":"sweeper","agent_status":"idle","agent_session":{"value":"ss"}}'
@@ -54,7 +54,7 @@ eq "agent-revive: resumes the same conversation" "$(cut -d' ' -f1-4 <<<"$out") $
 eq "agent-revive: flag reset for the new life" "$(agsql "SELECT state||' '||killable FROM agents WHERE name='worker1';")" "running unknown"
 export FAKE_AGENTS="[$A_C,$A_S,$A_H,$A_W]"
 eq "agent-revive: live → 1" "$(rc $TB agent-revive worker1)" "1"
-printf 'agent:stop:helper1 = allow\nagent:stop:conductor = allow\nagent:* = ask\n' >"$TB_APPROVALS"
+printf '* agent:stop helper1 = allow\n* agent:stop conductor = allow\n' >"$TB_POLICY_A"
 eq "agent-stop: allowed but not flagged → 1, recorded failed" "$(HERDR_PANE_ID=wC:p1 rc $TB agent-stop helper1) $(agsql "SELECT status FROM agent_ops ORDER BY id DESC LIMIT 1;")" "1 failed"
 $TB agent-flag helper1 --killable yes --reason 'done' >/dev/null
 eq "agent-stop: allowed + flagged → stopped without a human" "$(HERDR_PANE_ID=wC:p1 $TB agent-stop helper1 | cut -d' ' -f1-2)" "helper1 stopped"
@@ -102,11 +102,11 @@ eq "agent-new: blocked agent → tells the human to attach" "$(grep -c '人の�
 eq "agent-new: blocked agent stays in the registry with its pane" "$(agsql "SELECT state||' '||pane_id FROM agents WHERE name='helper3';") $(grep -c '^prompt helper3' "$FAKE_LOG")" "running wA:p1 0"
 agsql "DELETE FROM agents WHERE name='helper3';"; unset TB_SPAWN_LOG
 eq "agents --json: material for the sweeper" "$($TB agents --json | jq -r 'select(.name=="worker1") | [.state, .killable, .open_tasks, .open_questions, .idle_min != null, .role_file] | map(tostring) | join(" ")')" "running unknown 0 0 true worker.md"
-export TB_APPROVALS=$TMP/appr.conf
+export TB_POLICY_A=$TMP/appr.conf
 unset FAKE_AGENTS; export HERDR_PANE_ID=$_saved_pane
 # 別の herdr セッションの agent は、見えなくても止まった扱いにせず、復活もさせない
 _saved_pane=${HERDR_PANE_ID-}; unset HERDR_PANE_ID
-export TB_DB=$TMP/agents.db TB_APPROVALS=$TMP/appr-agent.conf TB_SPAWN_RETRY_SEC=0 TB_AGENT_CWD=$TMP
+export TB_DB=$TMP/agents.db TB_POLICY_A=$TMP/appr-agent.conf TB_SPAWN_RETRY_SEC=0 TB_AGENT_CWD=$TMP
 export FAKE_AGENTS='[{"pane_id":"wX:p1","name":"far","agent_status":"idle","agent_session":{"value":"sf"}}]'
 HERDR_SESSION=other $TB agents >/dev/null
 export FAKE_AGENTS='[]'
@@ -114,7 +114,7 @@ $TB agents >/dev/null
 eq "agents: other herdr session is not marked stopped" "$(sqlite3 "$TB_DB" "SELECT state||' '||herdr_session FROM agents WHERE name='far';")" "running other"
 eq "agent-revive: other herdr session → 1 with a hint" "$($TB agent-revive far 2>&1 | grep -c 'HERDR_SESSION=other')" "1"
 eq "agent-stop: other herdr session → hint" "$($TB agent-stop far --force 2>&1 | grep -c 'HERDR_SESSION=other')" "1"
-export TB_APPROVALS=$TMP/appr.conf
+export TB_POLICY_A=$TMP/appr.conf
 unset FAKE_AGENTS; export HERDR_PANE_ID=$_saved_pane
 _saved_pane=${HERDR_PANE_ID-}; unset HERDR_PANE_ID
 export TB_DB=$TMP/agents.db TB_SPAWN_RETRY_SEC=0 TB_AGENT_CWD=$TMP FAKE_AGENTS='[]'
@@ -123,18 +123,18 @@ eq "agent-revive: resume needs the original cwd" "$($TB agent-revive helper1 2>&
 eq "agent-revive --fresh: falls back to TB_AGENT_CWD" "$($TB agent-revive helper1 --fresh | grep -c "cwd $TMP")" "1"
 unset FAKE_AGENTS; export HERDR_PANE_ID=$_saved_pane
 _saved_pane=${HERDR_PANE_ID-}; unset HERDR_PANE_ID
-export TB_DB=$TMP/agents.db TB_APPROVALS=$TMP/appr-agent.conf TB_SPAWN_RETRY_SEC=0 TB_AGENT_CWD=$TMP
+export TB_DB=$TMP/agents.db TB_POLICY_A=$TMP/appr-agent.conf TB_SPAWN_RETRY_SEC=0 TB_AGENT_CWD=$TMP
 export FAKE_AGENTS="[$A_C,$A_S]"
 eq "requester: herdr list failure is not treated as a human" "$(FAKE_LIST_FAIL=1 HERDR_PANE_ID=wC:p1 rc $TB agent-stop worker1 --force) $(FAKE_LIST_FAIL=1 HERDR_PANE_ID=wC:p1 rc $TB agent-reject L-1)" "1 1"
-printf 'agent:new:* = allow\n* = ask\n' >"$TB_APPROVALS"
+printf '* agent:new * = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
 eq "agent-new --killable: not from a non-sweeper agent" "$(HERDR_PANE_ID=wC:p1 $TB agent-new helper5 --killable yes 2>&1 | grep -c '判定役')" "1"
 mkdir -p "$TMP/rel/sub"
-out=$(cd "$TMP/rel" && HERDR_PANE_ID=wC:p1 TB_APPROVALS=$TMP/appr-ask.conf $TB agent-new helper6 --cwd sub; true)
+out=$(cd "$TMP/rel" && HERDR_PANE_ID=wC:p1 TB_POLICY_A=$TMP/appr-ask.conf $TB agent-new helper6 --cwd sub; true)
 eq "agent-new: relative --cwd stored as absolute" "$(sqlite3 "$TB_DB" "SELECT json_extract(args,'\$.cwd') FROM agent_ops WHERE target='helper6';")" "$TMP/rel/sub"
-export TB_APPROVALS=$TMP/appr.conf
+export TB_POLICY_A=$TMP/appr.conf
 unset FAKE_AGENTS; export HERDR_PANE_ID=$_saved_pane
 _saved_pane=${HERDR_PANE_ID-}; unset HERDR_PANE_ID
 export TB_DB=$TMP/agents.db FAKE_AGENTS="[$A_C,$A_S]"
-(cd "$TMP/rel" && HERDR_PANE_ID=wC:p1 TB_APPROVALS=$TMP/appr-ask.conf $TB agent-new helper7 --cwd notyet >/dev/null 2>&1)
+(cd "$TMP/rel" && HERDR_PANE_ID=wC:p1 TB_POLICY_A=$TMP/appr-ask.conf $TB agent-new helper7 --cwd notyet >/dev/null 2>&1)
 eq "agent-new: missing relative --cwd is still anchored to the requester" "$(sqlite3 "$TB_DB" "SELECT json_extract(args,'\$.cwd') FROM agent_ops WHERE target='helper7';")" "$TMP/rel/notyet"
 unset FAKE_AGENTS; export HERDR_PANE_ID=$_saved_pane

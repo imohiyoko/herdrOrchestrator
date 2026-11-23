@@ -117,17 +117,17 @@ C
 eq "risk strict: lowering the threshold and sender.model=ask take effect" "$(rk "$RK/strict.conf" conductor worker running '' hi | reasons)|$(rk "$RK/strict.conf" "${OK[@]}" hi | sed -n 2p)" "unknown:sender.model +ask sender.model が不明(設定 ask)|risk-score: 0 / threshold 1"
 
 # --- tb への組み込み(判定は変えない)
-export TB_DB=$TMP/risk.db TB_CONFIG=$TMP/send.conf TB_APPROVALS=$TMP/approvals-risk.conf
-cp "$HERE/../config/approvals.conf.example" "$TB_APPROVALS"
+export TB_DB=$TMP/risk.db TB_CONFIG=$TMP/send.conf TB_POLICY_A=$TMP/approvals-risk.conf
+: >"$TB_POLICY_A"   # 既定の表(perms/ops.tbl)で決まる
 export FAKE_AGENTS='[{"pane_id":"wC:p1","name":"conductor","agent_session":{"value":"sc"}},{"pane_id":"wW:p1","name":"worker1","agent_session":{"value":"s1"}}]'
 : >"$FAKE_LOG"
-eq "approval: no extra args → output exactly as before (no risk lines)" "$($TB approval send:task:worker1; echo "rc=$?")" "$(printf 'ask\nrule: send:task:* = ask\nrc=20')"
+eq "approval: no extra args → output exactly as before (no risk lines)" "$($TB approval send:task:worker1; echo "rc=$?")" "$(printf 'ask\nrule: 既定 ask-any\nrc=20')"
 out=$($TB approval send:info:worker1 --to worker1 --text 'git push now'); r=$?
-eq "approval: with --to/--text → allow stays allow (rc 0), risk lines appended" "$r|$(sed -n '1,2p' <<<"$out" | tr '\n' '|')$(grep -c '^risk: ask' <<<"$out")|$(grep -c '^risk-reason: R-02 +ask' <<<"$out")" "0|allow|rule: send:info:* = allow|1|1"
+eq "approval: with --to/--text → allow stays allow (rc 0), risk lines appended" "$r|$(sed -n '1,2p' <<<"$out" | tr '\n' '|')$(grep -c '^risk: ask' <<<"$out")|$(grep -c '^risk-reason: R-02 +ask' <<<"$out")" "0|allow|rule: 既定 allow|1|1"
 # tb send: 結果(status・終了コード・配送)は評価に影響されず、reason に評価が追記される
 HERDR_PANE_ID=wC:p1 $TB send worker1 --kind info --text 'git push it' >/dev/null 2>&1; r=$?
 eq "send: R-02 hit but approvals allow → still sent (risk is not used)" "$r|$(sqlite3 "$TB_DB" "SELECT status FROM outbox ORDER BY id DESC LIMIT 1;")" "0|sent"
-eq "send: reason carries the risk evaluation after the approvals rule" "$(sqlite3 "$TB_DB" "SELECT reason FROM outbox ORDER BY id DESC LIMIT 1;" | grep -c ' / approvals: send:info:\* = allow / risk: ask(参考。score 1/2) \[unknown:.*R-02 +ask ')" "1"
+eq "send: reason carries the risk evaluation after the policy rule" "$(sqlite3 "$TB_DB" "SELECT reason FROM outbox ORDER BY id DESC LIMIT 1;" | grep -c ' / 認可: 既定 allow / risk: ask(参考。score 1/2) \[unknown:.*R-02 +ask ')" "1"
 HERDR_PANE_ID=wC:p1 $TB send worker1 --kind info --text 'just reading' >/dev/null 2>&1
 eq "send: clean body → no R-02 in the reason" "$(sqlite3 "$TB_DB" "SELECT reason FROM outbox ORDER BY id DESC LIMIT 1;" | grep -c 'risk: ask(参考。score 1/2) \[unknown:target.state +ask')" "1"
 HERDR_PANE_ID=wC:p1 $TB send worker1 --text 'plain task' >/dev/null 2>&1; r=$?
@@ -143,4 +143,4 @@ eq "approval: arg error prints nothing on stdout" "$($TB approval send:info:work
 eq "approval: --to without --text is a usage error" "$(rc $TB approval send:info:worker1 --to worker1)" "2"
 # tb 本体は規則ファイルの場所を env で差し替えられない
 eq "risk: TB_RISK_RULES has no effect (fixed path)" "$(printf '[nope]\n' >"$RK/env.conf"; TB_RISK_RULES=$RK/env.conf RISK_RULES=$RK/env.conf $TB approval send:info:worker1 --to worker1 --text hi | grep -c 'R-07')" "0"
-unset FAKE_AGENTS TB_APPROVALS
+unset FAKE_AGENTS TB_POLICY_A

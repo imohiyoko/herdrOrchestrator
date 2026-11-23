@@ -58,7 +58,7 @@ func reserved(lin string) bool {
 }
 
 // BuiltinPaths は設定の有無にかかわらず効くパス規則(gate.sh の GATE_BUILTIN_PATHS)。
-var BuiltinPaths = []string{".github", ".github/**", "**/.github", "**/.github/**", "**/gate*.conf", "**/gate-paths.conf", "**/gate*.sh", "**/approvals.conf", "**/risk-rules.conf",
+var BuiltinPaths = []string{".github", ".github/**", "**/.github", "**/.github/**", "**/gate*.conf", "**/gate-paths.conf", "**/gate*.sh", "**/approvals.conf", "**/policy.conf", "**/perms/*.tbl", "**/risk-rules.conf",
 	"**/bin/tb", "**/run-all.sh", "**/test/run.sh", "**/tests/run.sh", "**/test/cases/*gate*", "**/tests/*gate*",
 	"**/.claude", "**/.claude/**", "**/CLAUDE.md", "**/CLAUDE.local.md", "**/AGENTS.md", "**/GEMINI.md", "**/copilot-instructions.md",
 	"**/.cursor", "**/.cursor/**", "**/.cursorrules", "**/.windsurf", "**/.windsurf/**", "**/.windsurfrules", "**/.clinerules*", "**/.roo", "**/.roo/**",

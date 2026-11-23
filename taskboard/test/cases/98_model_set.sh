@@ -2,7 +2,7 @@
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
 # --- モデル: tb model-set(切り替え)、approvals の agent:model:<名前>、config の role-models(役割の既定)と決まり方の順
 _saved_pane=${HERDR_PANE_ID-}; unset HERDR_PANE_ID
-export TB_DB=$TMP/models.db TB_APPROVALS=$TMP/appr-models.conf TB_SPAWN_RETRY_SEC=0 TB_AGENT_CWD=$TMP TB_LIMITS=$TMP/ms-lim.conf
+export TB_DB=$TMP/models.db TB_POLICY_A=$TMP/appr-models.conf TB_SPAWN_RETRY_SEC=0 TB_AGENT_CWD=$TMP TB_LIMITS=$TMP/ms-lim.conf
 export TB_ROLE_MODELS=$TMP/role-models.conf
 export FAKE_DYNAMIC=1
 mssql() { sqlite3 "$TB_DB" "$@"; }
@@ -15,7 +15,7 @@ ms_hash() { cksum <"$MS_HOME/.claude/settings.json"; }
 H0=$(ms_hash)
 MS_C=$(ms_ag conductor wC:p1); MS_W1=$(ms_ag worker1 wW:p1 idle s1); MS_W2=$(ms_ag worker2 wX:p1 working s2); MS_H=$(ms_ag hr1 wH:p1 idle sh)
 export FAKE_AGENTS="[$MS_C,$MS_W1,$MS_W2,$MS_H]"
-printf 'agent:model:worker1 = allow\n* = ask\n' >"$TB_APPROVALS"
+printf '* agent:model worker1 = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
 : >"$TB_ROLE_MODELS"
 ms_reset
 $TB agents >/dev/null
@@ -70,9 +70,9 @@ eq "model-set pending: recorded as op=revive with args.model_set" "$(mssql "SELE
 out=$($TB agent-approve "$lid" 2>&1; echo "rc=$?")
 eq "agent-approve runs the model switch" "$(tail -1 <<<"$out") $(ms_model worker2) $(grep -c '^start worker2 .* --resume s2 --model haiku$' "$FAKE_LOG")" "rc=0 haiku 1"
 # 役割の glob でも同じ経路(@worker = allow)
-printf 'agent:model:@worker = allow\n* = ask\n' >"$TB_APPROVALS"
+printf '* agent:model @worker = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
 eq "approval: @role rule takes effect" "$($TB approval agent:model:worker2 | head -1) $($TB approval agent:model:hr1 | head -1)" "allow ask"
-printf 'agent:model:worker1 = allow\n* = ask\n' >"$TB_APPROVALS"
+printf '* agent:model worker1 = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
 
 # ---- @役割 と --all
 mssql "UPDATE agents SET cwd='$TMP';"
@@ -134,4 +134,4 @@ eq "config set role-models: name: lines are accepted, a bad glob is refused" "$(
 $TB config unset role-models >/dev/null; export TB_ROLE_MODELS=$_saved_rm
 : >"$TB_ROLE_MODELS"
 
-unset FAKE_AGENTS FAKE_DYNAMIC TB_ROLE_MODELS TB_LIMITS MS_HOME; export TB_APPROVALS=$TMP/appr.conf; export HERDR_PANE_ID=$_saved_pane
+unset FAKE_AGENTS FAKE_DYNAMIC TB_ROLE_MODELS TB_LIMITS MS_HOME; export TB_POLICY_A=$TMP/appr.conf; export HERDR_PANE_ID=$_saved_pane

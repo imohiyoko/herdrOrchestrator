@@ -13,15 +13,16 @@ import (
 	"github.com/imohiyoko/herdrorchestrator/internal/approval"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/config"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/identity"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/perms"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 	"github.com/imohiyoko/herdrorchestrator/internal/message"
 )
 
 // tb approval(taskboard/lib/approvals.sh)。古い名前 tb approval <操作> / allow / ask / approve / reject も同じに動かす。
 
-const approvalUsage = `tb approval check <操作> [--by A] [--to 宛先 --text 本文 [--kind K]]   1 行目 ask|allow、2 行目 rule:(終了コード 0=allow 20=ask)
-tb approval allow <操作のパターン>    今後は許可する(人だけ)
-tb approval ask <操作のパターン>      承認制に戻す(人だけ)
+const approvalUsage = `tb approval check <操作> [--by A] [--to 宛先 --text 本文 [--kind K]]   1 行目 allow|ask|deny、2 行目 rule:(終了コード 0=allow 20=ask 4=deny)
+tb approval allow <操作のパターン>    今後は許可する(人だけ。設定 policy に * <操作> <対象> = allow の行を書く)
+tb approval ask <操作のパターン>      承認制に戻す(人だけ。設定 policy に * <操作> <対象> = ask-any の行を書く)
 tb approval approve O-<n> [--always]  承認待ちの送信を届ける
 tb approval reject O-<n>              承認待ちの送信を却下する
 (古い名前 tb approval <操作> / tb allow / tb ask / tb approve / tb reject も同じに使える)
@@ -77,7 +78,7 @@ func cmdApproval(args []string, w, stderr io.Writer, legacy string) error {
 		if len(args) != 1 {
 			return usage("%s <操作のパターン>", sub)
 		}
-		return setApproval(db, sub, args[0], w)
+		return setApproval(db, sub, args[0], w, stderr)
 	case "approve":
 		return approve(db, args, w, stderr)
 	default:
@@ -144,76 +145,106 @@ func approvalCheck(db *store.DB, args []string, w, stderr io.Writer) error {
 		}
 		fmt.Fprint(w, approval.Eval(j.Collect(sender, to, kind, text)).Format())
 	}
-	if v != "allow" {
-		return &exit{exitAsk, ""}
+	switch v {
+	case "allow":
+		return nil
+	case "deny":
+		return &exit{4, ""}
 	}
-	return nil
+	return &exit{exitAsk, ""}
 }
 
 func nowTS() string { return time.Now().UTC().Format("2006-01-02T15:04:05Z") }
 
-// setApproval は set_approval: 同じパターンの行を書き換え、無ければ最初の規則の前に足す。
-func setApproval(db *store.DB, val, pat string, w io.Writer) error {
+// setApproval は set_approval: 設定 policy に「* <操作名> <対象> = allow|ask-any」の行を書く
+// (主体・操作名・対象が同じ行があれば書き換え、無ければ末尾に足す)。書いたあとに、もっと厳しい行が当たっていないか確かめる。
+func setApproval(db *store.DB, val, pat string, w io.Writer, stderr io.Writer) error {
 	if err := validAction(pat); err != nil {
 		return err
 	}
 	if err := requireHuman("tb " + val); err != nil {
 		return err
 	}
-	cur, _, has := config.Lookup(db.DB, db.Session, "approvals")
+	eff := "ask-any"
+	if val == "allow" {
+		eff = "allow"
+	}
+	op, target := perms.SplitAct(pat)
+	if target == "" {
+		target = "*"
+	}
+	ops := perms.OpsOf(op)
+	if len(ops) == 0 {
+		return die("tb %s: %s はコマンドの中の操作に当たりません(コマンド cmd: や承認の委任 approve: は policy に直接書く: tb config edit policy)", val, pat)
+	}
+	cur, _, has, readErr := config.LookupStrict(db.DB, db.Session, "policy")
+	if readErr != "" {
+		return die("設定 policy を読めないため書きません(%s)", readErr)
+	}
 	var lines []string
 	if has && cur != "" {
 		lines = strings.Split(cur, "\n")
 	}
 	ts := nowTS()
 	var b strings.Builder
-	found := false
+	done := map[string]bool{}
 	for _, line := range lines {
-		k := config.Trim(cutHash(line))
-		k, _, _ = strings.Cut(k, "=")
-		k = config.Trim(k)
-		if !strings.HasPrefix(line, "#") && strings.Contains(line, "=") && k == pat {
-			if !found {
-				b.WriteString(pat + " = " + val + "   # " + ts + " に人が変更\n")
+		l := config.Trim(cutHash(line))
+		lhs, _, isRule := strings.Cut(l, "=")
+		f := strings.Fields(lhs)
+		hit := ""
+		if isRule && len(f) == 3 && f[2] == target {
+			for _, o := range ops {
+				if f[0] == perms.SubjectOf(o) && f[1] == o {
+					hit = o
+				}
 			}
-			found = true
-		} else {
-			b.WriteString(line + "\n")
 		}
+		if hit == "" {
+			b.WriteString(line + "\n")
+			continue
+		}
+		if done[hit] {
+			continue
+		}
+		b.WriteString(perms.SubjectOf(hit) + " " + hit + " " + target + " = " + eff + "   # " + ts + " に人が変更(tb approval " + val + ")\n")
+		done[hit] = true
 	}
 	body := strings.TrimSuffix(b.String(), "\n")
-	if !found {
-		rule := pat + " = " + val + "   # " + ts + " に人が追加"
+	for _, o := range ops {
+		if done[o] {
+			continue
+		}
+		row := perms.SubjectOf(o) + " " + o + " " + target + " = " + eff + "   # " + ts + " に人が追加(tb approval " + val + ")"
 		if body == "" {
-			body = rule
-		} else { // awk: コメントでも空行でもない最初の行の前に足す($(...) で末尾の改行は落ちる)
-			var o []string
-			done := false
-			for _, l := range strings.Split(body, "\n") {
-				if !done && !strings.HasPrefix(l, "#") && strings.TrimFunc(l, isPosixSpace) != "" {
-					o = append(o, rule)
-					done = true
-				}
-				o = append(o, l)
-			}
-			if !done {
-				o = append(o, rule)
-			}
-			body = strings.TrimRight(strings.Join(o, "\n"), "\n")
+			body = row
+		} else {
+			body += "\n" + row
 		}
 	}
-	info, _ := config.Info("approvals")
+	if bad := perms.ValidatePolicy(body); bad != "" {
+		fmt.Fprint(stderr, bad)
+		return die("policy の本文に問題があるため書きませんでした")
+	}
+	info, _ := config.Info("policy")
 	if f := os.Getenv(info.Env); f != "" {
 		if err := writeConfigFile(f, body); err != nil {
 			return err
 		}
-	} else if err := config.DBPut(db.DB, db.Session, "approvals", body, val, false, ""); err != nil {
+	} else if err := config.DBPut(db.DB, db.Session, "policy", body, val, false, ""); err != nil {
 		return err
 	}
 	if _, err := db.Exec(`INSERT INTO main.approval_changes (herdr_session, pattern, value, created_at) VALUES (?, ?, ?, ?)`, db.Session, pat, val, nowTS()); err != nil {
 		return err
 	}
-	fmt.Fprintf(w, "%s = %s\n", pat, val)
+	for _, o := range ops {
+		fmt.Fprintf(w, "%s %s %s = %s\n", perms.SubjectOf(o), o, target, eff)
+	}
+	if val == "allow" && !strings.ContainsAny(pat, "*?") && perms.SubjectOf(op) == "*" {
+		if tier, rule := approval.NewJudge(db.DB, db.Session).Authorize(pat, ""); tier != "allow" {
+			fmt.Fprintf(stderr, "tb: 注意: もっと厳しい行が当たるため、%s はまだ %s です(%s)\n", pat, tier, rule)
+		}
+	}
 	return nil
 }
 
@@ -260,9 +291,14 @@ func approverCheck(j *approval.Judge, cmd, act, by string) (approver, error) {
 	if who == by {
 		return approver{}, die("%s: 自分の依頼は承認できません(agent '%s')。人が自分の端末で実行します", cmd, who)
 	}
+	if agents.NameRE.MatchString(by) {
+		if tier, r := j.Authorize(act, by); tier == "ask-human" {
+			return approver{}, die("%s は人が自分の端末で実行します(%s からの %s は ask-human のため、人だけが承認できます。%s)", cmd, by, act, r)
+		}
+	}
 	rule, ok := j.GrantOf(who, "approve:"+act, by)
 	if !ok {
-		return approver{}, die("%s は人が自分の端末で実行します(agent '%s' には %s からの %s を承認する許可がありません。grants.conf に '<承認者> approve:<操作> <依頼者>' の行が要ります)", cmd, who, by, act)
+		return approver{}, die("%s は人が自分の端末で実行します(agent '%s' には %s からの %s を承認する許可がありません。policy に '<承認者> approve:<操作> <依頼者> = allow' の行が要ります)", cmd, who, by, act)
 	}
 	return approver{who, rule}, nil
 }
@@ -313,7 +349,7 @@ func approve(db *store.DB, args []string, w, stderr io.Writer) error {
 		return die("%s は承認待ちではありません(ほかで決まりました)", id)
 	}
 	if always {
-		if err := setApproval(db, "allow", act, io.Discard); err != nil {
+		if err := setApproval(db, "allow", act, io.Discard, stderr); err != nil {
 			return err
 		}
 		fmt.Fprintf(w, "%s = allow(今後は承認なし)\n", act)

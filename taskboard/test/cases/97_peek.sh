@@ -2,9 +2,9 @@
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
 # --- tb peek(agent の中身を読む権限)と read_log / 関係グラフの read の辺
 _saved_pane=${HERDR_PANE_ID-}; unset HERDR_PANE_ID
-_saved_appr=${TB_APPROVALS-}
-export TB_DB=$TMP/peek.db TB_APPROVALS=$TMP/peek-appr.conf
-printf 'agent:read:@worker = allow\n* = ask\n' >"$TB_APPROVALS"
+_saved_appr=${TB_POLICY_A-}
+export TB_DB=$TMP/peek.db TB_POLICY_A=$TMP/peek-appr.conf
+printf '* agent:read @worker = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
 pk() { printf '{"pane_id":"w%s:p1","name":"%s","agent_status":"idle","agent_session":{"value":"s-%s"}}' "$1" "$1" "$1"; }
 export FAKE_AGENTS="[$(pk conductor),$(pk worker1),$(pk sweeper)]"
 : >"$FAKE_LOG"
@@ -19,5 +19,5 @@ eq "peek: read_log keeps who read whom" "$(sqlite3 "$TB_DB" "SELECT reader||'>'|
   "human>conductor:ok sweeper>sweeper:ok sweeper>worker1:ok sweeper>conductor:denied human>nobody:failed "
 eq "agents --graph: agent-to-agent reads are edges (denied marked)" "$($TB agents --graph --json | jq -r '[.edges[] | select(.verb=="read") | "\(.from)>\(.to):\(.status)"] | sort | join(",")')" "sweeper>conductor:denied,sweeper>worker1:ok"
 eq "peek: a failed agent list is still logged" "$(FAKE_LIST_FAIL=1 rc $TB peek worker1) $(sqlite3 "$TB_DB" "SELECT reader||'>'||target||':'||status FROM read_log ORDER BY id DESC LIMIT 1;")" "1 human>worker1:failed"
-export TB_APPROVALS=$_saved_appr
+export TB_POLICY_A=$_saved_appr
 unset FAKE_AGENTS; export HERDR_PANE_ID=$_saved_pane

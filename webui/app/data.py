@@ -132,11 +132,12 @@ def q(sql, params=()):
 # ---- 設定(config 表。taskboard/schema/013)。tb の lib/config.sh の config_lookup と同じ順で引く:
 # 環境変数で明示したファイル > DB のこのセッションの行 > DB の共通の行(*) > checkout の taskboard/config/<名前> > <名前>.example
 CONFIG_KEYS = {"projects": (("TB_CONFIG",), "projects.conf"),
-               "approvals": (("WEBUI_APPROVALS", "TB_APPROVALS"), "approvals.conf"),
+               "policy": (("WEBUI_POLICY", "TB_POLICY"), "policy.conf"),
                "protect": (("TB_PROTECT",), "protect.conf"),
                "labels": (("TB_LABELS",), "labels.conf"),
                "statuses": (("TB_STATUSES",), "statuses.conf")}
 CONFIG_MAX = 262144
+NO_EXAMPLE = {"policy"}   # .example を既定値にしないキー(tb の CFG_EXAMPLE=0 と同じ)
 
 
 def _read_text(path):
@@ -161,7 +162,10 @@ def config_text(key):
     if rows:
         return rows[0]["body"], "db:" + rows[0]["s"]
     cdir = os.environ.get("TB_CONFIG_DIR") or os.path.join(HERDR_ROOT, "taskboard", "config")
-    for path, kind in ((os.path.join(cdir, name), "file:"), (os.path.join(cdir, name + ".example"), "example:")):
+    cands = [(os.path.join(cdir, name), "file:")]
+    if key not in NO_EXAMPLE:
+        cands.append((os.path.join(cdir, name + ".example"), "example:"))
+    for path, kind in cands:
         text = _read_text(path)
         if text is not None:
             return text, kind + path

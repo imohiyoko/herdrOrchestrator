@@ -112,6 +112,15 @@ lead1        approve:agent:stop  ~report      = allow       # 旧 grants の app
 
 段 1 が herdr の変更に依存するので、herdr 側が入るまでは、段 2・3 を先に進めてよい(そのあいだ認証は今のまま)。
 
+### 段 3 の進み具合(2026-11-23)
+
+- **段 3a(済み)**: `approvals` と `grants` を `policy` に統合した。コマンドの中の操作の既定は表 `taskboard/perms/ops.tbl`(herdrctl も同じ表を埋め込む)。`approval_of` / `grant_of` は policy の判定(当たる行のいちばん厳しい効果、無ければ既定の表)に替え、deny は送らず実行しない(終了コード 4)。古いキーはもう読まず、残っていれば一度だけ警告する。`tb policy import [--apply]` が古い行を変換する
+  - 変換の決まり: approvals の行は主体 `*` の行にする。ただし `*` や `agent:*` のような広い glob は、`cmd:`・`approve:`・`agent:flag` に当たらないよう、中の操作の族ごとの行に分ける(前の approvals はコマンドと承認の委任を決めていなかったので、`* * * = allow` にすると権限が広がる)。`role:change` は人事役(`@hr`)の行にする(前は人事役にだけ効いていた)。grants の行は `= allow` を付けた行にする
+  - 前は「上から最初に当たった行」だったので、厳しい方が勝つ policy では結果が変わる行がある(広い ask の下の狭い allow、ask に当たる grants)。import はそれを「確かめてほしい行」として出す。広い行で締めて狭い行で緩める書き方はできない(決めたことの 1 のとおり)
+  - `tb approval allow` / `ask` は policy に「* <操作> <対象> = allow|ask-any」の行を書く(上と同じ分け方)
+  - policy.conf と `perms/*.tbl` を gate の外せない保護対象に足した
+- **段 3b(これから)**: `routes` / `delivery` の許可・拒否、`protect`、spawn の方針の自動承認、proxy check を policy に移し、古い仕組みを消す
+
 ## 人が決めたこと(2026-11-22。すべて推奨どおり)
 
 1. **決め方**: 当たる行のうち「いちばん厳しい効果」を採る。

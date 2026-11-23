@@ -67,6 +67,7 @@ ADR 0002(サービスの境界)と ADR 0004(3 つの層とモジュール)から
 | `activity` | 機能 | hook からの活動記録 | activity / `touch` `activity`(hook が呼ぶので名前は変えない) |
 | `handoff` | 機能 | 人が貼る調査依頼の文面 | handoff / `handoff write`(古い形 `handoff <id>`) |
 | `config` | 土台(store) | 設定の読み書き | config / `config` |
+| `policy` | 土台(authz) | 認可の設定 policy の移し替え(古い approvals / grants から) | approvals / `policy import` |
 
 迷ったら、そのコマンドが **どの表(または設定)を書くか** で決める。書く表を持つサービスがコマンドの持ち主になる(ADR 0002 の「直接 SQL を書くのは store だけ」「他のサービスの表を直接読まない」と同じ向き)。
 

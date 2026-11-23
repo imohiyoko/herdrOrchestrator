@@ -7,3 +7,8 @@ import _ "embed"
 //
 //go:embed commands.tbl
 var Commands string
+
+// Ops は ops.tbl(コマンドの中の操作の既定)の本文。
+//
+//go:embed ops.tbl
+var Ops string

@@ -1,12 +1,12 @@
 # shellcheck shell=bash
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
 # --- delivery(今届ける / 保留する)と inbox(tb inbox / tb inbox-read)
-_dl_saved=("${TB_CONFIG-}" "${TB_ROUTES-}" "${TB_APPROVALS-}")
-export TB_DB=$TMP/delivery.db TB_CONFIG=$TMP/delivery-projects.conf TB_ROUTES=$TMP/delivery-routes.conf TB_APPROVALS=$TMP/delivery-approvals.conf
+_dl_saved=("${TB_CONFIG-}" "${TB_ROUTES-}" "${TB_POLICY_A-}")
+export TB_DB=$TMP/delivery.db TB_CONFIG=$TMP/delivery-projects.conf TB_ROUTES=$TMP/delivery-routes.conf TB_POLICY_A=$TMP/delivery-approvals.conf
 unset TB_DELIVERY
 printf 'dl=coordinator\n' >"$TB_CONFIG"
 printf 'coordinator -> *\n@worker -> *\nassistant -> *\n' >"$TB_ROUTES"
-printf '* = allow\n' >"$TB_APPROVALS"
+printf '* * * = allow\n' >"$TB_POLICY_A"
 dsql() { sqlite3 "$TB_DB" "$@"; }
 dag() { printf '{"pane_id":"w%s:p1","name":"%s","agent_session":{"value":"s-%s"}}' "$1" "$1" "$1"; }
 export FAKE_AGENTS="[$(dag coordinator),$(dag assistant),$(dag worker1),$(dag worker2),$(dag other)]"
@@ -40,10 +40,10 @@ eq "delivery: a line without the kind (and no *) is skipped" "$(C send assistant
 printf 'coordinator -> assistant : info=hold answer=hold task=now\n@worker -> assistant : *=hold\n' >"$TB_DELIVERY"
 
 # 承認待ち → 承認したあとで delivery が決まる
-printf 'send:info:assistant = ask\n* = allow\n' >"$TB_APPROVALS"
+printf '* send:info assistant = ask-any\n* * * = allow\n' >"$TB_POLICY_A"
 eq "delivery: approvals before delivery (pending first)" "$(C send assistant --kind info --text wait 2>/dev/null | tail -1) $(dsql "SELECT COUNT(*) FROM inbox WHERE outbox_id=10;")" "O-10 pending-approval 0"
 eq "delivery: approved message is held, not typed" "$(n=$(prompts); $TB approve O-10; echo "$(($(prompts) - n))")" "$(printf 'O-10 approved and held for assistant (I-7)\n0')"
-printf '* = allow\n' >"$TB_APPROVALS"
+printf '* * * = allow\n' >"$TB_POLICY_A"
 # routes が先(拒否は保留しない)
 eq "delivery: routes before delivery (denied is not held)" "$(HERDR_PANE_ID=wother:p1 rc $TB send assistant --kind info --text x) $(dsql "SELECT COUNT(*) FROM inbox WHERE outbox_id=(SELECT MAX(id) FROM outbox);")" "4 0"
 
@@ -79,6 +79,6 @@ eq "delivery: a role that cannot be read → held (never now)" "$out $(dsql "SEL
 # キーを消せば今までどおり(rollback)
 unset TB_DELIVERY
 eq "delivery: removing the key → delivered now again" "$(C send assistant --kind info --text back | tail -1)" "O-14 sent to assistant"
-export TB_CONFIG=${_dl_saved[0]} TB_ROUTES=${_dl_saved[1]} TB_APPROVALS=${_dl_saved[2]}
-[[ -n $TB_ROUTES ]] || unset TB_ROUTES; [[ -n $TB_APPROVALS ]] || unset TB_APPROVALS
+export TB_CONFIG=${_dl_saved[0]} TB_ROUTES=${_dl_saved[1]} TB_POLICY_A=${_dl_saved[2]}
+[[ -n $TB_ROUTES ]] || unset TB_ROUTES; [[ -n $TB_POLICY_A ]] || unset TB_POLICY_A
 unset FAKE_AGENTS _dl_saved

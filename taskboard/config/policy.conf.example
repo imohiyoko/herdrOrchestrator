@@ -1,18 +1,31 @@
 # 認可(ADR 0007)。誰が(主体)、何を(操作)、何に対して(対象)してよいか。tb config set policy < このファイル で使う。
-# 書くのは人だけ(agent の pane からは tb config set を実行できない)。.example は既定値にしない(無ければ表 taskboard/perms/commands.tbl の既定)。
+# 書くのは人だけ(agent の pane からは tb config set を実行できない)。.example は既定値にしない(無ければ既定の表)。
+# 古い設定 approvals と grants はもう読まない。残っていれば tb policy import で、この形の行に変換して消す。
 #
 # 1 行 1 つ: <主体> <操作> <対象> = <効果>
-#   主体   agent 名の glob / @<役割>(@a+b は全部を持つ)/ *(どの agent も)
+#   主体   agent 名の glob / @<役割>(@a+b は全部を持つ)/ *(どの agent も。主体の無い自動の判定 ― alert:analyze・compact など ― にも当たる)
 #          human と system:<名前> はまだ書けない(人は常に通る。system は ADR 0007 の段 1 から)
-#   操作   cmd:<サービス>:<動詞> の glob(操作名は taskboard/perms/commands.tbl の 2 列目。例: cmd:ticket:resolve、cmd:ticket:*)
-#   対象   コマンドの操作では * と書く(送信・停止などの対象は ADR 0007 の段 3 から)
-#   効果   allow(すぐ実行)/ ask-any(別の agent か人の承認が要る)/ ask-human(人の承認が要る)/ deny(実行しない)
+#   操作   コマンド   cmd:<サービス>:<動詞> の glob(操作名は taskboard/perms/commands.tbl の 2 列目。例: cmd:ticket:resolve、cmd:ticket:*)
+#          コマンドの中の操作   send:task / send:info / send:answer(tb message send)、agent:read(tb peek)、agent:stop / agent:revive /
+#            agent:new / agent:spawn / agent:compact / agent:model(agent の操作)、agent:slash:<コマンド>(tb slash)、agent:flag(判定フラグ)、
+#            role:change(役割の変更)、alert:analyze(解析役の起動)、recipe:<名前>(レシピ)、setup:<段階>、
+#            approve:<元の操作>:<元の対象>(承認待ちを承認・却下できる。対象は依頼した agent。例: approve:send:task:*)
+#   対象   コマンドの操作では * と書く
+#          コマンドの中の操作では agent 名の glob / @<役割> / self(主体自身)/ *(問わない)、または関係:
+#            spawn の親子 ~child(子)/ ~descendant(子孫)/ ~parent(親)/ ~sibling(同じ親)
+#            組織図(設定 org) ~report(直属の部下)/ ~subordinate(配下)/ ~manager(上司)/ ~superior(上の全員)/ ~peer(同じ上司)
+#          対象の無い操作(role:change、alert:analyze、setup:*)は * の行だけが当たる
+#   効果   allow(すぐ実行)/ ask-any(承認待ち。人か、approve: を許された agent が承認する)/ ask-human(人の承認が要る)/ deny(実行しない)
 #
-# 決め方: 主体・操作・対象が当たる行のうち、いちばん厳しい効果を採る(行の順番は関係ない)。当たる行が無ければ表の既定。
+# 決め方: 主体・操作・対象が当たる行のうち、いちばん厳しい効果を採る(行の順番は関係ない)。当たる行が無ければ既定の表
+#   (コマンドは taskboard/perms/commands.tbl、コマンドの中の操作は taskboard/perms/ops.tbl。今の既定: send:info・send:answer・
+#    alert:analyze・proxy:read-only は allow、agent:flag と approve:* は deny、ほかは ask-any)
 #   - 広い行で締めて、狭い行で緩める、はできない(厳しい方が勝つ)。緩めたい相手を外すように、広い行を狭く書く
-#   - 役割を確かめられない行は、締める向きにだけ効く(緩める向きには使わない)
+#   - 役割・関係を確かめられない行は、締める向きにだけ効く(緩める向きには使わない)
 #   - 設定を読めないときは deny(fail-closed)
+#   - agent:flag と approve:* は、allow の行で明示したときだけ許す(既定は deny)
 # 判定は agent の pane からの実行だけにかかる。人の端末からは、いつでも実行できる。
+# 確かめ方: tb can <主体> <操作> <対象>(例: tb can w1 send:task lead1)/ tb approval check <操作>:<対象> --by <主体>
 #
 # 例:
 # worker はチケットを取り消すとき人の確認が要る
@@ -21,3 +34,12 @@
 # conductor cmd:ticket:resolve *  = allow
 # どの agent も設定を書き換えない(既定どおり。明示しておく)
 # *        cmd:config:set      *  = deny
+# manager は子孫の中身を読め、子には承認なしで依頼を送れる
+# @manager agent:read  ~descendant = allow
+# @manager send:task   ~child      = allow
+# lead は直属の部下の停止を承認なしで
+# @lead    agent:stop  ~report     = allow
+# lead は子からの依頼の送信を承認できる(tb approval approve O-<n>)
+# @lead    approve:send:task:*  ~child = allow
+# 解析役の自動起動を止める(人が tb alert-approve で決める)
+# *        alert:analyze *  = ask-any

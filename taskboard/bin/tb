@@ -37,7 +37,7 @@ tb_go() {
   # 1 語目(サービスごと移したもの)か、<サービス>.<動詞>(.<動詞>)(サービスの一部の動詞だけ移したもの。tb agent ops など)で決める
   [[ " $have " == *" $1 "* || ( $# -ge 2 && " $have " == *" $1.$2 "* ) || ( $# -ge 3 && " $have " == *" $1.$2.$3 "* ) ]] || return 0
   # 権限段階の門(ADR 0006)を持たない古い herdrctl には渡さない(渡すと approvals の cmd: の行が効かない)
-  [[ " $("$hc" tb --features 2>/dev/null) " == *" policy "* ]] || die "herdrctl が古く、認可(ADR 0007)を確かめられないため渡しません: $hc(herdrctl を入れ直すか TB_IMPL=bash)"
+  [[ " $("$hc" tb --features 2>/dev/null) " == *" policy-ops "* ]] || die "herdrctl が古く、認可(ADR 0007)を確かめられないため渡しません: $hc(herdrctl を入れ直すか TB_IMPL=bash)"
   tb_go_exec "$hc" "$@"
 }
 tb_go_exec() {  # $1=herdrctl, 残り=tb のコマンドと引数

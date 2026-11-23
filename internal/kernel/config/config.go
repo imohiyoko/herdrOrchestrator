@@ -25,7 +25,7 @@ var Keys = []string{"projects", "policy", "approvals", "grants", "routes", "deli
 var keyInfo = map[string]Key{
 	"projects":      {"TB_CONFIG", "projects.conf", true},
 	"policy":        {"TB_POLICY", "policy.conf", false},
-	"approvals":     {"TB_APPROVALS", "approvals.conf", true},
+	"approvals":     {"TB_APPROVALS", "approvals.conf", false}, // 古い権限の設定(ADR 0007 で読まない。tb policy import が移す)
 	"grants":        {"TB_GRANTS", "grants.conf", false},
 	"routes":        {"TB_ROUTES", "routes.conf", false},
 	"delivery":      {"TB_DELIVERY", "delivery.conf", false},

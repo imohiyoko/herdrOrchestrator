@@ -3,9 +3,9 @@
 # --- nudge(チケットを握ったまま休んでいる agent に「続けて」と送る。経路は tb send と同じ outbox + delivery)
 _ng_nudge_set=${TB_NUDGE+x}; _ng_nudge=${TB_NUDGE-}   # 設定 nudge は、開始時に退避して専用の空設定にし、終了時に戻す(未設定なら未設定)
 _ng_roles_set=${TB_ROLES+x}; _ng_roles=${TB_ROLES-}
-_ng_saved=("${TB_CONFIG-}" "${TB_ROUTES-}" "${TB_APPROVALS-}" "${TB_DELIVERY-}" "${TB_PROTECT-}" "${HERDR_PANE_ID-}")
+_ng_saved=("${TB_CONFIG-}" "${TB_ROUTES-}" "${TB_POLICY_A-}" "${TB_DELIVERY-}" "${TB_PROTECT-}" "${HERDR_PANE_ID-}")
 export TB_DB=$TMP/nudge.db TB_CONFIG=$TMP/nudge-projects.conf TB_PROTECT=$TMP/nudge-protect.conf
-unset TB_ROUTES TB_DELIVERY TB_APPROVALS HERDR_PANE_ID
+unset TB_ROUTES TB_DELIVERY TB_POLICY_A HERDR_PANE_ID
 printf 'ng=coord\n' >"$TB_CONFIG"; : >"$TB_PROTECT"
 export TB_NUDGE=$TMP/nudge-ignore.conf; : >"$TB_NUDGE"
 : >"$FAKE_LOG"
@@ -192,8 +192,8 @@ eq "digest: 親と子は複数チケットに数えない" "$($TB digest --dry-r
 # 設定 messages で nudge.pool を差し替えられる({agent} {session} も使える)
 eq "config set messages: nudge.pool を受け付ける" "$(printf 'nudge.pool = {task} {title} {agent} {session}\n' | rc $TB config set messages)" "0"
 $TB config unset messages >/dev/null
-export TB_CONFIG=${_ng_saved[0]} TB_ROUTES=${_ng_saved[1]} TB_APPROVALS=${_ng_saved[2]} TB_DELIVERY=${_ng_saved[3]} TB_PROTECT=${_ng_saved[4]} HERDR_PANE_ID=${_ng_saved[5]}
-for _v in TB_CONFIG TB_ROUTES TB_APPROVALS TB_DELIVERY TB_PROTECT HERDR_PANE_ID; do [[ -n ${!_v} ]] || unset "$_v"; done
+export TB_CONFIG=${_ng_saved[0]} TB_ROUTES=${_ng_saved[1]} TB_POLICY_A=${_ng_saved[2]} TB_DELIVERY=${_ng_saved[3]} TB_PROTECT=${_ng_saved[4]} HERDR_PANE_ID=${_ng_saved[5]}
+for _v in TB_CONFIG TB_ROUTES TB_POLICY_A TB_DELIVERY TB_PROTECT HERDR_PANE_ID; do [[ -n ${!_v} ]] || unset "$_v"; done
 if [[ -n $_ng_nudge_set ]]; then export TB_NUDGE=$_ng_nudge; else unset TB_NUDGE; fi
 if [[ -n $_ng_roles_set ]]; then export TB_ROLES=$_ng_roles; else unset TB_ROLES; fi
 unset FAKE_AGENTS _ng_saved _v _ng_nudge _ng_nudge_set _ng_roles _ng_roles_set

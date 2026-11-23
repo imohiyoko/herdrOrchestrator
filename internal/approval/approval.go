@@ -6,10 +6,10 @@ import (
 
 	"github.com/imohiyoko/herdrorchestrator/internal/agents"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/config"
-	"github.com/imohiyoko/herdrorchestrator/internal/kernel/util"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/perms"
 )
 
-// 承認の判定(taskboard/lib/approvals.sh の grant_of / org_* / approval_of)。
+// 承認の判定(taskboard/lib/approvals.sh の grant_of / org_* / approval_of)。判定そのものは設定 policy(internal/kernel/perms の Judge / Authorize。ADR 0007)。
 
 // orgDepth は ORG_DEPTH(上へたどる段数の上限)。
 const orgDepth = 16
@@ -19,6 +19,7 @@ type Judge struct {
 	DB      *sql.DB
 	Session string
 	Roles   *agents.Roles
+	warned  bool
 }
 
 // NewJudge は今のセッションの判定。
@@ -230,85 +231,70 @@ func (j *Judge) OrgRelation(a, b, rel string) int {
 	return 1
 }
 
-// GrantOf は grant_of: grants.conf の行に当たれば、その行の書き方("grants.conf: <主体> <操作> <対象>")と true。
+// matcher は判定の間の役割を固定した照合(bash の role_pin)。
+func (j *Judge) matcher() perms.Matcher {
+	return perms.Matcher{Name: j.Roles.Match, Rel: j.Relation}
+}
+
+// LegacyWarn は古い権限の設定(approvals / grants)が残っていれば、その出どころを返す(bash の perm_legacy_warn。読まない)。
+func LegacyWarn(db *sql.DB, session string) string {
+	var left []string
+	for _, k := range []string{"approvals", "grants"} {
+		if _, src, ok := config.Lookup(db, session, k); ok {
+			left = append(left, k+"("+src+")")
+		}
+	}
+	if len(left) == 0 {
+		return ""
+	}
+	return "tb: 古い権限の設定が残っています(もう読みません): " + strings.Join(left, " ") + "。人が tb policy import で設定 policy に移して消してください(ADR 0007)"
+}
+
+// Warn は判定のときに 1 回だけ LegacyWarn を出す先(herdrctl tb の入口が stderr を入れる)。
+var Warn func(msg string)
+
+func (j *Judge) warn() {
+	if j.warned || Warn == nil {
+		return
+	}
+	j.warned = true
+	if m := LegacyWarn(j.DB, j.Session); m != "" {
+		Warn(m)
+	}
+}
+
+// GrantOf は grant_of: policy の行が主体にその操作を許していれば(当たる行のいちばん厳しい効果が allow)、その行と true。既定の表は見ない。
 func (j *Judge) GrantOf(who, op, target string) (string, bool) {
 	if who == "" || who == "human" {
 		return "", false
 	}
-	lines, ok := j.text("grants")
-	if !ok {
+	j.warn()
+	g, readErr, _ := perms.Judge(j.DB, j.Session, who, nil, op, target, j.matcher())
+	if readErr != "" || !g.Granted() {
 		return "", false
 	}
-	for _, line := range lines {
-		f := strings.FieldsFunc(trim(cutHash(line)), func(r rune) bool { return r == ' ' || r == '\t' || r == '\n' }) // read の既定の IFS
-		if len(f) != 3 {
-			continue
-		}
-		s, o, t := f[0], f[1], f[2]
-		if !util.Glob(o, op) || j.Roles.Match(who, s) != 0 {
-			continue
-		}
-		if strings.HasPrefix(t, "~") {
-			if j.Relation(who, target, t) != 0 {
-				continue
-			}
-		} else if j.Roles.Match(target, t) != 0 {
-			continue
-		}
-		return "grants.conf: " + s + " " + o + " " + t, true
-	}
-	return "", false
+	return g.BRule, true
 }
 
-// lastPart / initPart は ${x##*:} / ${x%:*}。
-func lastPart(s string) string {
-	if i := strings.LastIndexByte(s, ':'); i >= 0 {
-		return s[i+1:]
-	}
-	return s
-}
-func initPart(s string) string {
-	if i := strings.LastIndexByte(s, ':'); i >= 0 {
-		return s[:i]
-	}
-	return s
+// Authorize は approval_of の効果(allow / ask-any / ask-human / deny)と根拠。act は古い形の操作名(send:task:w1 など)。
+// by(実行する agent)が空なら主体の無い判定(主体 * の行だけ)。
+func (j *Judge) Authorize(act, by string) (tier, rule string) {
+	j.warn()
+	op, target := perms.SplitAct(act)
+	return perms.Authorize(j.DB, j.Session, by, op, target, j.matcher())
 }
 
-// Of は approval_of: 値(ask|allow)と根拠の行。by(実行する agent)を渡すと先に grants.conf を見る(操作の末尾を対象とみなす)。
+// Of は approval_of: 値(allow|ask|deny)と根拠の行。
 func (j *Judge) Of(act, by string) (value, rule string) {
-	if by != "" && strings.Contains(act, ":") {
-		if r, ok := j.GrantOf(by, initPart(act), lastPart(act)); ok {
-			return "allow", r
-		}
+	tier, rule := j.Authorize(act, by)
+	return Value(tier), rule
+}
+
+// Value は効果を approval の値(allow / ask / deny)にする。
+func Value(tier string) string {
+	switch tier {
+	case "allow", "deny":
+		return tier
 	}
-	lines, ok := j.text("approvals")
-	if ok {
-		for _, line := range lines {
-			line = trim(cutHash(line))
-			k, v, ok := strings.Cut(line, "=")
-			if !ok {
-				continue
-			}
-			k, v = trim(k), trim(v)
-			if v != "ask" && v != "allow" {
-				continue
-			}
-			if strings.HasPrefix(lastPart(k), "@") {
-				if !strings.Contains(act, ":") || !util.Glob(initPart(k), initPart(act)) {
-					continue
-				}
-				switch j.Roles.Match(lastPart(act), lastPart(k)) {
-				case 0:
-					return v, k + " = " + v
-				case 2:
-					return "ask", k + "(台帳を読めず役割を確かめられないため ask)"
-				}
-				continue
-			}
-			if util.Glob(k, act) {
-				return v, k + " = " + v
-			}
-		}
-	}
-	return "ask", "(一致なし: 既定 ask)"
+	return "ask"
 }

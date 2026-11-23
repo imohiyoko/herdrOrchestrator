@@ -51,5 +51,5 @@
 - 役割どうしの矛盾、古くなった記述、誰の仕事でもない隙間
 
 ## やらないこと
-- `roles/`・`approvals.conf`・`delivery`(旧 `routes.conf`)・scheduler の設定を直接変える
+- `roles/`・`policy`(権限)・`delivery`(旧 `routes.conf`)・scheduler の設定を直接変える
 - 他の agent に直接指示する(提案は設定役へ。人の判断が要るものは提案の本文に「人に確認」と書く)

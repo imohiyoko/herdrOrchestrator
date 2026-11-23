@@ -1,5 +1,5 @@
 // Package perms は tb の認可(主体 × 操作 × 対象 → allow / ask-any / ask-human / deny。ADR 0006 / ADR 0007。taskboard/lib/perms.sh)。
-// 既定は taskboard/perms/commands.tbl(埋め込み)。人が変えるのは設定 policy の行だけ(<主体> <操作> <対象> = <効果>)。
+// 既定は taskboard/perms/commands.tbl(コマンド)と ops.tbl(コマンドの中の操作)。どちらも埋め込み。人が変えるのは設定 policy の行だけ(<主体> <操作> <対象> = <効果>)。
 // 当たる行のうち、いちばん厳しい効果を採る。人は常に通る。
 package perms
 
@@ -101,88 +101,262 @@ func nameMatch(db *sql.DB, session, name, pat string) int {
 	return 1
 }
 
-// Tier は今の呼び出し元に効く効果と根拠(bash の perm_tier)。db が nil なら設定を見ない。
+// RelMatch は主体と対象の関係(~child / ~report など)の照合: 0 当たる / 1 当たらない / 2 確かめられない。
+// 台帳と組織図を読むので機能の層が入れる(herdrctl tb の入口。bash は PERM_REL_MATCH)。nil なら関係は確かめられない。
+var RelMatch func(db *sql.DB, session, a, b, rel string) int
+
+// Matcher は行の主体・対象の照合に使う関数(nil なら既定の NameMatch / RelMatch)。
+// 1 回の判定の間、役割を固定したいとき(approval.Judge)は自分の関数を渡す。
+type Matcher struct {
+	Name func(name, pat string) int
+	Rel  func(a, b, rel string) int
+}
+
+func (m Matcher) name(db *sql.DB, session, name, pat string) int {
+	if pat == "*" {
+		return 0
+	}
+	if m.Name != nil {
+		return m.Name(name, pat)
+	}
+	return nameMatch(db, session, name, pat)
+}
+
+// targetMatch は bash の perm_target_match。
+func (m Matcher) targetMatch(db *sql.DB, session, who, target, t string) int {
+	if t == "*" {
+		return 0
+	}
+	if target == "" {
+		return 1 // 対象の無い操作に当たるのは * の行だけ
+	}
+	switch {
+	case t == "self":
+		if who != "" && who == target {
+			return 0
+		}
+		return 1
+	case strings.HasPrefix(t, "~"):
+		if who == "" {
+			return 1
+		}
+		if m.Rel != nil {
+			return m.Rel(who, target, t)
+		}
+		if RelMatch != nil {
+			return RelMatch(db, session, who, target, t)
+		}
+		return 2
+	}
+	return m.name(db, session, target, t)
+}
+
+// Judgement は設定 policy の行を当てた結果(bash の PJ_*)。
+type Judgement struct {
+	Best  int    // 確かめられた行のうち、いちばん厳しい効果の順位(無ければ -1)
+	BRule string // その行
+	Unk   int    // 役割・関係を確かめられない行のいちばん厳しい順位(締める向きにだけ使う。無ければ -1)
+	URule string
+	Human bool // 呼び出し元が人(行は見ない)
+}
+
+// Caller は Judge の主体に「今の呼び出し元」を渡す印(行の操作名が当たったときに初めて whoFn で引く)。
+const Caller = "@caller"
+
+// Judge は bash の perm_judge。主体 who は agent 名 / "human" / ""(主体の無い判定。主体 * の行だけ)/ Caller。
+// 対象 target は名前 / ""(対象の無い操作。対象 * の行だけ)/ "*"(行の対象を見ない)。
+// readErr は設定を読めなかったとき(呼ぶ側が deny にする)。
+func Judge(db *sql.DB, session, who string, whoFn func() (string, error), op, target string, m Matcher) (j Judgement, readErr string, err error) {
+	j = Judgement{Best: -1, Unk: -1}
+	if who == "human" {
+		j.Human = true
+		return j, "", nil
+	}
+	if db == nil {
+		return j, "", nil
+	}
+	body, _, found, re := config.LookupStrict(db, session, "policy")
+	if re != "" {
+		return j, re, nil
+	}
+	if !found {
+		return j, "", nil
+	}
+	for _, line := range strings.Split(body, "\n") {
+		if i := strings.IndexByte(line, '#'); i >= 0 {
+			line = line[:i]
+		}
+		line = config.Trim(line)
+		lhs, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		v = config.Trim(v)
+		f := strings.Fields(lhs)
+		if len(f) != 3 || !valid(v) {
+			continue
+		}
+		s, o, tg := f[0], f[1], f[2]
+		if !util.Glob(o, op) || s == "human" || strings.HasPrefix(s, "system:") {
+			continue
+		}
+		if who == Caller {
+			if who, err = whoFn(); err != nil {
+				return j, "", err
+			}
+			if who == "human" {
+				j.Human = true
+				return j, "", nil
+			}
+		}
+		mm := 0
+		if who == "" {
+			if s != "*" {
+				continue
+			}
+		} else if mm = m.name(db, session, who, s); mm == 1 {
+			continue
+		}
+		if target != "*" {
+			switch m.targetMatch(db, session, who, target, tg) {
+			case 1:
+				continue
+			case 2:
+				mm = 2
+			}
+		}
+		rk := Rank(v)
+		if mm == 0 && rk > j.Best {
+			j.Best, j.BRule = rk, "policy: "+s+" "+o+" "+tg+" = "+v
+		} else if mm == 2 && rk > j.Unk {
+			j.Unk, j.URule = rk, "policy: "+s+" "+o+" "+tg+" = "+v+"(役割・関係を確かめられない)"
+		}
+	}
+	return j, "", nil
+}
+
+// Resolve は既定(tier, rule)に判定の結果を重ねる(bash の perm_resolve)。floor が空なら下限なし。
+func (j Judgement) Resolve(tier, rule, floor string) (string, string) {
+	if j.Best >= 0 {
+		tier, rule = Tiers[j.Best], j.BRule
+	}
+	if j.Unk > Rank(tier) {
+		tier, rule = Tiers[j.Unk], j.URule
+	}
+	if floor != "" && Rank(tier) < Rank(floor) {
+		rule += "(下限 " + floor + " より緩いので " + floor + ")"
+		tier = floor
+	}
+	return tier, rule
+}
+
+// Granted は行で明示した許可か(bash の grant_of: 当たる行のいちばん厳しい効果が allow で、確かめられない行が締めていない)。
+func (j Judgement) Granted() bool { return j.Best == 0 && j.Unk <= 0 }
+
+// Tier は今の呼び出し元に効く効果と根拠(bash の perm_tier。コマンドの操作)。db が nil なら設定を見ない。
 // who は呼び出し元(人なら "human")を返す。policy の行が操作に当たったときだけ呼ぶ(herdr に聞かずに済むように)。
-// human が返ったら、判定はしない(Enforce が通す)。
+// human が返ったら、判定はしない(Enforce が通す)。対象は今は無い(対象 * の行だけが当たる)。
 func (t *Table) Tier(db *sql.DB, session, op, target string, who func() (string, error)) (tier, rule string, err error) {
 	r, ok := t.byOp[op]
 	if !ok {
 		return "deny", "(表に無い操作: deny)", nil
 	}
-	tier, rule = r.Default, "(既定 "+r.Default+")"
-	if target == "" {
-		target = "*"
+	tier, rule = r.Default, "既定 "+r.Default
+	j, readErr, err := Judge(db, session, Caller, who, op, target, Matcher{})
+	if err != nil {
+		return "", "", err
 	}
-	best, unk := -1, -1
-	var brule, urule string
-	if db != nil {
-		body, _, found, readErr := config.LookupStrict(db, session, "policy")
-		// 設定を読めない(ファイルの読み取りや DB の問い合わせが失敗した)ときは、設定が無いのとは分けて deny(fail-closed)
-		if readErr != "" {
-			return "deny", "(設定 policy を読めない: " + readErr + ")", nil
-		}
-		name := ""
-		for _, line := range strings.Split(body, "\n") {
-			if !found {
-				break
-			}
-			if i := strings.IndexByte(line, '#'); i >= 0 {
-				line = line[:i]
-			}
-			line = config.Trim(line)
-			lhs, v, ok := strings.Cut(line, "=")
-			if !ok {
-				continue
-			}
-			v = config.Trim(v)
-			f := strings.Fields(lhs)
-			if len(f) != 3 || !valid(v) {
-				continue
-			}
-			s, o, tg := f[0], f[1], f[2]
-			if !util.Glob(o, op) || s == "human" || strings.HasPrefix(s, "system:") {
-				continue
-			}
-			if name == "" {
-				if name, err = who(); err != nil {
-					return "", "", err
-				}
-			}
-			if name == "human" {
-				return tier, rule, nil
-			}
-			m := nameMatch(db, session, name, s)
-			if m == 1 {
-				continue
-			}
-			if target != "*" {
-				switch nameMatch(db, session, target, tg) {
-				case 1:
-					continue
-				case 2:
-					m = 2
-				}
-			}
-			rk := Rank(v)
-			if m == 0 && rk > best {
-				best, brule = rk, "policy: "+s+" "+o+" "+tg+" = "+v
-			} else if m == 2 && rk > unk {
-				unk, urule = rk, "policy: "+s+" "+o+" "+tg+" = "+v+"(役割を確かめられない)"
-			}
-		}
+	// 設定を読めない(ファイルの読み取りや DB の問い合わせが失敗した)ときは、設定が無いのとは分けて deny(fail-closed)
+	if readErr != "" {
+		return "deny", "(設定 policy を読めない: " + readErr + ")", nil
 	}
-	if best >= 0 {
-		tier, rule = Tiers[best], brule
+	if j.Human {
+		return tier, rule, nil
 	}
-	if unk > Rank(tier) {
-		tier, rule = Tiers[unk], urule
-	}
-	if Rank(tier) < Rank(r.Floor) {
-		rule += "(下限 " + r.Floor + " より緩いので " + r.Floor + ")"
-		tier = r.Floor
-	}
+	tier, rule = j.Resolve(tier, rule, r.Floor)
 	return tier, rule, nil
 }
+
+// opRow は ops.tbl の 1 行(コマンドの中の操作の既定。上から最初に当たった行)。
+type opRow struct{ pat, def string }
+
+func parseOps(body string) []opRow {
+	var out []opRow
+	for _, line := range strings.Split(body, "\n") {
+		if i := strings.IndexByte(line, '#'); i >= 0 {
+			line = line[:i]
+		}
+		f := strings.Fields(line)
+		if len(f) != 2 {
+			continue
+		}
+		out = append(out, opRow{f[0], f[1]})
+	}
+	return out
+}
+
+var stdOps = parseOps(tblperms.Ops)
+
+// OpDefault はコマンドの中の操作の既定(bash の perm_op_default。当たらなければ deny)。
+func OpDefault(op string) string {
+	for _, r := range stdOps {
+		if util.Glob(r.pat, op) {
+			return r.def
+		}
+	}
+	return "deny"
+}
+
+// OpsAllowDefaults は既定が allow の操作名のパターン(tb policy import の変換が使う)。
+func OpsAllowDefaults() []string {
+	var out []string
+	for _, r := range stdOps {
+		if r.def == "allow" {
+			out = append(out, r.pat)
+		}
+	}
+	return out
+}
+
+// SplitAct は古い形の操作名(send:task:w1 など)を操作名と対象に分ける(bash の perm_split_act。対象が無ければ空)。
+func SplitAct(a string) (op, target string) {
+	for _, p := range []string{"role:", "alert:", "proxy:", "setup:"} {
+		if strings.HasPrefix(a, p) {
+			return a, ""
+		}
+	}
+	if rest, ok := strings.CutPrefix(a, "agent:slash:"); ok {
+		if c, t, ok := strings.Cut(rest, ":"); ok {
+			return "agent:slash:" + c, t
+		}
+	}
+	first, rest, ok := strings.Cut(a, ":")
+	if !ok {
+		return a, ""
+	}
+	second, t, ok := strings.Cut(rest, ":")
+	if !ok {
+		return a, ""
+	}
+	return first + ":" + second, t
+}
+
+// Authorize はコマンドの中の操作の効果と根拠(bash の perm_authorize)。主体の書き方は Judge と同じ(人なら allow)。
+func Authorize(db *sql.DB, session, who, op, target string, m Matcher) (tier, rule string) {
+	if who == "human" {
+		return "allow", "(人は常に通る)"
+	}
+	def := OpDefault(op)
+	j, readErr, _ := Judge(db, session, who, nil, op, target, m)
+	if readErr != "" {
+		return "deny", "(設定 policy を読めない: " + readErr + ")"
+	}
+	return j.Resolve(def, "既定 "+def, "")
+}
+
+// Relations は policy の対象に書ける関係。
+var Relations = map[string]bool{"~child": true, "~descendant": true, "~parent": true, "~sibling": true,
+	"~report": true, "~subordinate": true, "~manager": true, "~superior": true, "~peer": true}
 
 func valid(v string) bool {
 	for _, x := range Tiers {
@@ -288,7 +462,7 @@ func check(op, what string, openDB func() (*sql.DB, string, func(), error)) erro
 		}
 		return n, nil
 	}
-	tier, rule, err := std.Tier(db, session, op, "*", who)
+	tier, rule, err := std.Tier(db, session, op, "", who)
 	if err != nil {
 		return err
 	}
@@ -325,6 +499,58 @@ func ValidatePolicy(body string) string {
 		if f[0] == "human" || strings.HasPrefix(f[0], "system:") {
 			fmt.Fprintf(&bad, "%d 行目: 主体 %s の行はまだ効きません(人は常に通る。system は ADR 0007 の段 1 から)\n", i+1, f[0])
 		}
+		if strings.HasPrefix(f[1], "cmd:") && f[2] != "*" {
+			fmt.Fprintf(&bad, "%d 行目: コマンドの操作(%s)の対象は * と書きます: %s\n", i+1, f[1], f[2])
+		}
+		if strings.HasPrefix(f[2], "~") && !Relations[f[2]] {
+			fmt.Fprintf(&bad, "%d 行目: 知らない関係です(~child ~descendant ~parent ~sibling ~report ~subordinate ~manager ~superior ~peer): %s\n", i+1, f[2])
+		}
 	}
 	return bad.String()
+}
+
+// InnerOps は古い approvals が見ていたコマンドの中の操作の族(bash の POLICY_INNER_OPS と同じ)。
+var InnerOps = []string{"send:task", "send:info", "send:answer", "agent:new", "agent:stop", "agent:revive", "agent:spawn",
+	"agent:compact", "agent:model", "agent:read", "agent:slash:*", "role:change", "alert:analyze", "proxy:read-only",
+	"proxy:write", "proxy:external", "setup:*", "recipe:*"}
+
+func opReserved(op string) bool {
+	pre := op
+	if i := strings.IndexAny(op, "*?\\["); i >= 0 {
+		pre = op[:i]
+	} else {
+		return strings.HasPrefix(op, "cmd:") || strings.HasPrefix(op, "approve:") || op == "agent:flag"
+	}
+	for _, r := range []string{"cmd:", "approve:", "agent:flag"} {
+		if strings.HasPrefix(r, pre) || strings.HasPrefix(pre, r) {
+			return true
+		}
+	}
+	return false
+}
+
+// OpsOf は古い形の操作名の glob を、policy に書く操作名にする。cmd:・approve:・agent:flag に当たりうる glob は
+// 中の操作の族に絞る(そのまま書くと、前は当たらなかったコマンドや承認の委任まで許してしまう)。
+func OpsOf(op string) []string {
+	if !opReserved(op) {
+		return []string{op}
+	}
+	var out []string
+	for _, f := range InnerOps {
+		if util.Glob(op, f) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// SubjectOf は古い approvals の行を policy に書くときの主体。role:change は人事役(TB_ROLE_ADMIN、既定 hr)にだけ効いていた。
+func SubjectOf(op string) string {
+	if op == "role:change" {
+		if a := os.Getenv("TB_ROLE_ADMIN"); a != "" {
+			return "@" + a
+		}
+		return "@hr"
+	}
+	return "*"
 }

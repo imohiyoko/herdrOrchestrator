@@ -131,7 +131,7 @@ killable_of() {
       ELSE 'yes' END FROM agents WHERE name=$(q "$1");"
 }
 
-# 実行してよいか。人なら 0。agent なら approvals の agent:<op>:<名前>: allow → 0、ask → L-<n> を積んで 20
+# 実行してよいか。人なら 0。agent なら policy の agent:<op> <名前>: allow → 0、ask-* → L-<n> を積んで 20、deny → 4
 authorize_op() {  # $1=op $2=対象 $3=引数の JSON
   requester
   [[ $REQ_BY == human ]] && return 0
@@ -140,9 +140,15 @@ authorize_op() {  # $1=op $2=対象 $3=引数の JSON
   approval_of "agent:$1:$2" "$REQ_BY"
   ROLE_HINT_NAME=""; ROLE_HINT=""
   [[ $APPROVAL_VALUE == allow ]] && return 0
+  if [[ $APPROVAL_VALUE == deny ]]; then
+    sql "INSERT INTO main.agent_ops (herdr_session, op, target, args, requested_by, status, result, created_at, decided_at)
+      VALUES ($SQS, $(q "$1"), $(q "$2"), $(q "$3"), $(q "$REQ_BY"), 'rejected', $(q "認可: $APPROVAL_RULE"), $(q "$(now)"), $(q "$(now)"));" >/dev/null
+    echo "tb: agent:$1 $2 は実行できません(deny。$APPROVAL_RULE)" >&2
+    return 4
+  fi
   local id
   id=$(sql "INSERT INTO main.agent_ops (herdr_session, op, target, args, requested_by, status, result, created_at)
-    VALUES ($SQS, $(q "$1"), $(q "$2"), $(q "$3"), $(q "$REQ_BY"), 'pending', $(q "approvals: $APPROVAL_RULE"), $(q "$(now)"));
+    VALUES ($SQS, $(q "$1"), $(q "$2"), $(q "$3"), $(q "$REQ_BY"), 'pending', $(q "認可: $APPROVAL_RULE"), $(q "$(now)"));
     SELECT last_insert_rowid();")
   echo "L-$id pending (人の承認待ち: tb agent-approve L-$id)"
   return 20
@@ -399,11 +405,11 @@ cmd_agent-new() {
     requester
     # shellcheck disable=SC2053  # glob として比べる
     if [[ $REQ_BY != human && $REQ_BY != $SWEEPER_PAT ]]; then
-      # 作る前の agent は台帳に無い。grants の @<役割> の対象は、要求された役割(--role)で比べる
+      # 作る前の agent は台帳に無い。policy の @<役割> の対象は、要求された役割(--role)で比べる
       local grc=0; [[ -z $role ]] || { ROLE_HINT_NAME=$name; ROLE_HINT=$role; }
       grant_of "$REQ_BY" agent:flag "$name" || grc=$?
       ROLE_HINT_NAME=""; ROLE_HINT=""
-      ((grc == 0)) || die "agent-new --killable を付けられるのは人、判定役($SWEEPER_PAT)、grants で agent:flag を許された agent だけです($REQ_BY)"
+      ((grc == 0)) || die "agent-new --killable を付けられるのは人、判定役($SWEEPER_PAT)、policy で agent:flag を許された agent だけです($REQ_BY)"
     fi
   fi
   [[ ${#prompt} -le 4000 ]] || usage "agent-new: --prompt は 4000 字まで"
@@ -482,7 +488,7 @@ cmd_agent-restart() {
     if [[ -z $why ]]; then
       approval_of "agent:stop:$name" "$REQ_BY"; s=$APPROVAL_VALUE
       approval_of "agent:revive:$name" "$REQ_BY"; v=$APPROVAL_VALUE
-      [[ $s == allow && $v == allow ]] || why="approvals で agent:stop:$name と agent:revive:$name の両方が allow ではありません(stop=$s revive=$v)。人が実行するか、人が許可してください"
+      [[ $s == allow && $v == allow ]] || why="policy で agent:stop と agent:revive($name)の両方が allow ではありません(stop=$s revive=$v)。人が実行するか、人が許可してください"
     fi
     if [[ -n $why ]]; then
       sql "INSERT INTO main.agent_ops (herdr_session, op, target, args, requested_by, status, result, created_at, decided_at)
@@ -514,7 +520,7 @@ cmd_agent-flag() {
   requester
   if [[ $REQ_BY != human ]]; then
     # shellcheck disable=SC2053  # glob として比べる
-    [[ $REQ_BY == $SWEEPER_PAT ]] || grant_of "$REQ_BY" agent:flag "$name" || die "判定フラグを付けられるのは人、判定役($SWEEPER_PAT)、grants で agent:flag を許された agent だけです($REQ_BY)"
+    [[ $REQ_BY == $SWEEPER_PAT ]] || grant_of "$REQ_BY" agent:flag "$name" || die "判定フラグを付けられるのは人、判定役($SWEEPER_PAT)、policy で agent:flag を許された agent だけです($REQ_BY)"
     [[ $REQ_BY != "$name" ]] || die "自分自身の判定は付けられません"
   fi
   agent_sync || die "herdr agent list に失敗しました"
@@ -632,7 +638,8 @@ cmd_peek() {
     approval_of "agent:read:$name" "$REQ_BY"; rule=$APPROVAL_RULE
     if [[ $APPROVAL_VALUE != allow ]]; then
       sql "INSERT INTO main.read_log (herdr_session, reader, target, lines, status, rule, created_at) VALUES ($SQS, $(q "$REQ_BY"), $(q "$name"), $lines, 'denied', $(q "$rule"), $(q "$(now)"));"
-      echo "tb: $REQ_BY は $name の中身を読めません($rule)。必要なら人が approvals に agent:read:$name か agent:read:@<役割> を allow で足すか、grants.conf に個別の許可を足す" >&2
+      echo "tb: $REQ_BY は $name の中身を読めません($rule)。必要なら人が policy に '<主体> agent:read $name = allow'(対象は @<役割> や ~child なども書ける)を足す" >&2
+      [[ $APPROVAL_VALUE == deny ]] && return 4
       return 20
     fi
   fi
@@ -839,7 +846,7 @@ cmd_org() {
 
 # tb can <主体> <操作> <対象>: 主体が対象にその操作をできるかを、実際の判定と同じ規則で 1 つに決めて出す(読むだけ。何もしない)
 # 1 行目 allow|ask|hold|deny、続けて rule: 行。終了コード 0=allow 20=ask(人の承認待ちになる)21=hold(inbox に置かれる)4=deny
-# 主体 human は人(pane のない端末)。操作: send:task / send:info / send:answer / agent:stop / role:change / agent:flag / そのほか approvals の操作名
+# 主体 human は人(pane のない端末)。操作: send:task / send:info / send:answer / agent:stop / role:change / agent:flag / approve:<操作> / そのほか policy の操作名
 # tb can <操作> <対象> は主体を叩いた agent(pane から決める。人の端末なら human)にする
 cmd_can() {
   [[ $# -eq 2 || $# -eq 3 ]] || usage "can [<主体>] <操作> <対象>(例: tb can w1 send:task lead1、主体を省くと自分: tb can agent:stop w1)"
@@ -862,34 +869,33 @@ cmd_can() {
     send:task|send:info|send:answer)
       delivery_mode "$who" "$target" "${op#send:}"
       [[ $DELIVERY_MODE != block ]] || { verdict=deny; _can_out "$DELIVERY_RULE"; return; }
-      # tb send と同じく、hold でも先に approvals を見る(ask なら承認待ち。承認のあとで inbox に置かれる)
+      # tb send と同じく、hold でも先に認可を見る(ask なら承認待ち。承認のあとで inbox に置かれる)
       approval_of "$op:$target" "$who"
-      if [[ $APPROVAL_VALUE != allow ]]; then verdict=ask
-      elif [[ $DELIVERY_MODE == hold ]]; then verdict=hold; fi
-      _can_out "$DELIVERY_RULE$([[ $DELIVERY_MODE == hold ]] && printf '(届けず宛先の inbox に置く)')" "approvals: $APPROVAL_RULE";;
+      case $APPROVAL_VALUE in deny) verdict=deny;; ask) verdict=ask;; *) [[ $DELIVERY_MODE != hold ]] || verdict=hold;; esac
+      _can_out "$DELIVERY_RULE$([[ $DELIVERY_MODE == hold ]] && printf '(届けず宛先の inbox に置く)')" "認可: $APPROVAL_RULE";;
     agent:stop)
       if p=$(protect_reason "$target"); then verdict=deny; _can_out "protect: $p"; return; fi
-      approval_of "$op:$target" "$who"; [[ $APPROVAL_VALUE == allow ]] || verdict=ask
+      approval_of "$op:$target" "$who"; verdict=$APPROVAL_VALUE
       _can_out "$APPROVAL_RULE";;
     agent:flag)
       # shellcheck disable=SC2053  # glob として比べる
       if [[ $who == $SWEEPER_PAT ]]; then _can_out "判定役($SWEEPER_PAT)"
       elif grant_of "$who" agent:flag "$target"; then _can_out "$GRANT_RULE"
-      else verdict=deny; _can_out "判定役でなく、grants に agent:flag の行もない"; fi;;
+      else verdict=deny; _can_out "判定役でなく、policy に agent:flag を許す行もない"; fi;;
     role:change)
       if grant_of "$who" role:change "$target"; then _can_out "$GRANT_RULE"
       elif name_matches "$who" "@$ROLE_ADMIN"; then
-        approval_of role:change; [[ $APPROVAL_VALUE == allow ]] || verdict=ask
-        _can_out "人事役(@$ROLE_ADMIN)/ approvals: $APPROVAL_RULE"
-      else verdict=deny; _can_out "人事役(@$ROLE_ADMIN)でなく、grants に role:change の行もない"; fi;;
+        approval_of role:change "$who"; verdict=$APPROVAL_VALUE
+        _can_out "人事役(@$ROLE_ADMIN)/ 認可: $APPROVAL_RULE"
+      else verdict=deny; _can_out "人事役(@$ROLE_ADMIN)でなく、policy に role:change を許す行もない"; fi;;
     approve:*)
-      # 承認の委任(tb approve / agent-approve)。対象は依頼した agent。grants の行だけで決まる(approvals.conf は見ない)
+      # 承認の委任(tb approve / agent-approve)。対象は依頼した agent。policy で明示した allow の行だけで決まる(既定は deny)
       if [[ $who == "$target" ]]; then verdict=deny; _can_out "自分の依頼は承認できない"; return; fi
       local g=1; role_pin "$who" "$target"; grant_of "$who" "$op" "$target" && g=0; role_unpin
-      if ((g == 0)); then _can_out "$GRANT_RULE(--always・--all 系・spawn-freeze 中は人だけ)"
-      else verdict=deny; _can_out "grants に $op $target に当たる approve の行がない(承認は人だけ)"; fi;;
+      if ((g == 0)); then _can_out "$GRANT_RULE(--always・--all 系・spawn-freeze 中・依頼が ask-human のものは人だけ)"
+      else verdict=deny; _can_out "policy に $op $target を許す approve の行がない(承認は人だけ)"; fi;;
     *)
-      approval_of "$op:$target" "$who"; [[ $APPROVAL_VALUE == allow ]] || verdict=ask
+      approval_of "$op:$target" "$who"; verdict=$APPROVAL_VALUE
       _can_out "$APPROVAL_RULE";;
   esac
 }

@@ -20,8 +20,8 @@ config_key_info() {
   case $1 in
     projects)     CFG_ENV=TB_CONFIG;          CFG_FILE=projects.conf; CFG_EXAMPLE=1;;
     policy)       CFG_ENV=TB_POLICY;          CFG_FILE=policy.conf;;   # 認可(主体 × 操作 × 対象 → 効果。lib/perms.sh、ADR 0007)。.example は既定値にしない(無ければ表の既定)
-    approvals)    CFG_ENV=TB_APPROVALS;       CFG_FILE=approvals.conf; CFG_EXAMPLE=1;;
-    grants)       CFG_ENV=TB_GRANTS;          CFG_FILE=grants.conf;;
+    approvals)    CFG_ENV=TB_APPROVALS;       CFG_FILE=approvals.conf;;   # 古い権限の設定(ADR 0007 で読まない。tb policy import が読んで policy に移す)
+    grants)       CFG_ENV=TB_GRANTS;          CFG_FILE=grants.conf;;   # 古い権限の設定(同上)
     routes)       CFG_ENV=TB_ROUTES;          CFG_FILE=routes.conf;;
     delivery)     CFG_ENV=TB_DELIVERY;        CFG_FILE=delivery.conf;;
     notify)       CFG_ENV=TB_NOTIFY_CONF;     CFG_FILE=notify.conf;;
@@ -242,6 +242,7 @@ config_change() {
   require_human "tb config $sub"
   # 会話の振り分け表は、緩める変更の確かめと version の検査を通す tb conv-routes-set だけで書く(消すのは unset でよい)
   [[ $key != conv-routes || $sub == unset ]] || die "conv-routes は tb conv-routes-set < 新しい表 で書きます(緩める変更は --approve-looser が要ります)"
+  [[ ( $key != approvals && $key != grants ) || $sub == unset ]] || die "$key はもう読みません(ADR 0007)。権限は設定 policy に書きます(残っている古い設定は tb policy import で移します)"
   if ((shared)) && [[ -n $(config_env_file "$key") ]]; then die "$CFG_ENV でファイルを明示しているので --shared は使えません"; fi
   case $sub in
     unset)

@@ -158,7 +158,8 @@ cmd_model-set() {
     if ((all)); then hold=1; why="--all は人の承認が要ります"
     elif [[ $REQ_BY != human ]]; then
       approval_of "agent:model:$n" "$REQ_BY"
-      [[ $APPROVAL_VALUE == allow ]] || { hold=1; why="approvals: $APPROVAL_RULE"; }
+      if [[ $APPROVAL_VALUE == deny ]]; then echo "$n denied(認可: $APPROVAL_RULE)"; skipped=$((skipped + 1)); continue; fi
+      [[ $APPROVAL_VALUE == allow ]] || { hold=1; why="認可: $APPROVAL_RULE"; }
     fi
     if ((dry)); then
       if ((hold)); then echo "$n would hold for approval ($line / $why)"; else echo "$n would $line"; fi

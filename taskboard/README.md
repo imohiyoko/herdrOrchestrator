@@ -357,7 +357,7 @@ coordinator -> assistant : info=hold answer=hold task=now
 - パターンは routes と同じ(glob と `@<役割>`)。種別は `task` / `info` / `answer`、`*` はそれ以外の全部。送信者と宛先が一致し、その種別(無ければ `*`)を書いた最初の行で決まる。どの行にも当たらなければ now
 - `:` の無い行は全種別(reply も)now、行頭 `!` は全種別 block
 - **どの行にも当たらなければ**(キーが無いときも)、送信者が指揮官なら now、ほかは止める(終了コード 4、`O-<n> denied`)。役割を確かめられない行に当たったら hold に倒す
-- 判定は受け付け時(止めるものは承認を求めない)→ approvals → 届ける直前(承認待ちの送信は、承認したあとにこの規則でもう一度決まる。`tb message flush` でも同じ)
+- 判定は受け付け時(止めるものは承認を求めない)→ policy → 届ける直前(承認待ちの送信は、承認したあとにこの規則でもう一度決まる。`tb message flush` でも同じ)
 - hold の送信は宛先の入力に打ち込まず `inbox` 表に置き、送信は成功(終了コード 0、出力は `O-<n> held for <宛先> (I-<m>)`)。outbox の行は `sent` になり、`reason` に `→ inbox I-<m>` が残る。messages には種別 `hold` で残る
 - inbox に書けなかったときは終了コード 12 で送信者に知らせ、outbox は `queued` のまま(次の `tb message flush` で再び保留を試す。黙って捨てない)
 
@@ -393,28 +393,46 @@ tb message read I-<n> [--json]      # 全文を読み、既読にする
 - 結果は outbox の `reply_to` / `reply_check`(`ok` か、認めなかった理由)に残る。返信の承認を人が却下したら返信済みに数えない
 - 返されていない依頼 = `reply_check='ok'` の行に `reply_to` で指されていない送信(`SELECT * FROM outbox o WHERE status='sent' AND NOT EXISTS (SELECT 1 FROM outbox r WHERE r.reply_to=o.id AND r.reply_check='ok')`)
 
-## 人の承認(approvals)
+## 認可(設定 policy。ADR 0007)
 
-人の承認が要るかどうかは設定 `approvals`(「設定」の順で引く。既定値は `config/approvals.conf.example`)で操作ごとに決める(`<操作のパターン> = ask|allow`、上から最初に一致した行、無一致は `ask`)。
+agent が何をしてよいかは、設定 `policy` の 1 表で決める(「設定」の順で引く。例は `config/policy.conf.example`。`.example` は既定値にしない)。古い設定 `approvals`(操作 → ask/allow)と `grants`(主体ごとの許可)はもう読まない。残っていれば `tb policy import` で policy の行に変換して消す。
 
-```bash
-tb approval check <操作>        # ask|allow と根拠の行。終了コード 0=allow / 20=ask
-tb approval allow <パターン>    # 「今後は許可」。同じパターンの行を書き換え、無ければ先頭(ほかのルールより前)に足す
-tb approval ask <パターン>      # 承認制に戻す
-tb approval approve O-<n> [--always]   # 承認待ちの送信を届ける。--always で send:<kind>:<宛先> を allow に
-tb approval reject O-<n>
-# 古い名前(tb approval <操作> / tb allow / tb ask / tb approve / tb reject)も同じに動く
-# ただし古い形 tb approval <操作> では、サブコマンドと同じ名前の操作(check / allow / ask / approve / reject)は書けない。tb approval check allow のように書く
+```
+<主体> <操作> <対象> = <効果>
+@worker  send:task   @reviewer   = allow      # worker は reviewer に承認なしで依頼を送れる
+@manager agent:read  ~descendant = allow      # manager は子孫の中身を tb peek で読める
+*        agent:spawn *           = ask-any    # spawn は誰でも承認待ち(既定どおり。明示しておく)
+@worker  cmd:ticket:cancel *     = ask-human  # コマンドの操作は cmd:<サービス>:<動詞>(下の「コマンドの認可」)
 ```
 
-- 操作の名前: `send:<kind>:<宛先>`(tb message send)、`role:change`(人事の roles/ 変更)、`setup:<step>` など。`proxy:<effect>` は操作名としては定義があるが、**承認判定(`approval_of`)には渡らない**(代行依頼は `proxy_requests` の別の仕組み)ので、approvals.conf の `proxy:*` の行は何も効かない。既定では `send:task:*` が `ask`、`send:info:*` / `send:answer:*` が `allow`
-- `tb message send` は `ask` の送信を届けず、`outbox` に `pending`(人の承認待ち)で置く(終了コード 20)。Web UI の緊急通知に出る
-- `tb approval allow` / `ask` / `approve` / `reject` は**人の端末から**だけ実行できる(agent の pane からは拒否)。履歴は `approval_changes`。例外: `approve` / `reject` は grants.conf の `approve:<操作>` に当たる agent も実行できる(下の「承認待ちの承認を agent に任せる」)
-- agent には承認ルールを書き換えさせない(DB の `config` 表への直接の書き込みと `tb config` を拒否し、取り込み前のファイルも Claude Code の `permissions.deny` で `Edit(//<ORCH_DIR>/taskboard/config/approvals.conf)` などを拒否し、
-  `Bash(tb allow:*)` なども拒否しておくとより確実。権限カタログ `approvals-catalog.conf` も同じ扱いにする: 書き換えられると `/perms` の警告が消える)
-- 操作の候補と性質(種別・副作用・リスク階層・allow の候補・状態)は `config/approvals-catalog.conf` に定義している(判定には使わない。Web UI の `/perms` が approvals.conf と突き合わせて見せる)。状態は active(承認判定に渡す箇所がある)・unwired(操作名はあるが承認判定には渡らない)・reserved(将来用)。
-  tb が承認判定に渡す操作名を増やしたら、カタログにも足す(`test/cases/82_catalog.sh` が、コード中の操作名の載り漏れと、既定の approvals.conf の未知の規則を検出する)
-- tb が強制するのは `tb message send` だけ。ほかの操作(役割の変更・セットアップの書き込みなど)は、agent が `tb approval check <操作>` を見て、`ask` なら人に聞く
+- 主体: agent 名の glob / `@<役割>`(`@a+b` は全部を持つ)/ `*`。`*` は主体の無い自動の判定(`alert:analyze`、scheduler の compact など)にも当たる
+- 操作: コマンドの中の操作 `send:task` / `send:info` / `send:answer`(tb message send)、`agent:read`(tb peek)、`agent:stop` / `agent:revive` / `agent:new` / `agent:spawn` / `agent:compact` / `agent:model`、`agent:slash:<コマンド>`、`agent:flag`、`role:change`、`alert:analyze`、`recipe:<名前>`、`setup:<段階>`、`approve:<元の操作>:<元の対象>`(承認待ちの承認)。コマンドは `cmd:<サービス>:<動詞>`
+- 対象: agent 名の glob / `@<役割>` / `self` / `*`、または関係 `~child` / `~descendant` / `~parent` / `~sibling`(spawn の親子)、`~report` / `~subordinate` / `~manager` / `~superior` / `~peer`(組織図 `org`)。対象の無い操作(`role:change`、`alert:analyze`、`setup:*`)とコマンドは `*` の行だけが当たる
+- 効果: `allow`(すぐ実行)/ `ask-any`(承認待ち。人か、`approve:` を許された agent が承認する)/ `ask-human`(人の承認が要る)/ `deny`(実行しない)
+- 決め方: 当たる行のうち **いちばん厳しい効果** を採る(行の順番は関係ない)。当たる行が無ければ既定の表(コマンドの中の操作は `perms/ops.tbl`: `send:info`・`send:answer`・`alert:analyze`・`proxy:read-only` は allow、`agent:flag` と `approve:*` は deny、ほかは ask-any)
+  - 広い行で締めて狭い行で緩める、はできない。緩めたい相手を外すように、広い行を狭く書く
+  - 役割・関係を確かめられない行は、締める向きにだけ効く。設定を読めないときは deny
+  - `agent:flag` と `approve:*` は、allow の行で明示したときだけ許す
+- 人の端末からは判定にかけない(いつでも実行できる)。判定は agent の pane からの実行だけ
+
+```bash
+tb can <主体> <操作> <対象>            # 実際の判定と同じ順で、誰が誰に何をできるかを出す(読むだけ)
+tb approval check <操作>:<対象> [--by A]   # allow|ask|deny と根拠の行。終了コード 0=allow / 20=ask / 4=deny
+tb approval allow <パターン>    # policy に「* <操作> <対象> = allow」の行を書く(同じ行があれば書き換える)。人だけ
+tb approval ask <パターン>      # 同じく ask-any の行を書く。人だけ
+tb approval approve O-<n> [--always]   # 承認待ちの送信を届ける。--always で「* send:<kind> <宛先> = allow」を書く
+tb approval reject O-<n>
+tb policy import [--apply]      # 古い approvals / grants を policy の行に変換する(--apply で書き、古い設定を消す)。人だけ
+# 古い名前(tb approval <操作> / tb allow / tb ask / tb approve / tb reject)も同じに動く
+```
+
+- `tb approval allow` / `ask` のパターンは古い形(`<操作>:<対象>`)。`*` や `agent:*` のような広い glob は、コマンド(`cmd:`)・承認の委任(`approve:`)・`agent:flag` に当たらないよう、中の操作の族ごとの行に分けて書く。`role:change` は人事役(`@hr`、`TB_ROLE_ADMIN`)の行として書く(前の approvals が人事役にだけ効いていたのと同じ)
+- `tb policy import` も同じ規則で変換する。前は「上から最初に当たった行」だったので、厳しい方が勝つ policy では結果が変わりうる行を「確かめてほしい行」として出す
+- `tb message send` は ask の送信を届けず、`outbox` に `pending`(承認待ち)で置く(終了コード 20)。deny は送らない(終了コード 4)。Web UI の緊急通知に出る
+- agent には policy を書き換えさせない(agent の pane からは `tb config set` / `tb allow` などを拒否する。取り込み前のファイルも Claude Code の `permissions.deny` で `Edit(//<ORCH_DIR>/taskboard/config/policy.conf)` などを拒否しておくとより確実。権限カタログ `approvals-catalog.conf` も同じ扱いにする: 書き換えられると `/perms` の警告が消える)
+- `proxy:<effect>` は操作名としては定義があるが、承認判定には渡らない(代行依頼は `proxy_requests` の別の仕組み)ので、policy の `proxy:*` の行は何も効かない
+- 操作の候補と性質(種別・副作用・リスク階層・allow の候補・状態)は `config/approvals-catalog.conf` に定義している(判定には使わない。Web UI の `/perms` が policy と突き合わせて見せる)。状態は active・unwired・reserved。
+  tb が承認判定に渡す操作名を増やしたら、カタログにも足す(`test/cases/82_catalog.sh` が、コード中の操作名と既定の表 `perms/ops.tbl` の載り漏れを検出する)
 
 ### コマンドの認可(ADR 0006 / ADR 0007)
 
@@ -426,7 +444,7 @@ tb の全コマンドは表 `perms/commands.tbl` に行を持ち、呼び出し�
   - 当たる行のうち、**いちばん厳しい効果**を採る(行の順番は関係ない)。当たる行が無ければ表の既定
   - 役割を確かめられない行は、締める向きにだけ効く。設定を読めないときは `deny`
   - `human` と `system:<名前>` の行はまだ書けない(人は常に通る。system は ADR 0007 の段 1 から)
-- 設定 `approvals` の `cmd:` の行は使わない(`policy` に移した)。送信・停止などのほかの権限の設定も、ADR 0007 の段 3 で `policy` に移す
+- コマンドの中の操作(送信・停止など)も同じ `policy` の行で決める(上の「認可」)。delivery・protect・spawn の方針は、ADR 0007 の段 3 の続きで policy に移す
 - `ask-any` / `ask-human` の承認待ちはまだ無い。いまは agent からの実行を終了コード 20 で止める
 - コマンドを足したら表にも行を足す(足し忘れはテスト `test/cases/03_perms.sh` と `internal/kernel/perms` が落とす)
 
@@ -440,7 +458,7 @@ tb parts [--json]                        # 部品の一覧
 tb part-check <部品> [<名前>=<値> ...]    # 引数の型・リスク階層・判定の操作名を確かめる(実行しない)
 tb part-risk <部品> ...                   # 部品の並びのリスク階層(中の最大)
 tb recipe-set <名前> [--file F]          # レシピ(部品の並び)を登録する(人だけ)。recipe-rm / recipe-list / recipe-show / recipe-history
-tb recipe-run <名前> [--target A] [k=v]  # 汎用の入口。recipe:<名前>:<対象> を approvals / grants で判定し、続けて部品ごとに判定する
+tb recipe-run <名前> [--target A] [k=v]  # 汎用の入口。recipe:<名前>:<対象> を policy で判定し、続けて部品ごとに判定する
 ```
 
 - 登録されていないレシピ名は ask ではなく実行しない。レシピの許可は、中の部品の判定の代わりにならない
@@ -459,14 +477,14 @@ tb recipe-run <名前> [--target A] [k=v]  # 汎用の入口。recipe:<名前>:<
 tb alert --title '<何が起きたか>' [--body '<見た事実>' | --body-file F] [--key K]   # 見張り役。--severity は指定できない
 tb alerts [A-<n>] [--status S] [--json]
 tb alert-result A-<n> --severity critical|high|medium|low --summary '<要約>' [--report <報告.md>]   # 担当の解析役(か人)だけ
-tb alert-approve A-<n> [--always]   # approvals の alert:analyze が ask のとき、人が起動を承認
+tb alert-approve A-<n> [--always]   # policy の alert:analyze が ask のとき、人が起動を承認
 tb alert-dispatch                   # 承認・上限待ちを進める(tb digest も最初に呼ぶ)
 tb alert-close A-<n>                # 人が閉じる
 ```
 
 - 同じ指紋(`--key`、無ければ題名)の未解決アラートは 1 件にまとめ、件数(`count`)を増やす。解析済み・閉じたものと同じ題名は新しいアラートになる
 - 解析役は `herdr workspace create --label analyst-A<n>` + `herdr agent start analyst-A<n> --kind claude` で起動し、依頼を送る。
-  起動の可否は `approvals.conf` の `alert:analyze`(既定 allow)。同時に動かす数は `TB_ANALYST_MAX`(既定 2)、超えた分は `queued`。
+  起動の可否は policy の `alert:analyze`(既定 allow。止めるなら `* alert:analyze * = ask-any`)。同時に動かす数は `TB_ANALYST_MAX`(既定 2)、超えた分は `queued`。
   作業ディレクトリは `TB_ANALYST_CWD`(既定このリポジトリ)、モデルは `TB_ANALYST_MODEL`(既定は Claude Code の既定)
 - 結果はすぐ指揮官に送る。使用中なら `tb digest` が回収する。新しいアラートも digest に入る。critical / high の解析結果と起動待ちは Web UI の緊急通知に出る
 - 状態: `new` → (`awaiting-approval` → `approved`)→ (`queued`)→ `analyzing` → `analyzed` → `closed`
@@ -521,11 +539,11 @@ tb agent-approve L-<n> [--always] / tb agent-reject L-<n>      # 人だけ
   `--prompt` が無ければ「MCP を再接続した。前の作業を続け、MCP のツールが使えることを確かめ、まだなら tb comment で報告」という既定の一文を送る(準備完了を待ち、受け付けられたかも確かめる)。
   復活に失敗したら停止のまま残し、`tb agent-revive <名前> [--fresh]` を出して 0 以外で終わる(新しい会話は勝手に作らない)。
   `agent_ops` には op=revive、args.restart=1 の 1 行で、依頼者・停止と復活の結果・session が変わらなかったか・所要秒を残す。再開したが最初の指示を確認できないときは終了コード 10
-- **判定フラグ(killable)**: `yes|no|unknown`。付けられるのは判定役(利用例は `setup/examples/roles/sweeper.md`、軽いモデル。`TB_SWEEPER_PATTERN`、既定 `sweeper*`)と人、`grants` で `agent:flag` を許された agent だけ(例 `my-judge agent:flag *`)。
+- **判定フラグ(killable)**: `yes|no|unknown`。付けられるのは判定役(利用例は `setup/examples/roles/sweeper.md`、軽いモデル。`TB_SWEEPER_PATTERN`、既定 `sweeper*`)と人、policy の allow の行で `agent:flag` を許された agent だけ(例 `my-judge agent:flag * = allow`)。
   yes を付けた後でその agent が新しい入力を受けたら、または会話が変わったら `stale` になり、停止には使えない(付け直しが要る)。
   解析役(`analyst-A<n>`)は `tb alert-result` を返した時点で tb が yes を付ける。判定役の定期実行は `scheduler/jobs/sweeper.conf.example`
-- **誰が実行できるか**: 人の端末(と Web UI)からはそのまま実行する。agent の pane からは `approvals.conf` の `agent:<op>:<名前>`(op は `new|stop|revive`、既定 `agent:* = ask`)を見て、
-  `ask` なら `L-<n>` として人の承認待ちに積む(終了コード 20。Web UI の緊急通知と agent 一覧に出る)。`allow` ならそのまま実行する(停止の前提はそれでも確かめる)。`--force` は人だけ
+- **誰が実行できるか**: 人の端末(と Web UI)からはそのまま実行する。agent の pane からは policy の `agent:<op>`(op は `new|stop|revive`、対象は agent 名。既定 ask-any)を見て、
+  ask なら `L-<n>` として承認待ちに積む(終了コード 20。Web UI の緊急通知と agent 一覧に出る)。deny なら実行しない(終了コード 4)。`allow` ならそのまま実行する(停止の前提はそれでも確かめる)。`--force` は人だけ
 - herdr のセッション(`HERDR_SESSION`、プリセットの `# session:`)ごとに台帳を分けて扱う。別セッションの agent は同期で「止まった」扱いにせず、操作するときは `HERDR_SESSION=<名前>` を付けるよう案内する
 - 実行したもの・断ったもの・承認待ちは `agent_ops` にすべて残る。終了コード: 0 実行済み / 1 拒否・前提違い / 11 herdr の失敗 / 20 承認待ち
 
@@ -584,7 +602,7 @@ agent 同士の関係は 1 本の木ではなく、`主体 -動詞→ 対象` �
 「どのロールがどのロールに何をしてよいか」を書けるように、次の規則では名前の glob の代わりに `@<役割の glob>` が使える。
 
 - 設定 `delivery`(旧 `routes.conf` も): `@conductor -> @worker`、`!@worker -> @conductor`、`@worker -> reviewer : *=block`(送信者・宛先の両方)
-- 設定 `approvals`: 末尾の宛先を `@<役割>` にする(例 `send:task:@worker = allow`、`agent:stop:@analyst = allow`)
+- 設定 `policy`: 主体・対象を `@<役割>` にする(例 `* send:task @worker = allow`、`@lead agent:stop @analyst = allow`)
 - `config/spawn-policy.conf` の `denied_parents`(例 `@watcher`)
 
 役割は上の決まり方で引くので、役割を変えられる操作(`tb agent-new --role`、`roles/` や `map.conf` の書き換え)は、そのまま権限の変更になる。agent からのそれらは従来どおり人の承認が要る(`agent:new:*` と `role:change` は ask のまま)。
@@ -604,7 +622,7 @@ agent 同士の関係は 1 本の木ではなく、`主体 -動詞→ 対象` �
 agent ごとのロールを変える入口は `tb role-set <agent 名> <ロール> [--reason R]` に絞る(台帳の role を書き換え、`role_changes` に記録する)。
 
 - 人の端末からはそのまま実行できる
-- agent から実行できるのは人事役(`@hr`。`TB_ROLE_ADMIN` で変えられる)と、`tb role-set` に限り `grants` で `role:change` を許された agent だけ(grants に当たればそれで allow)。人事役は `approvals.conf` の `role:change` が allow でなければ終了コード 20 で止まり、人の実行を求める
+- agent から実行できるのは人事役(`@hr`。`TB_ROLE_ADMIN` で変えられる)と、`tb role-set` に限り policy の allow の行で `role:change` を許された agent だけ(当たればそれで allow)。人事役も policy の `role:change` が allow でなければ(既定は ask-any)終了コード 20 で止まり、人の実行を求める
 - agent は自分のロールを変えられず、人事役のロールを付けることもできない(権限の自己拡大を防ぐ)
 - `roles/<名前>.md` がある agent は台帳のロールが効かないので拒否する
 - 記録は `tb role-log`。人事役による変更は関係グラフに `role` の辺として出る。会計役(auditor)は提案するだけで、変えない
@@ -619,21 +637,20 @@ agent ごとのロールを変える入口は `tb role-set <agent 名> <ロー�
 - `tb role-set` は別のセッションの agent を拒否する(`HERDR_SESSION=<そのセッション>` で実行する)。`role_changes` にセッションを残し、`tb role-log` はそのセッションの分だけ出す
 - Web UI は agent ごとに、その agent のセッションの役割ファイルで表示・判定する
 
-#### 個別の許可と相対指定(`config/grants.conf`)
+#### 個別の許可と相対指定(policy の主体と対象)
 
-`approvals.conf` は「操作 → ask/allow」を決める共通の表。そこに、主体ごとの許可を足すのが `grants.conf`(`grants.conf.example` を写して使う。`TB_GRANTS` で場所を変えられる)。
+主体ごとの許可は、policy の行の主体と対象で書く(前の `grants.conf` は `tb policy import` で `<主体> <操作> <対象> = allow` の行になる)。
 
 ```
-# <主体> <操作> <対象>
-@manager agent:read ~descendant   # manager ロールは、子孫(子・孫…)の中身を tb peek で読める
-@manager send:task  ~child        # 子には依頼を送れる
-lead1    agent:stop @worker       # lead1 は worker を承認なしで止められる(個別の付与)
+@manager agent:read ~descendant = allow   # manager ロールは、子孫(子・孫…)の中身を tb peek で読める
+@manager send:task  ~child      = allow   # 子には依頼を送れる
+lead1    agent:stop @worker     = allow   # lead1 は worker を承認なしで止められる
 ```
 
-- 主体は agent 名の glob か `@<役割>`。対象は agent 名の glob、`@<役割>`、または `tb agent-spawn` の親子関係による相対指定 `~child` / `~descendant` / `~parent` / `~sibling`(同じセッションの台帳で引く)、組織図(下の設定 `org`)の `~report` / `~subordinate` / `~manager` / `~superior` / `~peer`
-- どれかの行に当たれば allow。当たらなければ従来どおり `approvals.conf` が決める。許可を足すだけで、`delivery`(旧 `routes.conf`)の拒否などは外さない
-- 使う場所: `tb peek`(`agent:read`)、承認待ちの承認(`approve:<操作>`。下の節)、`tb message send`(`send:<kind>`)、`tb agent-stop` などの agent 操作、`tb role-set`(`role:change`。grants に行があれば人事役でなくてよい。自分は不可・人事役は付けられない、の制限はそのまま。役割の本文・map を書く `tb role-write` は人事役だけ)、`tb agent-flag` / `agent-new --killable`(`agent:flag`)
-- 役割を確かめられない(台帳を読めない)行は使わない。`tb approval check <操作> --by <agent>` で、その agent から見た判定(grants を含む)を確かめられる
+- 相対指定は `tb agent-spawn` の親子関係 `~child` / `~descendant` / `~parent` / `~sibling`(同じセッションの台帳で引く)と、組織図(下の設定 `org`)の `~report` / `~subordinate` / `~manager` / `~superior` / `~peer`
+- allow の行は許可を足すだけで、`delivery`(旧 `routes.conf`)の拒否などは外さない。ほかの行が締めていれば(ask-any など)、厳しい方が勝つ
+- 使う場所: `tb peek`(`agent:read`)、承認待ちの承認(`approve:<操作>`。下の節)、`tb message send`(`send:<kind>`)、`tb agent-stop` などの agent 操作、`tb role-set`(`role:change`。allow の行があれば人事役でなくてよい。自分は不可・人事役は付けられない、の制限はそのまま。役割の本文・map を書く `tb role-write` は人事役だけ)、`tb agent-flag` / `agent-new --killable`(`agent:flag`)
+- 役割を確かめられない(台帳を読めない)行は許可に使わない。`tb approval check <操作> --by <agent>` か `tb can <agent> <操作> <対象>` で、その agent から見た判定を確かめられる
 
 #### 組織図(設定 `org`)と `tb can`
 
@@ -647,32 +664,32 @@ lead*   -> boss
 ```
 
 - 組織図は全員が見られる: `tb org`(木)、`tb org <agent>` / `tb org --me`(叩いた agent。pane から tb が決める)で上司・上の全員・直属の部下・同じ上司。`--json` も出せる
-- 線を引くだけでは何も許さない。grants の対象と delivery の宛先に `~report`(直属の部下)/ `~subordinate`(配下の全員)/ `~manager`(上司)/ `~superior`(上の全員)/ `~peer`(同じ上司)と書くと、その行がこの線で判定する(例 `@lead agent:read ~report`、`@worker -> ~manager : *=now`)。行の例は `setup/examples/org-rules.conf`
+- 線を引くだけでは何も許さない。policy の対象と delivery の宛先に `~report`(直属の部下)/ `~subordinate`(配下の全員)/ `~manager`(上司)/ `~superior`(上の全員)/ `~peer`(同じ上司)と書くと、その行がこの線で判定する(例 `@lead agent:read ~report`、`@worker -> ~manager : *=now`)。行の例は `setup/examples/org-rules.conf`
 - 役割を確かめられない行に先に当たった agent は、上司が決まらない(関係はどれにも当たらない。delivery は hold)
-- `tb can [<主体>] <操作> <対象>` は、誰が誰に何をできるかを実際の判定と同じ順で 1 つに決めて出す(読むだけ)。`send:<kind>` は delivery → approvals、`agent:stop` は protect → approvals、`role:change` / `agent:flag` は各コマンドの決まり、ほかは approvals(grants を含む)。終了コード 0=allow / 20=ask / 21=hold / 4=deny。主体を省くと叩いた agent
+- `tb can [<主体>] <操作> <対象>` は、誰が誰に何をできるかを実際の判定と同じ順で 1 つに決めて出す(読むだけ)。`send:<kind>` は delivery → policy、`agent:stop` は protect → policy、`role:change` / `agent:flag` は各コマンドの決まり、ほかは policy。終了コード 0=allow / 20=ask / 21=hold / 4=deny。主体を省くと叩いた agent
 
 #### 承認待ちの承認を agent に任せる(`approve:<操作> <依頼者>`)
 
-ask で止まった承認待ち(送信の `O-<n>`、agent 操作の `L-<n>`)は、ふだんは人が自分の端末で `tb approval approve` / `tb agent-approve` する。`grants.conf` に `approve:` の行を書くと、「誰からの」「どの操作の」承認待ちかを絞って、特定の agent に承認(LGTM)を任せられる。依頼した agent は、その agent が承認した時点で続けられる。
+ask で止まった承認待ち(送信の `O-<n>`、agent 操作の `L-<n>`)は、ふだんは人が自分の端末で `tb approval approve` / `tb agent-approve` する。policy に `approve:` の allow の行を書くと、「誰からの」「どの操作の」承認待ちかを絞って、特定の agent に承認(LGTM)を任せられる。依頼した agent は、その agent が承認した時点で続けられる。
 
 ```
-# <承認者> approve:<元の操作の glob> <依頼者>
-@lead      approve:send:task:*    ~child   # lead ロールは、子からの依頼の送信(宛先は問わない)を承認できる
-reviewer1  approve:agent:stop:*   w1       # reviewer1 は、w1 が頼んだ agent の停止を承認できる
-reviewer1  approve:send:task:w3   @worker  # worker からの w3 宛ての依頼だけ
+# <承認者> approve:<元の操作の glob> <依頼者> = allow
+@lead      approve:send:task:*    ~child  = allow  # lead ロールは、子からの依頼の送信(宛先は問わない)を承認できる
+reviewer1  approve:agent:stop:*   w1      = allow  # reviewer1 は、w1 が頼んだ agent の停止を承認できる
+reviewer1  approve:send:task:w3   @worker = allow  # worker からの w3 宛ての依頼だけ
 ```
 
-- 操作は `approve:` のあとに、承認待ちになった元の操作名(`send:<kind>:<宛先>`、`agent:<op>:<対象>`、`agent:spawn:<子>`、`agent:model:<名前>`、`agent:slash:<コマンド>:<宛先>`)。対象は依頼した agent(spawn は親)で、ほかの grants と同じく名前の glob・`@<役割>`・`~child` などの関係が書ける
-- 当たる agent は、自分の pane から `tb approval approve O-<n>` / `tb approval reject O-<n>` / `tb agent-approve L-<n>` / `tb agent-reject L-<n>` を実行できる。当たらなければ従来どおり人だけ
-- 自分の依頼は承認できない。`--always`(今後は承認なしにする規則の書き換え)は人だけ。`tb slash --all` / `tb model-set --all` の承認待ちと spawn-freeze 中の spawn も人だけ。アラート(`tb alert-approve`)と PR キュー(`tb pr queue approve`)は対象外(人だけ)
+- 操作は `approve:` のあとに、承認待ちになった元の操作名(`send:<kind>:<宛先>`、`agent:<op>:<対象>`、`agent:spawn:<子>`、`agent:model:<名前>`、`agent:slash:<コマンド>:<宛先>`)。対象は依頼した agent(spawn は親)で、ほかの行と同じく名前の glob・`@<役割>`・`~child` などの関係が書ける
+- 当たる agent は、自分の pane から `tb approval approve O-<n>` / `tb approval reject O-<n>` / `tb agent-approve L-<n>` / `tb agent-reject L-<n>` を実行できる。当たらなければ人だけ
+- 自分の依頼は承認できない。`--always`(今後は承認なしにする規則の書き換え)は人だけ。`tb slash --all` / `tb model-set --all` の承認待ち、spawn-freeze 中の spawn、依頼した agent にとって ask-human の操作も人だけ。アラート(`tb alert-approve`)と PR キュー(`tb pr queue approve`)は対象外(人だけ)
 - 同じ承認待ちを 2 人(人と agent でも)が同時に承認しても、実行・送信は 1 回だけ。実行の途中で止まった `L-<n>` は承認し直せないので、人が `tb agent-reject` で片付けて頼み直す
-- 誰が承認・却下したかは記録に残る(outbox の reason、`tb agent-ops` の結果に `agent <名前>(grants.conf: …)が承認`)。承認しても `delivery` の止める規則などは外れない
+- 誰が承認・却下したかは記録に残る(outbox の reason、`tb agent-ops` の結果に `agent <名前>(policy: … = allow)が承認`)。承認しても `delivery` の止める規則などは外れない
 - `tb can <承認者> approve:<元の操作> <依頼者>`(例 `tb can lead1 approve:send:task:w2 w1`)で、承認できるかを確かめられる(allow か deny)。組織図の関係も書ける(例 `@lead approve:send:task:* ~report`)
 - 承認者には自動では知らせない。依頼した agent が `tb message send <承認者> --kind info --text 'O-12 の確認をお願いします'` のように頼む
 
 #### agent の中身を読むのは `tb peek` だけ
 
-`tb peek <agent> [--lines N]` は pane の直近の出力を読む。人と本人はそのまま、ほかの agent からは `approvals.conf` の `agent:read:<名前>`(`agent:read:@<役割>` も可)が allow のときだけ(既定は ask = 読めない。終了コード 20)。誰がいつ誰を読んだかは `read_log` に残り、agent 同士の読み取りは関係グラフに `read` の辺として出る(拒否は denied)。
+`tb peek <agent> [--lines N]` は pane の直近の出力を読む。人と本人はそのまま、ほかの agent からは policy の `<主体> agent:read <対象> = allow`(対象は `@<役割>` や `~child` も可)に当たるときだけ(既定は ask-any = 読めない。終了コード 20、deny は 4)。誰がいつ誰を読んだかは `read_log` に残り、agent 同士の読み取りは関係グラフに `read` の辺として出る(拒否は denied)。
 
 tb を通らない直読みを防ぐため、agent の Claude Code 設定で herdr の直接呼び出しを止める(指揮官の `herdr agent prompt` と同じやり方):
 
@@ -697,9 +714,9 @@ tb spawn-freeze / tb spawn-unfreeze                                        # 人
 - 役割 `-` は役割なしの子(台帳の役割は空。役割の文面は `_common.md` だけ)。`allowed_roles` に `-` を書いたときだけ使える(既定の `.example` は `-` だけ。役割の利用例を入れたら worker などを足す)。プロンプトは役割に触れず、上の規則と依頼だけで動く文面になる
 - 規則は `config/spawn-policy.conf`(人だけが編集。無ければ `spawn-policy.conf.example` の既定値): 許可する役割(既定 `worker` だけ)、親 1 体あたり 2、全体 6、深さ 1、モデル sonnet。
   追加の固定の条件: 親は herdr で動いていて、`--task` が親の持つ in_progress のタスクであること。`denied_parents`(glob)に当たる親は子を立てられない
-- 判定: 規則に合い、`approvals.conf` の `agent:spawn:<子の名前>` が `allow` → 人の承認なしで作る(`agent-new` と同じ経路。`agent_ops` に requested_by=親・result に policy)。
+- 判定: 規則に合い、policy の `agent:spawn`(主体は親、対象は子の名前)が `allow` → 人の承認なしで作る(`agent-new` と同じ経路。`agent_ops` に requested_by=親・result に policy)。
   規則に合うが ask、または凍結中 → `L-<n>`(終了コード 20、`tb agent-approve`)。規則に合わない → 何も作らず stderr に理由を出して終了コード 4
-- 自動で作るには、人が `tb approval allow 'agent:spawn:*'`(`approvals.conf` に `agent:spawn:* = allow` を、`agent:* = ask` より上に足す)
+- 自動で作るには、人が `tb approval allow 'agent:spawn:*'`(policy に `* agent:spawn * = allow` を足す)か、親を絞った行(`@lead agent:spawn * = allow`)を書く
 - 親子は `agents.spawned_by` / `spawn_task` に残る。子の `tb comment` は指揮官への本文の先頭に `spawned_by: <親>` が付く
 - `tb digest` が知らせる: 子の数が上限の 1 つ手前以上(全体、または 1 体の親)/ 親のタスクが done・cancelled・blocked なのに子が動いている。子がいなければ何も出さない
 
@@ -716,7 +733,7 @@ tb slash mcp --all --apply              # 全 agent。L-<n> を積むだけで�
 
 - 送れるのは許可リスト(`config/slash.conf`。無ければ `slash.conf.example`、`tb config` で DB に置ける)に `allow` で載っているコマンドだけ。載っていない名前と `deny` の行(`/model` など、ユーザーの既定も変わる副作用の大きいもの)は送らない。呼び出す側は引数を足せない(固定の引数だけ)
 - 宛先は agent 名・`@<役割>`・`--all`。いまの herdr セッションの agent だけ。実行者自身と指揮官は常に除く。idle/done でない agent は理由つきで飛ばす。kind が対応していなければ `not-supported`
-- 承認: 人の端末からはそのまま送る。agent の pane からは `approvals.conf` の `agent:slash:<コマンド>:<宛先>`(`@<役割>` も可、既定 ask)を見て、ask なら宛先ごとに `L-<n>`(終了コード 20)
+- 承認: 人の端末からはそのまま送る。agent の pane からは policy の `agent:slash:<コマンド>`(対象は宛先。`@<役割>` も可、既定 ask-any)を見て、ask なら宛先ごとに `L-<n>`(終了コード 20)
 - 送り方は `tb compact-check` と同じ(状態を見直してから送り、受け付けを確かめる)。確認はコマンドごと: `busy` は動き出したか(動かなければ Enter を 1 回だけ補う)、`screen` は Enter を補わずに画面を読み、エラーの行(`Unknown command` / `Error:` / `failed`)や成功の印を見る
 - 記録は `agent_ops`(op=slash。宛先・依頼者・時刻・結果)。画面の出力は 200 字以内の状態の 1 行だけで、本文は残さない(`tb agent-ops` で見る)
 - 終了コード: 0 送った(飛ばした宛先があっても)/ 1 許可リストに無い・deny / 11 送ったが失敗した宛先がある / 20 承認待ちを積んだ
@@ -819,7 +836,7 @@ tb comment / alert / done / 障害の開閉 / pr-watch / 定期 ──▶ notify
 - 伏せ字(`mask_*`): メールは既定で伏せる。リポジトリ名・IP・アカウント ID・ホスト名は、人の決定で既定は**伏せない**(必要なら on)
 - 頻度: 1 分 6 通・1 時間 60 通(既定)。超えた分は 1 通にまとめる。同じ種別・対象は 10 分(`dedupe_sec`)に 1 回
 - sink: `file`(`data/notify/<日付>.md` と、外へ送った全文を残す `sent.log`。置き場は taskboard/data/notify(git 管理外)。`TB_NOTIFY_DIR` で変える)/ `stdout`(`tb notify tail`)/ `slack`
-  - `slack_via = agent`(既定): `tb notify flush`(scheduler の `notify-flush` ジョブ)が、整形済みの本文・hash・宛先を notifier agent へ送る(scheduler と同じ内部の送信の道なので `approvals.conf` の行は要らない)。notifier は本文をそのまま投稿し、`tb notify ack N-<n> <hash> [--id X]` で返す。hash が違えば警告、返事が無ければ再送(最大 3 回)して failed(情報は file に残る)。役は `drafts/new-roles/notifier.md`
+  - `slack_via = agent`(既定): `tb notify flush`(scheduler の `notify-flush` ジョブ)が、整形済みの本文・hash・宛先を notifier agent へ送る(scheduler と同じ内部の送信の道なので policy の行は要らない)。notifier は本文をそのまま投稿し、`tb notify ack N-<n> <hash> [--id X]` で返す。hash が違えば警告、返事が無ければ再送(最大 3 回)して failed(情報は file に残る)。役は `drafts/new-roles/notifier.md`
   - `slack_via = webhook`: 権限 0600 のファイル(`webhook_file`。リポジトリの外)の 1 行目の URL へ curl で POST。URL は引数・記録・ログに出ない
 - 宛先のチャンネル ID は `notify.conf` か環境変数にだけ書く(リポジトリに入れない。`tb notify status` も値は出さない)
 
@@ -917,24 +934,24 @@ tb が `herdr agent prompt` で送ろうとしたものは、結果にかかわ�
 ## 設定(`tb config`)
 
 運用の設定は DB の `config` 表に置き、キーで引く(schema/013)。シングルポート・マルチセッションでも、セッションごとに違う設定を持てる。
-本文は今までの conf ファイルの中身そのまま(書式は各節のとおり)。キーは `projects` / `approvals` / `grants` / `routes` / `delivery` / `limits` / `notify` / `compact` / `slash` / `sched-watch` / `spawn-policy` / `role-models` / `protect`(tb から止めさせない agent)/ `org`(組織図。上の「組織図」)/ `labels`(チケットに付けられるラベル)/ `messages`(agent に返す文面の上書き。下の「agent に返す文面」)/ `conv-routes`(会話の振り分け表。書くのは `tb conv routes-set` だけ)。
+本文は今までの conf ファイルの中身そのまま(書式は各節のとおり)。キーは `projects` / `policy` / `routes` / `delivery` / `limits` / `notify` / `compact` / `slash` / `sched-watch` / `spawn-policy` / `role-models` / `protect`(tb から止めさせない agent)/ `org`(組織図。上の「組織図」)/ `labels`(チケットに付けられるラベル)/ `messages`(agent に返す文面の上書き。下の「agent に返す文面」)/ `conv-routes`(会話の振り分け表。書くのは `tb conv routes-set` だけ)。
 
 引く順(最初に見つかったもの):
 
-1. 環境変数で明示したファイル(`TB_CONFIG` / `TB_APPROVALS` / `TB_GRANTS` / `TB_ROUTES` / `TB_LIMITS` / `TB_NOTIFY_CONF` / `TB_COMPACT_CONF` / `TB_SCHEDWATCH_CONF` / `TB_SPAWN_POLICY` / `TB_ROLE_MODELS` / `TB_CONV_ROUTES`。テストや一時の差し替え)
+1. 環境変数で明示したファイル(`TB_CONFIG` / `TB_POLICY` / `TB_ROUTES` / `TB_LIMITS` / `TB_NOTIFY_CONF` / `TB_COMPACT_CONF` / `TB_SCHEDWATCH_CONF` / `TB_SPAWN_POLICY` / `TB_ROLE_MODELS` / `TB_CONV_ROUTES`。テストや一時の差し替え)
 2. DB の**このセッション**の行
 3. DB の**全セッション共通**の行(`herdr_session='*'`)
 4. checkout の `taskboard/config/<名前>.conf`(DB に取り込むまでの移行用。git 管理外)
-5. `<名前>.conf.example`(projects / approvals / limits / compact / slash / sched-watch / spawn-policy。コードと一緒に版を合わせる既定値)
+5. `<名前>.conf.example`(projects / limits / compact / slash / sched-watch / spawn-policy。コードと一緒に版を合わせる既定値)
 
 ```bash
 tb config                          # キーごとの出どころ(db:<セッション> / db:* / file:<パス> / example:<パス> / none)
-tb config show approvals           # 今効いている本文
+tb config show policy              # 今効いている本文
 tb config import [--dry-run]       # checkout の config/*.conf を共通の行として取り込み、checkout から退かす(最初に 1 回。共通の行があるキーは飛ばす)
-tb config edit approvals           # このセッションの行を $EDITOR で編集(--shared で共通の行)
+tb config edit policy              # このセッションの行を $EDITOR で編集(--shared で共通の行)
 tb config set routes < routes.conf # 標準入力の本文で置き換える(--shared で共通の行)
 tb config unset routes             # このセッションの行を消す(共通の行・ファイルに戻る)
-tb config history approvals        # 変更の履歴(config_changes)
+tb config history policy           # 変更の履歴(config_changes)
 ```
 
 - `tb allow` / `tb ask` / `tb notify set` / `tb limits` も、今効いている本文を元に、このセッションの行を書く(環境変数でファイルを明示していればそのファイル)
@@ -943,7 +960,7 @@ tb config history approvals        # 変更の履歴(config_changes)
   ファイルを直接読むと、別のセッション向けや古い本文を読みかねない。そのため `tb config import` は取り込んだファイルを `~/.local/state/herdr/config-imported/<日時>/` へ退かす(戻すときはそこからコピー)。
   念のため `permissions.deny` に `Read(//<ORCH_DIR>/taskboard/config/*.conf)` を入れておくとよい
 - ファイルに残す設定: この Mac 全体を守るもの(gate 系・risk-rules・pr-queue・proxy-allowlist・repos.md・spawn-rules)と、コードと版を合わせる既定値(`approvals-catalog.conf`・`*.example`)。役割(roles/)は今は `roles/sessions/<セッション>/` で分ける
-- Web UI も同じ順で引く(`webui/app/data.py` の `config_text`。今は projects と approvals)
+- Web UI も同じ順で引く(`webui/app/data.py` の `config_text`。今は projects と policy)
 
 ### agent に返す文面(`messages`)
 

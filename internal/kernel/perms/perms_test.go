@@ -87,7 +87,7 @@ func TestRowsAreConsistent(t *testing.T) {
 }
 
 func tier(tb *perms.Table, db *sql.DB, op, who string) (string, string) {
-	t, r, _ := tb.Tier(db, "s", op, "*", func() (string, error) { return who, nil })
+	t, r, _ := tb.Tier(db, "s", op, "", func() (string, error) { return who, nil })
 	return t, r
 }
 
@@ -250,7 +250,7 @@ func TestPolicyStrictestWins(t *testing.T) {
 		}
 	}
 	asked := false
-	if got, _, _ := tb.Tier(db, "s", "cmd:x:z", "*", func() (string, error) { asked = true; return "w1", nil }); got != "allow" || asked {
+	if got, _, _ := tb.Tier(db, "s", "cmd:x:z", "", func() (string, error) { asked = true; return "w1", nil }); got != "allow" || asked {
 		t.Errorf("当たる行の無い操作 = %s(呼び出し元を聞いた: %v)", got, asked)
 	}
 	if got, _ := tier(tb, db, "cmd:x:a", "human"); got != "allow" {
@@ -259,13 +259,30 @@ func TestPolicyStrictestWins(t *testing.T) {
 }
 
 func TestValidatePolicy(t *testing.T) {
-	if msg := perms.ValidatePolicy("# c\n\n@worker cmd:ticket:* * = ask-human\nw1 cmd:x:y lead1 = deny\n"); msg != "" {
+	if msg := perms.ValidatePolicy("# c\n\n@worker cmd:ticket:* * = ask-human\nw1 send:task lead1 = deny\n@lead agent:read ~child = allow\n"); msg != "" {
 		t.Errorf("正しい本文が落ちた: %s", msg)
 	}
-	msg := perms.ValidatePolicy("w1 cmd:x = allow\nw1 cmd:x:y * = maybe\nhuman cmd:x:y * = deny\nno equals here\n")
-	for _, want := range []string{"1 行目", "2 行目", "3 行目", "4 行目"} {
+	msg := perms.ValidatePolicy("w1 cmd:x = allow\nw1 cmd:x:y * = maybe\nhuman cmd:x:y * = deny\nno equals here\nw1 cmd:x:y lead1 = deny\nw1 agent:read ~cousin = allow\n")
+	for _, want := range []string{"1 行目", "2 行目", "3 行目", "4 行目", "5 行目", "6 行目"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("%s が無い: %s", want, msg)
+		}
+	}
+}
+
+func TestOpsOf(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"send:*", "send:*"},
+		{"agent:stop", "agent:stop"},
+		{"agent:*", "agent:new agent:stop agent:revive agent:spawn agent:compact agent:model agent:read agent:slash:*"},
+		{"*", strings.Join(perms.InnerOps, " ")},
+		{"*:task", "send:task"},
+		{"cmd:ticket:list", ""},
+		{"approve:send:task", ""},
+		{"agent:flag", ""},
+	} {
+		if got := strings.Join(perms.OpsOf(c.in), " "); got != c.want {
+			t.Errorf("OpsOf(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
 }

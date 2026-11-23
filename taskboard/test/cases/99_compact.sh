@@ -2,7 +2,7 @@
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
 # --- tb compact-check: 大きい文脈の待機中 agent に /compact を送る。判定の各条件と dry-run / apply / approvals
 _saved_pane=${HERDR_PANE_ID-}; unset HERDR_PANE_ID
-export TB_DB=$TMP/compact.db TB_APPROVALS=$TMP/appr-compact.conf TB_COMPACT_CONF=$TMP/compact.conf TB_CLAUDE_PROJECTS=$TMP/cprojects
+export TB_DB=$TMP/compact.db TB_POLICY_A=$TMP/appr-compact.conf TB_COMPACT_CONF=$TMP/compact.conf TB_CLAUDE_PROJECTS=$TMP/cprojects
 unset FAKE_DYNAMIC FAKE_STATUS
 cpsql() { sqlite3 "$TB_DB" "$@"; }
 cp_ag() { printf '{"pane_id":"%s","name":"%s","agent_status":"%s","agent_session":{"value":"s-%s"},"cwd":"%s"}' "$2" "$1" "${3:-idle}" "$1" "$TMP"; }
@@ -15,7 +15,7 @@ cp_tr() {  # $1=名前 $2=cache_read
 }
 cp_keys() { grep -c "^prompt .*	/compact$" "$FAKE_LOG"; }
 printf 'enabled = 1\nthreshold_tokens = 150000\nmin_interval_sec = 1800\nexclude = conductor skipme\n' >"$TB_COMPACT_CONF"
-printf 'agent:compact:big = allow\nagent:compact:busy = allow\nagent:compact:skipme = allow\nagent:compact:small = allow\nagent:compact:recent = allow\n* = ask\n' >"$TB_APPROVALS"
+printf '* agent:compact big = allow\n* agent:compact busy = allow\n* agent:compact skipme = allow\n* agent:compact small = allow\n* agent:compact recent = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
 cp_tr big 200000; cp_tr busy 200000; cp_tr skipme 200000; cp_tr small 1000; cp_tr recent 200000; cp_tr noappr 200000; cp_tr conductor 200000
 export FAKE_AGENTS="[$(cp_ag conductor wC:p1),$(cp_ag big wB:p1),$(cp_ag busy wY:p1 working),$(cp_ag skipme wS:p1),$(cp_ag small wM:p1),$(cp_ag recent wR:p1),$(cp_ag noappr wN:p1)]"
 : >"$FAKE_LOG"
@@ -30,7 +30,7 @@ eq "compact: below threshold skipped" "$(grep -c '^small 4000 skip(below thresho
 eq "compact: working skipped" "$(grep -c '^busy - skip(working)' <<<"$out")" "1"
 eq "compact: excluded (config list and conductor) skipped" "$(grep -c '^skipme - skip(excluded)' <<<"$out") $(grep -c '^conductor - skip(excluded)' <<<"$out")" "1 1"
 eq "compact: compacted within min_interval skipped" "$(grep -c '^recent 203000 skip(compacted' <<<"$out")" "1"
-eq "compact: no approvals rule (ask) skipped with the line to add" "$(grep -c "^noappr 203000 skip(approval: agent:compact:noappr is ask; add 'agent:compact:\* = allow'" <<<"$out")" "1"
+eq "compact: no policy row (ask-any) skipped with the line to add" "$(grep -c "^noappr 203000 skip(approval: agent:compact:noappr is ask-any; add '\* agent:compact \* = allow'" <<<"$out")" "1"
 eq "compact: output never contains transcript content" "$(grep -c SECRET-BODY <<<"$out")" "0"
 eq "compact: tail too short for the last usage line → falls back to reading the whole transcript" "$(COMPACT_TAIL_BYTES=40 $TB compact-check 2>&1 | grep -c '^big 203000 would-compact')" "1"
 eq "compact: tail cut inside the usage line → falls back too" "$(COMPACT_TAIL_BYTES=150 $TB compact-check 2>&1 | grep -c '^big 203000 would-compact')" "1"

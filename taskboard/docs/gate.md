@@ -103,7 +103,7 @@ AUTHOR-REJECT-RATE low|mid|high|unknown           作者の過去の差し戻し
 
 | 分類 | パス |
 |---|---|
-| 判定・承認の設定と実装、`tb` の入口、テスト基盤 | `.github`(どの階層でも)、`gate*.conf`、`gate-paths.conf`、`gate*.sh`、`approvals.conf`、`risk-rules.conf`、`bin/tb`、`run-all.sh`、`test/run.sh`、`tests/run.sh`、gate のテスト |
+| 判定・承認の設定と実装、`tb` の入口、テスト基盤 | `.github`(どの階層でも)、`gate*.conf`、`gate-paths.conf`、`gate*.sh`、`approvals.conf`・`policy.conf`・`perms/*.tbl`、`risk-rules.conf`、`bin/tb`、`run-all.sh`、`test/run.sh`、`tests/run.sh`、gate のテスト |
 | agent への指示・権限・拡張の設定(どの階層でも) | `.claude.json`、`.agents/`、`AGENT.md`、`.aider.conf.*`、`.claude/`(hooks、commands、agents、skills、settings)、`CLAUDE.md`、`CLAUDE.local.md`、`AGENTS.md`、`GEMINI.md`、`copilot-instructions.md`、`.cursor/`、`.cursorrules`、`.windsurf/`、`.windsurfrules`、`.clinerules*`、`.roo/`、`.continue/`、`.codex/`、`.gemini/`、`mcp.json`、`.mcp.json`、`.vscode/tasks.json`、`.vscode/settings.json` |
 | レビュー必須の規則・レビューの設定 | `CODEOWNERS`(ルート・`docs/`・`.github/` のどこでも)、`.coderabbit.yaml` |
 | 実行の入口(git・起動・CI) | `.githooks`、`.husky`、`.gitattributes`、`.gitmodules`、`.pre-commit-config.yaml`、`.envrc`、`.mcp.json`、`.devcontainer/`、`.circleci/`、`Jenkinsfile`、`.gitlab-ci.yml`、`.gitlab/`、`.travis.yml`、`azure-pipelines*.y*ml`、`.azure-pipelines/`、`bitbucket-pipelines.yml`、`cloudbuild.y*ml`、`appveyor.yml`、`.drone.yml`、`buildspec*.y*ml`、`lefthook*.y*ml`、`.pre-commit-hooks.yaml`、`renovate.json`(`.json5`)、`.renovaterc*`、`.dependabot/` |

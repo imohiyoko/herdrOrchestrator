@@ -2,8 +2,8 @@
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
 # --- agent の kind アダプタ(lib/kinds.sh): claude は従来どおり、codex / gemini は対応していない項目をはっきり止める
 _saved_pane=${HERDR_PANE_ID-}; unset HERDR_PANE_ID
-export TB_DB=$TMP/kinds.db TB_APPROVALS=$TMP/appr-kinds.conf TB_SPAWN_RETRY_SEC=0 TB_AGENT_CWD=$TMP TB_LIMITS=$TMP/kd-lim.conf
-printf '* = allow\n' >"$TB_APPROVALS"
+export TB_DB=$TMP/kinds.db TB_POLICY_A=$TMP/appr-kinds.conf TB_SPAWN_RETRY_SEC=0 TB_AGENT_CWD=$TMP TB_LIMITS=$TMP/kd-lim.conf
+printf '* * * = allow\n' >"$TB_POLICY_A"
 unset FAKE_DYNAMIC FAKE_START_RC FAKE_CLOSE_RC FAKE_STATUS
 kdsql() { sqlite3 "$TB_DB" "$@"; }
 kd_ag() { printf '{"pane_id":"%s","name":"%s","agent_status":"idle","agent_session":{"value":"%s"},"cwd":"%s"%s}' "$2" "$1" "$3" "$TMP" "${4:-}"; }

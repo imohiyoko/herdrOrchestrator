@@ -4,6 +4,7 @@ package tbcli
 
 import (
 	"database/sql"
+	"github.com/imohiyoko/herdrorchestrator/internal/approval"
 	"sort"
 
 	"bufio"
@@ -26,8 +27,8 @@ import (
 // Commands は Go に移し終えたコマンド。bin/tb はこの一覧(herdrctl tb --commands)を見て渡すかを決める。
 var Commands = []string{"activity", "add", "agent-approve", "agent-flag", "agent-kinds", "agent-new", "agent-ops", "agent-reject", "agent-restart", "agent-revive", "agent-shed", "agent-spawn", "agent-stop", "agents", "allow", "approval", "approve", "ask", "block", "board", "can", "cancel", "claim", "comment", "comments", "compact-check", "config", "conv", "conv-candidate-add", "conv-candidate-adopt", "conv-candidate-reject", "conv-draft", "conv-gate", "conv-incident", "conv-kinds", "conv-learn-purge", "conv-ledger", "conv-length", "conv-lint", "conv-pair-add", "conv-pair-show", "conv-pairs", "conv-patterns", "conv-route", "conv-routes-set", "conv-scan", "conv-stage", "conv-stage-log", "conv-stage-reset", "conv-stage-set", "conv-voice", "conv-voice-check", "deadlines-import", "done", "due-scan", "events", "flush", "gate", "handoff", "history", "inbox", "inbox-read", "job", "labels", "limits", "link", "list", "message", "model-set", "notify", "nudge", "org", "outbox", "part-check", "part-risk", "parts", "peek", "pending", "pr", "pr-queue", "pr-watch", "proposal", "proposal-resolve", "proposals", "proxy", "proxy-check", "proxy-list", "proxy-request", "proxy-resolve", "recipe-history", "recipe-list", "recipe-rm", "recipe-set", "recipe-show", "reject", "reminder", "reminders", "reopen", "report", "resolve", "review", "review-pack", "review-submit", "role-broadcast", "role-context", "role-edit", "role-list", "role-log", "role-set", "role-show", "role-unset", "role-write", "roles", "sched-job", "send", "show", "slash", "spawn-freeze", "spawn-unfreeze", "sprint-add", "sprint-close", "sprint-start", "sprints", "ticket", "touch", "tree", "unlink", "update"}
 
-// Features は bin/tb が渡す前に確かめる機能(perms = 権限段階の門。ADR 0006)。
-var Features = []string{"perms", "policy"}
+// Features は bin/tb が渡す前に確かめる機能(perms = 権限段階の門。ADR 0006。policy = 認可の表。policy-ops = コマンドの中の操作も policy で判定。ADR 0007)。
+var Features = []string{"perms", "policy", "policy-ops"}
 
 // 終了コード(tb と同じ)
 const (
@@ -66,6 +67,10 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 	perms.OpenDB = permDB
 	perms.NameMatch = func(db *sql.DB, session, name, pat string) int { return agents.NewRoles(db, session).Match(name, pat) }
+	perms.RelMatch = func(db *sql.DB, session, a, b, rel string) int {
+		return approval.NewJudge(db, session).Relation(a, b, rel)
+	}
+	approval.Warn = func(msg string) { fmt.Fprintln(stderr, msg) }
 	if args[0] != "touch" {
 		// 権限段階の入口(ADR 0006。bash の main → perm_gate と同じ)
 		if err := permErr(perms.Gate(args, permDB)); err != nil {

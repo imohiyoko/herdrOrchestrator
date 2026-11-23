@@ -1,12 +1,12 @@
 # shellcheck shell=bash
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
 # --- tb send --reply-to(受け手の自分の送信への返信だけを、DB で確かめてすぐ届ける)
-_rp_saved=("${TB_CONFIG-}" "${TB_ROUTES-}" "${TB_APPROVALS-}")
-export TB_DB=$TMP/reply.db TB_CONFIG=$TMP/reply-projects.conf TB_ROUTES=$TMP/reply-routes.conf TB_APPROVALS=$TMP/reply-approvals.conf
+_rp_saved=("${TB_CONFIG-}" "${TB_ROUTES-}" "${TB_POLICY_A-}")
+export TB_DB=$TMP/reply.db TB_CONFIG=$TMP/reply-projects.conf TB_ROUTES=$TMP/reply-routes.conf TB_POLICY_A=$TMP/reply-approvals.conf
 export TB_DELIVERY=$TMP/reply-delivery.conf
 printf 'rp=coordinator\n' >"$TB_CONFIG"
 printf 'coordinator -> *\n@worker -> *\nassistant -> *\n' >"$TB_ROUTES"
-printf '* = allow\n' >"$TB_APPROVALS"
+printf '* * * = allow\n' >"$TB_POLICY_A"
 printf 'coordinator -> assistant : *=hold reply=now\n@worker -> assistant : *=hold reply=now\n' >"$TB_DELIVERY"
 rsql() { sqlite3 "$TB_DB" "$@"; }
 rag() { printf '{"pane_id":"w%s:p1","name":"%s","agent_session":{"value":"s-%s"}}' "$1" "$1" "$1"; }
@@ -41,23 +41,23 @@ eq "reply: a message that does not exist → held" "$(tail -1 <<<"$out") $(grep 
 eq "reply: --reply-to must be O-<n>" "$(rc RC send assistant --reply-to 1 --text x) $(rc RC send assistant --reply-to I-1 --text x)" "2 2"
 
 # まだ届いていない(承認待ち)の送信への返信は認めない
-printf 'send:task:coordinator = ask\n* = allow\n' >"$TB_APPROVALS"
+printf '* send:task coordinator = ask-any\n* * * = allow\n' >"$TB_POLICY_A"
 RA send coordinator --kind task --text 'pending q' >/dev/null 2>&1   # O-8 pending
 out=$(RC send assistant --kind answer --reply-to O-8 --text 'early' 2>&1)
 eq "reply: the original must have been delivered" "$(tail -1 <<<"$out") $(grep -c 'O-8 はまだ届いていない(pending)' <<<"$out")" "O-9 held for assistant (I-6) 1"
 # 返信が承認待ちで却下されたら、返信済みに数えない
 RA send coordinator --kind info --text 'q2' >/dev/null 2>&1   # O-10 sent(info は allow)
-printf 'send:answer:assistant = ask\n* = allow\n' >"$TB_APPROVALS"
+printf '* send:answer assistant = ask-any\n* * * = allow\n' >"$TB_POLICY_A"
 eq "reply: a verified reply still waits for approval first" "$(RC send assistant --kind answer --reply-to O-10 --text r1 2>/dev/null | tail -1)" "O-11 pending-approval"
 $TB reject O-11 >/dev/null
-printf '* = allow\n' >"$TB_APPROVALS"
+printf '* * * = allow\n' >"$TB_POLICY_A"
 eq "reply: a rejected reply does not count as answered" "$(RC send assistant --kind answer --reply-to O-10 --text r2 2>/dev/null | tail -1) $(rsql "SELECT reply_check FROM outbox WHERE id=11;")" "O-12 sent to assistant 人が却下"
 # 承認されれば、届ける時点で返信として扱う
-printf 'send:answer:assistant = ask\n* = allow\n' >"$TB_APPROVALS"
+printf '* send:answer assistant = ask-any\n* * * = allow\n' >"$TB_POLICY_A"
 RA send coordinator --kind info --text 'q3' >/dev/null 2>&1   # O-13
 RC send assistant --kind answer --reply-to O-13 --text r3 >/dev/null 2>&1   # O-14 pending
 eq "reply: an approved verified reply is delivered now" "$($TB approve O-14)" "O-14 approved and sent to assistant"
-printf '* = allow\n' >"$TB_APPROVALS"
+printf '* * * = allow\n' >"$TB_POLICY_A"
 
 # 保留された送信(inbox)への返信も返信として届く(元の送信は sent)
 eq "reply: replying to a held message is allowed" "$(RA send coordinator --kind answer --reply-to O-2 --text 'thanks' 2>/dev/null | tail -1) $(rsql "SELECT reply_check FROM outbox WHERE id=15;")" "O-15 sent to coordinator ok"
@@ -77,6 +77,6 @@ eq "reply: without the delivery key everything is delivered now" "$(RC send assi
 printf '!worker1 -> coordinator\n* -> *\n' >"$TB_ROUTES"
 RC send worker1 --kind task --text 'q6' >/dev/null 2>&1   # O-21
 eq "reply: a denied reply is recorded as not ok" "$(RW send coordinator --reply-to O-21 --text x 2>&1 >/dev/null | grep -c 認めません) $(rsql "SELECT status||' '||reply_check FROM outbox WHERE id=22;")" "0 denied ルールで拒否された送信"
-export TB_CONFIG=${_rp_saved[0]} TB_ROUTES=${_rp_saved[1]} TB_APPROVALS=${_rp_saved[2]}
-[[ -n $TB_ROUTES ]] || unset TB_ROUTES; [[ -n $TB_APPROVALS ]] || unset TB_APPROVALS
+export TB_CONFIG=${_rp_saved[0]} TB_ROUTES=${_rp_saved[1]} TB_POLICY_A=${_rp_saved[2]}
+[[ -n $TB_ROUTES ]] || unset TB_ROUTES; [[ -n $TB_POLICY_A ]] || unset TB_POLICY_A
 unset FAKE_AGENTS _rp_saved

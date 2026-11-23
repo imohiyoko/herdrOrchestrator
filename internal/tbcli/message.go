@@ -150,10 +150,14 @@ func send(db *store.DB, args []string, w, stderr io.Writer) error {
 	default:
 		v, rule := j.Of("send:"+kind+":"+target, l.Name)
 		apRule = rule
-		if v != "allow" {
+		switch v {
+		case "allow":
+		case "deny":
+			status = "denied"
+		default:
 			status = "pending"
 		}
-		reason += " / approvals: " + rule
+		reason += " / 認可: " + rule
 		// リスク評価(第 1 段: 参考値を reason に残すだけ。status は変えない)
 		reason += " / " + approval.Eval(j.Collect(l.Name, target, kind, text)).Oneline()
 	}
@@ -175,7 +179,7 @@ func send(db *store.DB, args []string, w, stderr io.Writer) error {
 		fmt.Fprintf(stderr, "tb: 送信を拒否しました(%s): %s\n", reason, id)
 		rc = 4
 	case "pending":
-		fmt.Fprintf(stderr, "tb: 人の承認待ちです(approvals.conf: %s)。人が tb approve %s で届けます\n", apRule, id)
+		fmt.Fprintf(stderr, "tb: 承認待ちです(認可: %s)。人(か approve: を許された agent)が tb approve %s で届けます\n", apRule, id)
 		rc = exitAsk
 	default:
 		r := message.Deliver(j, oid, true, io.Discard, stderr)

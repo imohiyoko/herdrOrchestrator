@@ -4,7 +4,7 @@
 _saved_pane=${HERDR_PANE_ID-}; unset HERDR_PANE_ID
 _saved_hs=${HERDR_SESSION-}; unset HERDR_SESSION
 _saved_tc=${TB_CONFIG-}; _saved_tl=${TB_LIMITS-}
-unset TB_CONFIG TB_LIMITS TB_APPROVALS TB_ROUTES TB_GRANTS
+unset TB_CONFIG TB_LIMITS TB_POLICY_A TB_ROUTES TB_POLICY_G
 export TB_DB=$TMP/config.db; rm -f "$TB_DB"
 CR=$(cd "$HERE/../config" && pwd)
 export TB_CONFIG_DIR=$TMP/cfgdir; mkdir -p "$TB_CONFIG_DIR"   # checkout の設定ファイルの置き場(取り込むと退かすので一時の場所)
@@ -17,7 +17,7 @@ l=$(SA config list)
 eq "config: 置き場に何も無ければ無し" "$(src "$l" projects) $(src "$l" approvals) $(src "$l" routes)" \
   "none none none"
 unset TB_CONFIG_DIR; l=$(SA config list); export TB_CONFIG_DIR=$TMP/cfgdir
-eq "config: 既定の置き場では checkout の例を読む" "$(src "$l" projects) $(src "$l" approvals)" "example:$CR/projects.conf.example example:$CR/approvals.conf.example"
+eq "config: 既定の置き場では checkout の例を読む(policy の例は既定値にしない)" "$(src "$l" projects) $(src "$l" policy)" "example:$CR/projects.conf.example none"
 printf 'pj = from-file\n' >"$TB_CONFIG_DIR/projects.conf"
 eq "config: checkout のファイルがあればそれ" "$(src "$(SA config list)" projects)" "file:$TB_CONFIG_DIR/projects.conf"
 
@@ -27,16 +27,16 @@ eq "config show: 本文" "$(SA config show routes 2>/dev/null)" "a -> b"
 printf '! x -> y\n' | SB config set routes --shared >/dev/null
 eq "config set --shared: 共通の行。このセッションの行があればそちらが先" "$(src "$(SA config list)" routes) $(src "$(SB config list)" routes) $(SB config show routes 2>/dev/null)" "db:sa db:* ! x -> y"
 
-# 承認ルールも DB から引く。tb allow はこのセッションの行に書く(今効いている本文を元にする)
-printf '# 共通\nsend:* = allow\n* = ask\n' | SA config set approvals --shared >/dev/null
-eq "approvals: 共通の行で判定" "$(SA approval send:task:w | head -1) $(SB approval send:task:w | head -1)" "allow allow"
+# 認可(policy)も DB から引く。tb allow はこのセッションの行に書く(今効いている本文を元にする)
+printf '# 共通\n* send:* * = allow\n' | SA config set policy --shared >/dev/null
+eq "policy: 共通の行で判定" "$(SA approval send:task:w | head -1) $(SB approval send:task:w | head -1)" "allow allow"
 SA allow 'agent:stop:*' >/dev/null
-eq "tb allow: このセッションの行に書き、ほかのセッションは変わらない" "$(SA approval agent:stop:w | head -1) $(SB approval agent:stop:w | head -1) $(src "$(SA config list)" approvals) $(src "$(SB config list)" approvals)" \
+eq "tb allow: このセッションの行に書き、ほかのセッションは変わらない" "$(SA approval agent:stop:w | head -1) $(SB approval agent:stop:w | head -1) $(src "$(SA config list)" policy) $(src "$(SB config list)" policy)" \
   "allow ask db:sa db:*"
-eq "tb allow: 元の本文(共通の行)を引き継ぎ、新しい規則は最初の規則の前" "$(SA config show approvals 2>/dev/null | grep -v '^#' | sed 's/ *#.*//' | tr '\n' '|')" "agent:stop:* = allow|send:* = allow|* = ask|"
+eq "tb allow: 元の本文(共通の行)を引き継ぎ、新しい行は末尾" "$(SA config show policy 2>/dev/null | grep -v '^#' | sed 's/ *#.*//' | tr '\n' '|')" "* send:* * = allow|* agent:stop * = allow|"
 SA ask 'agent:stop:*' >/dev/null
-eq "tb ask: 同じ行を書き換える" "$(SA approval agent:stop:w | head -1) $(SA config show approvals 2>/dev/null | grep -c 'agent:stop')" "ask 1"
-eq "config history: 変更が残る" "$(SA config history approvals | cut -f2,3 | tr '\t\n' ': ')" "sa:ask sa:allow *:set "
+eq "tb ask: 同じ行を書き換える" "$(SA approval agent:stop:w | head -1) $(SA config show policy 2>/dev/null | grep -c 'agent:stop')" "ask 1"
+eq "config history: 変更が残る" "$(SA config history policy | cut -f2,3 | tr '\t\n' ': ')" "sa:ask sa:allow *:set "
 
 # 送り先(projects)も DB から
 printf 'pj = cond-shared\n' | SA config set projects --shared >/dev/null
@@ -61,14 +61,14 @@ eq "config: 不明なキー" "$(rc SA config show nope)" "2"
 
 # 取り込み: checkout のファイルを共通の行にし、checkout から退かす(既にある共通の行は飛ばす)。dry-run は書かない
 SA config unset projects --shared >/dev/null
-printf 'x = allow\n' >"$TB_CONFIG_DIR/approvals.conf"
+printf '* send:* * = deny\n' >"$TB_CONFIG_DIR/policy.conf"
 out=$(SA config import --dry-run)
-eq "config import --dry-run: 書かず、退かさない" "$(grep -c 'approvals:.*飛ばします' <<<"$out") $(grep -c 'projects:.*取り込みます' <<<"$out") $(sqlite3 "$TB_DB" "SELECT COUNT(*) FROM config WHERE herdr_session='*';") $(ls "$TB_CONFIG_DIR" | tr '\n' ' ')" \
-  "1 1 1 approvals.conf projects.conf "
+eq "config import --dry-run: 書かず、退かさない" "$(grep -c 'policy:.*飛ばします' <<<"$out") $(grep -c 'projects:.*取り込みます' <<<"$out") $(sqlite3 "$TB_DB" "SELECT COUNT(*) FROM config WHERE herdr_session='*';") $(ls "$TB_CONFIG_DIR" | tr '\n' ' ')" \
+  "1 1 1 policy.conf projects.conf "
 SA config import >/dev/null
 eq "config import: 共通の行が無いキーだけ、ファイルの本文のまま取り込む" "$(sqlite3 "$TB_DB" "SELECT key||'='||body FROM config WHERE herdr_session='*' ORDER BY key;" | tr '\n' ' ')" \
-  "approvals=# 共通 send:* = allow * = ask projects=pj = from-file "
-eq "config import: 取り込んだファイルは checkout から退かし、取り込まなかったものは残す" "$(ls "$TB_CONFIG_DIR" | tr '\n' ' ')/$(ls "$XDG_STATE_HOME"/herdr/config-imported/*/ | tr '\n' ' ')" "approvals.conf /projects.conf "
+  "policy=# 共通 * send:* * = allow projects=pj = from-file "
+eq "config import: 取り込んだファイルは checkout から退かし、取り込まなかったものは残す" "$(ls "$TB_CONFIG_DIR" | tr '\n' ' ')/$(ls "$XDG_STATE_HOME"/herdr/config-imported/*/ | tr '\n' ' ')" "policy.conf /projects.conf "
 eq "config import: 2 回目は何もしない" "$(SA config import | grep -c '取り込み、')" "0"
 
 
