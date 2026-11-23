@@ -208,7 +208,7 @@ func cmdAlert(args []string, w, stderr io.Writer) error {
 	return nil
 }
 
-// alertDispatchOne は alert_dispatch_one: 解析役を起動する。新規で approvals が ask なら awaiting-approval。上限なら queued。
+// alertDispatchOne は alert_dispatch_one: 解析役を起動する。新規で policy の alert:analyze が allow でなければ awaiting-approval。上限なら queued。
 func alertDispatchOne(db *store.DB, id int64) int {
 	st := alertStatus(db, id)
 	if st != "new" && st != "queued" && st != "approved" {
@@ -338,7 +338,7 @@ func cmdAlertApprove(args []string, w, stderr io.Writer) error {
 		return die("A-%d は承認待ちではありません", id)
 	}
 	alertSetStatus(db, id, "approved")
-	if always && setApproval(db, "allow", "alert:analyze", io.Discard) == nil {
+	if always && setApproval(db, "allow", "alert:analyze", io.Discard, io.Discard) == nil {
 		fmt.Fprintln(w, "alert:analyze = allow(今後は承認なし)")
 	}
 	_ = alertDispatchOne(db, id)

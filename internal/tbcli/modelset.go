@@ -270,8 +270,14 @@ func cmdModelSet(args []string, w, stderr io.Writer) error {
 		if all {
 			hold, why = true, "--all は人の承認が要ります"
 		} else if by != "human" {
-			if v, rule := approval.NewJudge(db.DB, db.Session).Of("agent:model:"+n, by); v != "allow" {
-				hold, why = true, "approvals: "+rule
+			v, rule := approval.NewJudge(db.DB, db.Session).Of("agent:model:"+n, by)
+			if v == "deny" {
+				fmt.Fprintln(w, n+" denied(認可: "+rule+")")
+				skipped++
+				continue
+			}
+			if v != "allow" {
+				hold, why = true, "認可: "+rule
 			}
 		}
 		if dry {

@@ -192,7 +192,7 @@ func cmdAgentApprove(args []string, w, stderr io.Writer) error {
 	}
 	if always {
 		pat := "agent:" + aop + ":" + o.target
-		if setApproval(db, "allow", pat, io.Discard) == nil {
+		if setApproval(db, "allow", pat, io.Discard, io.Discard) == nil {
 			fmt.Fprintln(w, pat+" = allow(今後は承認なし)")
 		}
 	}
@@ -223,7 +223,7 @@ func slashApprove(db *store.DB, o opRow, always bool, ap approver, w, stderr io.
 	}
 	if always {
 		pat := "agent:slash:" + cmd + ":" + o.target
-		if setApproval(db, "allow", pat, io.Discard) == nil {
+		if setApproval(db, "allow", pat, io.Discard, io.Discard) == nil {
 			fmt.Fprintln(w, pat+" = allow(今後は承認なし)")
 		}
 	}
