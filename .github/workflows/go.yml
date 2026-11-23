@@ -70,10 +70,10 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y sqlite3 jq
       - run: go build -o "$RUNNER_TEMP/herdrctl" ./cmd/herdrctl
       - run: TB_HERDRCTL="$RUNNER_TEMP/herdrctl" bash taskboard/test/run.sh --shard "${{ matrix.shard }}"
-  # 契約テスト: scheduler のテストを SCHED_IMPL=go で流す(show.sh は herdrctl sched show が答える)
+  # scheduler のテスト(bin/*.sh の中身は herdrctl sched)
   sched-go:
     runs-on: ubuntu-latest
-    name: scheduler contract (SCHED_IMPL=go)
+    name: scheduler (herdrctl)
     steps:
       - uses: actions/checkout@v4
         with:
@@ -83,7 +83,7 @@ jobs:
           go-version-file: go.mod
       - run: sudo apt-get update && sudo apt-get install -y sqlite3 jq
       - run: go build -o "$RUNNER_TEMP/herdrctl" ./cmd/herdrctl
-      - run: SCHED_IMPL=go SCHED_HERDRCTL="$RUNNER_TEMP/herdrctl" TB_HERDRCTL="$RUNNER_TEMP/herdrctl" bash scheduler/tests/run.sh   # scheduler のテストは tb も呼ぶ
+      - run: SCHED_HERDRCTL="$RUNNER_TEMP/herdrctl" TB_HERDRCTL="$RUNNER_TEMP/herdrctl" bash scheduler/tests/run.sh   # scheduler のテストは tb も呼ぶ
   # ブランチ保護で必須にする 1 つのチェック
   go-all:
     if: always()

@@ -305,7 +305,7 @@ herdr は `tests/fake/herdr`(疑似)、DB・ログ・ログイン情報の置き
 ## 定期実行ジョブの表示(`/jobs/<job>`)の読み取り範囲
 
 - 引用符なしの値は行末まで(` #` の前まで)を記述として出す。`$`・`` ` ``・`;`・`(`・引用符の連結など、bash が展開・解釈する記述を含む値は「シェルで展開・解釈される記述です(表示は不完全)」と明示し、`PROMPT_FILE` はファイルを確定できないので中身を読まない。conf が 64 KiB を超えるときも注意を出す。
-- 読み取り処理(`app/jobview.py`)は `scheduler/jobs/<job>.conf` を**実行しない**(bash として source しない)。ただしページ全体では、スケジュール等の情報を得る経路(`job_info` → `show.sh` → `load_job`)が conf を source で読み込む。conf は人が書く信頼済みのファイルである前提で、webui から conf を書き換える機能はスケジュールの保存だけ。`PROMPT` / `PROMPT_FILE` / `COMMAND` / `SKIP_IF` / `COMMAND_TIMEOUT` の記述を、`$変数` なども展開せずそのまま表示する。
+- 読み取り処理(`app/jobview.py`)は `scheduler/jobs/<job>.conf` を**実行しない**(bash として source しない)。スケジュール等の情報を得る経路(`job_info` → `show.sh` → `herdrctl sched show`)も conf を実行せず、`KEY=値` だけを読む(展開を含む conf は読めず、詳細ページはその理由を出す)。webui から conf を書き換える機能はスケジュールの保存だけ。`PROMPT` / `PROMPT_FILE` / `COMMAND` / `SKIP_IF` / `COMMAND_TIMEOUT` の記述を、`$変数` なども展開せずそのまま表示する。
 - `PROMPT_FILE` の中身は、絶対パスで、`scheduler/`(と jobs の置き場)の配下の通常ファイルで、認証情報の置き場(`/docs` と同じ判定)でないときだけ表示する。相対パス・範囲外は、パスだけ表示して中身は読まない。
 - 本文・コマンドのトークンらしい文字列(`ghp_…`・`xox…-`・`AKIA…`・`Bearer …`・`token=…` など)と秘密鍵のブロックは `[マスク]` に置き換える。完全ではない(機密を含みうる画面)。
 - 見るのはこの webui のプロセスの `scheduler/jobs`・`scheduler/logs`(別 checkout のジョブは見えない)。

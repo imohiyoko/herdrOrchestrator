@@ -87,10 +87,7 @@ def make_env(name, **extra):
         WEBUI_STATE_DIR=os.path.join(d, "state"), WEBUI_AUTH_DIR=os.path.join(d, "run"),
         XDG_CONFIG_HOME=os.path.join(d, "xdg"), HERDR_SESSION_FILE=os.path.join(d, "no-herdr-session"),
         TB_PROTECT=os.path.join(d, "protect.conf"), TB_LABELS=os.path.join(d, "labels.conf"),
-        SCHED_FILE_FALLBACK="1",   # ジョブはファイル(jobs/*.conf)に置いて試す。既定(DB だけ)は「既定は DB だけ」のところで確かめる
-        # 展開を含む conf($HOME や $(…))の表示を試すので、scheduler は bash 版で読む(Go 版はそういう conf を読まない)。
-        # PATH に herdrctl があると scheduler の既定は Go になるため、ここで固定する
-        SCHED_IMPL="bash")
+        SCHED_FILE_FALLBACK="1")   # ジョブはファイル(jobs/*.conf)に置いて試す。既定(DB だけ)は「既定は DB だけ」のところで確かめる
     # 役割の既定(roles/)は _common.md だけ。setup の利用例(setup/examples/roles)を入れた状態で試す
     rd = os.path.join(d, "roles")
     if not os.path.isdir(rd):
@@ -972,9 +969,10 @@ for _n, _body in (("pdeny1", "DENIED-KEY-BODY"), ("pdeny2", "DENIED-ENV-BODY"), 
     _d = cl.get("/jobs/" + _n)[2]
     check(f"ジョブ詳細: PROMPT_FILE が認証情報の置き場({_n})なら中身を出さない", _body not in _d and "認証情報などの置き場なので、中身は表示しません" in _d, _d[:0])
 _vv = cl.get("/jobs/pvar")[2]
-check("ジョブ詳細: PROMPT_FILE=$HOME/x は相対扱いにせず「展開される記述」と明示", "シェルで展開・解釈される記述です" in _vv and "相対パスなので" not in _vv and "確定できず" in _vv)
+# 展開($ や `)を含む conf は scheduler(herdrctl sched)が読まない(動かない)。詳細はその理由を出す
+check("ジョブ詳細: PROMPT_FILE=$HOME/x の conf は scheduler が読めない理由を出す", "展開($ や ` や ~)は使えない" in _vv and "相対パスなので" not in _vv and 'action="/jobs/pvar"' not in _vv)
 _cs = cl.get("/jobs/cmdsub")[2]
-check("ジョブ詳細: COMMAND=$(…) は行全体を出し、展開される記述と明示", "$(echo hi; date)" in _cs and "シェルで展開・解釈される記述です" in _cs and "# comment" not in _cs)
+check("ジョブ詳細: COMMAND=$(…) の conf は scheduler が読めない理由を出す(コマンドは実行しない)", "展開($ や ` や ~)は使えない" in _cs and 'action="/jobs/cmdsub"' not in _cs)
 _cp = cl.get("/jobs/cmdplain")[2]
 check("ジョブ詳細: 単純な引用符なしの値は警告なし", "bin/tb-prwatch" in _cp and "シェルで展開・解釈される記述です" not in _cp)
 check("ジョブ詳細: 展開される記述でない PROMPT(単一引用符)は警告なし", "シェルで展開・解釈される記述です" not in cl.get("/jobs/pcomment")[2])

@@ -14,7 +14,7 @@ import (
 	"sync"
 )
 
-// jobs / dispatch / plist / launchd は scheduler/bin の jobs.sh / dispatch.sh / gen-plist.sh / install.sh の Go 版。
+// jobs / dispatch / plist / launchd は scheduler/bin の jobs.sh / dispatch.sh / gen-plist.sh / install.sh の中身。
 
 // dbJobs は sched_db_jobs: DB にあるジョブ名(このセッションか共通 * の行)。DB が無い・読めなければ空。
 func (e Env) dbJobs() []string {

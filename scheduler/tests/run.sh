@@ -3,8 +3,7 @@
 # 使い方: tests/run.sh
 # An agent pane running this suite would change some results; the cases do not depend on it.
 unset HERDR_PANE_ID
-# 既定(SCHED_IMPL 未設定)は使える herdrctl があれば Go。このテストはどちらで流すかを決めて流す(CI の scheduler contract は go)
-export SCHED_IMPL="${SCHED_IMPL:-bash}"
+# bin/*.sh の中身は herdrctl sched。herdrctl は SCHED_HERDRCTL > TB_HERDRCTL > PATH(tb も呼ぶので TB_HERDRCTL か PATH に要る)
 cd "$(dirname "$0")/.." || exit 1
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 export JOBS_DIR="$TMP/jobs" LOG_DIR="$TMP/logs"; mkdir -p "$JOBS_DIR"
@@ -436,15 +435,14 @@ printf 'INTERVAL_MIN=30\n' >"$D/settings/fonly.settings"
 ok "既定: DB に定義があれば動き、ファイルの settings は読まない" \
   "$(dbo env DRY_RUN=1 NOW="$THU 10:02" bash bin/tick.sh fonly 2>/dev/null | jq -r .action) $(dbo bash bin/show.sh fonly | jq -r '.settings_source + " " + (.interval_min|tostring)')" "ran none 2"
 
-# ---- どちらで動かすか(SCHED_IMPL。lib.sh の sched_go)。偽の herdrctl で、渡したかどうかだけを見る
+# ---- herdrctl に渡す(lib.sh の sched_go)。偽の herdrctl で、渡したかどうかだけを見る
 FH="$TMP/fake-herdrctl"; FHLOG="$TMP/fake-herdrctl.log"
 printf '#!/bin/bash\necho "fake $*" >>"%s"\n[ "$1 $2" = "sched --features" ] && { echo "${FAKE_FEATURES-show tick jobs dispatch gen-plist install}"; exit 0; }\necho "{\\"job\\":\\"fake\\"}"\n' "$FHLOG" >"$FH"; chmod +x "$FH"
 impl() { local n; rm -f "$FHLOG"; env SCHED_FILE_FALLBACK=1 JOBS_DIR="$TMP/jobs" SCHED_HERDRCTL="$FH" "$@" >/dev/null 2>&1; n=$(grep -c '^fake sched show' "$FHLOG" 2>/dev/null); echo "${n:-0}"; }
-ok "既定(未設定): sched --features に show がある herdrctl なら Go に渡す" "$(impl SCHED_IMPL= bash bin/show.sh t)" 1
-ok "既定(未設定): sched を知らない herdrctl なら bash" "$(impl SCHED_IMPL= FAKE_FEATURES= bash bin/show.sh t)" 0
-ok "既定(未設定): herdrctl が無ければ bash" "$(SCHED_FILE_FALLBACK=1 JOBS_DIR="$TMP/jobs" SCHED_IMPL= SCHED_HERDRCTL="$TMP/none" bash bin/show.sh t | jq -r .job)" t
-ok "SCHED_IMPL=bash なら herdrctl があっても bash" "$(impl SCHED_IMPL=bash bash bin/show.sh t)" 0
-ok "SCHED_IMPL=go で herdrctl が無ければエラー(exit 2)" "$(SCHED_IMPL=go SCHED_HERDRCTL="$TMP/none" bash bin/show.sh t >/dev/null 2>&1; echo $?)" 2
+ok "show.sh は herdrctl sched show に渡す" "$(impl bash bin/show.sh t)" 1
+ok "sched を知らない(古い)herdrctl ならエラー(exit 2)" "$(FAKE_FEATURES= SCHED_HERDRCTL="$FH" bash bin/show.sh t >/dev/null 2>&1; echo $?)" 2
+ok "herdrctl が無ければエラー(exit 2)" "$(SCHED_HERDRCTL="$TMP/none" bash bin/show.sh t >/dev/null 2>&1; echo $?)" 2
+ok "herdrctl が無いときのエラーは入れ方を示す" "$(SCHED_HERDRCTL="$TMP/none" bash bin/tick.sh t 2>&1 >/dev/null | grep -c 'go install')" 1
 
 echo "---- pass=$pass fail=$failn"
 [ "$failn" = 0 ]
