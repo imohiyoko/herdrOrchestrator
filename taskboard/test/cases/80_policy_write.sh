@@ -19,6 +19,14 @@ eq "policy write: comments and order alone are not changes" "$(pwset '# note' 'p
 eq "policy write: a new kind of operation works with the same rule form (no list of kinds)" "$(printf '%s\n' "$pw_base" 'pw1 policy:brand-new:* self = allow' >"$TB_POLICY"; pwset 'pw1 policy:brand-new:* self = allow' 'pw1 brand-new:op * = allow')" "0"
 printf '%s\n' "$pw_base" >"$TB_POLICY"
 eq "policy write: tb approval allow is checked the same way (* subject needs policy:<op> *)" "$(HERDR_PANE_ID=wW:p1 $TB approval allow send:task >/dev/null 2>"$TMP/pw.err"; echo $?) $(grep -c "policy:send:task を対象 \\* に許す行がありません" "$TMP/pw.err")" "1 1"
+eq "policy write: a glob target like ?* does not cover rows for subject *" "$(printf '%s\n' "$pw_base" 'pw1 policy:send:* ?* = allow' >"$TB_POLICY"; pwset 'pw1 policy:send:* ?* = allow' '* send:task * = allow')" "1"
+# unset: このセッションの行を消すと共通の行が効く。その差分も確かめる
+unset TB_POLICY
+printf '%s\n' "$pw_base" 'pw2 agent:stop * = allow' | $TB config set policy --shared >/dev/null
+printf '%s\n' "$pw_base" | $TB config set policy >/dev/null
+eq "policy write: unset is checked against what takes effect after it (the shared row)" "$(HERDR_PANE_ID=wW:p1 $TB config unset policy >/dev/null 2>&1; echo $?) $($TB config show policy | grep -c 'agent:stop')" "1 0"
+$TB config unset policy >/dev/null; $TB config unset policy --shared >/dev/null; export TB_POLICY=$TMP/policy-write.policy
+printf '%s\n' "$pw_base" >"$TB_POLICY"
 eq "policy write: a person is never stopped" "$(printf 'pw2 agent:stop * = deny\n' | $TB config set policy >/dev/null 2>&1; echo $?)" "0"
 eq "policy write: tb allow refuses a policy: pattern (write it in policy directly)" "$($TB approval allow 'policy:send:task' >/dev/null 2>&1; echo $?)" "1"
 unset -f pwset; unset pw_base TB_DB TB_POLICY HERDR_PANE_ID FAKE_AGENTS; eval "$_pw_saved"; unset _pw_saved

@@ -292,7 +292,13 @@ func cmdPolicyImport(args []string, w, stderr io.Writer) error {
 			fmt.Fprint(stderr, bad)
 			return die("policy の本文に問題があるため書きませんでした")
 		}
-		if err := requirePolicyWrite(cur, body, "tb policy import"); err != nil {
+		before := cur
+		if info, _ := config.Info("policy"); shared == 1 && os.Getenv(info.Env) == "" && !perms.HumanPane() {
+			if before, err = policyBefore(db, true); err != nil { // 共通の行に書くので、その行そのものと比べる
+				return err
+			}
+		}
+		if err := requirePolicyWrite(before, body, "tb policy import"); err != nil {
 			return err
 		}
 		info, _ := config.Info("policy")

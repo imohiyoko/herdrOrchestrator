@@ -129,8 +129,8 @@ func (m Matcher) targetMatch(db *sql.DB, session, who, target, t string) int {
 	if t == "*" {
 		return 0
 	}
-	if target == "" {
-		return 1 // 対象の無い操作に当たるのは * の行だけ
+	if target == "" || target == anySubject {
+		return 1 // 対象の無い操作と主体 * の行(policy:<操作>)に当たるのは * の行だけ(?* などの glob にも当てない)
 	}
 	switch {
 	case t == "self":
