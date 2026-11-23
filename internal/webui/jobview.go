@@ -417,8 +417,80 @@ func (v *sv) jobSummary(name string, info *jobInfo) string {
 	return ""
 }
 
-// pyRealpath は os.path.realpath(存在しない部分はそのまま残す)。
+// pyRealpath は os.path.realpath(strict でない)。posix では posixpath と同じく 1 つずつ symlink をたどり、
+// 存在しない部分はそのまま、.. はそこまでたどった実体から 1 つ上がる。
 func pyRealpath(p string) string {
+	if !filepathIsPosix {
+		return winRealpath(p)
+	}
+	rest := strings.Split(p, "/")
+	for l, r := 0, len(rest)-1; l < r; l, r = l+1, r-1 {
+		rest[l], rest[r] = rest[r], rest[l]
+	}
+	path := "/"
+	if !strings.HasPrefix(p, "/") {
+		path, _ = os.Getwd()
+	}
+	const mark = "\x00" // 解決済みのしるし(次に積んだものが symlink のパス)
+	seen := map[string]*string{}
+	for len(rest) > 0 {
+		name := rest[len(rest)-1]
+		rest = rest[:len(rest)-1]
+		if name == mark {
+			sl := rest[len(rest)-1]
+			rest = rest[:len(rest)-1]
+			r := path
+			seen[sl] = &r
+			continue
+		}
+		if name == "" || name == "." {
+			continue
+		}
+		if name == ".." {
+			if i := strings.LastIndex(path, "/"); i > 0 {
+				path = path[:i]
+			} else {
+				path = "/"
+			}
+			continue
+		}
+		newpath := path + "/" + name
+		if path == "/" {
+			newpath = "/" + name
+		}
+		st, err := os.Lstat(newpath)
+		if err != nil || st.Mode()&os.ModeSymlink == 0 {
+			path = newpath
+			continue
+		}
+		if r, ok := seen[newpath]; ok {
+			if r != nil {
+				path = *r
+			} else {
+				path = newpath // ループ
+			}
+			continue
+		}
+		target, err := os.Readlink(newpath)
+		if err != nil {
+			path = newpath
+			continue
+		}
+		if strings.HasPrefix(target, "/") {
+			path = "/"
+		}
+		seen[newpath] = nil
+		rest = append(rest, newpath, mark)
+		tp := strings.Split(target, "/")
+		for k := len(tp) - 1; k >= 0; k-- {
+			rest = append(rest, tp[k])
+		}
+	}
+	return path
+}
+
+// winRealpath は Windows 向けの近似(存在する祖先まで実体にし、残りはそのまま)。
+func winRealpath(p string) string {
 	p, _ = filepath.Abs(p)
 	rest := ""
 	cur := p

@@ -202,6 +202,57 @@ INSERT INTO agents (herdr_session, name, kind, state, killable, created_by, crea
  ('other', 'zeta', 'claude', 'running', 'no', 'human', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
 `
 
+// docsFixtureSQL はドキュメント(/docs)とタスク詳細(/tasks/<id>)のための行。@DOCS@ は成果物を置いたディレクトリ。
+const docsFixtureSQL = `
+UPDATE agent_activity SET cwd = '@DOCS@/proj' WHERE session_id = 'sess-b';
+INSERT INTO comments (task_id, kind, text, from_name, from_pane, from_session, created_at, deliverables, delivered_at, herdr_session) VALUES
+ ('T-p-1', 'done', '成果 <b>', 'beta', 'p2', 'sess-b', '2026-01-05T00:00:00Z',
+  '["notes.md", "sub", "https://example.com/pr/1?a=1&b=2", "missing.md", "../outside.md", "bin.dat", " notes.md ", "big.txt", "link-out", "empty.md"]', '2026-01-05T00:01:00Z', 'default'),
+ ('T-p-1', 'progress', 'second', 'alpha', 'p1', 'nosess', '2026-01-04T00:00:00Z',
+  '["rel.md", "/abs/none.md", "@DOCS@/proj/diagram.mmd", "@DOCS@/proj/.env", "~/homefile.md", "file://@DOCS@/proj/plain.txt", "@DOCS@/proj/sub/"]', NULL, 'default'),
+ ('T-p-2', 'done', 'x', 'alpha', 'p1', 'sess-b', '2026-01-03T00:00:00Z', 'notjson', NULL, 'default'),
+ ('T-p-2', 'done', 'x', 'alpha', 'p1', 'sess-b', '2026-01-03T00:00:00Z', '[1, true, null, 2.5, "notes.md", {"a": 1}]', NULL, 'default'),
+ ('T-zz', 'done', 'no task', 'alpha', 'p1', 'sess-b', '2026-01-06T00:00:00Z', '["notes.md"]', NULL, 'default'),
+ ('T-p-3', 'done', 'other session', 'alpha', 'p1', 'sess-b', '2026-01-06T00:00:00Z', '["notes.md"]', NULL, 'other');
+UPDATE tasks SET deliverables = '["@DOCS@/proj/notes.md", "@DOCS@/proj/sub", "https://example.com/x"]', session_id = 'sess-b', account = 'acc <1>',
+  description = '説明 <b>' || char(10) || '2 行目', refs = '[{"kind": "slack", "url": "https://slack.example/a"}, {"url": "javascript:alert(1)"}, "junk", {"kind": "pr"}]',
+  summary = 'まとめ', note = 'メモ'
+  WHERE id = 'T-q-1';
+INSERT INTO task_events (herdr_session, task_id, kind, old, new, actor, ref, created_at) VALUES
+ ('default', 'T-q-1', 'created', NULL, 'todo', 'human', NULL, '2026-02-01T10:20:30Z'),
+ ('default', 'T-q-1', 'status', 'todo', '<wip>', 'alpha', 'C-1', '2026-02-02T00:00:00Z'),
+ ('other', 'T-q-1', 'status', 'x', 'y', 'zeta', NULL, '2026-02-02T00:00:00Z');
+INSERT INTO task_links (from_id, link_type, to_id, created_by, created_at, herdr_session) VALUES
+ ('T-q-1', 'blocks', 'T-q-2', 'human', '2026-02-01T00:00:00Z', 'default'),
+ ('T-q-3', 'duplicates', 'T-q-1', 'human', '2026-02-01T00:00:00Z', 'default'),
+ ('T-q-4', 'blocks', 'T-q-1', 'human', '2026-02-01T00:00:00Z', 'default'),
+ ('T-q-1', 'relates', 'T-q-5', 'human', '2026-02-01T00:00:00Z', 'default');
+UPDATE alert_details SET result_path = '@DOCS@/proj/report.md', result_report = '# DB のレポート' || char(10) || '- 本文', result_by = 'analyst'
+  WHERE alert_no = 9;
+UPDATE alert_details SET result_report = 'DB だけ **太字**' WHERE alert_no = 10;
+`
+
+// docsFiles は成果物のファイル(@DOCS@ からの相対パス → 中身)。
+var docsFiles = map[string]string{
+	"proj/notes.md": "# ノート <x>\n\n本文 **太字** と [リンク](https://example.com)。\n\n- a\n  - b\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n" +
+		"```mermaid\ngraph TD; A-->B\n```\n",
+	"proj/diagram.mmd":        "graph LR; X-->Y",
+	"proj/.env":               "SECRET=1",
+	"proj/plain.txt":          "壊れた \xe3\x81 と \xff\xfe と <tag>",
+	"proj/bin.dat":            "a\x00b",
+	"proj/empty.md":           "",
+	"proj/report.md":          "# ファイルのレポート",
+	"proj/sub/a.md":           "*a*",
+	"proj/sub/b.txt":          "b",
+	"proj/sub/.hidden":        "h",
+	"proj/sub/nested/c.md":    "c",
+	"proj/sub/node_modules/x": "x",
+	"proj/sub/.git/config":    "x",
+	"proj/sub/z dir/日本語.md":   "日本",
+	"homefile.md":             "home",
+	"extra/e.md":              "e",
+}
+
 const fakeHerdr = `#!/bin/sh
 if [ "$1 $2" = "agent list" ]; then
 cat <<'J'
@@ -238,6 +289,19 @@ func pagesFixture(t *testing.T) string {
 	if _, err := db.Exec(strings.ReplaceAll(fixtureSQL, "@SCHED@", schedDir)); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.Exec(strings.ReplaceAll(docsFixtureSQL, "@DOCS@", dir)); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range docsFiles {
+		p := filepath.Join(dir, name)
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		os.WriteFile(p, []byte(body), 0o644)
+	}
+	os.WriteFile(filepath.Join(dir, "proj", "big.txt"), []byte(strings.Repeat("あ", docMaxBytes/3+10)), 0o644)
+	os.Symlink("/etc/hostname", filepath.Join(dir, "proj", "link-out"))
+	os.Symlink("/etc/hostname", filepath.Join(dir, "proj", "sub", "out-link"))
+	os.Symlink("../report.md", filepath.Join(dir, "proj", "sub", "in-link.md"))
+	os.Symlink("nested", filepath.Join(dir, "proj", "sub", "dirlink"))
 	db.Close()
 	herdr := filepath.Join(dir, "herdr")
 	if err := os.WriteFile(herdr, []byte(fakeHerdr), 0o755); err != nil {
@@ -266,6 +330,7 @@ not json
 		"XDG_STATE_HOME": filepath.Join(dir, "state"), "WEBUI_POLICY": "", "TB_POLICY": "", "TB_ROLES": filepath.Join(dir, "roles"),
 		"WEBUI_SCHED_JOBS": filepath.Join(dir, "jobs"), "WEBUI_SCHED_SETTINGS": filepath.Join(dir, "settings"), "SCHED_FILE_FALLBACK": "",
 		"SCHED_START": "", "SCHED_END": "", "SCHED_WINDOW": "", "SCHED_INTERVAL_MIN": "", "SCHED_INTERVAL_SEC": "", "HOME": dir, "WEBUI_STATE_DIR": filepath.Join(dir, "state"),
+		"WEBUI_DOC_ROOTS": filepath.Join(dir, "extra") + ":relative:/tmp:" + filepath.Join(dir, "nope"),
 	} {
 		t.Setenv(k, v)
 	}
@@ -298,7 +363,11 @@ with reqctx.use("default", "default"), data.request_db():
             ctx["norefresh"] = True
             title, body = views.page_job(p[6:], "X", saved=parse_qs(query).get("saved") == ["1"])
         else:
-            title, body = views.route(p, parse_qs(query), ctx)
+            r = views.route(p, parse_qs(query), ctx)
+            if r is None:
+                out[u] = None
+                continue
+            title, body = r
         out[u] = [title, body, views.page(title, body, p, data.badge_count(), "<LOGOUT>", refresh=not ctx.get("norefresh"), scripts=ctx.get("scripts", ()))]
     out["api"] = json.dumps({"items": data.urgent_items(), "poll_sec": data.NOTIFY_POLL_SEC}, ensure_ascii=False)
 print(json.dumps(out))
@@ -326,7 +395,27 @@ func TestPagesMatchPython(t *testing.T) {
 		"/tasks?q=%25_&project=q&owner=~&type=bug&priority=highest&label=ui&due=overdue&days=5&unreported=1&stale=1&sort=priority",
 		"/tasks?due=soon&days=3", "/tasks?due=soon&days=x&view=bad&type=no&priority=no&label=a%20b&owner=bad%20o&sort=nope",
 		"/tasks?stale=1", "/tasks?owner=alpha&q=%E3%83%90%E3%82%B0", "/tasks?sort=id&view=open&label=x%20y",
-		"/board", "/board?sprint=S-2", "/board?sprint=S-9&label=ui", "/board?sprint=bad&label=a%20b", "/board?project=p", "/board?label=backend&project=q"}
+		"/board", "/board?sprint=S-2", "/board?sprint=S-9&label=ui", "/board?sprint=bad&label=a%20b", "/board?project=p", "/board?label=backend&project=q",
+		"/docs", "/docs?q=NOTES", "/docs?q=%CE%A3x", "/docs?q=analyst", "/docs?q=T-q-1", "/tasks/T-q-1", "/tasks/T-p-1", "/tasks/T-p-2",
+		"/tasks/T-p-3", "/tasks/nope", "/tasks/T-a-9", "/tasks/T-q-1?resolved=done",
+		"/docs/view", "/docs/view?ref=bogus", "/docs/view?ref=C-99/0", "/docs/view?ref=A-99", "/docs/view?ref=A-9", "/docs/view?ref=A-9&raw=1",
+		"/docs/view?ref=A-10", "/docs/view?ref=A-10&raw=1", "/docs/view?ref=task:T-q-1/0", "/docs/view?ref=task:T-q-1/0&raw=1",
+		"/docs/view?ref=task:T-q-1/1", "/docs/view?ref=task:T-q-1/1&sub=nested", "/docs/view?ref=task:T-q-1/1&sub=a.md",
+		"/docs/view?ref=task:T-q-1/1&sub=../notes.md", "/docs/view?ref=task:T-q-1/1&sub=in-link.md", "/docs/view?ref=task:T-q-1/1&sub=out-link",
+		"/docs/view?ref=task:T-q-1/1&sub=nested/c.md&raw=1", "/docs/view?ref=task:T-q-1/0&sub=x", "/docs/view?ref=task:T-q-1/2",
+		"/docs/view?ref=task:T-q-1/3", "/docs/view?ref=task:nope/0", "/docs/view?ref=C-12/1", "/docs/view?ref=C-12/0", "/docs/view?ref=C-11/0"}
+	for i := range 10 {
+		paths = append(paths, fmt.Sprintf("/docs/view?ref=C-9/%d", i))
+	}
+	for i := range 7 {
+		paths = append(paths, fmt.Sprintf("/docs/view?ref=C-10/%d", i))
+	}
+	home := os.Getenv("HOME")
+	for _, x := range []string{home + "/proj/notes.md", home + "/proj/sub", "~/proj/diagram.mmd", "file://" + home + "/extra/e.md", "relative.md",
+		"/etc/hostname", home + "/proj/../proj/plain.txt", home + "/extra", home, home + "/proj/.env", home + "/proj/sub/out-link", " " + home + "/extra/e.md "} {
+		paths = append(paths, "/docs/view?"+pyURLEncode(kvs{{"path", x}}), "/docs/view?"+pyURLEncode(kvs{{"path", x}, {"sub", "a.md"}}))
+	}
+	paths = append(paths, "/docs/view?"+pyURLEncode(kvs{{"path", home + "/proj/notes.md"}, {"ref", "A-9"}}))
 	nowFn = func() time.Time { return time.Date(2026, 3, 4, 12, 34, 56, 0, time.UTC) }
 	defer func() { nowFn = time.Now }()
 	t.Setenv("SCHED_HERDRCTL", buildHerdrctl(t))
@@ -351,10 +440,22 @@ func TestPagesMatchPython(t *testing.T) {
 			opts.norefresh = true
 			saved := pyParseQS(query)["saved"]
 			title, body = s.pageJob(q, name, "X", "", len(saved) == 1 && saved[0] == "1")
+		} else if tt, bb, found, handled := s.routeDetail(q, p, query, "X", opts); handled {
+			if !found {
+				if want[u] != nil {
+					t.Errorf("%s: Go は 404、Python は %v", u, want[u])
+				}
+				continue
+			}
+			title, body = tt, bb
 		} else {
 			title, body = ported[p](s, q, pageCtx{csrf: "X", opts: opts, qs: pyParseQS(query)})
 		}
-		w := want[u].([]any)
+		w, ok := want[u].([]any)
+		if !ok {
+			t.Errorf("%s: Python は 404", u)
+			continue
+		}
 		if title != w[0] {
 			t.Errorf("%s title: %q != %q", p, title, w[0])
 		}
@@ -414,15 +515,20 @@ func TestPagesHTTP(t *testing.T) {
 		code int
 		has  string
 	}{
-		"/s/default/notifications":     {200, "<h1>緊急通知</h1>"},
-		"/s/default/outbox/":           {200, "<h1>送信 (outbox)</h1>"},
-		"/s/default/sessions":          {200, `<a href="../other/">other</a>`},
-		"/s/default/ledger?kind=send":  {200, `<option value="send" selected>send</option>`},
-		"/s/default/nope":              {404, "<h1>見つかりません</h1>"},
-		"/s/default/tasks":             {200, "<h1>タスク</h1>"},
-		"/s/default/jobs/x":            {404, "<h1>見つかりません</h1>"},
-		"/s/default/agents/x":          {501, "Go 版の Web UI にまだありません"},
-		"/s/default/api/notifications": {200, `"poll_sec": 15}`},
+		"/s/default/notifications":         {200, "<h1>緊急通知</h1>"},
+		"/s/default/outbox/":               {200, "<h1>送信 (outbox)</h1>"},
+		"/s/default/sessions":              {200, `<a href="../other/">other</a>`},
+		"/s/default/ledger?kind=send":      {200, `<option value="send" selected>send</option>`},
+		"/s/default/nope":                  {404, "<h1>見つかりません</h1>"},
+		"/s/default/tasks":                 {200, "<h1>タスク</h1>"},
+		"/s/default/tasks/T-q-1":           {200, "<h1>タスク T-q-1</h1>"},
+		"/s/default/tasks/nope":            {404, "<h1>見つかりません</h1>"},
+		"/s/default/docs":                  {200, "<h1>ドキュメント</h1>"},
+		"/s/default/docs/view?ref=C-9%2F0": {200, `<script src="/s/default/static/mermaid.min.js"`},
+		"/s/default/docs/view?ref=x":       {404, "<h1>見つかりません</h1>"},
+		"/s/default/jobs/x":                {404, "<h1>見つかりません</h1>"},
+		"/s/default/agents/x":              {501, "Go 版の Web UI にまだありません"},
+		"/s/default/api/notifications":     {200, `"poll_sec": 15}`},
 	} {
 		r := do(t, ts, "GET", path, ck, nil)
 		if r.code != want.code || !strings.Contains(r.body, want.has) {

@@ -552,6 +552,14 @@ func (s *Server) route(q *rq, path, query, logout, csrf string) {
 		return
 	}
 	opts := &pageOpts{}
+	if title, body, ok, handled := s.routeDetail(q, path, query, csrf, opts); handled { // 見つからなければ 404 になる画面
+		if !ok {
+			s.html(q, 404, s.page(q, "見つかりません", "<p>そのページはありません。</p>", "", logout, pageOpts{}))
+			return
+		}
+		s.html(q, 200, s.page(q, title, body, path, logout, *opts))
+		return
+	}
 	if fn, ok := ported[path]; ok {
 		title, body := fn(s, q, pageCtx{csrf: csrf, opts: opts, qs: pyParseQS(query)})
 		s.html(q, 200, s.page(q, title, body, path, logout, *opts))
@@ -571,6 +579,22 @@ func (s *Server) staticFile(q *rq, name, ctype string) {
 		return
 	}
 	s.send(q, 200, b, ctype)
+}
+
+var reTaskDetail = regexp.MustCompile(`^/tasks/([^/]+)$`)
+
+// routeDetail は、対象が無ければ 404 を返す画面(/docs/view と /tasks/<id>)。handled=false ならここでは扱わない。
+func (s *Server) routeDetail(q *rq, path, query, csrf string, opts *pageOpts) (title, body string, ok, handled bool) {
+	c := pageCtx{csrf: csrf, opts: opts, qs: pyParseQS(query)}
+	if path == "/docs/view" {
+		title, body, ok = s.pageDoc(q, c)
+		return title, body, ok, true
+	}
+	if m := reTaskDetail.FindStringSubmatch(path); m != nil {
+		title, body, ok = s.pageTask(q, pyUnquote(m[1]), c) // views.route と同じく、もう一度 unquote する
+		return title, body, ok, true
+	}
+	return "", "", false, false
 }
 
 // notPorted は Go 版にまだ無い画面。
