@@ -7,6 +7,11 @@
 # 同じジョブをここと個別の plist(gen-plist.sh <job>)の両方に登録しない(二重に動く。setup/check.sh が warn を出す)。
 # 環境変数(NOW / DRY_RUN / JOBS_DIR / LOG_DIR など)は tick.sh にそのまま渡る。終了コードは 1 つでも失敗があれば 1
 set -u
+if [ "${SCHED_IMPL:-bash}" = go ]; then   # Go 版(herdrctl sched dispatch)に渡す(lib.sh の sched_go)
+  # shellcheck source=lib.sh
+  source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+  sched_go dispatch "$@"
+fi
 TICK="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/tick.sh"
 [ $# -gt 0 ] || { echo "error: 使い方: dispatch.sh <job> [<job> ...]" >&2; exit 2; }
 pids=()

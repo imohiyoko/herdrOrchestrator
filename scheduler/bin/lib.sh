@@ -1,5 +1,7 @@
 # shellcheck shell=bash
 # 共通処理。tick.sh / gen-plist.sh / install.sh から source される。
+# Go 版(SCHED_IMPL=go)の herdrctl: SCHED_HERDRCTL > TB_HERDRCTL > PATH。下で PATH を置き換える前に探す(dispatch.sh のサブシェルでは引き継ぐ)
+[ -n "${_SCHED_HC+x}" ] || { _SCHED_HC=${SCHED_HERDRCTL:-${TB_HERDRCTL:-}}; [ -n "$_SCHED_HC" ] || _SCHED_HC=$(command -v herdrctl 2>/dev/null) || _SCHED_HC=""; }
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 SCHED_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -14,6 +16,15 @@ HERDR="${HERDR_BIN:-$HERDR_DEFAULT_BIN}"   # 上の PATH で /opt/homebrew/bin/h
 export HERDR_BIN_PATH="${HERDR_BIN_PATH:-$HERDR}"
 
 die() { echo "error: $*" >&2; exit 2; }
+
+# SCHED_IMPL=go なら herdrctl sched <サブコマンド> に置き換わって戻らない。既定(bash)なら何もしない。
+# Go 版は conf を bash として実行せず、決まった書き方(KEY=値)だけを読む(README の「Go 版」)
+sched_go() {
+  [ "${SCHED_IMPL:-bash}" = go ] || return 0
+  [ -n "$_SCHED_HC" ] && command -v "$_SCHED_HC" >/dev/null 2>&1 || die "SCHED_IMPL=go ですが herdrctl が見つかりません"
+  SCHED_ROOT=$SCHED_ROOT JOBS_DIR=$JOBS_DIR SCHED_SETTINGS_DIR=$SETTINGS_DIR TB_DB=$SCHED_DB LOG_DIR=$LOG_DIR HERDR_BIN=$HERDR \
+    TB_BIN="${TB_BIN:-$SCHED_ROOT/../taskboard/bin/tb}" exec "$_SCHED_HC" sched "$@"
+}
 
 # ジョブ定義・上書き設定の DB(taskboard と同じ DB の config 表)。キー: sched-job:<job>(conf の本文)/ sched-settings:<job>(settings の本文)。
 # 読むのは DB だけ: このセッションの行 > 全セッション共通の行(*)。書くのは人だけ(tb job)。ここは読むだけで、DB を書き込みで開かない。
