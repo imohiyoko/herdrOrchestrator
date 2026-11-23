@@ -213,3 +213,10 @@ SCHED_FILE_FALLBACK=1 DRY_RUN=1 bash bin/tick.sh <job>       # DB に取り込�
   優先順は `HERDR_SOCKET_PATH` > `HERDR_SESSION` > `herdr-session` > `default`。ファイルで決めておけば、
   jobs の COMMAND に `HERDR_SESSION=…` を書かなくてよい(tick.sh も tb も Web UI もファイルを読む)。今どれで決まったかは `tb whoami`。
 - launchd 自体の出力は `logs/launchd-<job>.out / .err`。
+
+## Go 版(移行中)
+
+`SCHED_IMPL=go` なら `bin/show.sh` は `herdrctl sched show` に渡す(herdrctl は `SCHED_HERDRCTL` > `TB_HERDRCTL` > PATH)。
+Go 版はジョブ定義を bash として実行しない。書けるのは `KEY=値` だけで、値は `'…'`(そのまま)/ `"…"`(`\"` などの逃がしだけ)/ 引用なし。
+`$VAR`・`$(…)`・`` `…` ``・`~` の展開、`;` などのコマンド、知らないキーは読み込みでエラーになる(`$` を文字として書くなら `'…'` で囲む)。
+既定はまだ bash(tick.sh などが移ったら既定を Go にする)。移す順は [docs/go-migration.md](../docs/go-migration.md)。
