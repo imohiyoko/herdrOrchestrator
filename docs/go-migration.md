@@ -23,6 +23,7 @@ Go に移すサービスは、`.claude/skills/tb-command-naming` の形(`tb <サ
 | 2 | job | `job list/show/set/edit/unset/import/history`(古い名前 `sched-job` も) | 済み |
 | 2 | handoff | `handoff write`(古い形 `handoff <id>` も) | 済み |
 | 2 | whoami | `whoami` | まだ(`bin/tb` の入口を作り直すときに一緒に) |
+| 2 | 土台の小さいもの | scheduler からの送信 `system-send`、旧形式の DB の取り込み `db-import`(写しは VACUUM INTO で作り、Go のスキーマ移行で最新にしてから取り込む) | 済み |
 | 3 | config | `config list/show/set/edit/unset/import/history`(9 種類の設定の検査も Go に) | 済み |
 | 3 | proposal | `proposal add/list/show/resolve`(古い名前 `proposal --role ...` `proposals` `proposal-resolve` も) | 済み |
 | 3 | notify | `notify status/on/off/test/dry-run/tail/ack/flush/events/hash/event/rules`(`pr-watch` は pr サービスとして移した) | 済み |
