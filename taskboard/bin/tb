@@ -61,7 +61,9 @@ main() {
   local cmd=${1:-help}; shift || true
   case $cmd in
     help|-h|--help) cmd_help; return 0;;
-    whoami) cmd_whoami "$@"; return $?;;   # 読み取りだけ。DB を開かない(壊れた DB でも今の向き先を確かめられる)
+    whoami)   # 読み取りだけ。DB を開かない(壊れた DB でも今の向き先を確かめられる)。Go にはセッションの環境変数を書き換えずに渡す
+      if [[ ${TB_IMPL:-bash} == go ]] && tb_go_has whoami; then TB_ROOT=$TB_ROOT HERDR_ROOT=$HERDR_ROOT exec "${TB_HERDRCTL:-herdrctl}" tb whoami "$@"; fi
+      cmd_whoami "$@"; return $?;;
     touch) [[ ${TB_IMPL:-bash} != go ]] || tb_go_quiet touch "$@"; cmd_touch "$@"; return 0;;   # 常に 0。ツールの有無チェックや init_db の失敗でも止めない
     role-context) ( need_tools && init_db ) >/dev/null 2>&1 && session_setup_load || return 0   # hook 用。常に 0
       if [[ ${TB_IMPL:-bash} == go ]] && tb_go_has role-context; then ( tb_go_exec "${TB_HERDRCTL:-herdrctl}" role-context "$@" ) 2>/dev/null || true
