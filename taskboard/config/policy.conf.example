@@ -1,0 +1,23 @@
+# 認可(ADR 0007)。誰が(主体)、何を(操作)、何に対して(対象)してよいか。tb config set policy < このファイル で使う。
+# 書くのは人だけ(agent の pane からは tb config set を実行できない)。.example は既定値にしない(無ければ表 taskboard/perms/commands.tbl の既定)。
+#
+# 1 行 1 つ: <主体> <操作> <対象> = <効果>
+#   主体   agent 名の glob / @<役割>(@a+b は全部を持つ)/ *(どの agent も)
+#          human と system:<名前> はまだ書けない(人は常に通る。system は ADR 0007 の段 1 から)
+#   操作   cmd:<サービス>:<動詞> の glob(操作名は taskboard/perms/commands.tbl の 2 列目。例: cmd:ticket:resolve、cmd:ticket:*)
+#   対象   コマンドの操作では * と書く(送信・停止などの対象は ADR 0007 の段 3 から)
+#   効果   allow(すぐ実行)/ ask-any(別の agent か人の承認が要る)/ ask-human(人の承認が要る)/ deny(実行しない)
+#
+# 決め方: 主体・操作・対象が当たる行のうち、いちばん厳しい効果を採る(行の順番は関係ない)。当たる行が無ければ表の既定。
+#   - 広い行で締めて、狭い行で緩める、はできない(厳しい方が勝つ)。緩めたい相手を外すように、広い行を狭く書く
+#   - 役割を確かめられない行は、締める向きにだけ効く(緩める向きには使わない)
+#   - 設定を読めないときは deny(fail-closed)
+# 判定は agent の pane からの実行だけにかかる。人の端末からは、いつでも実行できる。
+#
+# 例:
+# worker はチケットを取り消すとき人の確認が要る
+# @worker  cmd:ticket:cancel   *  = ask-human
+# 指揮官はチケットを対応済みにできる(既定は人だけ)
+# conductor cmd:ticket:resolve *  = allow
+# どの agent も設定を書き換えない(既定どおり。明示しておく)
+# *        cmd:config:set      *  = deny

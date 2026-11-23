@@ -23,7 +23,4 @@ alert:analyze = allow
 agent:*       = ask
 * = ask
 
-# tb のコマンドそのもの(ADR 0006):
-#   cmd:<サービス>:<動詞>  tb のコマンドそのもの(ADR 0006)。値は allow / ask-any(ask と同じ)/ ask-human / only-human。
-#                          既定と下限は taskboard/perms/commands.tbl(下限より緩い値は下限になる)。cmd: で始まる行だけが効く(* = ask は効かない)
-#                          例: cmd:ticket:cancel = ask-human
+# tb のコマンドそのものの権限(cmd:<サービス>:<動詞>)は、ここではなく設定 policy に書く(ADR 0007。config/policy.conf.example)。
