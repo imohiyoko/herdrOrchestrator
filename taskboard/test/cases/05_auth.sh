@@ -2,8 +2,9 @@
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
 # --- 呼び出し元の確かめ(ADR 0007 段 1a): HERDR_PANE_ID を信じず、pane の中から呼ばれたかを herdr とプロセスの親子・端末で確かめる
 # 疑似 herdr は、呼んだ tb の HERDR_PANE_ID の pane だけ、テストのプロセス(TB_TEST_SHELL_PID。tb の祖先)を pane の最初のプロセスとして返す
+_au_saved=$(declare -p TB_DB FAKE_AGENTS TB_CONFIG 2>/dev/null || true)   # 最後に元の宣言(未設定・export も)へ戻す
 export TB_DB=$TMP/auth.db
-unset FAKE_AGENTS; _au_tc=${TB_CONFIG-}; unset TB_CONFIG
+unset FAKE_AGENTS TB_CONFIG
 au() { "$@" >/dev/null 2>"$TMP/auth.err"; echo $?; }   # 人だけのコマンド tb config unset で、人か agent か分からないかを見る
 eq "auth: outside herdr, no HERDR_PANE_ID → human" "$(au env -u HERDR_PANE_ID $TB config unset projects)" "0"
 eq "auth: a verified agent pane is the agent (human-only refused)" "$(HERDR_PANE_ID=wW:p1 au $TB config unset projects) $(grep -c "worker1" "$TMP/auth.err")" "1 1"
@@ -19,4 +20,6 @@ eq "auth: inside herdr without HERDR_PANE_ID, our pane is an agent's → that ag
 eq "auth: inside herdr without HERDR_PANE_ID, no agent's pane → human (a person's own pane)" "$(in_herdr env -u HERDR_PANE_ID "$TB" config unset projects >/dev/null 2>&1; echo $?)" "0"
 eq "auth: inside herdr, herdr cannot answer → unknown" "$(FAKE_LIST_FAIL=1 in_herdr env -u HERDR_PANE_ID "$TB" list >/dev/null 2>&1; echo $?)" "3"
 eq "auth: hooks (touch) are not stopped" "$(FAKE_SHELL_PID=999999 HERDR_PANE_ID=wW:p1 au $TB touch)" "0"
-unset -f au in_herdr; [[ -z $_au_tc ]] || export TB_CONFIG=$_au_tc; unset _au_tc
+eq "auth: inside herdr, an unreadable agent list → unknown (not a person's pane)" "$(FAKE_AGENTS='"x"' in_herdr env -u HERDR_PANE_ID "$TB" list >/dev/null 2>&1; echo $?)" "3"
+eq "auth: inside herdr, an empty agent list → human" "$(FAKE_AGENTS='[]' in_herdr env -u HERDR_PANE_ID "$TB" config unset projects >/dev/null 2>&1; echo $?)" "0"
+unset -f au in_herdr; unset TB_DB FAKE_AGENTS TB_CONFIG; eval "$_au_saved"; unset _au_saved

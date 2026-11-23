@@ -8,6 +8,7 @@ package identity
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +18,8 @@ import (
 
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/herdr"
 )
+
+var errBadList = errors.New("agent list")
 
 type procs struct {
 	ppid map[int]int
@@ -86,7 +89,7 @@ func (p *procs) insideHerdr(me int, anc map[int]bool) bool {
 
 // inPane: 0=この pane の中 1=違う 2=herdr に聞けない
 func (p *procs) inPane(pane string, me int, anc map[int]bool) int {
-	out, err := herdr.Call("pane", "process-info", pane)
+	out, err := herdr.Call("pane", "process-info", "--pane", pane)
 	if err != nil {
 		return 2
 	}
@@ -136,7 +139,19 @@ func Authenticate() (state, errMsg string) {
 	if !p.insideHerdr(me, anc) {
 		return "outside", ""
 	}
-	as, err := herdr.Agents()
+	out, err := herdr.Call("agent", "list")
+	var shape struct {
+		Result struct {
+			Agents []json.RawMessage `json:"agents"`
+		} `json:"result"`
+	}
+	if err == nil && (json.Unmarshal(out, &shape) != nil || shape.Result.Agents == nil) { // 読めない一覧を「agent はいない」と取らない
+		err = errBadList
+	}
+	var as []herdr.Agent
+	if err == nil {
+		as, err = herdr.ParseAgents(out)
+	}
 	if err != nil {
 		return "", "herdr agent list に失敗したため、呼び出し元を確かめられません"
 	}

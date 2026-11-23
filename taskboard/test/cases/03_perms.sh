@@ -135,7 +135,7 @@ export TB_DB=$TMP/perms.db TB_POLICY=$TMP/perms.policy
 
 # 古い herdrctl(権限段階の門が無い)には渡さない
 mkdir -p "$TMP/perms-oldhc"; printf '#!/bin/sh\n[ "$2" = --commands ] && echo list && exit 0\nexit 2\n' >"$TMP/perms-oldhc/herdrctl"; chmod +x "$TMP/perms-oldhc/herdrctl"
-eq "perms: TB_IMPL=go refuses an herdrctl without the perms feature" "$(TB_IMPL=go TB_HERDRCTL=$TMP/perms-oldhc/herdrctl $TB list -p pm 2>&1 >/dev/null | grep -c '認可(ADR 0007)を確かめられない')" "1"
+eq "perms: TB_IMPL=go refuses an herdrctl without the perms feature" "$(TB_IMPL=go TB_HERDRCTL=$TMP/perms-oldhc/herdrctl $TB list -p pm 2>&1 >/dev/null | grep -c '認可と呼び出し元(ADR 0007)を確かめられない')" "1"
 
 unset TB_DB TB_POLICY TB_POLICY_A HERDR_PANE_ID FAKE_AGENTS
 eval "$_saved_env"

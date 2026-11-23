@@ -123,7 +123,7 @@ lead1        approve:agent:stop  ~report      = allow       # 旧 grants の app
 
 - **人が決めたこと**: 別の OS ユーザーで動かす tb のサーバーは作らない(最低限で終える)。同じ OS ユーザーの agent による、わざとのなりすましは一部許容する
 - **段 1a(済み)**: `HERDR_PANE_ID` を信じず、tb(と herdrctl)を呼んだプロセスが本当にその pane の中で動いているかを確かめる。herdr は変えない
-  - 確かめ方: `herdr pane process-info <pane>` が返す pane の最初のプロセス(`shell_pid`)が呼び出し元の祖先にいるか、同じ端末(tty)を使っているか(親が先に終わって祖先から外れても、端末は残る)
+  - 確かめ方: `herdr pane process-info --pane <pane>` が返す pane の最初のプロセス(`shell_pid`)が呼び出し元の祖先にいるか、同じ端末(tty)を使っているか(親が先に終わって祖先から外れても、端末は残る)
   - `HERDR_PANE_ID` が無くても、herdr の中(祖先か、同じ端末の持ち主の親に herdr のプロセスがいる)なら agent の pane を探し、見つかれば `HERDR_PANE_ID` を付け直す。`HERDR_PANE_ID` を消して人のふりをする、を止める。どの agent の pane でもなければ人の pane
   - 確かめられないとき(申告した pane の中にいない、herdr に聞けない)は何もしない(`identity.unverified`、終了コード 3)。hook(`touch`、`role-context`)は止めない
   - herdr の外(人の端末・scheduler・Web UI)は今までどおり人

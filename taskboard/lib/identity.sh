@@ -75,7 +75,7 @@ _auth_inside_herdr() {  # herdr のプロセスが祖先にいるか、自分の
 }
 _auth_in_pane() {  # $1=pane → 0=この pane の中 1=違う 2=herdr に聞けない
   local out sp mytty=${_AU_TTY[$$]:-}
-  out=$(herdr_call pane process-info "$1" 2>/dev/null) || return 2
+  out=$(herdr_call pane process-info --pane "$1" 2>/dev/null) || return 2
   sp=$(jq -r '.result.process_info.shell_pid // empty' <<<"$out" 2>/dev/null) || return 2
   [[ $sp =~ ^[0-9]+$ ]] || return 2
   [[ $_AU_ANC == *" $sp "* ]] && return 0
@@ -98,7 +98,8 @@ authenticate() {
   fi
   if ! _auth_inside_herdr; then AUTH_STATE=outside; return 0; fi
   # herdr の中なのに HERDR_PANE_ID が無い: agent の pane を探す。どれにも当たらなければ人の pane
-  out=$(herdr_call agent list 2>/dev/null) || { AUTH_ERR="herdr agent list に失敗したため、呼び出し元を確かめられません"; return 1; }
+  out=$(herdr_call agent list 2>/dev/null) && jq -e '.result.agents | type == "array"' >/dev/null 2>&1 <<<"$out" \
+    || { AUTH_ERR="herdr agent list に失敗したため、呼び出し元を確かめられません"; return 1; }
   while IFS= read -r p; do
     [[ -n $p ]] || continue
     r=0; _auth_in_pane "$p" || r=$?
