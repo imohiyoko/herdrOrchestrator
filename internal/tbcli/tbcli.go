@@ -24,7 +24,7 @@ import (
 )
 
 // Commands は Go に移し終えたコマンド。bin/tb はこの一覧(herdrctl tb --commands)を見て渡すかを決める。
-var Commands = []string{"activity", "add", "agent-approve", "agent-flag", "agent-kinds", "agent-new", "agent-ops", "agent-reject", "agent-restart", "agent-revive", "agent-shed", "agent-spawn", "agent-stop", "agents", "allow", "approval", "approve", "ask", "block", "board", "can", "cancel", "claim", "comment", "comments", "compact-check", "config", "conv", "conv-candidate-add", "conv-candidate-adopt", "conv-candidate-reject", "conv-draft", "conv-gate", "conv-incident", "conv-kinds", "conv-learn-purge", "conv-ledger", "conv-length", "conv-lint", "conv-pair-add", "conv-pair-show", "conv-pairs", "conv-patterns", "conv-route", "conv-routes-set", "conv-scan", "conv-stage", "conv-stage-log", "conv-stage-reset", "conv-stage-set", "conv-voice", "conv-voice-check", "deadlines-import", "done", "due-scan", "events", "flush", "gate", "handoff", "history", "inbox", "inbox-read", "job", "labels", "limits", "link", "list", "message", "model-set", "notify", "nudge", "org", "outbox", "part-check", "part-risk", "parts", "peek", "pending", "pr", "pr-queue", "pr-watch", "proposal", "proposal-resolve", "proposals", "proxy", "proxy-check", "proxy-list", "proxy-request", "proxy-resolve", "recipe-history", "recipe-list", "recipe-rm", "recipe-set", "recipe-show", "reject", "reminder", "reminders", "reopen", "report", "resolve", "review", "review-pack", "review-submit", "role-broadcast", "role-context", "role-edit", "role-list", "role-log", "role-set", "role-show", "role-unset", "role-write", "roles", "sched-job", "send", "show", "slash", "spawn-freeze", "spawn-unfreeze", "sprint-add", "sprint-close", "sprint-start", "sprints", "ticket", "touch", "tree", "unlink", "update"}
+var Commands = []string{"activity", "add", "agent-approve", "agent-flag", "agent-kinds", "agent-new", "agent-ops", "agent-reject", "agent-restart", "agent-revive", "agent-shed", "agent-spawn", "agent-stop", "agents", "alert", "alert-approve", "alert-close", "alert-dispatch", "alert-result", "alerts", "allow", "approval", "approve", "ask", "block", "board", "can", "cancel", "claim", "comment", "comments", "compact-check", "config", "conv", "conv-candidate-add", "conv-candidate-adopt", "conv-candidate-reject", "conv-draft", "conv-gate", "conv-incident", "conv-kinds", "conv-learn-purge", "conv-ledger", "conv-length", "conv-lint", "conv-pair-add", "conv-pair-show", "conv-pairs", "conv-patterns", "conv-route", "conv-routes-set", "conv-scan", "conv-stage", "conv-stage-log", "conv-stage-reset", "conv-stage-set", "conv-voice", "conv-voice-check", "deadlines-import", "done", "due-scan", "events", "flush", "gate", "handoff", "history", "inbox", "inbox-read", "job", "labels", "limits", "link", "list", "message", "model-set", "notify", "nudge", "org", "outbox", "part-check", "part-risk", "parts", "peek", "pending", "pr", "pr-queue", "pr-watch", "proposal", "proposal-resolve", "proposals", "proxy", "proxy-check", "proxy-list", "proxy-request", "proxy-resolve", "recipe-history", "recipe-list", "recipe-rm", "recipe-set", "recipe-show", "reject", "reminder", "reminders", "reopen", "report", "resolve", "review", "review-pack", "review-submit", "role-broadcast", "role-context", "role-edit", "role-list", "role-log", "role-set", "role-show", "role-unset", "role-write", "roles", "sched-job", "send", "show", "slash", "spawn-freeze", "spawn-unfreeze", "sprint-add", "sprint-close", "sprint-start", "sprints", "ticket", "touch", "tree", "unlink", "update"}
 
 // Features は bin/tb が渡す前に確かめる機能(perms = 権限段階の門。ADR 0006)。
 var Features = []string{"perms", "policy"}
@@ -165,6 +165,18 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		err = cmdAgentReject(args[1:], w, stderr)
 	case "agent-shed":
 		err = cmdAgentShed(args[1:], w, stderr)
+	case "alert":
+		err = cmdAlert(args[1:], w, stderr)
+	case "alert-approve":
+		err = cmdAlertApprove(args[1:], w, stderr)
+	case "alert-close":
+		err = cmdAlertClose(args[1:], w, stderr)
+	case "alert-dispatch":
+		err = cmdAlertDispatch(args[1:], w, stderr)
+	case "alert-result":
+		err = cmdAlertResult(args[1:], w, stderr)
+	case "alerts":
+		err = cmdAlerts(args[1:], w, stderr)
 	case "agents":
 		err = cmdAgents(args[1:], w, stderr)
 	case "agent-spawn":
