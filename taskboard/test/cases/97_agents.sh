@@ -38,7 +38,7 @@ eq "agent-stop: new input after the flag → stale" "$($TB agent-stop worker1 2>
 agsql "UPDATE agent_activity SET last_prompt_at='2000-01-01T00:00:00.000Z', last_stop_at='2000-01-01T00:01:00.000Z', cwd='$TMP' WHERE session_id='s1';"
 eq "agent-stop: --force refused from an agent pane" "$(HERDR_PANE_ID=wC:p1 rc $TB agent-stop worker1 --force)" "1"
 out=$(HERDR_PANE_ID=wC:p1 $TB agent-stop worker1; echo "rc=$?"); lid=$(head -1 <<<"$out" | cut -d' ' -f1)
-eq "agent-stop: conductor needs approval" "$(tr '\n' ' ' <<<"$out")" "$lid pending (人の承認待ち: tb agent-approve $lid) rc=20 "
+eq "agent-stop: conductor needs approval" "$(tr '\n' ' ' <<<"$out" | sed -E 's/Q-[0-9]+/Q-n/g')" "$lid pending Q-n (承認待ち: tb approval approve Q-n) rc=20 "
 eq "agent-ops: pending listed" "$($TB agent-ops --status pending | cut -f1-5 | tr '\t' ' ')" "$lid stop worker1 conductor pending"
 eq "agent-approve: refused from an agent pane" "$(HERDR_PANE_ID=wC:p1 rc $TB agent-approve "$lid")" "1"
 out=$(HERDR_PANE_ID= $TB agent-approve "$lid")

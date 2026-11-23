@@ -179,7 +179,7 @@ func send(db *store.DB, args []string, w, stderr io.Writer) error {
 		fmt.Fprintf(stderr, "tb: 送信を拒否しました(%s): %s\n", reason, id)
 		rc = 4
 	case "pending":
-		fmt.Fprintf(stderr, "tb: 承認待ちです(認可: %s)。人(か approve: を許された agent)が tb approve %s で届けます\n", apRule, id)
+		fmt.Fprintf(stderr, "tb: 承認待ちです(認可: %s)。人(か approve: を許された agent)が tb approval approve %s で届けます\n", apRule, pendingQ(db.DB, "outbox", oid))
 		rc = exitAsk
 	default:
 		r := message.Deliver(j, oid, true, io.Discard, stderr)
@@ -223,7 +223,7 @@ func send(db *store.DB, args []string, w, stderr io.Writer) error {
 	case rc == 4:
 		fmt.Fprintf(w, "%s denied\n", id)
 	case rc == exitAsk:
-		fmt.Fprintf(w, "%s pending-approval\n", id)
+		fmt.Fprintf(w, "%s pending-approval %s\n", id, pendingQ(db.DB, "outbox", oid))
 	default:
 		fmt.Fprintf(w, "%s queued\n", id)
 	}

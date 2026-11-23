@@ -90,7 +90,7 @@ lead1        approve:agent:stop  ~report      = allow       # 旧 grants の app
 - `tb policy import`(人だけ)が、`approvals` / `grants` / `routes` / `delivery` の許可・拒否 / `protect` / `spawn-policy` の自動承認の部分を、`policy` の行に変換する。変換できない行は書かずに一覧で出す(人が直す)。
 - 変換のあと、古いキーは読まない。残っていれば、tb は起動のたびに「古い権限の設定が残っている。tb policy import をして消す」と警告する(黙って無視しない)。
 - `delivery` は届け方(now / hold)だけを残す。許可・拒否(block、`!` の行)は policy に移る。
-- 承認待ちは 1 つにする(段 4): O-<n> / L-<n> / P-<n> を 1 つの承認待ちにし、承認できるのは `approve:<操作>` が `allow` の主体。承認は依頼者の再実行で 1 回だけ使え、使うときにもう一度判定する(ADR 0006 の決定のまま)。
+- 承認待ちは 1 つにする(段 4): O-<n> / L-<n> / P-<n> を 1 つの承認待ちにし、承認できるのは `approve:<操作>` が `allow` の主体。(段 4 の進み具合を参照。承認したコマンドは承認した側が 1 回だけ実行する)
 
 ## 代替案
 
@@ -143,9 +143,11 @@ lead1        approve:agent:stop  ~report      = allow       # 旧 grants の app
 
 ### 段 4 の進み具合(2026-11-23)
 
-- **済み(最低限)**: 承認待ちを 1 か所で見て決める。`tb approval list [--json]` が、送信の承認待ち(`O-<n>`)と agent の操作の承認待ち(`L-<n>`)を古い順に並べる。`tb approval approve|reject` は `O-<n>` も `L-<n>` も受ける(`L-<n>` は `tb agent-approve` / `agent-reject` に渡し、その入口の門も通す)
-- **作らないもの**: コマンドの承認待ち(ADR 0006 の `P-<n>`。依頼者の打ち直しで 1 回だけ通す)。今の表(`perms/commands.tbl`)にはコマンドの既定が `ask-*` のものが無く、人が policy に `cmd:` の `ask-*` の行を書いたときだけ要る。そのときは今までどおり終了コード 20 で止まり、人が自分の端末で実行する
-- `O-<n>` と `L-<n>` の表(`outbox` / `agent_ops`)は分けたまま。承認したときの実行の仕方(送信を届ける、agent を操作する)が違うため
+- **済み**: 承認待ちは 1 つの表 `requests` に集め、ID は `Q-<n>` の 1 種類にした(スキーマ 027)。1 件ごとに、依頼者・要る権限(操作と対象)・優先度(high / normal / low)・中身を持つ。`tb approval list [--json]` は優先度の高い順、同じなら古い順に並べ、`tb approval approve|reject Q-<n>` で決める。
+  - 送信(`outbox`)と agent の操作(`agent_ops`)は、元の表に pending の行ができたときにトリガーが `requests` に足す。状態の正は元の行のまま(承認したときの実行の仕方が違うため、表は分けたまま)。前の `O-<n>` / `L-<n>` も受ける
+  - `ask` で止まったコマンド(`cmd:` の門、`policy:` の変更)も、引数と標準入力ごと `Q-<n>` に積む(終了コード 20)。承認すると、**承認した側**がそのコマンドを 1 回だけ実行する(`ask` は通し、`deny` は通さない)。依頼者の打ち直しを待つ形(ADR 0006 の `P-<n>`)はやめた。承認した側の記録として残る
+  - 承認できるのは人と、`<承認者> approve:<操作>[:<対象>] <依頼者> = allow` に当たる agent。自分の依頼は承認できない
+  - 優先度は、積むときに `TB_PRIORITY=high|normal|low`、あとから `tb approval priority Q-<n> <優先度>`(依頼した agent と人)
 
 ## 人が決めたこと(2026-11-22。すべて推奨どおり)
 

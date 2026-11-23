@@ -409,7 +409,7 @@ agent が何をしてよいかは、設定 `policy` の 1 表で決める(「設
 - 操作: コマンドの中の操作 `send:task` / `send:info` / `send:answer`(tb message send)、`agent:read`(tb peek)、`agent:stop` / `agent:revive` / `agent:new` / `agent:spawn` / `agent:compact` / `agent:model`、`agent:slash:<コマンド>`、`agent:flag`、`role:change`、`alert:analyze`、`recipe:<名前>`、`setup:<段階>`、`approve:<元の操作>:<元の対象>`(承認待ちの承認)。コマンドは `cmd:<サービス>:<動詞>`
 - 対象: agent 名の glob / `@<役割>` / `self` / `*`、または関係 `~child` / `~descendant` / `~parent` / `~sibling`(spawn の親子)、`~report` / `~subordinate` / `~manager` / `~superior` / `~peer`(組織図 `org`)。対象の無い操作(`role:change`、`alert:analyze`、`setup:*`)とコマンドは `*` の行だけが当たる
 - 効果: `allow`(すぐ実行)/ `ask`(承認待ち。人か、`approve:` を許された agent が承認する)/ `deny`(実行しない)。前の `ask` / `ask-human` は `ask` にまとめた(読むときは `ask` と同じ。書くときは断る)
-- 承認待ちの一覧は `tb approval list [--json]`(送信 `O-<n>` と agent の操作 `L-<n>` を古い順)。承認・却下はどちらも `tb approval approve|reject <ID>`(`L-<n>` は `tb agent-approve` / `agent-reject` と同じ)
+- 承認待ちは 1 か所(ID は `Q-<n>`)。送信・agent の操作・`ask` で止まったコマンド(policy の変更も)がどれも並ぶ。一覧は `tb approval list [--json]`(優先度の高い順、同じなら古い順。依頼者・要る権限・対象を出す)。承認・却下は `tb approval approve|reject Q-<n>`。コマンドは承認した側が 1 回だけ実行する(`ask` は通り、`deny` は通らない)。優先度は積むときに `TB_PRIORITY=high|normal|low`、あとから `tb approval priority Q-<n> <優先度>`
 - 決め方: 当たる行のうち **いちばん厳しい効果** を採る(行の順番は関係ない)。当たる行が無ければ既定の表(コマンドの中の操作は `perms/ops.tbl`: `send:info`・`send:answer`・`alert:analyze`・`proxy:read-only` は allow、`agent:flag` と `approve:*` は deny、ほかは ask)
   - 広い行で締めて狭い行で緩める、はできない。緩めたい相手を外すように、広い行を狭く書く
   - 役割・関係を確かめられない行は、締める向きにだけ効く。設定を読めないときは deny
@@ -423,8 +423,8 @@ tb can <主体> <操作> <対象>            # 実際の判定と同じ順で、
 tb approval check <操作>:<対象> [--by A]   # allow|ask|deny と根拠の行。終了コード 0=allow / 20=ask / 4=deny
 tb approval allow <パターン>    # policy に「* <操作> <対象> = allow」の行を書く(同じ行があれば書き換える)。人だけ
 tb approval ask <パターン>      # 同じく ask の行を書く。人だけ
-tb approval approve O-<n> [--always]   # 承認待ちの送信を届ける。--always で「* send:<kind> <宛先> = allow」を書く
-tb approval reject O-<n>
+tb approval approve Q-<n> [--always]   # 承認待ちを決める(送信なら届ける)。--always で「* send:<kind> <宛先> = allow」を書く
+tb approval reject Q-<n>
 tb policy import [--apply]      # 古い approvals / grants を policy の行に変換する(--apply で書き、古い設定を消す)。人だけ
 # 古い名前(tb approval <操作> / tb allow / tb ask / tb approve / tb reject)も同じに動く
 ```
@@ -448,7 +448,7 @@ tb の全コマンドは表 `perms/commands.tbl` に行を持ち、呼び出し�
   - 役割を確かめられない行は、締める向きにだけ効く。設定を読めないときは `deny`
   - `human` の行は書けない(人は常に通る)。`system:<名前>` の行は scheduler などの主体に効く(上の呼び出し元の項)
 - コマンドの中の操作(送信・停止など)も同じ `policy` の行で決める(上の「認可」)。delivery・protect・spawn の方針は、ADR 0007 の段 3 の続きで policy に移す
-- コマンドの `ask` の承認待ちはまだ無い。いまは agent からの実行を終了コード 20 で止める
+- コマンドが `ask` になったら、agent からの実行は引数と標準入力ごと承認待ち `Q-<n>` に積んで終了コード 20 で止める。承認されると承認した側が実行する
 - コマンドを足したら表にも行を足す(足し忘れはテスト `test/cases/03_perms.sh` と `internal/kernel/perms` が落とす)
 
 ## 部品とレシピ(ADR 0005)

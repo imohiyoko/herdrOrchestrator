@@ -362,7 +362,8 @@ func cmdAgentSpawn(args []string, w, stderr io.Writer) error {
 		id, _ := res.LastInsertId()
 		lid := "L-" + strconv.FormatInt(id, 10)
 		spawnNotify(db, live, lid, parent, name, role, task, brief)
-		fmt.Fprintf(w, "%s pending (人の承認待ち: tb agent-approve %s)\n", lid, lid)
+		q := pendingQ(db.DB, "agent_ops", id)
+		fmt.Fprintf(w, "%s pending %s (承認待ち: tb approval approve %s)\n", lid, q, q)
 		return &exit{20, ""}
 	}
 	r := doAgentNew(db, name, cwd, p.model, arole, prompt, "unknown", parent, parent, task, kindDefault, stderr)

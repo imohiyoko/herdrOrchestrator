@@ -110,7 +110,7 @@ export FAKE_AGENTS="[$SP_C,$SP_P,$SP_Q]"
 spsql "DELETE FROM agents WHERE spawned_by IS NOT NULL;"
 n0=$(ws_count)
 out=$(HERDR_PANE_ID=wP:p1 $TB agent-spawn worker --task "$T1" --brief 'ask path'; echo "rc=$?"); lid=$(head -1 <<<"$out" | cut -d' ' -f1)
-eq "agent-spawn: approvals ask → pending L-<n>, rc 20, nothing created" "$(tr '\n' ' ' <<<"$out") $(( $(ws_count) - n0 ))" "$lid pending (人の承認待ち: tb agent-approve $lid) rc=20  0"
+eq "agent-spawn: approvals ask → pending L-<n>, rc 20, nothing created" "$(tr '\n' ' ' <<<"$out" | sed -E 's/Q-[0-9]+/Q-n/g') $(( $(ws_count) - n0 ))" "$lid pending Q-n (承認待ち: tb approval approve Q-n) rc=20  0"
 eq "agent-spawn: pending op is recorded for the parent" "$(spsql "SELECT op||' '||target||' '||requested_by||' '||status FROM agent_ops WHERE id=${lid#L-};")" "new parent1-s1 parent1 pending"
 eq "agent-spawn: a pending child counts toward the limit" "$(spsql "SELECT COUNT(*) FROM agent_ops WHERE status='pending';") $(HERDR_PANE_ID=wP:p1 $TB agent-spawn worker --task "$T1" --brief again | head -1 | cut -d' ' -f1 | grep -c .)" "1 1"
 eq "agent-spawn: a second pending gets the next number" "$(spsql "SELECT group_concat(target,',') FROM agent_ops WHERE status='pending' ORDER BY id;")" "parent1-s1,parent1-s2"

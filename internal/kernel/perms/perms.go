@@ -426,7 +426,19 @@ type Denied struct {
 func (d *Denied) Error() string { return d.Msg }
 
 // Enforce は効果で止めるか決める(bash の perm_enforce)。人の端末(pane なし・pane に agent がいない)なら常に通す。
-func Enforce(op, tier, rule, what string) error {
+func Enforce(op, tier, rule, what string) error { return EnforceTarget(op, "*", tier, rule, what) }
+
+// Queue は ask で止めたコマンドを承認待ちに積む(herdrctl tb の入口が入れる)。積んだ承認待ちの ID(Q-<n>)を返す。nil なら積まない。
+var Queue func(op, target, what string) (string, error)
+
+// Approved は承認済みの依頼を実行しているとき(tb approval approve が立てる。ask は通す。deny は通さない)。
+var Approved bool
+
+// EnforceTarget は Enforce に操作の対象を足したもの(承認待ちのラベルに使う)。
+func EnforceTarget(op, target, tier, rule, what string) error {
+	if tier == "ask" && Approved {
+		return nil
+	}
 	pane := identityPane()
 	if tier == "allow" || (pane == "" && identity.System == "") {
 		return nil
@@ -443,7 +455,15 @@ func Enforce(op, tier, rule, what string) error {
 	}
 	switch tier {
 	case "ask":
-		return &Denied{20, what + " は承認が要ります(" + op + " = " + tier + "。" + rule + ")。承認待ちの仕組みはまだ無いため実行しません。人が自分の端末で実行してください(agent '" + n + "')"}
+		msg := what + " は承認が要ります(" + op + " = " + tier + "。" + rule + ")"
+		if Queue != nil {
+			id, err := Queue(op, target, what)
+			if err != nil {
+				return &Denied{20, msg + "。承認待ちに積めませんでした(" + err.Error() + ")。人が自分の端末で実行してください(agent '" + n + "')"}
+			}
+			return &Denied{20, msg + "。承認待ち " + id + " に積みました(承認されると承認した側が実行します。tb approval list)(agent '" + n + "')"}
+		}
+		return &Denied{20, msg + "。承認待ちに積めないため実行しません。人が自分の端末で実行してください(agent '" + n + "')"}
 	}
 	if strings.HasPrefix(rule, "policy:") {
 		return &Denied{1, what + " は実行できません(" + op + " = deny。" + rule + ")(agent '" + n + "')"}
@@ -614,7 +634,7 @@ func RequirePolicyWrite(old, new, what string, openDB func() (*sql.DB, string, f
 			target = anySubject // Judge は対象 * を「行の対象を見ない」に使うので、主体 * の行は別の印で渡す(当たるのは対象 * の行だけ)
 		}
 		tier, rule := Authorize(db, session, who, op, target, Matcher{})
-		if err := Enforce(op, tier, rule, what+"(変わる行: "+c.Line+")"); err != nil {
+		if err := EnforceTarget(op, c.Subject, tier, rule, what+"(変わる行: "+c.Line+")"); err != nil {
 			var d *Denied
 			if errors.As(err, &d) && d.Code == 1 && tier == "deny" && !strings.HasPrefix(rule, "policy:") {
 				d.Msg = what + " は実行できません(変わる行: " + c.Line + ")。" + op + " を対象 " + c.Subject +

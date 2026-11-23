@@ -74,6 +74,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return finish(err, stderr)
 	}
 	perms.OpenDB = permDB
+	perms.Queue = queueCmd
+	runArgs = args
 	perms.NameMatch = func(db *sql.DB, session, name, pat string) int { return agents.NewRoles(db, session).Match(name, pat) }
 	perms.RelMatch = func(db *sql.DB, session, a, b, rel string) int {
 		return approval.NewJudge(db, session).Relation(a, b, rel)
@@ -84,6 +86,12 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		if _, msg := identity.Authenticate(); msg != "" {
 			fmt.Fprintln(stderr, "tb: [identity.unverified] "+msg)
 			return 3
+		}
+	}
+	if args[0] != "touch" && args[0] != "role-context" {
+		// tb approval approve が立てた子(承認済みの依頼の実行)なら、ask を通す
+		if err := approvedRun(args); err != nil {
+			return finish(err, stderr)
 		}
 	}
 	if args[0] != "touch" {

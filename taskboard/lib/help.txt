@@ -168,12 +168,13 @@ tb approval allow <パターン>   今後は承認なしにする(設定 policy 
   別名(古い名前): tb allow <パターン>
 tb approval ask <パターン>     承認制に戻す(設定 policy に * <操作> <対象> = ask を書く。agent は cmd:approval:ask と policy:<操作> * が要る)
   別名(古い名前): tb ask <パターン>
-tb approval list [--json]      承認待ちの一覧(送信 O-<n> と agent の操作 L-<n>。古い順。ID・操作・依頼者・対象・作った時刻)
-tb approval approve O-<n>|L-<n> [--always]   承認する。L-<n> は tb agent-approve と同じ。O-<n> は承認待ちの送信を届ける。--always なら send:<kind>:<宛先> を allow にする(人だけ)。
-                              policy の <agent> approve:send:<kind>:<宛先> <依頼者> = allow に当たる agent も承認できる(自分の依頼は不可)
+tb approval list [--json]      承認待ちの一覧(Q-<n>。送信・agent の操作・ask で止まったコマンド。優先度の高い順、同じなら古い順。ID・優先度・要る権限・依頼者・対象・作った時刻)
+tb approval approve Q-<n> [--always]   承認する。送信は届け、agent の操作は実行し、コマンドは承認した側が 1 回だけ実行する(ask は通る)。--always は送信と agent の操作で、今後は承認なしにする(人だけ)。
+                              policy の <agent> approve:<操作>[:<対象>] <依頼者> = allow に当たる agent も承認できる(自分の依頼は不可)。前の O-<n> / L-<n> も受ける
   別名(古い名前): tb approve O-<n> [--always]
-tb approval reject O-<n>|L-<n>   却下する(L-<n> は tb agent-reject と同じ)。O-<n> は承認待ちの送信を却下する(承認と同じく、人か approve: の許可がある agent)
+tb approval reject Q-<n>       却下する(承認と同じく、人か approve: の許可がある agent)
   別名(古い名前): tb reject O-<n>
+tb approval priority Q-<n> high|normal|low   優先度を変える(依頼した agent と人)。積むときに TB_PRIORITY=high|normal|low で付けられる
 tb approval                    approval のサブコマンドの一覧
 tb policy import [--apply]     古い設定 approvals / grants を設定 policy の行に変換する(--apply で書いて古い設定を消す。agent は cmd:policy:import と、足す行ごとの policy:<行の操作> <行の主体> が要る。ADR 0007)
 
@@ -234,14 +235,14 @@ tb agent compact check [--dry-run] [--apply]   idle/done で文脈が大きい a
   別名(古い名前): tb compact-check
 tb agent slash <コマンド> <agent 名|@役割>... [--apply]   許可リスト(config/slash.conf)のスラッシュコマンドを idle/done の agent に送る(既定 dry-run)。
   別名(古い名前): tb slash
-         自分と指揮官は除く。agent からは policy の agent:slash:<コマンド> <宛先>(ask-* なら L-<n>、deny なら送らない)。記録は agent_ops(op=slash)
-tb agent slash <コマンド> --all [--apply]   全 agent へ。--apply しても L-<n> を積むだけで、人が tb agent-approve するまで送らない
+         自分と指揮官は除く。agent からは policy の agent:slash:<コマンド> <宛先>(ask なら Q-<n>、deny なら送らない)。記録は agent_ops(op=slash)
+tb agent slash <コマンド> --all [--apply]   全 agent へ。--apply しても Q-<n> を積むだけで、人が tb approval approve するまで送らない
   別名(古い名前): tb slash
 tb agent slash --list   許可リストを出す(deny の行は送らない)
   別名(古い名前): tb slash
 tb agent flag <名前> --killable yes|no|unknown [--reason R]   止めてよいかの判定。判定役(TB_SWEEPER_PATTERN、既定 sweeper*)か人だけ
   別名(古い名前): tb agent-flag
-         終了コード(new/stop/revive): 0 実行済み 1 拒否・前提違い 11 herdr の失敗 20 人の承認待ち(L-<n>)
+         終了コード(new/stop/revive): 0 実行済み 1 拒否・前提違い 11 herdr の失敗 20 承認待ち(Q-<n>)
 tb agent ops [--status pending|done|failed|rejected] [--json]   操作の記録と承認待ち
   別名(古い名前): tb agent-ops
 tb agent approve L-<n> [--always]   承認待ちの操作を実行(--always で agent:<op>:<名前> を allow。人だけ)。
@@ -256,7 +257,7 @@ tb agent spawn <役割|-> --task <task-id> --brief <依頼の本文(2000 字ま�
          子の名前は tb が <親>-s<連番> で付け、プロンプトも tb がテンプレートで組む(依頼は役割の指示を上書きできない)。
          親は動いていて、--task が親の in_progress のタスクであること。許可する役割・子の数・深さは spawn-policy.conf
          (既定: worker だけ、親 1 体あたり 2、全体 6、深さ 1、モデル sonnet。denied_parents に当たる親は不可)
-         終了コード: 0 作成済み(規則に合い、policy の agent:spawn <子の名前> が allow) 20 人の承認待ち(L-<n>。policy が ask-* か spawn-freeze 中)
+         終了コード: 0 作成済み(規則に合い、policy の agent:spawn <子の名前> が allow) 20 承認待ち(Q-<n>。policy が ask か spawn-freeze 中)
                     4 規則で拒否(理由を stderr に出し、何も作らない)
          自動で作るには人が policy に `* agent:spawn * = allow` を足す(tb approval allow 'agent:spawn:*')。agent:new は ask のまま
 tb agent freeze     自動承認を止める。以後の agent-spawn は全部人の承認待ち(人の端末からだけ)

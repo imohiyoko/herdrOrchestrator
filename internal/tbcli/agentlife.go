@@ -69,7 +69,8 @@ func authorizeOp(db *store.DB, op, target, args, by string, w io.Writer) (bool, 
 		return false, err
 	}
 	id, _ := res.LastInsertId()
-	fmt.Fprintf(w, "L-%d pending (人の承認待ち: tb agent-approve L-%d)\n", id, id)
+	q := pendingQ(db.DB, "agent_ops", id)
+	fmt.Fprintf(w, "L-%d pending %s (承認待ち: tb approval approve %s)\n", id, q, q)
 	return false, &exit{20, ""}
 }
 
