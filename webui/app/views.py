@@ -1144,8 +1144,8 @@ def _job_overview(name, info):
     rows.append(("副作用", ("宛先 agent が受け取って動きます。その agent が Slack・Jira など外部へ書けるかは、webui からは分かりません(不明)。"
                           if is_prompt else "コマンドが何を書くかは、本文から推測しません(不明)。上のコマンド本文を確認してください。")))
     d = send_task_decision(info["target"]) if is_prompt else None
-    appr = ("scheduler からの送信(<code>tb system-send</code>)は approvals.conf を見ず、人の承認待ちにはなりません。"
-            "上の条件を満たせば自動で送られます。" if is_prompt else "COMMAND 型の実行は approvals.conf の対象外です(承認待ちにならず、時刻になれば実行されます)。")
+    appr = ("scheduler からの送信(<code>tb system-send</code>)は設定 policy を見ず、承認待ちにはなりません。"
+            "上の条件を満たせば自動で送られます。" if is_prompt else "COMMAND 型の実行は設定 policy の対象外です(承認待ちにならず、時刻になれば実行されます)。")
     if d:
         appr += f' <span class=note>参考: 通常の <code>tb message send</code> の <code>send:task:{e(info["target"])}</code> は現在 {e(d)}(この job には適用されません)。</span>'
     rows.append(("承認の扱い", appr))
@@ -1276,11 +1276,11 @@ def page_ledger(qs, ctx=None):
 
 
 def _catalog_section(qs, rules, err, catalog, cerr, cbad):
-    """権限カタログ(操作の定義)と approvals.conf を突き合わせた一覧。読み取りのみ。"""
+    """権限カタログ(操作の定義)と設定 policy を突き合わせた一覧。読み取りのみ。"""
     if cerr:
         return "<h2>操作ごとの現在の権限</h2>" + err_html(cerr)
     if err:
-        return "<h2>操作ごとの現在の権限</h2>" + err_html("approvals.conf を全部は読めていないので、現在の値は出しません")
+        return "<h2>操作ごとの現在の権限</h2>" + err_html("policy を全部は読めていないので、現在の値は出しません")
     f_kind, f_state = _one(qs, "kind"), _one(qs, "state")
     f_fb, f_al = _one(qs, "fallback") == "1", _one(qs, "allowed") == "1"
     if f_kind not in perms.KINDS:
@@ -1315,38 +1315,36 @@ def _catalog_section(qs, rules, err, catalog, cerr, cbad):
             via = f'{r["rule"]["no"]} 行目(<code>[</code> を含む)'
             how = "-"
         else:
-            val = '<b class=warn>allow</b>' if r["value"] == "allow" else "ask"
+            val = '<b class=warn>allow</b>' if r["value"] == "allow" else e(r["value"])
             if r["rule"] is None:
-                via, how = "なし(既定の ask)", "既定に落ちる"
-            elif r["explicit"]:
-                via, how = f'{r["rule"]["no"]} 行目 <code>{e(r["rule"]["pattern"])}</code>', "明示"
+                via, how = f'なし(既定の表 perms/ops.tbl の {e(r["value"])})', "既定に落ちる"
             else:
-                via, how = f'{r["rule"]["no"]} 行目 <code>* = ask</code>(既定)', "既定に落ちる"
+                via, how = f'{r["rule"]["no"]} 行目 <code>{e(r["rule"]["pattern"])} = {e(r["rule"]["effect"])}</code>', "明示"
         warns = []
         if c["state"] == "unwired":
-            warns.append("承認判定に渡らない操作です。approvals.conf の行は効きません(代行依頼は別の仕組み)")
+            warns.append("承認判定に渡らない操作です。policy の行は効きません(代行依頼は別の仕組み)")
         if r["risky"]:
             warns.append(f'リスク {e(c["risk"])} / allow 候補 {e(c["allow_ok"])} の操作が allow になっています')
         if r["risky_exc"]:
             warns.append("allow にしない操作に、宛先を絞った allow の例外があります")
-        exc = " ".join(f'<code>{e(x["pattern"])} = {e(x["value"])}</code>' for x in r["exceptions"][:4])
+        exc = " ".join(f'<code>{e(x["pattern"])} = {e(x["effect"])}</code>' for x in r["exceptions"][:4])
         risk = f'<b class=warn>{e(c["risk"])}</b>' if c["risk"] in ("high", "human-only") else e(c["risk"])
         out.append([cell(f'<code>{e(c["pattern"])}</code>'), cell(e(c["kind"])), cell(e(c["desc"])), val, cell(how), cell(via),
                     cell(risk), cell(e(c["side"])), cell(e(c["allow_ok"])), cell(e(c["state"])),
                     (exc or "") + ("<br>" if exc and warns else "") + "".join(f'<span class=warn>{w}</span>' for w in warns)])
     note = (f"<p class=note>権限カタログ(<code>taskboard/config/approvals-catalog.conf</code>)の {len(catalog)} 件のうち {len(rows)} 件。"
-            "現在の値は、パターンの <code>*</code> を例の名前に置いて approvals.conf を上から当てた結果です"
-            "(宛先を絞った規則は「例外」の欄に出ます)。reserved(将来用で未実装)と unwired(操作名はあるが承認判定には渡らない)は薄く表示。"
+            "現在の値は、パターンの <code>*</code> を例の名前に置いて、policy の主体 <code>*</code> の行を当てた結果です"
+            "(当たる行のいちばん厳しい効果。無ければ既定の表。主体や宛先を絞った行は「例外」の欄に出ます)。reserved(将来用で未実装)と unwired(操作名はあるが承認判定には渡らない)は薄く表示。"
             "カタログは操作の説明で、判定には使いません。")
     if cbad:
         note += f" 形式が不正でスキップした行が {cbad} 件あります。"
     note += "</p>"
-    return ("<h2>操作ごとの現在の権限(カタログ × approvals.conf)</h2>" + form +
+    return ("<h2>操作ごとの現在の権限(カタログ × policy)</h2>" + form +
             table(["操作", "種別", "説明", "現在の値", "規則の有無", "決まる行", "リスク", "副作用", "allow 候補", "状態", "例外・警告"], out) + note)
 
 
 def page_perms(qs, ctx=None):
-    """権限(approvals.conf の読み取り)。変更操作は置かない。コマンド行を組み立てて表示するだけ。"""
+    """権限(設定 policy の読み取り)。変更操作は置かない。コマンド行を組み立てて表示するだけ。"""
     if ctx is not None:
         ctx["norefresh"] = True
     rules, err = perms.load_rules()
@@ -1362,29 +1360,30 @@ def page_perms(qs, ctx=None):
         if not perms.ACTION_RE.fullmatch(op):
             res = err_html("操作名に使えない文字があります(英数字と . _ : * ? - だけ、128 文字まで)")
         elif err:
-            res = err_html("approvals.conf を全部は読めていないので、ask とも allow とも判定しません")
+            res = err_html("policy を全部は読めていないので、判定しません")
         else:
             val, hit = perms.decide(rules, op)
             if val == "unknown":
                 res = (f'<p><code>{e(op)}</code> → <b class=warn>判定不能</b>({hit["no"]} 行目 <code>{e(hit["pattern"])}</code> に <code>[</code> があり、'
-                       'bash と照合規則が違いうるため、この画面ではここから下を判定しません。手元で <code>tb approval check</code> を使ってください)</p>')
+                       'bash と照合規則が違いうるため、この画面では判定しません。手元で <code>tb approval check</code> を使ってください)</p>')
             elif hit:
                 res = (f'<p><code>{e(op)}</code> → <b class="{"warn" if val == "allow" else ""}">{e(val)}</b>'
-                       f'(<b>{hit["no"]} 行目</b>: <code>{e(hit["pattern"])} = {e(hit["value"])}</code> で決まる)</p>')
+                       f'(<b>{hit["no"]} 行目</b>: <code>{e(hit["pattern"])} = {e(hit["effect"])}</code> で決まる)</p>')
             else:
-                res = f'<p><code>{e(op)}</code> → <b>ask</b>(どの行にも一致しないので既定の ask)</p>'
+                res = f'<p><code>{e(op)}</code> → <b>{e(val)}</b>(当たる行が無いので既定の表 perms/ops.tbl)</p>'
     body += "<h2>この操作はどの行で決まるか</h2>" + form + res + (
-        '<p class=note>tb の <code>tb approval check &lt;操作&gt;</code> と同じ規則(上から見て最初に一致した行)をここで再現した結果です。'
+        '<p class=note>tb の <code>tb approval check &lt;操作&gt;</code>(<code>--by</code> なし)と同じ規則(主体 <code>*</code> の行のうち、当たる行のいちばん厳しい効果。'
+        '無ければ既定の表)をここで再現した結果です。関係(<code>~child</code> など)の行は確かめず、締める向きにだけ数えます。'
         '実際に tb を呼んだり、何かを書き換えたりはしません。リスク評価(<code>tb approval check &lt;操作&gt; --to 宛先 --text 本文</code>)は'
         '本文が要るので、ここでは出しません。</p>')
-    # 権限カタログ × approvals.conf(操作ごとの現在の値)
+    # 権限カタログ × policy(操作ごとの現在の値)
     catalog, cerr, cbad = perms.load_catalog()
     body += _catalog_section(qs, rules, err, catalog, cerr, cbad)
     # 一覧
     rows = []
     last_chg = {}
     for h in approval_history(200):
-        last_chg.setdefault(h["pattern"], h)
+        last_chg.setdefault(perms.policy_row(h["value"], h["pattern"]).rsplit(" = ", 1)[0], h)   # tb approval allow|ask が書いた行
     for r in rules:
         notes = []
         w = perms.warning(r)
@@ -1392,27 +1391,30 @@ def page_perms(qs, ctx=None):
             notes.append(f'<span class=warn>{e(w)}</span>')
         if catalog and not err and perms.rule_inert(r, catalog):
             notes.append('<span class=warn>この規則は何も効きません(当たる操作はカタログで「承認判定に渡らない」とされています)</span>')
-        sh = perms.shadowed_by(rules, r)
+        sh = perms.stricter_over(rules, r)
         if sh:
-            notes.append(f'<span class=warn>上の {sh["no"]} 行目(<code>{e(sh["pattern"])}</code>)が先に一致するため、この行は使われません</span>')
+            notes.append(f'<span class=warn>もっと厳しい {sh["no"]} 行目(<code>{e(sh["pattern"])} = {e(sh["effect"])}</code>)が重なるため、'
+                         'そこではこの行は効きません(厳しい方が勝つ)</span>')
+        if r["subject"] == "human" or r["subject"].startswith("system:"):
+            notes.append('<span class=warn>この主体の行はまだ効きません(人は常に通る。system は ADR 0007 の段 1 から)</span>')
         chg = e(r["note"]) if r["note"] else ""
         hrow = last_chg.get(r["raw"])
         if hrow:
             chg += (" / " if chg else "") + f'履歴: {e(hrow["created_at"])} に {e(hrow["value"])}'
-        v = f'<b class=warn>{e(r["value"])}</b>' if r["value"] == "allow" else e(r["value"])
+        v = f'<b class=warn>{e(r["effect"])}</b>' if r["effect"] == "allow" else e(r["effect"])
         mark = ' style="background:#fff8c5"' if hit is r else ""
         ex = " ".join(f"<code>{e(x)}</code>" for x in perms.examples(rules, r)[:8]) or '<span class=note>(例なし)</span>'
         rows.append([str(r["no"]), f'<code{mark}>{e(r["pattern"])}</code>', v, chg or '<span class=note>(注記なし)</span>',
                      ex, "<br>".join(notes)])
-    body += "<h2>ルール一覧(上から順に評価)</h2>" + table(["順位", "パターン", "値", "最後の変更", "この行で決まる操作の例", "警告"], rows)
+    body += "<h2>ルール一覧(当たる行のいちばん厳しい効果が勝つ。順番は関係ない)</h2>" + table(["番号", "主体 操作 対象", "効果", "最後の変更", "この行で決まる操作の例", "警告"], rows)
     body += (f'<p class=note>元ファイル: <code>{e(perms.conf_path_label())}</code>。「最後の変更」は行末の注記と、tb が残した変更履歴(approval_changes)です。'
-             'どの行にも一致しなければ ask。ワイルドカードは <code>*</code> と <code>?</code>。</p>')
+             '当たる行が無ければ既定の表(taskboard/perms/ops.tbl)。ワイルドカードは <code>*</code> と <code>?</code>。</p>')
     if catalog and not err:
         unk = perms.unknown_rules(rules, catalog)
         body += "<h2>未知の規則(カタログに無い)</h2>" + (table(
-            ["順位", "パターン", "値"], [[str(r["no"]), f'<code>{e(r["pattern"])}</code>', e(r["value"])] for r in unk]) if unk else
+            ["番号", "主体 操作 対象", "効果"], [[str(r["no"]), f'<code>{e(r["pattern"])}</code>', e(r["effect"])] for r in unk]) if unk else
             "<p class=note>(なし)カタログに無い規則は見つかりませんでした。</p>")
-        body += ("<p class=note>approvals.conf にあるが、権限カタログのどの操作とも重ならない規則です。"
+        body += ("<p class=note>policy にあるが、権限カタログのどの操作とも重ならない規則です(コマンドの権限 cmd: の行は除く)。"
                  "操作名の書き間違いか、カタログへの追記漏れの可能性があります。</p>")
     # 変更履歴
     hist = approval_history(50)
@@ -1429,30 +1431,31 @@ def page_perms(qs, ctx=None):
             cmd_html = err_html("パターンは英数字と . _ : * ? - だけ(128 文字まで)、値は allow か ask です")
         else:
             warns = []
-            probe = {"raw": pat, "value": val}
+            row = perms.policy_row(val, pat)
+            op_, _, rest = row[2:].partition(" ")
+            probe = {"subject": "*", "op": op_, "target": rest.split(" = ")[0], "effect": "allow" if val == "allow" else "ask-any"}
             w = perms.warning(probe)
             if val == "allow" and pat == "*":
-                w = "全体を allow にします。末尾の <code>* = ask</code> は書き換えられてしまいます(tb に止める仕組みがありません)"
-                warns.append(w)
+                warns.append("全体を allow にします(どの agent の、どの操作も承認なし)")
             elif w:
                 warns.append(e(w))
-            if val == "ask" and pat == "*":
-                warns.append("既定の <code>* = ask</code> と同じ値です")
-            if any(r["raw"] == pat for r in rules):
-                warns.append("同じパターンの行が既にあるので、その行の値が書き換わります")
-            else:
-                warns.append("新しい行は一覧の先頭(コメントの直後)に入り、既存の行より先に一致します")
+            warns.append(f'設定 policy に <code>{e(row)}</code> の行を書きます(主体・操作・対象が同じ行があれば、その行を書き換えます)')
+            if val == "allow":
+                sh = perms.stricter_over(rules, dict(probe, no=0, raw="", pattern=""))
+                if sh:
+                    warns.append(f'もっと厳しい {sh["no"]} 行目(<code>{e(sh["pattern"])} = {e(sh["effect"])}</code>)が重なるため、そこでは allow になりません')
             cmd_html = (f'<p>人が<b>自分の端末で</b>実行するコマンド行です(この画面では実行しません):</p><pre>{e(cmd)}</pre>'
                         + "".join(f"<p class=warn>{x}</p>" for x in warns))
     pat_form = ('<form method=get action="/perms"><p>'
                 f'<label>パターン <input type=text name=pat value="{e(pat)}" size=30 placeholder="send:task:worker1"></label> '
                 f'<label>値 <select name=val><option value=allow{" selected" if val == "allow" else ""}>allow(承認なしで進めてよい)</option>'
-                f'<option value=ask{" selected" if val == "ask" else ""}>ask(人の承認が要る)</option></select></label> '
+                f'<option value=ask{" selected" if val == "ask" else ""}>ask(承認が要る。ask-any)</option></select></label> '
                 '<button type=submit>コマンド行を組み立てる</button></p></form>')
     body += ("<h2>変更したいとき</h2>" + pat_form + cmd_html +
-             "<p class=note>権限の変更は、この画面ではできません(ボタンも POST もありません)。人が端末で <code>tb approval allow</code> / <code>tb approval ask</code> を実行します。"
+             "<p class=note>権限の変更は、この画面ではできません(ボタンも POST もありません)。人が端末で <code>tb approval allow</code> / <code>tb approval ask</code> を実行します(設定 policy の行を書きます)。"
+             "主体や対象(<code>~child</code> など)を絞った行・deny の行は、<code>tb config edit policy</code> で書きます。"
              "広い allow(例: <code>agent:*</code>)は、agent が自分の承認権限を広げる経路になりえます。</p>")
-    return "権限(approvals.conf)", body
+    return "権限(policy)", body
 
 
 def age_label(sec):

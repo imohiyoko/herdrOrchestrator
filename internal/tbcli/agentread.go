@@ -135,7 +135,7 @@ func cmdCan(args []string, w, stderr io.Writer) error {
 		}
 		v, rule := j.Of(op+":"+target, who)
 		if v != "allow" {
-			verdict = "ask"
+			verdict = v
 		} else if d.Mode == "hold" {
 			verdict = "hold"
 		}
@@ -143,16 +143,14 @@ func cmdCan(args []string, w, stderr io.Writer) error {
 		if d.Mode == "hold" {
 			r += "(届けず宛先の inbox に置く)"
 		}
-		return out(r, "approvals: "+rule)
+		return out(r, "認可: "+rule)
 	case op == "agent:stop":
 		if p, ok := j.Roles.ProtectReason(target); ok {
 			verdict = "deny"
 			return out("protect: " + p)
 		}
 		v, rule := j.Of(op+":"+target, who)
-		if v != "allow" {
-			verdict = "ask"
-		}
+		verdict = v
 		return out(rule)
 	case op == "agent:flag":
 		sw := envOr("TB_SWEEPER_PATTERN", "sweeper*")
@@ -163,36 +161,32 @@ func cmdCan(args []string, w, stderr io.Writer) error {
 			return out(r)
 		}
 		verdict = "deny"
-		return out("判定役でなく、grants に agent:flag の行もない")
+		return out("判定役でなく、policy に agent:flag を許す行もない")
 	case op == "role:change":
 		if r, ok := j.GrantOf(who, "role:change", target); ok {
 			return out(r)
 		}
 		admin := envOr("TB_ROLE_ADMIN", "hr")
 		if j.Roles.Match(who, "@"+admin) == 0 {
-			v, rule := j.Of("role:change", "")
-			if v != "allow" {
-				verdict = "ask"
-			}
-			return out("人事役(@" + admin + ")/ approvals: " + rule)
+			v, rule := j.Of("role:change", who)
+			verdict = v
+			return out("人事役(@" + admin + ")/ 認可: " + rule)
 		}
 		verdict = "deny"
-		return out("人事役(@" + admin + ")でなく、grants に role:change の行もない")
+		return out("人事役(@" + admin + ")でなく、policy に role:change を許す行もない")
 	case strings.HasPrefix(op, "approve:"):
 		if who == target {
 			verdict = "deny"
 			return out("自分の依頼は承認できない")
 		}
 		if r, ok := j.GrantOf(who, op, target); ok {
-			return out(r + "(--always・--all 系・spawn-freeze 中は人だけ)")
+			return out(r + "(--always・--all 系・spawn-freeze 中・依頼が ask-human のものは人だけ)")
 		}
 		verdict = "deny"
-		return out("grants に " + op + " " + target + " に当たる approve の行がない(承認は人だけ)")
+		return out("policy に " + op + " " + target + " を許す approve の行がない(承認は人だけ)")
 	}
 	v, rule := j.Of(op+":"+target, who)
-	if v != "allow" {
-		verdict = "ask"
-	}
+	verdict = v
 	return out(rule)
 }
 
@@ -477,7 +471,10 @@ func cmdPeek(args []string, w, stderr io.Writer) error {
 		v, rule = j.Of("agent:read:"+name, by)
 		if v != "allow" {
 			logRead("denied", rule)
-			fmt.Fprintf(stderr, "tb: %s は %s の中身を読めません(%s)。必要なら人が approvals に agent:read:%s か agent:read:@<役割> を allow で足すか、grants.conf に個別の許可を足す\n", by, name, rule, name)
+			fmt.Fprintf(stderr, "tb: %s は %s の中身を読めません(%s)。必要なら人が policy に '<主体> agent:read %s = allow'(対象は @<役割> や ~child なども書ける)を足す\n", by, name, rule, name)
+			if v == "deny" {
+				return &exit{4, ""}
+			}
 			return &exit{exitAsk, ""}
 		}
 	}

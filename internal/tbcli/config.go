@@ -129,6 +129,9 @@ func configChange(db *store.DB, st tickets.StatusSet, sub string, args []string,
 	if key == "conv-routes" && sub != "unset" {
 		return die("conv-routes は tb conv-routes-set < 新しい表 で書きます(緩める変更は --approve-looser が要ります)")
 	}
+	if (key == "approvals" || key == "grants") && sub != "unset" {
+		return die("%s はもう読みません(ADR 0007)。権限は設定 policy に書きます(残っている古い設定は tb policy import で移します)", key)
+	}
 	info, _ := config.Info(key)
 	envFile := os.Getenv(info.Env)
 	if shared && envFile != "" {

@@ -2,13 +2,13 @@
 # run.sh から番号順に source される(前のファイルが作った状態を使うものがある)
 # --- tb agent-spawn(規則つきの子 agent 作成)/ spawn-freeze / spawned_by / digest の観測
 _saved_pane=${HERDR_PANE_ID-}; unset HERDR_PANE_ID
-export TB_DB=$TMP/spawn.db TB_APPROVALS=$TMP/appr-spawn.conf TB_SPAWN_RETRY_SEC=0 TB_AGENT_CWD=$TMP
+export TB_DB=$TMP/spawn.db TB_POLICY_A=$TMP/appr-spawn.conf TB_SPAWN_RETRY_SEC=0 TB_AGENT_CWD=$TMP
 export TB_CONFIG=$TMP/spawn-projects.conf; printf 'sp=sp-conductor\n' >"$TB_CONFIG"   # project sp の conductor(報告の宛先)
 unset TB_SPAWN_POLICY   # 既定の読み先(spawn-policy.conf が無ければ .example の既定値)
 # 以下は役割の利用例(worker)を子に許した規則で試す。既定(.example)は役割なしの子だけ
 sed 's/^allowed_roles *=.*/allowed_roles = worker/' "$HERE/../config/spawn-policy.conf.example" >"$TMP/spawn-default.conf"; export TB_SPAWN_POLICY=$TMP/spawn-default.conf
 printf '# 環境ごとの決まり\n\nサンプルの稼働中サービスには触れない\n' >"$TMP/spawn-rules.txt"; export TB_SPAWN_RULES=$TMP/spawn-rules.txt
-printf 'agent:spawn:* = allow\nagent:* = ask\n* = ask\n' >"$TB_APPROVALS"
+printf '* agent:spawn * = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
 spsql() { sqlite3 "$TB_DB" "$@"; }
 sp_ag() { printf '{"pane_id":"%s","name":"%s","agent_status":"idle","agent_session":{"value":"s-%s"},"cwd":"%s"}' "$2" "$1" "$1" "$TMP"; }
 SP_C=$(sp_ag conductor wC:p1); SP_P=$(sp_ag parent1 wP:p1); SP_Q=$(sp_ag parent2 wQ:p1)
@@ -105,7 +105,7 @@ eq "agent-new: no spawned_by recorded" "$(spsql "SELECT COALESCE(spawned_by,'-')
 
 spsql "UPDATE agent_ops SET status='rejected' WHERE status='pending';"
 # 承認が ask なら L-<n>(20)。人が承認すると作られ、spawned_by も付く
-printf 'agent:* = ask\n* = ask\n' >"$TB_APPROVALS"
+printf '* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
 export FAKE_AGENTS="[$SP_C,$SP_P,$SP_Q]"
 spsql "DELETE FROM agents WHERE spawned_by IS NOT NULL;"
 n0=$(ws_count)
@@ -121,7 +121,7 @@ eq "agent-approve: human creates the child; spawned_by recorded" "$(grep -c 'par
 spsql "UPDATE agent_ops SET status='rejected' WHERE status='pending';"
 
 # spawn-freeze: 規則に合い allow でも、全部人の承認待ち
-printf 'agent:spawn:* = allow\nagent:* = ask\n* = ask\n' >"$TB_APPROVALS"
+printf '* agent:spawn * = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
 export FAKE_AGENTS="[$SP_C,$SP_P,$SP_Q,$SP_S1]"
 eq "spawn-freeze: refused from an agent pane" "$(HERDR_PANE_ID=wP:p1 rc $TB spawn-freeze) $(HERDR_PANE_ID=wP:p1 rc $TB spawn-unfreeze)" "1 1"
 eq "spawn-freeze: not frozen by the refused attempts" "$(spsql "SELECT COUNT(*) FROM tb_flags WHERE key='spawn_frozen' AND value='1';")" "0"
@@ -167,7 +167,7 @@ eq "digest: total at limit-1 or more is noted" "$(grep -c '子 agent が 5 体�
 # 承認待ちに積んだら指揮官に知らせる(question と同じ経路。brief は 80 字まで・データとして)/ 承認時の再検査
 SP_R=$(sp_ag parent3 wR:p1); export FAKE_AGENTS="[$SP_C,$SP_R]"
 T4=$(sp_task parent3 in_progress)
-printf 'agent:* = ask\n* = ask\n' >"$TB_APPROVALS"
+printf '* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
 : >"$FAKE_LOG"
 long=$(printf 'b%.0s' $(seq 1 300))
 out=$(HERDR_PANE_ID=wR:p1 $TB agent-spawn worker --task "$T4" --brief "$long"; echo "rc=$?"); lid=$(head -1 <<<"$out" | cut -d' ' -f1)
@@ -176,10 +176,10 @@ eq "agent-spawn ask: rc 20 and the conductor is told (who/role/task/child/L-n/ap
 eq "agent-spawn ask: brief shown truncated to 80 chars, marked as data" "$(grep -c '依頼(データ): b\{1,80\}' <<<"$note") $(grep -c 'b\{81\}' <<<"$note")" "1 0"
 eq "agent-spawn ask: notification is a saved, delivered question" "$(sqlite3 "$TB_DB" "SELECT kind||' '||(delivered_at IS NOT NULL)||' '||from_name FROM comments WHERE text LIKE 'spawn 承認待ち $lid:%';")" "question 1 parent3"
 rm -rf "$TMP/roles98b"; cp -r "$HERE/../../roles" "$TMP/roles98b"; printf 'x\n' >"$TMP/roles98b/parent3-s1.md"
-eq "agent-approve (spawn): a roles file made while pending stops it before --always is written" "$(TB_ROLES=$TMP/roles98b rc $TB agent-approve "$lid" --always) $(grep -c 'parent3-s1' "$TB_APPROVALS") $(spsql "SELECT status FROM agent_ops WHERE 'L-'||id='$lid';") $(ws_count)" "1 0 pending 0"
+eq "agent-approve (spawn): a roles file made while pending stops it before --always is written" "$(TB_ROLES=$TMP/roles98b rc $TB agent-approve "$lid" --always) $(grep -c 'parent3-s1' "$TB_POLICY_A") $(spsql "SELECT status FROM agent_ops WHERE 'L-'||id='$lid';") $(ws_count)" "1 0 pending 0"
 spsql "UPDATE agent_ops SET status='rejected' WHERE status='pending';"
 # 凍結中
-printf 'agent:spawn:* = allow\nagent:* = ask\n* = ask\n' >"$TB_APPROVALS"; $TB spawn-freeze >/dev/null
+printf '* agent:spawn * = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"; $TB spawn-freeze >/dev/null
 : >"$FAKE_LOG"
 out=$(HERDR_PANE_ID=wR:p1 $TB agent-spawn worker --task "$T4" --brief 'frozen one'; echo "rc=$?"); lid=$(head -1 <<<"$out" | cut -d' ' -f1)
 eq "agent-spawn frozen: rc 20 and the conductor is told" "$(tail -1 <<<"$out") $(grep '^prompt sp-conductor' "$FAKE_LOG" | grep -c "spawn 承認待ち $lid: parent3")" "rc=20 1"
@@ -201,4 +201,4 @@ out=$(HERDR_PANE_ID= $TB agent-approve "$lid")
 eq "agent-approve: still valid → approved (the op itself is not counted against the limit)" "$(grep -c 'parent3-s1 started' <<<"$out")" "1"
 
 unset FAKE_AGENTS TB_SPAWN_POLICY TB_SPAWN_RULES; export HERDR_PANE_ID=$_saved_pane
-export TB_APPROVALS=$TMP/appr.conf
+export TB_POLICY_A=$TMP/appr.conf

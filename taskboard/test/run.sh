@@ -33,6 +33,17 @@ if [[ ${1-} == --unit ]]; then
   # scheduler のジョブをファイル(jobs/*.conf)に置くケースがあるので、DB の後にファイルも読ませる。既定(DB だけ)は 53_sched_jobs で確かめる
   export SCHED_FILE_FALLBACK=1
   TB=$HERE/../bin/tb
+  # 設定 policy を 2 つのファイルに分けて書くケースがある(ADR 0007 の前の approvals と grants から変換した行。TB_POLICY_A と TB_POLICY_G)。
+  # どちらかがあれば、tb を呼ぶたびに 1 つにまとめて TB_POLICY で渡す(TB_POLICY を自分で決めたケースはそのまま)
+  cat >"$TMP/tb" <<WRAP
+#!/usr/bin/env bash
+if [[ -z \${TB_POLICY:-} && -n \${TB_POLICY_A:-}\${TB_POLICY_G:-} ]]; then
+  cat "\${TB_POLICY_A:-/dev/null}" "\${TB_POLICY_G:-/dev/null}" >"$TMP/policy-merged.conf" 2>/dev/null
+  export TB_POLICY=$TMP/policy-merged.conf
+fi
+exec "$TB" "\$@"
+WRAP
+  chmod +x "$TMP/tb"; TB=$TMP/tb
   # 起動直後の準備待ちは既定では短く、送信確認は切る(98_ready で個別に有効化)
   export TB_PROMPT_VERIFY_SEC=0 TB_SPAWN_POLL_SEC=0.05 TB_SPAWN_READY_SEC=0.2 TB_VERIFY_POLL_SEC=0.05
   : >"$FAKE_LOG"

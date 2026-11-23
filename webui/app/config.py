@@ -31,6 +31,7 @@ HERDR_BIN = herdr_env.herdr_bin
 TB_DB = lambda: cfg("WEBUI_TB_DB", herdr_env.tb_db())  # noqa: E731  WEBUI_TB_DB → TB_DB → 既定
 SCHED_LOGS = lambda: cfg("WEBUI_SCHED_LOGS", os.path.join(HERDR_ROOT, "scheduler", "logs"))  # noqa: E731
 CATALOG = os.path.join(HERDR_ROOT, "taskboard", "config", "approvals-catalog.conf")  # 固定(env で差し替えない)
+OPS_TBL = os.path.join(HERDR_ROOT, "taskboard", "perms", "ops.tbl")  # コマンドの中の操作の既定(tb と同じ表。固定)
 # run ディレクトリ(待ち受けたポートの port ファイル)。WEBUI_RUN_DIR を指定すればそのまま(テスト用)
 RUN_DIR = lambda: os.environ.get("WEBUI_RUN_DIR") or RUN_BASE()  # noqa: E731
 SCHED_ROOT = os.path.join(HERDR_ROOT, "scheduler")

@@ -259,8 +259,8 @@ cmd_send() {
   elif [[ $DELIVERY_MODE == block ]]; then :                                    # delivery の行で止める: 承認は求めず、下の outbox_deliver が止めて送信者に返す
   else
     approval_of "send:$kind:$target" "$LABEL_NAME"
-    [[ $APPROVAL_VALUE == allow ]] || status=pending
-    reason+=" / approvals: $APPROVAL_RULE"
+    case $APPROVAL_VALUE in allow) ;; deny) status=denied;; *) status=pending;; esac
+    reason+=" / 認可: $APPROVAL_RULE"
     # リスク評価(第 1 段: 参考値を reason に残すだけ。status は変えない)
     risk_collect "$LABEL_NAME" "$target" "$kind" "$text"; risk_eval
     reason+=" / $(risk_oneline)"
@@ -292,7 +292,7 @@ cmd_send() {
     echo "tb: 送信を拒否しました($reason): O-$oid" >&2
     rc=4
   elif [[ $status == pending ]]; then
-    echo "tb: 人の承認待ちです(approvals.conf: $APPROVAL_RULE)。人が tb approve O-$oid で届けます" >&2
+    echo "tb: 承認待ちです(認可: $APPROVAL_RULE)。人(か approve: を許された agent)が tb approve O-$oid で届けます" >&2
     rc=20
   else
     outbox_deliver "$oid" inline >/dev/null || rc=$?

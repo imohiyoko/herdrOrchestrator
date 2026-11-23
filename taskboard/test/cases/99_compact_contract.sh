@@ -1,9 +1,9 @@
 # shellcheck shell=bash
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
 # --- tb compact-check の使い方・文面・終了コード・記録(bash と Go で同じ。期待値は bash の出力から作った)。DB は自分のものを使う
-_cc_saved=$(declare -p HERDR_PANE_ID TB_DB TB_APPROVALS TB_COMPACT_CONF TB_CLAUDE_PROJECTS TB_COMPACT_ENABLED TB_COMPACT_THRESHOLD_TOKENS FAKE_AGENTS FAKE_STATUS FAKE_PROMPT_RC FAKE_PROMPT_MODE TB_PROMPT_VERIFY_SEC TB_VERIFY_POLL_SEC COMPACT_TAIL_BYTES 2>/dev/null || true)
+_cc_saved=$(declare -p HERDR_PANE_ID TB_DB TB_POLICY_A TB_COMPACT_CONF TB_CLAUDE_PROJECTS TB_COMPACT_ENABLED TB_COMPACT_THRESHOLD_TOKENS FAKE_AGENTS FAKE_STATUS FAKE_PROMPT_RC FAKE_PROMPT_MODE TB_PROMPT_VERIFY_SEC TB_VERIFY_POLL_SEC COMPACT_TAIL_BYTES 2>/dev/null || true)
 unset HERDR_PANE_ID TB_COMPACT_ENABLED TB_COMPACT_THRESHOLD_TOKENS FAKE_STATUS FAKE_PROMPT_RC FAKE_PROMPT_MODE COMPACT_TAIL_BYTES FAKE_DYNAMIC
-export TB_DB=$TMP/cc.db TB_APPROVALS=$TMP/cc-appr.conf TB_COMPACT_CONF=$TMP/cc.conf TB_CLAUDE_PROJECTS=$TMP/cc-projects
+export TB_DB=$TMP/cc.db TB_POLICY_A=$TMP/cc-appr.conf TB_COMPACT_CONF=$TMP/cc.conf TB_CLAUDE_PROJECTS=$TMP/cc-projects
 export TB_PROMPT_VERIFY_SEC=0 TB_VERIFY_POLL_SEC=0
 rm -rf "$TB_CLAUDE_PROJECTS"; mkdir -p "$TB_CLAUDE_PROJECTS/b-proj" "$TB_CLAUDE_PROJECTS/a-proj" "$TB_CLAUDE_PROJECTS/.hidden"
 ccag() { printf '{"pane_id":"w%s:p1","name":"%s","agent_status":"%s","agent_session":{"value":"%s"}}' "$1" "$1" "${2:-idle}" "${3-s-$1}"; }
@@ -22,7 +22,7 @@ printf '{"usage":{"input_tokens":5}}\n' >"$TB_CLAUDE_PROJECTS/.hidden/s-small.js
 export FAKE_AGENTS="[$(ccag conductor),$(ccag big),$(ccag top),$(ccag nulls),$(ccag bad),$(ccag none),$(ccag small),$(ccag cod),$(ccag led idle ''),$(ccag busy working),$(ccag odd blocked),$(ccag done done),$(ccag skipme),{\"pane_id\":\"wx:p1\",\"agent_status\":\"idle\"}]"
 $TB agents >/dev/null 2>&1
 sqlite3 "$TB_DB" "UPDATE agents SET kind='codex' WHERE name='cod'; UPDATE agents SET session_id='s-led' WHERE name='led';"
-printf 'agent:compact:done = ask\nagent:compact:* = allow\n' >"$TB_APPROVALS"
+printf '* agent:compact done = ask-any\n* agent:compact * = allow\n' >"$TB_POLICY_A"
 ccerr() { "$@" 2>&1; echo "rc=$?"; }
 
 eq "compact: bad arg" "$(ccerr $TB compact-check --nope)" $'tb: compact-check: 不明な引数 --nope\n(tb help で使い方)\nrc=2'
@@ -48,5 +48,5 @@ eq "compact: tail fallback" "$(COMPACT_TAIL_BYTES=20 ccerr $TB compact-check | g
 eq "compact: records" "$(sqlite3 "$TB_DB" "SELECT op, target, args, requested_by, status, result FROM agent_ops ORDER BY id;")" $'compact|big|{"tokens":200300}|human|done|compact sent at 200300 tokens\ncompact|top|{"tokens":160000}|human|done|compact sent at 160000 tokens\ncompact|nulls|{"tokens":170000}|human|done|compact sent at 170000 tokens\ncompact|led|{"tokens":180000}|human|done|compact sent at 180000 tokens\ncompact|big|{"tokens":200300}|human|done|compact sent at 200300 tokens (処理の開始を確認できない。pane を見てください)\ncompact|top|{"tokens":160000}|human|done|compact sent at 160000 tokens (処理の開始を確認できない。pane を見てください)\ncompact|nulls|{"tokens":170000}|human|done|compact sent at 170000 tokens (処理の開始を確認できない。pane を見てください)\ncompact|led|{"tokens":180000}|human|done|compact sent at 180000 tokens (処理の開始を確認できない。pane を見てください)\ncompact|big|{"tokens":200300}|human|done|compact sent at 200300 tokens'
 eq "compact: messages" "$(sqlite3 "$TB_DB" "SELECT kind, ref, target, body, result FROM messages ORDER BY id;")" $'compact|compact:big|big|/compact|sent\ncompact|compact:top|top|/compact|sent\ncompact|compact:nulls|nulls|/compact|sent\ncompact|compact:led|led|/compact|sent\ncompact|compact:big|big|/compact|failed\ncompact|compact:top|top|/compact|failed\ncompact|compact:nulls|nulls|/compact|failed\ncompact|compact:led|led|/compact|failed\ncompact|compact:big|big|/compact|sent\ncompact|compact:top|top|/compact|sent\ncompact|compact:nulls|nulls|/compact|sent\ncompact|compact:led|led|/compact|sent\ncompact|compact:big|big|/compact|sent\ncompact|compact:top|top|/compact|busy\ncompact|compact:nulls|nulls|/compact|busy\ncompact|compact:led|led|/compact|busy'
 
-unset HERDR_PANE_ID TB_DB TB_APPROVALS TB_COMPACT_CONF TB_CLAUDE_PROJECTS TB_COMPACT_ENABLED TB_COMPACT_THRESHOLD_TOKENS FAKE_AGENTS FAKE_STATUS FAKE_PROMPT_RC FAKE_PROMPT_MODE TB_PROMPT_VERIFY_SEC TB_VERIFY_POLL_SEC COMPACT_TAIL_BYTES
+unset HERDR_PANE_ID TB_DB TB_POLICY_A TB_COMPACT_CONF TB_CLAUDE_PROJECTS TB_COMPACT_ENABLED TB_COMPACT_THRESHOLD_TOKENS FAKE_AGENTS FAKE_STATUS FAKE_PROMPT_RC FAKE_PROMPT_MODE TB_PROMPT_VERIFY_SEC TB_VERIFY_POLL_SEC COMPACT_TAIL_BYTES
 eval "$_cc_saved"

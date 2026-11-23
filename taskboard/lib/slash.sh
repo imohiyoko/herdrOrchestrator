@@ -185,10 +185,11 @@ cmd_slash() {
     if [[ -n $why ]]; then echo "$name $why"; continue; fi
     if [[ $REQ_BY != human ]]; then
       approval_of "agent:slash:$cmd:$name" "$REQ_BY"
+      if [[ $APPROVAL_VALUE == deny ]]; then echo "$name denied(認可: $APPROVAL_RULE)"; rc=4; continue; fi
       if [[ $APPROVAL_VALUE != allow ]]; then
         if ((! apply)); then echo "$name would-ask(approval: agent:slash:$cmd:$name is ask)"; continue; fi
         id=$(sql "INSERT INTO main.agent_ops (herdr_session, op, target, args, requested_by, status, result, created_at)
-          VALUES ($SQS, 'slash', $(q "$name"), $(q "$(jq -nc --arg c "$cmd" --arg a "$SL_ARGS" '{command:$c, args:$a}')"), $(q "$REQ_BY"), 'pending', $(q "approvals: $APPROVAL_RULE"), $(q "$(now)"));
+          VALUES ($SQS, 'slash', $(q "$name"), $(q "$(jq -nc --arg c "$cmd" --arg a "$SL_ARGS" '{command:$c, args:$a}')"), $(q "$REQ_BY"), 'pending', $(q "認可: $APPROVAL_RULE"), $(q "$(now)"));
           SELECT last_insert_rowid();")
         echo "$name pending L-$id (人の承認待ち: tb agent-approve L-$id)"
         ((rc == 0 || rc == 20)) && rc=20

@@ -4,7 +4,7 @@
 _saved_pane=${HERDR_PANE_ID-}; unset HERDR_PANE_ID
 _saved_hs=${HERDR_SESSION-}; unset HERDR_SESSION
 _saved_tc=${TB_CONFIG-}; _saved_tl=${TB_LIMITS-}
-unset TB_CONFIG TB_LIMITS TB_APPROVALS TB_ROUTES TB_GRANTS
+unset TB_CONFIG TB_LIMITS TB_POLICY_A TB_ROUTES TB_POLICY_G
 export TB_DB=$TMP/config.db; rm -f "$TB_DB"
 CR=$(cd "$HERE/../config" && pwd)
 export TB_CONFIG_DIR=$TMP/cfgdir; mkdir -p "$TB_CONFIG_DIR"   # checkout の設定ファイルの置き場(取り込むと退かすので一時の場所)

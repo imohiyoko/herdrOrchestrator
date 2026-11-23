@@ -1,11 +1,11 @@
 # shellcheck shell=bash
 # レシピ(ADR 0005 の段 2): 登録・一覧・履歴(人だけ)と、汎用の入口 tb recipe-run(判定と記録。実行は読み取りの部品だけ)
 # DB は $TMP/recipes.db、設定は $TMP/rc-*.conf だけを使う。project は rcp だけ。環境変数は最後に戻す
-_saved_db=$TB_DB; _saved_appr=${TB_APPROVALS-}; _saved_grants=${TB_GRANTS-}; _saved_agents=${FAKE_AGENTS-}; _saved_pane=${HERDR_PANE_ID-}
-export TB_DB=$TMP/recipes.db TB_APPROVALS=$TMP/rc-approvals.conf TB_GRANTS=$TMP/rc-grants.conf TB_RECIPE_POLL_SEC=0.05
+_saved_db=$TB_DB; _saved_appr=${TB_POLICY_A-}; _saved_grants=${TB_POLICY_G-}; _saved_agents=${FAKE_AGENTS-}; _saved_pane=${HERDR_PANE_ID-}
+export TB_DB=$TMP/recipes.db TB_POLICY_A=$TMP/rc-approvals.conf TB_POLICY_G=$TMP/rc-grants.conf TB_RECIPE_POLL_SEC=0.05
 export FAKE_AGENTS='[{"pane_id":"wL:p1","name":"lead","agent_session":{"value":"sl"}},{"pane_id":"wW:p1","name":"w1","agent_session":{"value":"s1"}}]'
 unset HERDR_PANE_ID
-printf '* = ask\n' >"$TB_APPROVALS"; : >"$TB_GRANTS"
+printf '* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"; : >"$TB_POLICY_G"
 rsql() { sqlite3 "$TB_DB" "$@"; }
 asw1() { HERDR_PANE_ID=wW:p1 "$@"; }       # w1 の pane から
 aslead() { HERDR_PANE_ID=wL:p1 "$@"; }     # lead の pane から
@@ -81,7 +81,7 @@ eq "recipe-run: 名前に : は使えない" "$(rc "$TB" recipe-run 'a:b' --targ
 # --- レシピの操作名の判定(approvals の既定 ask)
 eq "recipe-run: 判定が ask なら 20 で、部品は動かない" "$(asw1 rc "$TB" recipe-run look; gets)" "20
 0"
-printf 'recipe:look:* = allow\n* = ask\n' >"$TB_APPROVALS"
+printf '* recipe:look * = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
 out=$(asw1 "$TB" recipe-run look 2>&1); r=$?
 eq "recipe-run: allow なら読み取りの部品を順に実行する" "$r|$(tail -2 <<<"$out")" "0|w1 idle
 w1 idle"
@@ -93,18 +93,18 @@ eq "recipe-run: 記録は recipe_run / recipe_step × 2 / recipe_end(done)、依
    "recipe_run:w1 recipe_step:w1 recipe_step:w1 recipe_end:w1 done"
 eq "recipe-run: recipe_run の ref は判定の操作名" "$(rsql "SELECT ref FROM task_events WHERE id=$eid;")" "recipe:look:w1"
 eq "recipe-run: 記録は tb events に出る" "$($TB events --kind recipe_end | tail -1 | cut -f4,6,7)" "recipe_end	done	w1"
-eq "recipe-run: 他者を対象にすると操作名の対象が変わる" "$(asw1 "$TB" recipe-run look --target lead | head -1)" "recipe look target=lead risk=low: allow(recipe:look:* = allow)"
-printf 'recipe:look:w1 = allow\n* = ask\n' >"$TB_APPROVALS"
+eq "recipe-run: 他者を対象にすると操作名の対象が変わる" "$(asw1 "$TB" recipe-run look --target lead | head -1)" "recipe look target=lead risk=low: allow(policy: * recipe:look * = allow)"
+printf '* recipe:look w1 = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
 eq "recipe-run: 対象が許可の範囲の外なら ask(20)" "$(asw1 rc "$TB" recipe-run look --target lead)" "20"
 # grants: 操作は recipe:<名前>(対象を除く)。approvals が ask でも、grants の行で allow
-printf 'lead recipe:look w1\n' >"$TB_GRANTS"
-eq "recipe-run: grants の 'lead recipe:look w1' で lead は w1 を対象にできる" "$(aslead "$TB" recipe-run look --target w1 | head -1)" "recipe look target=w1 risk=low: allow(grants.conf: lead recipe:look w1)"
+: >"$TB_POLICY_A"; printf 'lead recipe:look w1 = allow\n' >"$TB_POLICY_G"
+eq "recipe-run: grants の 'lead recipe:look w1' で lead は w1 を対象にできる" "$(aslead "$TB" recipe-run look --target w1 | head -1)" "recipe look target=w1 risk=low: allow(policy: lead recipe:look w1 = allow)"
 eq "recipe-run: grants の行は対象を絞る(lead → lead は ask)" "$(aslead rc "$TB" recipe-run look)" "20"
 eq "recipe-run: tb can も同じ判定" "$($TB can lead recipe:look w1 | head -1) $($TB can w1 recipe:look lead | head -1)" "allow ask"
-: >"$TB_GRANTS"
+: >"$TB_POLICY_G"
 
 # --- 部品ごとの判定: レシピの許可は部品の許可の代わりにならない
-printf 'recipe:*:* = allow\n* = ask\n' >"$TB_APPROVALS"
+printf '* recipe:* * = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
 : >"$FAKE_LOG"
 out=$(asw1 "$TB" recipe-run rs note=memo 2>&1); r=$?
 eq "recipe-run: レシピが allow でも、部品の agent:stop / revive が ask なら 20" "$r" "20"
@@ -112,19 +112,19 @@ eq "recipe-run: 止めた step と理由を出す" "$(grep -c 'step 2 (agent-res
 eq "recipe-run: 止めたら、前の読み取りの部品も実行しない(全部を判定してから実行)" "$(gets)" "0"
 eid=$(rsql "SELECT max(id) FROM task_events WHERE kind='recipe_run';")
 eq "recipe-run: 止めたときも step ごとの判定を記録する" "$(rsql "SELECT old FROM task_events WHERE ref='E-$eid' AND kind='recipe_step' ORDER BY id;" | paste -sd,)" "1 agent-status,2 agent-restart"
-printf 'recipe:*:* = allow\nagent:stop:w1 = allow\nagent:revive:w1 = allow\n* = ask\n' >"$TB_APPROVALS"
+printf '* recipe:* * = allow\n* agent:stop w1 = allow\n* agent:revive w1 = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
 out=$(asw1 "$TB" recipe-run rs 2>&1); r=$?
 eq "recipe-run: 判定が全部 allow で外の実行役の部品があれば、その場では実行せず待ち行列に置く(0)" "$r|$(tail -1 <<<"$out" | grep -c '^R-[0-9]* queued')" "0|1"
 eq "recipe-run: 何も止めていない・起動していない" "$(grep -cE '^(pane-close|start) ' "$FAKE_LOG")" "0"
 eq "recipe-run: --dry-run は判定だけ(記録しない)" "$(n0=$(rsql "SELECT count(*) FROM task_events;"); asw1 "$TB" recipe-run look --dry-run >/dev/null; echo $(($(rsql "SELECT count(*) FROM task_events;") - n0)) $(gets))" "0 0"
 
 # --- 人だけの部品は、許可しても agent からは実行できない
-printf '* = allow\n' >"$TB_APPROVALS"
-printf '* recipe:* *\n* approve:* *\n' >"$TB_GRANTS"
+printf '* * * = allow\n' >"$TB_POLICY_A"
+printf '* recipe:* * = allow\n* approve:* * = allow\n' >"$TB_POLICY_G"
 eq "recipe-run: 人だけの部品は agent から 4(approvals / grants を全部許可しても)" "$(asw1 "$TB" recipe-run cfg 2>&1 | grep -c '人だけの部品(コードで固定)'; asw1 rc "$TB" recipe-run cfg)" "2
 4"
 eq "recipe-run: 人の端末なら人だけの判定は通る(config-set の実行はまだ無いので 4)" "$($TB recipe-run cfg --target w1 2>&1 | grep -c '人だけ')$(rc "$TB" recipe-run cfg --target w1)" "04"
-: >"$TB_GRANTS"; printf 'recipe:*:* = allow\n* = ask\n' >"$TB_APPROVALS"
+: >"$TB_POLICY_G"; printf '* recipe:* * = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
 
 # --- 引数
 eq "recipe-run: 宣言していない引数は 2" "$(asw1 rc "$TB" recipe-run rs bogus=1)" "2"
@@ -170,8 +170,8 @@ eq "recipe-rm: 無いレシピは 1" "$(rc "$TB" recipe-rm look)" "1"
 eq "recipe: 表はこのセッションの行だけ(herdr_session が入る)" "$(rsql "SELECT count(*) FROM recipes WHERE herdr_session=''; SELECT count(*) FROM recipe_changes WHERE herdr_session='';" | paste -sd' ')" "0 0"
 
 export TB_DB=$_saved_db
-if [[ -n $_saved_appr ]]; then export TB_APPROVALS=$_saved_appr; else unset TB_APPROVALS; fi
-if [[ -n $_saved_grants ]]; then export TB_GRANTS=$_saved_grants; else unset TB_GRANTS; fi
+if [[ -n $_saved_appr ]]; then export TB_POLICY_A=$_saved_appr; else unset TB_POLICY_A; fi
+if [[ -n $_saved_grants ]]; then export TB_POLICY_G=$_saved_grants; else unset TB_POLICY_G; fi
 if [[ -n $_saved_agents ]]; then export FAKE_AGENTS=$_saved_agents; else unset FAKE_AGENTS; fi
 [[ -z $_saved_pane ]] || export HERDR_PANE_ID=$_saved_pane
 unset TB_RECIPE_POLL_SEC

@@ -435,11 +435,16 @@ func cmdSlash(args []string, w, stderr io.Writer) error {
 		}
 		if by != "human" {
 			if v, rule := j.Of("agent:slash:"+cmd+":"+t.name, by); v != "allow" {
+				if v == "deny" {
+					fmt.Fprintf(w, "%s denied(認可: %s)\n", t.name, rule)
+					rc = 4
+					continue
+				}
 				if !apply {
 					fmt.Fprintf(w, "%s would-ask(approval: agent:slash:%s:%s is ask)\n", t.name, cmd, t.name)
 					continue
 				}
-				id, err := insertPending(db, t.name, jsonC("command", cmd, "args", e.args), by, "approvals: "+rule)
+				id, err := insertPending(db, t.name, jsonC("command", cmd, "args", e.args), by, "認可: "+rule)
 				if err != nil {
 					return die("agent_ops に書けません: %v", err)
 				}

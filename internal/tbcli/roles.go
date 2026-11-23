@@ -217,8 +217,8 @@ func roleWriteArgs(args []string) (name string, shared bool, err error) {
 	return name, shared, nil
 }
 
-// roleAdminCheck は role_admin_check: 人事役(agent)が役割を変えてよいか。target は grants の対象、cmd は人に頼むときのコマンド。
-// single なら target は 1 体の agent で、grants に当たれば人事役でなくてよい(tb role-set)。
+// roleAdminCheck は role_admin_check: 人事役(agent)が役割を変えてよいか。target は policy の対象、cmd は人に頼むときのコマンド。
+// single なら target は 1 体の agent で、policy の行で許されていれば人事役でなくてよい(tb role-set)。
 func roleAdminCheck(db *store.DB, j *approval.Judge, by, target, cmd string, single bool, stderr io.Writer) error {
 	value, rule := "", ""
 	if r, ok := j.GrantOf(by, "role:change", target); single && ok {
@@ -230,8 +230,11 @@ func roleAdminCheck(db *store.DB, j *approval.Judge, by, target, cmd string, sin
 		if r, ok := j.GrantOf(by, "role:change", target); ok {
 			value, rule = "allow", r
 		} else {
-			value, rule = j.Of("role:change", "")
+			value, rule = j.Of("role:change", by)
 		}
+	}
+	if value == "deny" {
+		return die("role:change は実行できません(deny。%s)(%s)", rule, by)
 	}
 	if value != "allow" {
 		fmt.Fprintf(stderr, "tb: [role.change.needs-approval] %s\n", config.Msg(db.DB, db.Session, "role.change.needs-approval",
@@ -395,7 +398,7 @@ func cmdRoleSet(args []string, w, stderr io.Writer) error {
 	if by != "human" {
 		admin := roleAdmin()
 		if _, ok := j.GrantOf(by, "role:change", name); !ok && j.Roles.Match(by, "@"+admin) != 0 {
-			return die("ロールを変えられるのは人、人事役(@%s)、grants で role:change を許された agent だけです(%s)", admin, by)
+			return die("ロールを変えられるのは人、人事役(@%s)、policy で role:change を許された agent だけです(%s)", admin, by)
 		}
 		if by == name {
 			return die("自分のロールは変えられません")

@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # 認可(ADR 0006 / 0007): 表 taskboard/perms/commands.tbl が全コマンドを覆っていること、入口と require_human が表の既定と設定 policy の行で決まること。
 # project は pm だけを使う。DB と policy は $TMP/perms.* を使う
-_saved_env=$(declare -p TB_DB TB_POLICY TB_APPROVALS HERDR_PANE_ID FAKE_AGENTS 2>/dev/null)
+_saved_env=$(declare -p TB_DB TB_POLICY TB_POLICY_A HERDR_PANE_ID FAKE_AGENTS 2>/dev/null)
 PM_ROOT=$(cd "$HERE/.." && pwd)
 PM_TBL=$PM_ROOT/perms/commands.tbl
 
@@ -21,7 +21,7 @@ eq "perms: a path appears once" "$(pm_rows | awk '{print $1}' | sort | uniq -d)"
 eq "perms: the same operation has the same default and floor on every row" \
   "$(pm_rows | awk '{k=$2; v=$3" "$4; if (k in seen && seen[k] != v) print k; seen[k]=v}')" ""
 eq "perms: service names come from the naming skill" \
-  "$(pm_rows | awk '{split($2, a, ":"); print a[2]}' | sort -u | grep -vxE 'ticket|team|notify|message|digest|agent|alert|review|proposal|pr|gate|approval|recipe|conv|reminder|job|proxy|activity|handoff|config')" ""
+  "$(pm_rows | awk '{split($2, a, ":"); print a[2]}' | sort -u | grep -vxE 'ticket|team|notify|message|digest|agent|alert|review|proposal|pr|gate|approval|recipe|conv|reminder|job|proxy|activity|handoff|config|policy')" ""
 
 # require_human の文面("tb <語...>")は、表の inner の行に当たる。$変数 は * とみなす(例: tb config $sub → config.*)
 pm_labels=$(grep -rhoE 'require_human "tb [^"]+"' "$PM_ROOT"/lib/*.sh | sed -E 's/^require_human "tb //; s/"$//' | sort -u)
@@ -42,7 +42,7 @@ eq "perms: every require_human label has an inner row" "$pm_bad" ""
 pm_used_ops=$(printf '%s' "$pm_used" | sort -u | while IFS= read -r p; do pm_rows | awk -v p="$p" '$1 == p {print $2}'; done | sort -u)
 eq "perms: every inner operation is reached by a require_human label (bash)" \
   "$(pm_rows | awk '$5 == "inner" {print $2}' | sort -u | comm -23 - <(printf '%s\n' "$pm_used_ops"))" ""
-eq "perms: the bash table is the one herdrctl embeds (no copy)" "$(ls "$PM_ROOT/perms")" "$(printf 'commands.tbl\nembed.go')"
+eq "perms: the bash table is the one herdrctl embeds (no copy)" "$(ls "$PM_ROOT/perms")" "$(printf 'commands.tbl\nembed.go\nops.tbl')"
 
 # ---------- 振る舞い(設定 policy。ADR 0007)----------
 export TB_DB=$TMP/perms.db TB_POLICY=$TMP/perms.policy
@@ -112,7 +112,7 @@ eq "perms: --dry-run paths that skip require_human still run (nudge --dry-run)" 
 eq "perms: herdr failure while checking → 1" "$(FAKE_LIST_FAIL=1 rc $TB resolve C-1)" "1"
 printf 'pw1 cmd:ticket:show * = allow\n' >"$TB_POLICY"
 eq "perms: herdr failure while matching a row → 1" "$(FAKE_LIST_FAIL=1 rc $TB show "$t1")" "1"
-eq "perms: approvals cmd: rows no longer apply (moved to policy)" "$(: >"$TB_POLICY"; printf 'cmd:ticket:show = only-human\n' >"$TMP/perms.approvals"; TB_APPROVALS=$TMP/perms.approvals rc $TB show "$t1")" "0"
+eq "perms: approvals cmd: rows no longer apply (moved to policy)" "$(: >"$TB_POLICY"; printf 'cmd:ticket:show = only-human\n' >"$TMP/perms.approvals"; TB_POLICY_A=$TMP/perms.approvals rc $TB show "$t1")" "0"
 
 # DB の設定を読めない(問い合わせが失敗する)ときは、設定が無いのとは分けて deny(fail-closed)。表が無い・行が無いのは既定のまま
 unset TB_POLICY HERDR_PANE_ID; export TB_DB=$TMP/perms-dberr.db
@@ -137,5 +137,5 @@ export TB_DB=$TMP/perms.db TB_POLICY=$TMP/perms.policy
 mkdir -p "$TMP/perms-oldhc"; printf '#!/bin/sh\n[ "$2" = --commands ] && echo list && exit 0\nexit 2\n' >"$TMP/perms-oldhc/herdrctl"; chmod +x "$TMP/perms-oldhc/herdrctl"
 eq "perms: TB_IMPL=go refuses an herdrctl without the perms feature" "$(TB_IMPL=go TB_HERDRCTL=$TMP/perms-oldhc/herdrctl $TB list -p pm 2>&1 >/dev/null | grep -c '認可(ADR 0007)を確かめられない')" "1"
 
-unset TB_DB TB_POLICY TB_APPROVALS HERDR_PANE_ID FAKE_AGENTS
+unset TB_DB TB_POLICY TB_POLICY_A HERDR_PANE_ID FAKE_AGENTS
 eval "$_saved_env"

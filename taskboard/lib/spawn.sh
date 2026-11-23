@@ -192,9 +192,15 @@ cmd_agent-spawn() {
   if spawn_frozen; then why="spawn-freeze 中"
   else
     ROLE_HINT_NAME=$name; ROLE_HINT=$arole   # 子はまだ台帳に無い。名前からの推定でなく要求された役割で判定する
-    approval_of "agent:spawn:$name"
+    approval_of "agent:spawn:$name" "$parent"   # 主体は親(子を作る agent)
     ROLE_HINT_NAME=""; ROLE_HINT=""
-    [[ $APPROVAL_VALUE == allow ]] || why="approvals: $APPROVAL_RULE"
+    if [[ $APPROVAL_VALUE == deny ]]; then
+      sql "INSERT INTO main.agent_ops (herdr_session, op, target, args, requested_by, status, result, created_at, decided_at)
+        VALUES ($SQS, 'new', $(q "$name"), $(q "$args"), $(q "$parent"), 'rejected', $(q "認可: $APPROVAL_RULE"), $(q "$(now)"), $(q "$(now)"));" >/dev/null
+      echo "tb: agent-spawn を拒否しました(agent:spawn $name は deny。$APPROVAL_RULE)" >&2
+      return 4
+    fi
+    [[ $APPROVAL_VALUE == allow ]] || why="認可: $APPROVAL_RULE"
   fi
   if [[ -n $why ]]; then
     id=$(sql "INSERT INTO main.agent_ops (herdr_session, op, target, args, requested_by, status, result, created_at)
@@ -205,7 +211,7 @@ cmd_agent-spawn() {
     return 20
   fi
   run_op new "$name" "$args" "$parent" || r=$?
-  record_op new "$name" "$args" "$parent" "$r" "$OP_OUT / policy: spawn-policy ok, approvals $APPROVAL_RULE"
+  record_op new "$name" "$args" "$parent" "$r" "$OP_OUT / policy: spawn-policy ok, 認可 $APPROVAL_RULE"
   if ((r)); then echo "tb: $OP_OUT" >&2; else echo "$OP_OUT"; fi
   return $r
 }

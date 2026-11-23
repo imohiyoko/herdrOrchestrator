@@ -54,7 +54,7 @@ cmd_alert() {
   else echo "A-$id $state $(sql "SELECT status FROM alerts WHERE id=$id;")"; fi
 }
 
-# 解析役を起動する。新規で approvals が ask なら awaiting-approval。上限に達していれば queued(承認は済んだ扱い)
+# 解析役を起動する。新規で policy の alert:analyze が allow でなければ awaiting-approval(人が tb alert-approve で決める)。上限に達していれば queued(承認は済んだ扱い)
 alert_dispatch_one() {  # $1=alerts.id(数字)
   local id=$1 st
   st=$(sql "SELECT status FROM alerts WHERE id=$id;")

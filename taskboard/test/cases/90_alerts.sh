@@ -1,8 +1,8 @@
 # shellcheck shell=bash
 # run.sh から番号順に source される(前のファイルが作った状態を使うものがある)
 # --- alerts(アラート → 解析役)
-export TB_DB=$TMP/alerts.db TB_CONFIG=$TMP/send.conf TB_APPROVALS=$TMP/appr-alert.conf TB_ANALYST_RETRY_SEC=0 TB_ANALYST_MAX=1 TB_ANALYST_CWD=$TMP
-printf 'alert:analyze = allow\n* = ask\n' >"$TB_APPROVALS"
+export TB_DB=$TMP/alerts.db TB_CONFIG=$TMP/send.conf TB_POLICY_A=$TMP/appr-alert.conf TB_ANALYST_RETRY_SEC=0 TB_ANALYST_MAX=1 TB_ANALYST_CWD=$TMP
+printf '* alert:analyze * = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
 export FAKE_AGENTS='[{"pane_id":"wC:p1","name":"conductor","agent_session":{"value":"sc"}},{"pane_id":"wX:p1","name":"watch1","agent_session":{"value":"sx"}},{"pane_id":"wA:p1","name":"analyst-A1","agent_session":{"value":"sa1"}}]'
 : >"$FAKE_LOG"
 alsql() { sqlite3 "$TB_DB" "$@"; }
@@ -14,7 +14,7 @@ eq "alert: workspace + agent start" "$(grep -c '^workspace-create.*--label analy
 eq "alert: analyst got the task" "$(grep '^prompt analyst-A1' "$FAKE_LOG" | grep -c 'tb alerts A-1')" "1"
 eq "alert: reporter from herdr" "$(alsql "SELECT source FROM alerts WHERE id=1;")" "watch1"
 eq "alert: duplicate is merged, no severity yet" "$(HERDR_PANE_ID=wX:p1 $TB alert --title 'API 5xx 増加') $(alsql "SELECT count||' '||COALESCE(severity,'-') FROM alerts WHERE id=1;")" "A-1 duplicate analyzing 2 -"
-printf 'alert:analyze = ask\n' >"$TB_APPROVALS"
+printf '* alert:analyze * = ask-any\n' >"$TB_POLICY_A"
 eq "alert: ask → waits for approval" "$(HERDR_PANE_ID=wX:p1 $TB alert --title 'ディスク 80%')" "A-2 new awaiting-approval"
 eq "alert-approve: refused from an agent pane" "$(HERDR_PANE_ID=wX:p1 rc $TB alert-approve A-2)" "1"
 eq "alert-approve: over the cap → queued" "$(HERDR_PANE_ID= $TB alert-approve A-2)" "A-2 queued"
@@ -35,7 +35,7 @@ msg=$(grep '^prompt conductor' "$FAKE_LOG" | tail -1)
 eq "digest: undelivered alert result" "$([[ $msg == *'A-1 解析結果 / critical'* ]] && echo ok || echo "$msg")" "ok"
 eq "digest: new alerts listed" "$([[ $msg == *'A-3 アラート / '* ]] && echo ok || echo "$msg")" "ok"
 eq "digest: result marked delivered" "$(alsql "SELECT result_delivered_at IS NOT NULL FROM alerts WHERE id=1;")" "1"
-printf 'alert:analyze = allow\n' >"$TB_APPROVALS"
+printf '* alert:analyze * = allow\n' >"$TB_POLICY_A"
 eq "alert: start failure → queued with note" "$(TB_ANALYST_MAX=5 FAKE_START_RC=1 HERDR_PANE_ID=wX:p1 $TB alert --title 'new one' | cut -d' ' -f3) $(alsql "SELECT note FROM alerts WHERE id=4;")" "queued agent を起動できない(exit 1)"
 eq "alert-close: human" "$(HERDR_PANE_ID= $TB alert-close A-4)" "A-4 closed"
 eq "alert: cli (no pane) allowed" "$(HERDR_PANE_ID= $TB alert --title 'from monitor script' | cut -d' ' -f2) $(alsql "SELECT source FROM alerts ORDER BY id DESC LIMIT 1;")" "new cli"
@@ -58,4 +58,4 @@ eq "ticket: title edited on the ticket shows in alerts" "$(HERDR_PANE_ID= $TB up
 eq "system-send: from agent pane refused" "$(HERDR_PANE_ID=wX:p1 rc $TB system-send watch1 --text 'look' --job watch)" "1"
 eq "system-send: sends and logs" "$(HERDR_PANE_ID= rc $TB system-send watch1 --text 'look around' --job watch) $(alsql "SELECT kind||':'||ref||':'||result FROM messages ORDER BY id DESC LIMIT 1;")" "0 scheduler:job:watch:sent"
 eq "system-send: busy → 10" "$(FAKE_STATUS=working HERDR_PANE_ID= rc $TB system-send watch1 --text x --job watch)" "10"
-unset FAKE_AGENTS TB_APPROVALS TB_ANALYST_RETRY_SEC TB_ANALYST_MAX TB_ANALYST_CWD
+unset FAKE_AGENTS TB_POLICY_A TB_ANALYST_RETRY_SEC TB_ANALYST_MAX TB_ANALYST_CWD

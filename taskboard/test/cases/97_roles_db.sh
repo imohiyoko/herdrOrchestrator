@@ -3,12 +3,12 @@
 # --- 役割の定義を DB に(config 表の role:<名前> / role-map): このセッションの行 > 共通の行 > roles/ のファイル
 _saved_pane=${HERDR_PANE_ID-}; unset HERDR_PANE_ID
 _saved_hs=${HERDR_SESSION-}; unset HERDR_SESSION
-_saved_roles=${TB_ROLES-}; _saved_appr=${TB_APPROVALS-}; _saved_fa=${FAKE_AGENTS-}
-export TB_DB=$TMP/rolesdb.db TB_ROLES=$TMP/rolesdb TB_APPROVALS=$TMP/rolesdb-appr.conf
+_saved_roles=${TB_ROLES-}; _saved_appr=${TB_POLICY_A-}; _saved_fa=${FAKE_AGENTS-}
+export TB_DB=$TMP/rolesdb.db TB_ROLES=$TMP/rolesdb TB_POLICY_A=$TMP/rolesdb-appr.conf
 rm -rf "$TB_ROLES"; mkdir -p "$TB_ROLES"
 printf '共通\n' >"$TB_ROLES/_common.md"; printf 'worker(ファイル)\n' >"$TB_ROLES/worker.md"; printf 'hr(ファイル)\n' >"$TB_ROLES/hr.md"
 printf 'w* = worker\nhr* = hr\n' >"$TB_ROLES/map.conf"
-printf 'role:change = allow\n* = ask\n' >"$TB_APPROVALS"
+printf '* role:change * = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
 RA() { HERDR_SESSION=sa "$TB" "$@"; }
 RB() { HERDR_SESSION=sb "$TB" "$@"; }
 
@@ -34,7 +34,7 @@ eq "role-write: 人事役でない agent は断る" "$(printf 'x\n' | HERDR_PANE
 eq "role-unset: agent からは消せない" "$(HERDR_PANE_ID=wH:p1 rc RA role-unset worker)" "1"
 eq "role-write: 人事役は人事役の役割を書けない" "$(printf 'x\n' | HERDR_PANE_ID=wH:p1 rc RA role-write hr)" "1"
 eq "role-write: 人事役は人事役を付ける対応を書けない" "$(printf 'z* = worker, hr\n' | HERDR_PANE_ID=wH:p1 rc RA role-write @map)" "1"
-printf 'role:change = ask\n' >"$TB_APPROVALS"
+printf '' >"$TB_POLICY_A"
 eq "role-write: role:change が ask なら人に頼む(20)" "$(printf 'x\n' | HERDR_PANE_ID=wH:p1 rc RA role-write worker) $(RA role-show w1 | grep -c 'hr が更新')" "20 1"
 eq "role-show: 引数なしは自分の pane の agent" "$(HERDR_PANE_ID=wW:p1 RA role-show | grep -c 'hr が更新')" "1"
 eq "role-write: 空の本文は断る" "$(printf '' | rc RA role-write worker)" "1"
@@ -52,5 +52,5 @@ eq "config import: 取り込んだ役割が効く" "$(HERDR_SESSION=sc "$TB" rol
 unset TB_CONFIG_DIR; if [[ -n $_xs ]]; then export XDG_STATE_HOME=$_xs; else unset XDG_STATE_HOME; fi
 
 if [[ -n $_saved_hs ]]; then export HERDR_SESSION=$_saved_hs; fi
-export HERDR_PANE_ID=$_saved_pane TB_ROLES=$_saved_roles TB_APPROVALS=$_saved_appr FAKE_AGENTS=$_saved_fa
-[[ -n $_saved_roles ]] || unset TB_ROLES; [[ -n $_saved_appr ]] || unset TB_APPROVALS; [[ -n $_saved_fa ]] || unset FAKE_AGENTS
+export HERDR_PANE_ID=$_saved_pane TB_ROLES=$_saved_roles TB_POLICY_A=$_saved_appr FAKE_AGENTS=$_saved_fa
+[[ -n $_saved_roles ]] || unset TB_ROLES; [[ -n $_saved_appr ]] || unset TB_POLICY_A; [[ -n $_saved_fa ]] || unset FAKE_AGENTS

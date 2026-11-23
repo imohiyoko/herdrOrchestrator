@@ -85,7 +85,7 @@ cmd_compact-check() {
     last=$(sql "SELECT COALESCE(CAST(strftime('%s','now') - strftime('%s', MAX(decided_at)) AS INTEGER), -1) FROM agent_ops WHERE op='compact' AND status='done' AND target=$(q "$name");")
     if ((last >= 0 && last < minint)); then echo "$name $tok skip(compacted ${last}s ago, min_interval ${minint}s)"; continue; fi
     approval_of "agent:compact:$name"
-    if [[ $APPROVAL_VALUE != allow ]]; then echo "$name $tok skip(approval: agent:compact:$name is ask; add 'agent:compact:* = allow' to approvals.conf)"; continue; fi
+    if [[ $APPROVAL_VALUE != allow ]]; then echo "$name $tok skip(approval: agent:compact:$name is $APPROVAL_TIER; add '* agent:compact * = allow' to policy)"; continue; fi
     if ((! apply)); then echo "$name $tok would-compact(dry-run)"; continue; fi
     # 送る直前に状態を見直す(herdr_send が idle/done でなければ送らない)。--prompt と同じ経路なので送信後の確認(Enter の補い)も同じ
     act=sent; line=""

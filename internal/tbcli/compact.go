@@ -291,8 +291,8 @@ func cmdCompactCheck(args []string, w, stderr io.Writer) error {
 			fmt.Fprintf(w, "%s %s skip(compacted %ds ago, min_interval %ds)\n", name, tok, last, minint)
 			continue
 		}
-		if v, _ := j.Of("agent:compact:"+name, ""); v != "allow" {
-			fmt.Fprintf(w, "%s %s skip(approval: agent:compact:%s is ask; add 'agent:compact:* = allow' to approvals.conf)\n", name, tok, name)
+		if tier, _ := j.Authorize("agent:compact:"+name, ""); tier != "allow" {
+			fmt.Fprintf(w, "%s %s skip(approval: agent:compact:%s is %s; add '* agent:compact * = allow' to policy)\n", name, tok, name, tier)
 			continue
 		}
 		if !apply {

@@ -226,19 +226,20 @@ cmd_role-broadcast() {
 }
 
 # ロールを変える(台帳 agents.role)。ロールは許可ルール(@<役割>)の主語・目的語なので、これは権限の変更でもある。
-# 人の端末からはそのまま。agent からは人事役(@hr、TB_ROLE_ADMIN で変えられる)で、grants に role:change の行があるか
-# approvals の role:change が allow のときだけ。台帳のロール(tb role-set。対象は 1 体の agent)に限り、grants の role:change の行が
-# あれば人事役でなくてもよい(役割の本文・map は同じ役割の全 agent に効くので、人事役に限ったまま)。
+# 人の端末からはそのまま。agent からは人事役(@hr、TB_ROLE_ADMIN で変えられる)で、policy の role:change が allow のときだけ
+# (主体を書いた行で許すか、既定の ask-any を * の行で allow にする)。台帳のロール(tb role-set。対象は 1 体の agent)に限り、
+# policy に主体と対象を書いた role:change = allow の行があれば人事役でなくてもよい(役割の本文・map は同じ役割の全 agent に効くので、人事役に限ったまま)。
 # agent は自分のロールと、人事役のロールを付けることはできない(権限の自己拡大を防ぐ)。記録は role_changes に残る
 ROLE_ADMIN=${TB_ROLE_ADMIN:-hr}
-# 人事役(agent)が役割を変えてよいか(人は呼ばない)。$1=対象(grants.conf の対象) $2=人に頼むときのコマンド
-# $3=agent なら $1 は 1 体の agent で、grants に当たれば人事役でなくてよい(tb role-set)。だめなら die か 20
+# 人事役(agent)が役割を変えてよいか(人は呼ばない)。$1=対象(policy の対象) $2=人に頼むときのコマンド
+# $3=agent なら $1 は 1 体の agent で、policy の行で許されていれば人事役でなくてよい(tb role-set)。だめなら die か 20
 role_admin_check() {
   if [[ ${3:-} == agent ]] && grant_of "$REQ_BY" role:change "$1"; then APPROVAL_VALUE=allow; APPROVAL_RULE=$GRANT_RULE
   else
     name_matches "$REQ_BY" "@$ROLE_ADMIN" || die "ロールを変えられるのは人と人事役(@$ROLE_ADMIN)だけです($REQ_BY)"
-    if grant_of "$REQ_BY" role:change "$1"; then APPROVAL_VALUE=allow; APPROVAL_RULE=$GRANT_RULE; else approval_of "role:change"; fi
+    if grant_of "$REQ_BY" role:change "$1"; then APPROVAL_VALUE=allow; APPROVAL_RULE=$GRANT_RULE; else approval_of "role:change" "$REQ_BY"; fi
   fi
+  [[ $APPROVAL_VALUE != deny ]] || die "role:change は実行できません(deny。$APPROVAL_RULE)($REQ_BY)"
   if [[ $APPROVAL_VALUE != allow ]]; then
     msg_err role.change.needs-approval 'role:change は人の承認が要ります({rule})。人が自分の端末で実行してください: {command}' rule="$APPROVAL_RULE" command="$2"
     return 20
@@ -344,7 +345,7 @@ cmd_role-set() {
   done
   requester
   if [[ $REQ_BY != human ]]; then
-    grant_of "$REQ_BY" role:change "$name" || name_matches "$REQ_BY" "@$ROLE_ADMIN" || die "ロールを変えられるのは人、人事役(@$ROLE_ADMIN)、grants で role:change を許された agent だけです($REQ_BY)"
+    grant_of "$REQ_BY" role:change "$name" || name_matches "$REQ_BY" "@$ROLE_ADMIN" || die "ロールを変えられるのは人、人事役(@$ROLE_ADMIN)、policy で role:change を許された agent だけです($REQ_BY)"
     [[ $REQ_BY != "$name" ]] || die "自分のロールは変えられません"
     for x in "${xs[@]}"; do [[ $x != "$ROLE_ADMIN" ]] || die "人事役のロール($ROLE_ADMIN)を付けられるのは人だけです"; done
     role_admin_check "$name" "tb role-set $name $role" agent || return $?

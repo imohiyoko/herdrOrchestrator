@@ -85,6 +85,11 @@ approval.ask             cmd:approval:ask             deny        allow       in
 allow                    cmd:approval:allow           deny        allow       inner
 ask                      cmd:approval:ask             deny        allow       inner
 
+# --- policy(認可の表 policy の変換。ADR 0007)
+policy                   cmd:policy:help              allow       allow       entry
+policy.help              cmd:policy:help              allow       allow       entry
+policy.import            cmd:policy:import            deny        allow       inner
+
 # --- config(設定そのもの。書く側の既定は deny)
 config                   cmd:config:list              allow       allow       entry
 config.list              cmd:config:list              allow       allow       entry

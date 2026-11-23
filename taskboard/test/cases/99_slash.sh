@@ -2,8 +2,8 @@
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
 # --- tb slash: 許可リストのスラッシュコマンドを agent に送る(#94)。許可リスト・宛先・状態・承認・--all・結果の確認・記録
 _saved_pane=${HERDR_PANE_ID-}; unset HERDR_PANE_ID
-_saved_appr=${TB_APPROVALS-}
-export TB_DB=$TMP/slash.db TB_APPROVALS=$TMP/appr-slash.conf TB_SLASH_CONF=$TMP/slash.conf TB_SLASH_SCREEN_SEC=0
+_saved_appr=${TB_POLICY_A-}
+export TB_DB=$TMP/slash.db TB_POLICY_A=$TMP/appr-slash.conf TB_SLASH_CONF=$TMP/slash.conf TB_SLASH_SCREEN_SEC=0
 unset FAKE_DYNAMIC FAKE_STATUS FAKE_READ_TEXT FAKE_PROMPT_MODE
 slsql() { sqlite3 "$TB_DB" "$@"; }
 sl_ag() { printf '{"pane_id":"%s","name":"%s","agent_status":"%s","agent_session":{"value":"s-%s"},"cwd":"%s"}' "$2" "$1" "${3:-idle}" "$1" "$TMP"; }
@@ -18,7 +18,7 @@ model   |  | deny  | busy |  | 既定で拒否
 bad!    |  | allow | busy |  | 名前が不正
 oddargs | a;b | allow | busy | | 引数が不正
 CONF
-printf 'agent:slash:mcp:@worker = allow\n* = ask\n' >"$TB_APPROVALS"
+printf '* agent:slash:mcp @worker = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
 export FAKE_AGENTS="[$(sl_ag conductor wC:p1),$(sl_ag worker1 wW1:p1),$(sl_ag worker2 wW2:p1 working),$(sl_ag worker3 wW3:p1 done),$(sl_ag sweeper wS:p1),$(sl_ag watcher wT:p1 blocked)]"
 : >"$FAKE_LOG"
 $TB agents >/dev/null
@@ -133,6 +133,6 @@ eq "slash: a target named twice is listed once" "$(TB_SLASH_CONF=$TMP/slash2.con
 # ---- 許可リストが無ければ何も送らない(.example も無い場所)
 eq "slash: no allow-list → unlisted" "$(TB_SLASH_CONF=$TMP/none.conf rc $TB slash compact worker1 --apply) $(sl_all)" "1 0"
 
-export TB_APPROVALS=$_saved_appr
+export TB_POLICY_A=$_saved_appr
 unset FAKE_AGENTS TB_SLASH_CONF TB_SLASH_SCREEN_SEC
 [[ -z $_saved_pane ]] || export HERDR_PANE_ID=$_saved_pane

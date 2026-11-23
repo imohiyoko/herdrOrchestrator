@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # 部品(ADR 0005 の段 1): 部品の一覧・引数の型・リスク階層の計算、人だけの部品がコードに固定されていること、権限カタログとの整合
 # DB は $TMP/parts.db だけを使う。設定は環境変数で一時ファイルを明示し、最後に戻す
-_saved_db=$TB_DB; _saved_appr=${TB_APPROVALS-}
+_saved_db=$TB_DB; _saved_appr=${TB_POLICY_A-}
 export TB_DB=$TMP/parts.db
 
 # --- 一覧
@@ -56,7 +56,7 @@ eq "part-risk: 部品なしは 2" "$(rc $TB part-risk)" "2"
 
 # --- 人だけの部品は、設定・環境変数で緩められない(コードに固定)
 printf '* = allow\n' >"$TMP/parts-approvals.conf"
-export TB_APPROVALS=$TMP/parts-approvals.conf
+export TB_POLICY_A=$TMP/parts-approvals.conf
 eq "parts: approvals を全部 allow にしても config-set は人だけのまま" "$($TB part-check config-set key=approvals | sed -n 's/^human_only: //p')" "yes"
 eq "parts: 環境変数 PARTS_TABLE では差し替えられない" \
    "$(PARTS_TABLE='config-set | none | low | inside | - | key:config-key | x' $TB parts | awk -F'\t' '$1 == "config-set" {print $3}')" "human-only"
@@ -93,4 +93,4 @@ eq "parts: 整合の検査が働く(自己テスト: 低いリスク階層を検
 eq "parts: 整合の検査が働く(自己テスト: カタログに無い操作名)" "$(js='{"name":"x","risk":"high","ops":["zzz:op:$t"]}' _parts_cat_problems)" 'x: zzz:op:$t がカタログに無い'
 
 export TB_DB=$_saved_db
-if [[ -n $_saved_appr ]]; then export TB_APPROVALS=$_saved_appr; else unset TB_APPROVALS; fi
+if [[ -n $_saved_appr ]]; then export TB_POLICY_A=$_saved_appr; else unset TB_POLICY_A; fi

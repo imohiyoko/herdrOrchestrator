@@ -49,7 +49,7 @@ tb proxy check <id>   1 行目が allow(自動代行可)か human(人に回す)�
 
 agent の活動記録(hook から。bin/tb-hook 経由が基本):
 tb db-import <旧 DB> [--session <名前>] [--dry-run]   旧形式(checkout ごと)の DB を、共有の DB の 1 セッション(既定は今のセッション)の行として取り込む。人の端末だけ。元の DB は読むだけ
-tb config [list]   設定(projects / approvals / grants / routes / delivery / limits / notify / compact / slash / sched-watch / spawn-policy / nudge / role-models / conv-routes / conv-learn / conv-stages / protect / org / labels / messages / statuses / system-labels)の出どころを出す。引く順: 環境変数で明示したファイル > DB のこのセッションの行 > DB の共通の行(*) > checkout の taskboard/config/<名前> > .example
+tb config [list]   設定(projects / policy / routes / delivery / limits / notify / compact / slash / sched-watch / spawn-policy / nudge / role-models / conv-routes / conv-learn / conv-stages / protect / org / labels / messages / statuses / system-labels)の出どころを出す。引く順: 環境変数で明示したファイル > DB のこのセッションの行 > DB の共通の行(*) > checkout の taskboard/config/<名前> > .example
 tb config show <キー> | history <キー>   今効いている本文 / 変更の履歴
 tb config set <キー> [--shared] < 本文 | edit <キー> [--shared] | unset <キー> [--shared]   DB のこのセッションの行(--shared なら全セッション共通の行)を書く・消す。人の端末だけ
 tb config import [--dry-run]   checkout の taskboard/config/*.conf を、全セッション共通の行として DB に取り込む(共通の行が既にあるキーは飛ばす)。人の端末だけ
@@ -118,7 +118,7 @@ tb recipe-list [--json]   名前 リスク階層 step 数 更新者 更新時刻
 tb recipe-show <名前>   判定の操作名・リスク階層・step ごとの部品の性質と本文
 tb recipe-history [<名前>] [--json]   登録の変更(時刻 名前 add|update|rm リスク階層 変えた者)
 tb recipe-run <名前> [--target A] [--task T-..] [--dry-run] [<名前>=<値> ...]   汎用の入口。判定は recipe:<名前>:<対象>(既定の対象は依頼者。人の端末は --target が要る)、続けて部品ごと
-         (人だけの部品は agent から止まる。部品の操作名も approvals / grants で判定。agent から指揮官は止めない)。全部を判定してから、依頼者が agent で pane の外で行う部品があれば
+         (人だけの部品は agent から止まる。部品の操作名も policy で判定。agent から指揮官は止めない)。全部を判定してから、依頼者が agent で pane の外で行う部品があれば
          検査済みの並びだけを待ち行列に置く(R-<n> queued。外の実行役 tb recipe-runner が実行する)。人の依頼と、外の部品が無い並びはその場で実行する。記録は tb events(recipe_run / recipe_step / recipe_end)
          定期ジョブ(SCHED_JOB)からはジョブの持ち主(OWNER → SCHED_OWNER)の権限で判定し、持ち主が無ければ実行しない
          終了コード 0=済んだ・置いた 1=途中の部品が失敗(残りは続行しない)2=使い方 4=実行しない(未登録・検査を通らない・人だけ・まだ実行できない部品・持ち主の無い定期ジョブ)20=人の承認が要る
@@ -127,12 +127,12 @@ tb recipe-runner [--max N]   外の実行役(人の端末か、人が登録し�
 tb recipe-queue [--all] [--json]   待ち行列(既定は queued と running。R-<n> 状態 レシピ 対象 依頼者 置いた時刻 結果)
 tb recipe-cancel R-<n>   待ち行列の queued を取り消す(人と、頼んだ agent 自身だけ)
 
-人の承認(config/approvals.conf。<操作のパターン> = ask|allow、最初に一致した行、無一致は ask):
+認可(設定 policy。<主体> <操作> <対象> = allow|ask-any|ask-human|deny、当たる行のいちばん厳しい効果、無ければ既定の表 perms/ops.tbl。ADR 0007):
 tb can [<主体>] <操作> <対象>   主体(省くと叩いた agent。pane から決める)が対象にその操作をできるかを、実際の判定と同じ規則で出す(読むだけ)。1 行目 allow|ask|hold|deny、続けて rule:。
          終了コード 0=allow 20=ask(人の承認待ち)21=hold(inbox に置かれる)4=deny。主体 human は人の端末。
-         操作: send:task|info|answer(delivery → approvals)/ agent:stop(protect → approvals)/ role:change / agent:flag / ほかは approvals の操作名
-         approve:<元の操作>(対象は依頼した agent。grants の approve: の行だけで allow か deny)
-tb approval check <操作> [--by A]  1 行目 ask|allow、2 行目 rule:。終了コード 0=allow 20=ask(例: send:task:worker1, role:change, setup:hooks)。--by で agent A から見た判定(grants.conf も見る)
+         操作: send:task|info|answer(delivery → policy)/ agent:stop(protect → policy)/ role:change / agent:flag / ほかは policy の操作名
+         approve:<元の操作>(対象は依頼した agent。policy の approve: の allow の行だけで allow か deny)
+tb approval check <操作> [--by A]  1 行目 allow|ask|deny、2 行目 rule:。終了コード 0=allow 20=ask 4=deny(例: send:task:worker1, role:change, setup:hooks)。--by で agent A から見た判定(設定 policy の主体の行も見る)
   [--to 宛先 --text 本文 [--kind K]]  付けると risk:(リスク評価。第 1 段は参考値で判定は変えない)を併記。設計: docs/risk-based-approvals.md
   別名(古い名前): tb approval <操作> ...(サブコマンドの名前 check / allow / ask / approve / reject と同じ操作名はこの形では書けない)
 tb gate evaluate <chain-id> --action merge|approve [--pr <o>/<r>#<n>] [--fact '行'] [--facts-stdin]   merge/approve の判定(読み取りのみ。0=allow 20=ask 21=評価不能)。tb gate execute は常に 30(無効)。docs/gate.md
@@ -141,20 +141,21 @@ tb review submit <task-id> --lineage L --sha S --blocker N --should N --verdict 
 tb gate ingest-review <task-id> --pr <o>/<r>#<n> --sha <head の sha>   外部レビュー(CodeRabbit)を gh の読み取りで取り、送信者 ingest で記録する(agent の pane からは実行不可。スキップ・無い・取得失敗は記録しない)。docs/gate.md
 tb gate ingest-events <task-id> --pr <o>/<r>#<n>   PR の全レビュー(reviews / inline / issue)を、数値 id などの身元つきで追記専用の記録に残す(本文は保存しない。agent の pane からは実行不可)。判定には使わない。docs/gate.md
 tb gate reviewers <o>/<r>#<n> [--task <id>]   記録をレビュアーごとにまとめて表示する(読み取りだけ。gh は呼ばない)
-tb approval allow <パターン>   今後は承認なしにする(人の端末からだけ)
+tb approval allow <パターン>   今後は承認なしにする(人の端末からだけ。設定 policy に * <操作> <対象> = allow を書く)
   別名(古い名前): tb allow <パターン>
-tb approval ask <パターン>     承認制に戻す(人の端末からだけ)
+tb approval ask <パターン>     承認制に戻す(人の端末からだけ。設定 policy に * <操作> <対象> = ask-any を書く)
   別名(古い名前): tb ask <パターン>
 tb approval approve O-<n> [--always]   承認待ちの送信を届ける。--always なら send:<kind>:<宛先> を allow にする(人だけ)。
-                              grants.conf の <agent> approve:send:<kind>:<宛先> <依頼者> に当たる agent も承認できる(自分の依頼は不可)
+                              policy の <agent> approve:send:<kind>:<宛先> <依頼者> = allow に当たる agent も承認できる(自分の依頼・ask-human の依頼は不可)
   別名(古い名前): tb approve O-<n> [--always]
 tb approval reject O-<n>       承認待ちの送信を却下する(承認と同じく、人か approve: の許可がある agent)
   別名(古い名前): tb reject O-<n>
 tb approval                    approval のサブコマンドの一覧
+tb policy import [--apply]     古い設定 approvals / grants を設定 policy の行に変換する(人だけ。--apply で書いて古い設定を消す。ADR 0007)
 
 アラート(見張り役 → 解析役の agent を起動 → 結果を指揮官・Web UI へ):
 tb alert --title T [--body B|--body-file F] [--key K] [--json]   見張り役が登録(緊急度は付けない)
-         → "A-<n> new|duplicate <status>"。新規なら approvals の alert:analyze を見て解析役を起動
+         → "A-<n> new|duplicate <status>"。新規なら policy の alert:analyze を見て解析役を起動
 tb alerts [A-<n>] [--status S] [--json]    一覧 / 全文と解析結果
 tb alert-approve A-<n> [--always]          人が解析役の起動を承認(--always で今後は承認なし)
 tb alert-result A-<n> --severity critical|high|medium|low --summary S [--report F]   解析役が緊急度と結果を返す(担当の解析役か人だけ)
@@ -178,10 +179,10 @@ tb proposal resolve P-<n> --status applied|rejected [--note N]   設定役か人
   別名(古い名前。同じに動く): tb proposal --role ... tb proposals tb proposal-resolve
   (提案は project proposal のチケット T-proposal-NNN でもある。担当は設定役)
 
-agent の停止・復活・新規作成(台帳 agents。人の端末からはそのまま、agent の pane からは approvals の agent:<op>:<名前>):
+agent の停止・復活・新規作成(台帳 agents。人の端末からはそのまま、agent の pane からは policy の agent:<op> <名前>):
 tb org [<agent 名> | --me] [--json]   組織図(設定 org: <部下のパターン> -> <上司>)。全員が見られる。agent 名を付けると上司・上の全員・直属の部下・同じ上司。--me は叩いた agent(pane から決める)
-         grants の対象と delivery の宛先に ~report / ~subordinate / ~manager / ~superior / ~peer と書くと、この線で判定する(書式: config/org.conf.example)
-tb peek <agent 名> [--lines N]   agent の直近の出力を読む(1〜200 行、既定 40)。人と本人はそのまま、ほかの agent は approvals の agent:read:<名前>(agent:read:@<役割> も可)が allow のときだけ(終了コード 20)。記録は read_log
+         policy の対象と delivery の宛先に ~report / ~subordinate / ~manager / ~superior / ~peer と書くと、この線で判定する(書式: config/org.conf.example)
+tb peek <agent 名> [--lines N]   agent の直近の出力を読む(1〜200 行、既定 40)。人と本人はそのまま、ほかの agent は policy の agent:read <名前>(対象は @<役割> や ~child も可)が allow のときだけ(終了コード 20、deny なら 4)。記録は read_log
 tb agents [--json] [--all] [--group role] [--graph]   台帳と判定材料(状態・killable・未完了タスク・未対応の質問・idle 分・役割)。herdr と同期する。
          --group role はロールごとにまとめる。--graph は関係グラフ(誰が誰に何をしたか: spawn / lead / send:<kind> / report / analyze。直近 7 日)。--json と併用で {nodes, edges}
 tb agent-new <名前> [--cwd D] [--kind K] [--model M] [--role R] [--prompt P] [--killable yes|no]
@@ -193,18 +194,18 @@ tb agent-kinds   kind(claude / codex / gemini)ごとの対応項目の表(起動
 tb agent-restart <名前> [--prompt P]   MCP が切れた agent の復旧: 停止 + 同じ会話での復活。idle/done で in_progress のタスクが無いときだけ
          (持つなら --prompt の再開メモが要る)。人はいつでも。agent からは agent:stop と agent:revive が両方 allow の名前だけ(自分・指揮官は不可)。--force は無い
          終了コード: 0 再起動済み 1 拒否・前提違い 4 上限・許可なし 10 再開したが最初の指示を確認できない 11 herdr の失敗
-tb model-set <名前|@役割|--all> <モデル> [--dry-run]   idle/done の agent を止めて同じ会話を --model 付きで復活(--all は人の承認待ち。approvals の agent:model:<名前>)
+tb model-set <名前|@役割|--all> <モデル> [--dry-run]   idle/done の agent を止めて同じ会話を --model 付きで復活(--all は人の承認待ち。policy の agent:model <名前>)
 tb model-set <名前|@役割|--all> --reset [--dry-run]    台帳のモデルを消す(次の起動から config の role-models の既定)
-tb compact-check [--dry-run] [--apply]   idle/done で文脈が大きい agent に /compact を送る(既定 dry-run。config/compact.conf と approvals の agent:compact:<名前>)
+tb compact-check [--dry-run] [--apply]   idle/done で文脈が大きい agent に /compact を送る(既定 dry-run。config/compact.conf と policy の agent:compact <名前>)
 tb slash <コマンド> <agent 名|@役割>... [--apply]   許可リスト(config/slash.conf)のスラッシュコマンドを idle/done の agent に送る(既定 dry-run)。
-         自分と指揮官は除く。agent からは approvals の agent:slash:<コマンド>:<宛先>(ask なら L-<n>)。記録は agent_ops(op=slash)
+         自分と指揮官は除く。agent からは policy の agent:slash:<コマンド> <宛先>(ask-* なら L-<n>、deny なら送らない)。記録は agent_ops(op=slash)
 tb slash <コマンド> --all [--apply]   全 agent へ。--apply しても L-<n> を積むだけで、人が tb agent-approve するまで送らない
 tb slash --list   許可リストを出す(deny の行は送らない)
 tb agent-flag <名前> --killable yes|no|unknown [--reason R]   止めてよいかの判定。判定役(TB_SWEEPER_PATTERN、既定 sweeper*)か人だけ
          終了コード(new/stop/revive): 0 実行済み 1 拒否・前提違い 11 herdr の失敗 20 人の承認待ち(L-<n>)
 tb agent-ops [--status pending|done|failed|rejected] [--json]   操作の記録と承認待ち
 tb agent-approve L-<n> [--always]   承認待ちの操作を実行(--always で agent:<op>:<名前> を allow。人だけ)。
-                              grants.conf の <agent> approve:agent:<op>:<名前> <依頼者> に当たる agent も承認できる(--all・spawn-freeze 中は人だけ)
+                              policy の <agent> approve:agent:<op>:<名前> <依頼者> = allow に当たる agent も承認できる(--all・spawn-freeze 中・ask-human の依頼は人だけ)
 tb agent-reject L-<n>   却下(人か approve: の許可がある agent)
 
 規則つきの子 agent 作成(agent の pane から。自動承認は LLM ではなく tb の規則。config/spawn-policy.conf は人だけが編集):
@@ -212,9 +213,9 @@ tb agent-spawn <役割|-> --task <task-id> --brief <依頼の本文(2000 字ま�
          子の名前は tb が <親>-s<連番> で付け、プロンプトも tb がテンプレートで組む(依頼は役割の指示を上書きできない)。
          親は動いていて、--task が親の in_progress のタスクであること。許可する役割・子の数・深さは spawn-policy.conf
          (既定: worker だけ、親 1 体あたり 2、全体 6、深さ 1、モデル sonnet。denied_parents に当たる親は不可)
-         終了コード: 0 作成済み(規則に合い、approvals の agent:spawn:<子の名前> が allow) 20 人の承認待ち(L-<n>。approvals が ask か spawn-freeze 中)
+         終了コード: 0 作成済み(規則に合い、policy の agent:spawn <子の名前> が allow) 20 人の承認待ち(L-<n>。policy が ask-* か spawn-freeze 中)
                     4 規則で拒否(理由を stderr に出し、何も作らない)
-         自動で作るには人が approvals.conf に `agent:spawn:* = allow` を足す(tb allow 'agent:spawn:*')。agent:new:* は ask のまま
+         自動で作るには人が policy に `* agent:spawn * = allow` を足す(tb approval allow 'agent:spawn:*')。agent:new は ask-any のまま
 tb spawn-freeze     自動承認を止める。以後の agent-spawn は全部人の承認待ち(人の端末からだけ)
 tb spawn-unfreeze   解除する(人の端末からだけ)
          子の tb comment には spawned_by: <親> が付く。tb digest は子の数が上限の 1 つ手前以上のときと、親のタスクが done/blocked なのに子が動いているときに知らせる

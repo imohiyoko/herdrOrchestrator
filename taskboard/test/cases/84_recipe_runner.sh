@@ -1,10 +1,10 @@
 # shellcheck shell=bash
 # レシピの外の実行役(ADR 0005 の段 3): 待ち行列(R-<n>)、tb recipe-runner(実行の時点で依頼者の権限で判定し直す)、
 # 副作用のある部品の実行、定期ジョブの持ち主(SCHED_JOB / SCHED_OWNER)。DB は $TMP/rrun.db、project は rrn だけ。環境変数は最後に戻す
-_saved_pane=${HERDR_PANE_ID-}; _saved_db=$TB_DB; _saved_appr=${TB_APPROVALS-}; _saved_agents=${FAKE_AGENTS-}; _saved_lim=${TB_LIMITS-}
+_saved_pane=${HERDR_PANE_ID-}; _saved_db=$TB_DB; _saved_appr=${TB_POLICY_A-}; _saved_agents=${FAKE_AGENTS-}; _saved_lim=${TB_LIMITS-}
 _saved_env=$(declare -p TB_SPAWN_RETRY_SEC TB_AGENT_CWD TB_RECIPE_POLL_SEC FAKE_DYNAMIC FAKE_STATUS SCHED_JOB SCHED_OWNER 2>/dev/null)
 unset HERDR_PANE_ID SCHED_JOB SCHED_OWNER
-export TB_DB=$TMP/rrun.db TB_APPROVALS=$TMP/rr-approvals.conf TB_SPAWN_RETRY_SEC=0 TB_AGENT_CWD=$TMP TB_LIMITS=$TMP/rr-lim.conf TB_RECIPE_POLL_SEC=0.05
+export TB_DB=$TMP/rrun.db TB_POLICY_A=$TMP/rr-approvals.conf TB_SPAWN_RETRY_SEC=0 TB_AGENT_CWD=$TMP TB_LIMITS=$TMP/rr-lim.conf TB_RECIPE_POLL_SEC=0.05
 export FAKE_DYNAMIC=1
 rrsql() { sqlite3 "$TB_DB" "$@"; }
 rr_ag() { printf '{"pane_id":"%s","name":"%s","agent_status":"idle","agent_session":{"value":"%s"},"cwd":"%s"}' "$2" "$1" "${3:-s-$1}" "$TMP"; }
@@ -13,7 +13,7 @@ rr_closes() { grep -c '^pane-close' "$FAKE_LOG"; }
 asw() { HERDR_PANE_ID=wW:p1 "$@"; }   # worker1 の pane から
 ash() { HERDR_PANE_ID=wH:p1 "$@"; }   # helper1 の pane から
 export FAKE_AGENTS="[$(rr_ag conductor wC:p1),$(rr_ag worker1 wW:p1 s1),$(rr_ag helper1 wH:p1 sh)]"
-printf 'recipe:*:* = allow\nagent:stop:worker1 = allow\nagent:revive:worker1 = allow\nagent:stop:conductor = allow\nagent:revive:conductor = allow\n* = ask\n' >"$TB_APPROVALS"
+printf '* recipe:* * = allow\n* agent:stop worker1 = allow\n* agent:revive worker1 = allow\n* agent:stop conductor = allow\n* agent:revive conductor = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
 rr_reset
 $TB agents >/dev/null
 $TB recipe-set restart-self >/dev/null <<'EOF'
@@ -59,13 +59,13 @@ eq "recipe-queue: 済んだものは既定では出ない(--all で出る)" "$($
 # --- 実行の時点で判定し直す: 置いた後に許可が外れたら実行しない
 rr_reset; export FAKE_AGENTS="[$(rr_ag conductor wC:p1),$(rr_ag worker1 wW:p1 s1),$(rr_ag helper1 wH:p1 sh)]"
 asw "$TB" recipe-run restart-self >/dev/null 2>&1
-printf 'recipe:*:* = allow\nagent:revive:worker1 = allow\n* = ask\n' >"$TB_APPROVALS"
+printf '* recipe:* * = allow\n* agent:revive worker1 = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
 eq "runner: 置いた後に agent:stop の許可が外れたら stopped で、何も止めない" "$($TB recipe-runner) $(rr_closes)" "R-2 stopped 0"
 eq "runner: 理由を残す" "$(rrsql "SELECT result FROM recipe_runs WHERE id=2;" | grep -c 'agent:stop:worker1')" "1"
-printf 'agent:stop:worker1 = allow\nagent:revive:worker1 = allow\n* = ask\n' >"$TB_APPROVALS"
+printf '* agent:stop worker1 = allow\n* agent:revive worker1 = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
 rrsql "INSERT INTO recipe_runs (herdr_session, name, body_sha, target, requester, task_id, plan, event_id, status, created_at) SELECT herdr_session, name, body_sha, target, requester, task_id, plan, event_id, 'queued', created_at FROM recipe_runs WHERE id=1;"
 eq "runner: レシピの操作名の許可が外れても実行しない" "$($TB recipe-runner) $(rr_closes)" "R-3 stopped 0"
-printf 'recipe:*:* = allow\nagent:stop:worker1 = allow\nagent:revive:worker1 = allow\nagent:stop:conductor = allow\nagent:revive:conductor = allow\n* = ask\n' >"$TB_APPROVALS"
+printf '* recipe:* * = allow\n* agent:stop worker1 = allow\n* agent:revive worker1 = allow\n* agent:stop conductor = allow\n* agent:revive conductor = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
 
 # --- レシピが変わった・消えたら実行しない
 asw "$TB" recipe-run restart-self >/dev/null 2>&1
@@ -151,10 +151,10 @@ eq "sched: 理由を出す" "$(SCHED_JOB=nightly "$TB" recipe-run restart-other 
 eq "sched: OWNER が agent 名でなければ 4" "$(SCHED_JOB=nightly SCHED_OWNER=Bad rc "$TB" recipe-run restart-self)" "4"
 out=$(SCHED_JOB=nightly SCHED_OWNER=worker1 "$TB" recipe-run restart-self 2>&1); r=$?
 eq "sched: 持ち主があれば、その agent の権限で判定して置く" "$r|$(tail -1 <<<"$out" | cut -d' ' -f2)|$(rrsql "SELECT requester||' '||target||' '||via FROM recipe_runs ORDER BY id DESC LIMIT 1;")" "0|queued|worker1 worker1 sched:nightly"
-printf 'recipe:*:* = allow\n* = ask\n' >"$TB_APPROVALS"
+printf '* recipe:* * = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
 eq "sched: 持ち主の権限が足りなければ人の端末でも 20(人として扱わない)" "$(SCHED_JOB=nightly SCHED_OWNER=helper1 rc "$TB" recipe-run restart-other --target helper1)" "20"
 eq "sched: 持ち主の権限で、人だけの部品は 4" "$(SCHED_JOB=nightly SCHED_OWNER=helper1 rc "$TB" recipe-run force --target helper1)" "4"
-eq "sched: agent の pane では SCHED_* を見ない(pane の agent が依頼者)" "$(SCHED_JOB=nightly SCHED_OWNER=conductor asw "$TB" recipe-run restart-self 2>/dev/null | head -1)" "recipe restart-self target=worker1 risk=mid: allow(recipe:*:* = allow)"
+eq "sched: agent の pane では SCHED_* を見ない(pane の agent が依頼者)" "$(SCHED_JOB=nightly SCHED_OWNER=conductor asw "$TB" recipe-run restart-self 2>/dev/null | head -1)" "recipe restart-self target=worker1 risk=mid: allow(policy: * recipe:* * = allow)"
 $TB recipe-cancel "$(rrsql "SELECT 'R-'||id FROM recipe_runs WHERE status='queued' ORDER BY id LIMIT 1;")" >/dev/null 2>&1 || true
 
 # --- その場で実行するもの(外の実行役の部品が無い並び)は、副作用があっても依頼者の pane の中で実行する
@@ -167,7 +167,7 @@ eq "inside: 人だけの部品なので agent からは 4" "$(asw rc "$TB" recip
 eq "recipe: recipe_runs にもセッションが入る" "$(rrsql "SELECT count(*) FROM recipe_runs WHERE herdr_session='';")" "0"
 
 export TB_DB=$_saved_db
-if [[ -n $_saved_appr ]]; then export TB_APPROVALS=$_saved_appr; else unset TB_APPROVALS; fi
+if [[ -n $_saved_appr ]]; then export TB_POLICY_A=$_saved_appr; else unset TB_POLICY_A; fi
 if [[ -n $_saved_agents ]]; then export FAKE_AGENTS=$_saved_agents; else unset FAKE_AGENTS; fi
 if [[ -n $_saved_lim ]]; then export TB_LIMITS=$_saved_lim; else unset TB_LIMITS; fi
 [[ -z $_saved_pane ]] || export HERDR_PANE_ID=$_saved_pane

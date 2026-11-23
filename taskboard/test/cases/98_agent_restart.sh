@@ -2,7 +2,7 @@
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
 # --- tb agent-restart: 停止 + 同じ会話での復活(MCP の再接続)。安全条件・権限・失敗時の扱い
 _saved_pane=${HERDR_PANE_ID-}; unset HERDR_PANE_ID
-export TB_DB=$TMP/restart.db TB_APPROVALS=$TMP/appr-restart.conf TB_SPAWN_RETRY_SEC=0 TB_AGENT_CWD=$TMP TB_LIMITS=$TMP/rs-lim.conf
+export TB_DB=$TMP/restart.db TB_POLICY_A=$TMP/appr-restart.conf TB_SPAWN_RETRY_SEC=0 TB_AGENT_CWD=$TMP TB_LIMITS=$TMP/rs-lim.conf
 export FAKE_DYNAMIC=1
 rssql() { sqlite3 "$TB_DB" "$@"; }
 rs_ag() { printf '{"pane_id":"%s","name":"%s","agent_status":"%s","agent_session":{"value":"%s"},"cwd":"%s"}' "$2" "$1" "${3:-idle}" "${4:-s-$1}" "$TMP"; }
@@ -11,7 +11,7 @@ rs_closes() { grep -c '^pane-close' "$FAKE_LOG"; }
 rs_last() { rssql "SELECT op||' '||status||' '||requested_by||' '||COALESCE(json_extract(args,'\$.restart'),'-') FROM agent_ops ORDER BY id DESC LIMIT 1;"; }
 RS_C=$(rs_ag conductor wC:p1); RS_W=$(rs_ag worker1 wW:p1 idle s1); RS_H=$(rs_ag helper1 wH:p1 idle sh)
 export FAKE_AGENTS="[$RS_C,$RS_W,$RS_H]"
-printf 'agent:stop:worker1 = allow\nagent:revive:worker1 = allow\nagent:stop:conductor = allow\nagent:revive:conductor = allow\nagent:stop:helper1 = allow\n* = ask\n' >"$TB_APPROVALS"
+printf '* agent:stop worker1 = allow\n* agent:revive worker1 = allow\n* agent:stop conductor = allow\n* agent:revive conductor = allow\n* agent:stop helper1 = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
 rs_reset
 $TB agents >/dev/null
 
@@ -105,7 +105,7 @@ eq "restart: at the limit is fine (net count unchanged); the far agent of anothe
 rs_reset; export FAKE_AGENTS="[$RS_C,$(rs_ag worker1 wW:p1 idle s1),$RS_H]"
 rm -f "$TB_LIMITS"
 
-export TB_APPROVALS=$TMP/appr.conf
+export TB_POLICY_A=$TMP/appr.conf
 unset FAKE_AGENTS FAKE_DYNAMIC TB_LIMITS; export TB_LIMITS=$TMP/limits-default.conf
 rs_reset
 [[ -n $_saved_pane ]] && export HERDR_PANE_ID=$_saved_pane
