@@ -56,7 +56,7 @@ _auth_snapshot() {
   while read -r pid ppid tty comm; do
     [[ $pid =~ ^[0-9]+$ ]] || continue
     _AU_PPID[$pid]=$ppid; _AU_TTY[$pid]=$tty; _AU_COMM[$pid]=${comm##*/}
-  done < <(ps -A -o pid=,ppid=,tty=,comm= 2>/dev/null)
+  done < <(command -p ps -A -o pid=,ppid=,tty=,comm= 2>/dev/null)   # PATH の差し替えで偽の ps を使わせない
   ((${#_AU_PPID[@]})) && [[ -n ${_AU_PPID[$$]:-} ]]
 }
 _auth_tty_ok() { [[ -n $1 && $1 != '?' && $1 != '??' && $1 != - ]]; }

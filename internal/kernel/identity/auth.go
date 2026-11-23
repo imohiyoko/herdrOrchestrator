@@ -24,7 +24,11 @@ type procs struct {
 }
 
 func snapshot() (*procs, bool) {
-	out, err := exec.Command("ps", "-A", "-o", "pid=,ppid=,tty=,comm=").Output()
+	ps := "/bin/ps" // PATH の差し替えで偽の ps を使わせない
+	if _, err := os.Stat(ps); err != nil {
+		ps = "/usr/bin/ps"
+	}
+	out, err := exec.Command(ps, "-A", "-o", "pid=,ppid=,tty=,comm=").Output()
 	if err != nil {
 		return nil, false
 	}
