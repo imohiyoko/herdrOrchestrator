@@ -7,7 +7,7 @@
 - **1 PR で 1 サービス**。他の PR が bash 側を書き換えている最中のサービスは後に回す
 - **移し終えた** = そのサービスのコマンドがすべて `herdrctl tb --commands` に出ていて、`taskboard/test/cases` のそのサービスのケースが **書き換えなしで** `TB_IMPL=go` でも通る。出力・終了コード・エラーの文面は bash と同じ。Go のユニットテストも付ける
 - **同期**: CI の `tb contract` ジョブが全ケースを `TB_IMPL=go` で流す。移したコマンドを bash 側だけ変えるとこのジョブが落ちる。ケースで確かめていない振る舞いは、移す PR でケースを足して埋める
-- **bash を消す時期**: tb の全サービスが移ったら、まず既定を `TB_IMPL=go` にする PR を出す。setup が herdrctl を必ず入れるようになり、しばらく様子を見てから `taskboard/lib/*.sh` を消し、`tb` を herdrctl を呼ぶだけの shell にする
+- **bash を消す時期**: tb の全サービスが移ったので、既定を Go にした(`TB_IMPL` が未設定なら、認可と呼び出し元の確かめを持つ herdrctl があれば Go、無い・古いなら何も言わずに bash。`TB_IMPL=go` / `TB_IMPL=bash` で固定できる。テスト(`taskboard/test/run.sh`)は未設定なら bash で流す)。次に setup が herdrctl を必ず入れるようにし、しばらく様子を見てから `taskboard/lib/*.sh` を消し、`tb` を herdrctl を呼ぶだけの shell にする
 
 ## コマンドの名前
 

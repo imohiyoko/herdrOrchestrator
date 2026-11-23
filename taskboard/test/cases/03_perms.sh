@@ -136,6 +136,12 @@ export TB_DB=$TMP/perms.db TB_POLICY=$TMP/perms.policy
 # 古い herdrctl(権限段階の門が無い)には渡さない
 mkdir -p "$TMP/perms-oldhc"; printf '#!/bin/sh\n[ "$2" = --commands ] && echo list && exit 0\nexit 2\n' >"$TMP/perms-oldhc/herdrctl"; chmod +x "$TMP/perms-oldhc/herdrctl"
 eq "perms: TB_IMPL=go refuses an herdrctl without the perms feature" "$(TB_IMPL=go TB_HERDRCTL=$TMP/perms-oldhc/herdrctl $TB list -p pm 2>&1 >/dev/null | grep -c '認可と呼び出し元(ADR 0007)を確かめられない')" "1"
+# TB_IMPL が未設定なら: 使える herdrctl があれば Go、無い・古いなら何も言わずに bash
+mkdir -p "$TMP/perms-newhc"; printf '#!/bin/sh\ncase "$2" in --features) echo "perms policy policy-ops auth";; --commands) echo list;; list) echo from-go;; esac\nexit 0\n' >"$TMP/perms-newhc/herdrctl"; chmod +x "$TMP/perms-newhc/herdrctl"
+eq "impl: unset TB_IMPL with a usable herdrctl -> Go" "$(TB_IMPL= TB_HERDRCTL=$TMP/perms-newhc/herdrctl $TB list -p pm 2>/dev/null)" "from-go"
+eq "impl: unset TB_IMPL with an old herdrctl -> bash, no error" "$(TB_IMPL= TB_HERDRCTL=$TMP/perms-oldhc/herdrctl $TB list -p pm 2>&1 >/dev/null | wc -l | tr -d ' '; TB_IMPL= TB_HERDRCTL=$TMP/perms-oldhc/herdrctl rc $TB list -p pm)" "$(printf '0\n0')"
+eq "impl: unset TB_IMPL without herdrctl -> bash, no error" "$(TB_IMPL= TB_HERDRCTL=$TMP/no-such-herdrctl rc $TB list -p pm)" "0"
+eq "impl: TB_IMPL=bash ignores a usable herdrctl" "$(TB_IMPL=bash TB_HERDRCTL=$TMP/perms-newhc/herdrctl $TB list -p pm 2>/dev/null | grep -c from-go)" "0"
 
 unset TB_DB TB_POLICY TB_POLICY_A HERDR_PANE_ID FAKE_AGENTS
 eval "$_saved_env"

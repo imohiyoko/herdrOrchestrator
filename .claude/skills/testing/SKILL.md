@@ -92,6 +92,8 @@ TB_IMPL=go TB_HERDRCTL=/tmp/herdrctl bash taskboard/test/run.sh
 
 herdrctl を作らずに `TB_IMPL=go` で流すと、ほとんどのケースが「herdrctl が見つかりません」で落ちる(コードの問題ではない)。
 
+`TB_IMPL` を付けずに流すと bash で流れる(run.sh が `TB_IMPL=bash` にする。手元の PATH に herdrctl があっても変わらない)。tb 自体は、未設定なら使える herdrctl があれば Go を使う。
+
 コマンドを Go に移すときは、ケースを書き換えずにこれが通ること。bash 側の出力(列の順・空白・終了コード)を変えたら、Go 側も合わせる。
 
 ## Web UI(`webui/tests/test_webui.py`)
