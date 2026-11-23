@@ -24,9 +24,8 @@ eq "schema: failed migration keeps the version" "$(sqlite3 "$TB_DB" "PRAGMA user
 # 別の tb が先に移行を済ませていたら、同じ移行を二度流さない(ロック後の版の確認)
 printf 'INSERT INTO tasks (id, project, title, created_at, updated_at) VALUES (%s);\n' "'T-dup-001','dup','x','t','t'" >"$TMP/badschema/999_broken.sql"
 sqlite3 "$TB_DB" "PRAGMA user_version=999;"
-( source "$HERE/../lib/db.sh"; migration_sql 999 "$TMP/badschema/999_broken.sql" ) | sqlite3 -bail "$TB_DB" >/dev/null 2>&1; r=$?
-eq "schema: guard stops a migration that already ran" "$([[ $r -ne 0 ]] && echo stopped) $(sqlite3 "$TB_DB" "SELECT COUNT(*) FROM tasks WHERE id='T-dup-001';")" "stopped 0"
-eq "schema: already migrated → tb still works" "$(TB_SCHEMA_DIR=$TMP/badschema rc $TB list)" "0"
+# 移行の中の版の確かめ(ロック後に版を見て二度流さない)そのものは internal/kernel/store の TestAlreadyMigratedIsNotRunTwice
+eq "schema: already migrated → tb still works, the migration is not run again" "$(TB_SCHEMA_DIR=$TMP/badschema rc $TB list) $(sqlite3 "$TB_DB" "SELECT COUNT(*) FROM tasks WHERE id='T-dup-001';")" "0 0"
 mkdir -p "$TMP/noschema"
 eq "schema: no schema files → exit 1, no DB file" "$(TB_DB=$TMP/none/x.db TB_SCHEMA_DIR=$TMP/noschema rc $TB list) $([[ -e $TMP/none ]] && echo created || echo absent)" "1 absent"
 export TB_DB=$TMP/old.db

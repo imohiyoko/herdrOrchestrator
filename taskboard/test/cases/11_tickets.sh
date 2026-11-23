@@ -111,7 +111,7 @@ fi
 exec "$_real_sqlite" "\$@"
 WRAP
 chmod +x "$TMP/race-bin/sqlite3"
-export TB_TEST_HOOKS=1  # Go 版(TB_IMPL=go)は sqlite3 を呼ばないので、同じことを herdrctl のテスト用の口(store.RaceHook)がする
+export TB_TEST_HOOKS=1  # tb(herdrctl)は sqlite3 を呼ばないので、herdrctl のテスト用の口(store.RaceHook)で割り込む
 ra=$($TB add -p tk6 -t a); rb=$($TB add -p tk6 -t b)
 eq "tickets(race): --type epic loses to a parent set in between" \
   "$(PATH="$TMP/race-bin:$PATH" RACE_MARK=$TMP/race1 RACE_SQL="UPDATE tasks SET parent_id='$rb' WHERE id='$ra'" rc $TB update "$ra" --type epic)" "2"

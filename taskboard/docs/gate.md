@@ -121,7 +121,7 @@ glob は広めに当たります(`*` が `/` も越える)ので、`Dockerfile` 
 tb review submit <task-id> --lineage <系統> --sha <head の sha> --blocker <n> --should <n> --verdict pass|fail [--pr <o>/<r>#<n>] [--evidence <パス>]
 ```
 
-古い名前 `tb review-submit` も同じに使えます(bash を外すときに外します)。Go 版(`TB_IMPL=go`)も、設定と記録は同じ固定の置き場所(`TB_ROOT` の下)だけを読み書きします。
+古い名前 `tb review-submit` も同じに使えます(bash を外すときに外します)。tb は、設定と記録は同じ固定の置き場所(`TB_ROOT` の下)だけを読み書きします。
 
 - 記録先は固定の追記専用ファイル `data/gate-reviews.log`(`.gitignore` 済み。env では変えられません)。DB のスキーマは変えません。既存の行は書き換えません。
 - 1 行の形: `ts=<UTC> task=<id> by=<送信者> pr=<o/r#n|-> REVIEW <系統> <sha> blocker=<n> should=<n> verdict=<pass|fail> evidence=<パス|->`

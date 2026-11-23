@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
-# --- 会話チーム(#95)と振り分け表(#96): lib/conv.sh
+# --- 会話チーム(#95)と振り分け表(#96)(tb conv)
 _saved_pane=${HERDR_PANE_ID-}; unset HERDR_PANE_ID
 _saved_cd=${TB_CONV_DIR-}; _saved_cr=${TB_CONV_ROUTES-}; _saved_db=$TB_DB
 export TB_DB=$TMP/conv.db; rm -f "$TB_DB"

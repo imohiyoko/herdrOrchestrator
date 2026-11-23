@@ -1,6 +1,8 @@
 package approval
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,17 +11,22 @@ import (
 	"testing"
 )
 
-// リスク評価を bash の risk.sh と突き合わせる(規則ファイルの読み方・誤りの文面・寄与の行)。
-func TestRiskMatchesBash(t *testing.T) {
+// リスク評価を、bash 版(taskboard/lib/risk.sh。消した)の出力を写した testdata/risk_golden.json と突き合わせる
+// (規則ファイルの読み方・誤りの文面・寄与の行)。RISK_BASH_LIB に古い risk.sh を渡すと、bash と比べて golden を書き直す。
+func TestRiskGolden(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("bash の risk.sh と比べる")
+		t.Skip("規則ファイルに FIFO・シンボリックリンクを使う")
 	}
-	if out, err := exec.Command("bash", "-c", `echo "${BASH_VERSINFO[0]}"`).Output(); err != nil || len(out) == 0 || out[0] < '4' || out[0] > '9' {
-		t.Skipf("bash 4 以上が無い(%q。tb の bash 版は 4 以上が前提)", out)
-	}
-	lib, _ := filepath.Abs("../../taskboard/lib/risk.sh")
-	if _, err := os.Stat(lib); err != nil {
-		t.Skip("risk.sh が無い")
+	lib := os.Getenv("RISK_BASH_LIB")
+	golden := map[string]string{}
+	if lib == "" {
+		b, err := os.ReadFile("testdata/risk_golden.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(b, &golden); err != nil {
+			t.Fatal(err)
+		}
 	}
 	files := map[string]string{
 		"none": "",
@@ -72,6 +79,7 @@ R-13 | target.state in (stopped,running) | risk:1 | 宛先の状態
 		{"-", "worker", "stopped", "-", "ghp_abcdefghij0123456789 です", "answer"},
 		{"human", "reviewer", "idle", "human", "パスワードを教えて", "task"},
 	}
+	n := 0
 	for name, body := range files {
 		dir := t.TempDir()
 		conf := filepath.Join(dir, "config")
@@ -95,7 +103,7 @@ R-13 | target.state in (stopped,running) | risk:1 | 宛先の状態
 			t.Fatalf("%s: 規則ファイルを作れません: %v", name, err)
 		}
 		t.Setenv("TB_ROOT", dir)
-		for _, in := range inputs {
+		for idx, in := range inputs {
 			ri := RiskInput{Text: set(in[4]), Kind: in[5]}
 			for i, p := range []*Opt{&ri.SenderRole, &ri.TargetRole, &ri.TargetState, &ri.SenderModel} {
 				if in[i] != "-" {
@@ -104,6 +112,17 @@ R-13 | target.state in (stopped,running) | risk:1 | 宛先の状態
 			}
 			r := Eval(ri)
 			got := r.Format() + r.Oneline()
+			key := fmt.Sprintf("%s/%d", name, idx)
+			n++
+			if lib == "" {
+				want, ok := golden[key]
+				if !ok {
+					t.Errorf("golden に無い: %s", key)
+				} else if got != want {
+					t.Errorf("%s %q:\n got:  %q\n want: %q", name, in, got, want)
+				}
+				continue
+			}
 			var sh strings.Builder
 			sh.WriteString("source " + shq(lib) + "\nsource " + shq(filepath.Join(filepath.Dir(lib), "notify.sh")) + " 2>/dev/null || true\n")
 			sh.WriteString("RISK_RULES=" + shq(f) + "\n")
@@ -121,7 +140,16 @@ R-13 | target.state in (stopped,running) | risk:1 | 宛先の状態
 			if got != string(out) {
 				t.Errorf("%s %q:\n go:   %q\n bash: %q", name, in, got, out)
 			}
+			golden[key] = string(out)
 		}
+	}
+	if lib != "" {
+		b, _ := json.MarshalIndent(golden, "", "  ")
+		if err := os.WriteFile("testdata/risk_golden.json", append(b, '\n'), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	} else if n != len(golden) {
+		t.Errorf("golden の数が違う: %d / %d", n, len(golden))
 	}
 }
 

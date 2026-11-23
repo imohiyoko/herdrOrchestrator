@@ -30,7 +30,7 @@ bash setup/check.sh --project ~/work/app  # 確認するプロジェクトを指
 |---|---|
 | `cmd:*` | `bash` `jq` `sqlite3` `python3` `claude` `herdr`(macOS では `plutil`) |
 | `herdr:server` | `herdr workspace list` が応答するか |
-| `cmd:herdrctl` | Go の tb(`herdrctl`。`TB_HERDRCTL` があればそれ)があり、`herdrctl tb --features` に認可と呼び出し元の確かめ(`policy-ops` と `auth`)があるか。無い・古いと tb は bash で動く(warn。bash の実装は後で外す) |
+| `cmd:herdrctl` | Go の tb(`herdrctl`。`TB_HERDRCTL` があればそれ)があり、`herdrctl tb --features` に認可と呼び出し元の確かめ(`policy-ops` と `auth`)があるか。無い・古いと tb が動かない(missing) |
 | `hook:global` / `hook:<project>` | Claude Code の settings(`~/.claude/settings.json`、`<project>/.claude/settings{,.local}.json`)の `UserPromptSubmit` と `Stop` に `tb-hook` があるか。パスがこのリポジトリを指すか、重複・片方だけ・グローバルとの二重登録 |
 | `taskboard:db` | 共有の DB(`~/.local/state/herdr/tasks.db`、`TB_DB` があればそれ)の有無と版(情報のみ) |
 | `taskboard:legacy-db` | 旧形式の DB(checkout の `taskboard/data/tasks.db`)が残っていて、まだ取り込んでいない(warn) |

@@ -7,7 +7,8 @@ PM_TBL=$PM_ROOT/perms/commands.tbl
 
 # ---------- 表が全コマンドを覆う(コマンドや require_human を足したら、表に行を足さないと落ちる)----------
 pm_rows() { sed 's/#.*//' "$PM_TBL" | awk 'NF == 5'; }
-pm_cmds=$( { grep -hoE '^cmd_[a-z][a-z0-9-]*\(\)' "$PM_ROOT"/lib/*.sh | sed 's/^cmd_//; s/()$//'; printf '%s\n' help whoami touch role-context; } | sort -u)
+# コマンドは herdrctl tb --commands の 1 語目(<サービス>.<動詞> の形は除く)と、bin/tb が自分で答える help
+pm_cmds=$( { "${TB_HERDRCTL:-herdrctl}" tb --commands | tr ' ' '\n' | grep -v '\.' | grep .; printf '%s\n' help whoami touch role-context; } | sort -u)
 pm_words=$(pm_rows | awk '{split($1, a, "."); print a[1]}' | sort -u)
 eq "perms: every tb command has a row in commands.tbl" "$(comm -23 <(printf '%s\n' "$pm_cmds") <(printf '%s\n' "$pm_words"))" ""
 eq "perms: every command in commands.tbl exists" "$(comm -13 <(printf '%s\n' "$pm_cmds") <(printf '%s\n' "$pm_words"))" ""
@@ -23,13 +24,18 @@ eq "perms: the same operation has the same default and floor on every row" \
 eq "perms: service names come from the naming skill" \
   "$(pm_rows | awk '{split($2, a, ":"); print a[2]}' | sort -u | grep -vxE 'ticket|team|notify|message|digest|agent|alert|review|proposal|pr|gate|approval|recipe|conv|reminder|job|proxy|activity|handoff|config|policy')" ""
 
-# require_human の文面("tb <語...>")は、表の inner の行に当たる。$変数 は * とみなす(例: tb config $sub → config.*)
-pm_labels=$(grep -rhoE 'require_human "tb [^"]+"' "$PM_ROOT"/lib/*.sh | sed -E 's/^require_human "tb //; s/"$//' | sort -u)
+# requireHuman の文面("tb <語...>")は、表の inner の行に当たる。"tb config " + sub の + 変数 は * とみなす(例: config.*)
+pm_labels=$( (grep -rhoE --include='*.go' --exclude='*_test.go' '[rR]equireHuman\([^"]*"tb [^"]+"( *\+ *[A-Za-z_.]+)?' "$PM_ROOT/../internal" \
+  | sed -E 's/^[^"]*"tb //; s/" *\+ *[A-Za-z_.]+$/*/; s/"$//'
+  # 文面を引数で渡すもの(setSpawnFrozen(..., "tb " + cmd))
+  grep -rhoE --include='*.go' 'setSpawnFrozen\(args, w, stderr, "[01]", "[^"]+"' "$PM_ROOT/../internal" | sed -E 's/.*"([^"]+)"$/\1/'
+  # setApproval は "tb " + val。val は tb approval allow|ask の sub(approval.go の setApproval(db, sub, ...))と、呼び出しの "allow"
+  if grep -q 'setApproval(db, sub, ' "$PM_ROOT/../internal/tbcli/approval.go"; then printf '%s\n' allow ask; fi ) | grep -vx '\*' | sort -u)
 pm_inner=$(pm_rows | awk '$5 == "inner" {print $1}' | sort -u)
 pm_bad=""; pm_used=""
 while IFS= read -r l; do
   [[ -n $l ]] || continue
-  pat=${l// /.}; pat=$(sed -E 's/\$\{?[A-Za-z_][A-Za-z0-9_]*\}?/*/g' <<<"$pat")
+  pat=${l// /.}
   hit=0
   while IFS= read -r p; do
     # shellcheck disable=SC2053  # glob として比べる
@@ -40,9 +46,9 @@ done <<<"$pm_labels"
 eq "perms: every require_human label has an inner row" "$pm_bad" ""
 # 使われない inner の行を残さない。同じ操作名の別名の行(例: pr.queue.approve と pr-queue.approve)は、どれかが当たればよい
 pm_used_ops=$(printf '%s' "$pm_used" | sort -u | while IFS= read -r p; do pm_rows | awk -v p="$p" '$1 == p {print $2}'; done | sort -u)
-eq "perms: every inner operation is reached by a require_human label (bash)" \
+eq "perms: every inner operation is reached by a requireHuman label" \
   "$(pm_rows | awk '$5 == "inner" {print $2}' | sort -u | comm -23 - <(printf '%s\n' "$pm_used_ops"))" ""
-eq "perms: the bash table is the one herdrctl embeds (no copy)" "$(ls "$PM_ROOT/perms")" "$(printf 'commands.tbl\nembed.go\nops.tbl')"
+eq "perms: the table is the one herdrctl embeds (no copy)" "$(ls "$PM_ROOT/perms")" "$(printf 'commands.tbl\nembed.go\nops.tbl')"
 
 # ---------- 振る舞い(設定 policy。ADR 0007)----------
 export TB_DB=$TMP/perms.db TB_POLICY=$TMP/perms.policy
@@ -133,15 +139,16 @@ sqlite3 "$TB_DB" "DROP VIEW config; CREATE TABLE \"config gone\" (key TEXT, herd
 eq "perms: a config view over a missing table named \"config gone\" → deny" "$(rc $TB cancel "$t4")" "1"
 export TB_DB=$TMP/perms.db TB_POLICY=$TMP/perms.policy
 
-# 古い herdrctl(権限段階の門が無い)には渡さない
+# 古い herdrctl(権限段階の門が無い)には渡さない。herdrctl が無ければ止まる(hook 用の touch / role-context は何も出さず 0)
 mkdir -p "$TMP/perms-oldhc"; printf '#!/bin/sh\n[ "$2" = --commands ] && echo list && exit 0\nexit 2\n' >"$TMP/perms-oldhc/herdrctl"; chmod +x "$TMP/perms-oldhc/herdrctl"
-eq "perms: TB_IMPL=go refuses an herdrctl without the perms feature" "$(TB_IMPL=go TB_HERDRCTL=$TMP/perms-oldhc/herdrctl $TB list -p pm 2>&1 >/dev/null | grep -c '認可と呼び出し元(ADR 0007)を確かめられない')" "1"
-# TB_IMPL が未設定なら: 使える herdrctl があれば Go、無い・古いなら何も言わずに bash
+eq "perms: an herdrctl without the perms feature is refused" "$(TB_HERDRCTL=$TMP/perms-oldhc/herdrctl $TB list -p pm 2>&1 >/dev/null | grep -c '認可と呼び出し元(ADR 0007)を確かめられない')|$(TB_HERDRCTL=$TMP/perms-oldhc/herdrctl rc $TB list -p pm)" "1|1"
 mkdir -p "$TMP/perms-newhc"; printf '#!/bin/sh\ncase "$2" in --features) echo "perms policy policy-ops auth";; --commands) echo list;; list) echo from-go;; esac\nexit 0\n' >"$TMP/perms-newhc/herdrctl"; chmod +x "$TMP/perms-newhc/herdrctl"
-eq "impl: unset TB_IMPL with a usable herdrctl -> Go" "$(TB_IMPL= TB_HERDRCTL=$TMP/perms-newhc/herdrctl $TB list -p pm 2>/dev/null)" "from-go"
-eq "impl: unset TB_IMPL with an old herdrctl -> bash, no error" "$(TB_IMPL= TB_HERDRCTL=$TMP/perms-oldhc/herdrctl $TB list -p pm 2>&1 >/dev/null | wc -l | tr -d ' '; TB_IMPL= TB_HERDRCTL=$TMP/perms-oldhc/herdrctl rc $TB list -p pm)" "$(printf '0\n0')"
-eq "impl: unset TB_IMPL without herdrctl -> bash, no error" "$(TB_IMPL= TB_HERDRCTL=$TMP/no-such-herdrctl rc $TB list -p pm)" "0"
-eq "impl: TB_IMPL=bash ignores a usable herdrctl" "$(TB_IMPL=bash TB_HERDRCTL=$TMP/perms-newhc/herdrctl $TB list -p pm 2>/dev/null | grep -c from-go)" "0"
+eq "impl: tb hands the command to TB_HERDRCTL" "$(TB_HERDRCTL=$TMP/perms-newhc/herdrctl $TB list -p pm 2>/dev/null)" "from-go"
+eq "impl: without herdrctl → error 1 naming it" "$(TB_HERDRCTL=$TMP/no-such-herdrctl $TB list -p pm 2>&1 | grep -c 'herdrctl が見つかりません')|$(TB_HERDRCTL=$TMP/no-such-herdrctl rc $TB list -p pm)" "1|1"
+eq "impl: hooks stay quiet without herdrctl (touch / role-context → 0, no output)" "$(TB_HERDRCTL=$TMP/no-such-herdrctl $TB touch --event x 2>&1; echo "rc=$?"; TB_HERDRCTL=$TMP/no-such-herdrctl $TB role-context 2>&1; echo "rc=$?")" "$(printf 'rc=0\nrc=0')"
+mkdir -p "$TMP/perms-failhc"; printf '#!/bin/sh\ncase "$2" in --features) echo "policy-ops auth";; *) echo out; exit 3;; esac\n' >"$TMP/perms-failhc/herdrctl"; chmod +x "$TMP/perms-failhc/herdrctl"
+eq "impl: hooks stay 0 when herdrctl fails (touch quiet, role-context keeps stdout)" "$(TB_HERDRCTL=$TMP/perms-failhc/herdrctl $TB touch --event x; echo "rc=$?"; TB_HERDRCTL=$TMP/perms-failhc/herdrctl $TB role-context; echo "rc=$?")" "$(printf 'rc=0\nout\nrc=0')"
+eq "impl: help works without herdrctl" "$(TB_HERDRCTL=$TMP/no-such-herdrctl $TB help | head -c 3 | wc -c | tr -d ' ')" "3"
 
 unset TB_DB TB_POLICY TB_POLICY_A HERDR_PANE_ID FAKE_AGENTS
 eval "$_saved_env"

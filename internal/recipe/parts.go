@@ -28,7 +28,7 @@ type Part struct {
 // HumanOnly は人だけの部品か(リスク階層が human-only)。
 func (p Part) HumanOnly() bool { return p.Risk == "human-only" }
 
-// Table は部品の表(recipes.sh の PARTS_TABLE と同じ。表は TestTableMatchesBash が bash と比べる)。
+// Table は部品の表(ここだけに置く。DB や環境変数では増やせない)。
 const Table = `agent-status     | none           | low        | inside  | -                                       | target:agent                   | agent の状態(idle / working など)を読む
 wait-idle        | none           | low        | inside  | -                                       | target:agent timeout:int:1-600 | agent が idle か done になるまで待つ(秒の上限つき。過ぎたら失敗)
 task-show        | none           | low        | inside  | -                                       | task:task                      | チケットを読む(tb show と同じ出力)

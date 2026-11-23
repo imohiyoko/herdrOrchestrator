@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # tb — herdr agent 用の最小タスク表(SQLite 1 ファイル)
-# usage: tb <コマンド> ...  (tb help で一覧。各コマンドは taskboard/lib/*.sh の cmd_<名前>)
+# usage: tb <コマンド> ...  (tb help で一覧)
 #
+# 中身は Go の herdrctl(herdrctl tb <コマンド>。internal/tbcli)。これは checkout の場所・DB・セッションを渡して置き換わるだけ。
+# herdrctl は TB_HERDRCTL > PATH の herdrctl(setup が入れる)。
 # 環境変数: TB_DB(DB パス) / TB_CONFIG(projects.conf) / HERDR_BIN(herdr の実体。テストでは疑似 herdr)
 # 終了コード: 0 成功 / 1 エラー / 2 使い方の誤り
 #             report のみ: 10 宛先が使用中などで未送信(pending に残る) / 11 送信・状態取得に失敗(pending に残る)
 set -euo pipefail
 
-# PATH に symlink で置かれても本体の場所を lib/ の起点にする
+# PATH に symlink で置かれても本体の場所を起点にする
 _src=${BASH_SOURCE[0]}
 while [[ -L $_src ]]; do _d=$(cd "$(dirname "$_src")" && pwd); _src=$(readlink "$_src"); [[ $_src == /* ]] || _src=$_d/$_src; done
 TB_ROOT=$(cd "$(dirname "$_src")/.." && pwd)
@@ -15,84 +17,35 @@ unset _src _d
 # shellcheck source=../../lib/herdr-env.sh
 source "$TB_ROOT/../lib/herdr-env.sh"
 herdr_session_apply   # checkout の herdr-session ファイルでセッションを固定していれば、herdr にも渡す
-DB=${TB_DB:-$HERDR_DEFAULT_TB_DB}
-CONF=${TB_CONFIG:-$TB_ROOT/config/projects.conf}
-HERDR_BIN=${HERDR_BIN:-$HERDR_DEFAULT_BIN}
+HC=${TB_HERDRCTL:-herdrctl}
 
-# 機能ごとのファイルは taskboard/lib/。読み込む順に意味があるのは db → core → transport だけ。
-# 土台(ADR 0004)= db config core transport util identity perms kinds。依存の向きは taskboard/tools/deps.py --check で確かめる
-for _m in db config core transport util identity perms kinds tasks proxy activity comments digest schedwatch schedjobs send roles approvals risk alerts review agents models spawn limits shed handoff notify notifyrules compact slash prqueue gate recipes whoami dbimport conv reminders convlearn convstage; do
-  # shellcheck source=/dev/null
-  source "$TB_ROOT/lib/$_m.sh"
-done
-unset _m
+cmd=${1:-help}
+case $cmd in
+  help|-h|--help) cat "$TB_ROOT/lib/help.txt"; exit 0;;
+esac
 
-cmd_help() { cat "$TB_ROOT/lib/help.txt"; }
-
-# TB_HERDRCTL(既定は PATH の herdrctl)が持つコマンドなら、DB とセッションを渡して置き換わる(戻らない)。持たなければ何もしない
-tb_go() {
-  local hc=${TB_HERDRCTL:-herdrctl} have
-  command -v "$hc" >/dev/null || die "TB_IMPL=go ですが herdrctl が見つかりません: $hc"
-  have=$("$hc" tb --commands) || die "herdrctl tb --commands に失敗しました: $hc"
-  # 1 語目(サービスごと移したもの)か、<サービス>.<動詞>(.<動詞>)(サービスの一部の動詞だけ移したもの。tb agent ops など)で決める
-  [[ " $have " == *" $1 "* || ( $# -ge 2 && " $have " == *" $1.$2 "* ) || ( $# -ge 3 && " $have " == *" $1.$2.$3 "* ) ]] || return 0
-  # 権限段階の門(ADR 0006)を持たない古い herdrctl には渡さない(渡すと approvals の cmd: の行が効かない)
-  [[ " $("$hc" tb --features 2>/dev/null) " == *" policy-ops "* && " $("$hc" tb --features 2>/dev/null) " == *" auth "* ]] || die "herdrctl が古く、認可と呼び出し元(ADR 0007)を確かめられないため渡しません: $hc(herdrctl を入れ直すか TB_IMPL=bash)"
-  tb_go_exec "$hc" "$@"
-}
-tb_go_exec() {  # $1=herdrctl, 残り=tb のコマンドと引数
-  local hc=$1; shift
-  TB_ROOT=$TB_ROOT TB_DB=$DB TB_CONFIG_DIR=$CONFIG_DIR HERDR_SESSION=$(herdr_session_name) HERDR_SOCKET_PATH='' exec "$hc" tb "$@"   # TB_ROOT: checkout の taskboard(scheduler の場所など)。TB_CONFIG_DIR: checkout の設定ファイル(statuses.conf など)
-}
-# hook 用(touch): 何も出さず、herdrctl が無い・持たないときは bash のまま続ける(die しない)
-tb_go_quiet() {
-  local hc=${TB_HERDRCTL:-herdrctl} have
-  have=$("$hc" tb --commands 2>/dev/null) || return 0
-  [[ " $have " == *" $1 "* ]] || return 0
-  tb_go_exec "$hc" "$@" >/dev/null 2>&1
-}
-# hook 用(role-context): herdrctl がそのコマンドを持つか(無い・失敗なら 1。die しない)
-tb_go_has() {
-  local have; have=$("${TB_HERDRCTL:-herdrctl}" tb --commands 2>/dev/null) || return 1
-  [[ " $have " == *" $1 "* ]]
+# Go に渡す。TB_ROOT: checkout の taskboard(scheduler の場所・roles など)。TB_CONFIG_DIR: checkout の設定ファイル(statuses.conf など)
+go_exec() {
+  TB_ROOT=$TB_ROOT TB_DB=${TB_DB:-$HERDR_DEFAULT_TB_DB} TB_CONFIG_DIR=${TB_CONFIG_DIR:-$TB_ROOT/config} \
+    HERDR_SESSION=$(herdr_session_name) HERDR_SOCKET_PATH='' exec "$HC" tb "$@"
 }
 
-# TB_IMPL の決め方(ADR 0002 の手順 4): go / bash を明示すればそれに従う。未設定なら、使える herdrctl(認可と呼び出し元の
-# 確かめを持つ版)があれば go、無ければ何も言わずに bash(setup が herdrctl を入れるまでは、無い手元でも今までどおり動く)
-tb_impl_resolve() {
-  local hc f
-  case ${TB_IMPL:-} in
-    go) TB_IMPL_EFF=go;;
-    "") TB_IMPL_EFF=bash; hc=${TB_HERDRCTL:-herdrctl}
-        if command -v "$hc" >/dev/null 2>&1 && f=$("$hc" tb --features 2>/dev/null) && [[ " $f " == *" policy-ops "* && " $f " == *" auth "* ]]; then TB_IMPL_EFF=go; fi;;
-    *) TB_IMPL_EFF=bash;;
-  esac
-}
-
-main() {
-  local cmd=${1:-help}; shift || true
-  tb_impl_resolve
-  case $cmd in
-    help|-h|--help) cmd_help; return 0;;
-    whoami)   # 読み取りだけ。DB を開かない(壊れた DB でも今の向き先を確かめられる)。Go にはセッションの環境変数を書き換えずに渡す
-      if [[ $TB_IMPL_EFF == go ]] && tb_go_has whoami; then TB_ROOT=$TB_ROOT HERDR_ROOT=$HERDR_ROOT exec "${TB_HERDRCTL:-herdrctl}" tb whoami "$@"; fi
-      cmd_whoami "$@"; return $?;;
-    touch) [[ $TB_IMPL_EFF != go ]] || tb_go_quiet touch "$@"; cmd_touch "$@"; return 0;;   # 常に 0。ツールの有無チェックや init_db の失敗でも止めない
-    role-context) ( need_tools && init_db ) >/dev/null 2>&1 && session_setup_load || return 0   # hook 用。常に 0
-      if [[ $TB_IMPL_EFF == go ]] && tb_go_has role-context; then ( tb_go_exec "${TB_HERDRCTL:-herdrctl}" role-context "$@" ) 2>/dev/null || true
-      else cmd_role-context "$@" 2>/dev/null || true; fi
-      return 0;;
-  esac
-  # ADR 0002 の手順 3: Go なら(tb_impl_resolve)、Go に移し終えたコマンド(herdrctl tb --commands)は herdrctl に渡す
-  if [[ $TB_IMPL_EFF == go ]]; then tb_go "$cmd" "$@"; fi
-  # コマンド = lib/*.sh で定義された cmd_<名前>。一覧を別に持たない
-  [[ $cmd =~ ^[a-z][a-z-]*$ ]] && declare -F "cmd_$cmd" >/dev/null || usage "不明なコマンド: $cmd"
-  need_tools
-  auth_or_die   # 呼び出し元の確かめ(HERDR_PANE_ID を信じず、pane の中かを herdr とプロセスの親子で確かめる。lib/identity.sh。ADR 0007 段 1a)
-  init_db || die "DB を開けないか、スキーマの移行に失敗しました: $DB"
-  session_setup_load   # sql() のビューと見張り(lib/db.sh)
-  statuses_load        # チケットの状態と分類(設定 statuses。lib/core.sh)
-  perm_gate "$cmd" "$@"   # 認可(ADR 0006 / 0007。taskboard/perms/commands.tbl の既定と設定 policy の行。lib/perms.sh)
-  "cmd_$cmd" "$@"
-}
-main "$@"
+if ! command -v "$HC" >/dev/null 2>&1; then
+  case $cmd in touch|role-context) exit 0;; esac   # hook 用。何も出さず 0
+  echo "error: herdrctl が見つかりません: $HC(setup で入れるか、TB_HERDRCTL で場所を指定)" >&2
+  exit 1
+fi
+# 権限段階の門(ADR 0006)と呼び出し元の確かめ(ADR 0007)を持たない古い herdrctl には渡さない
+f=$("$HC" tb --features 2>/dev/null) || f=""
+if [[ " $f " != *" policy-ops "* || " $f " != *" auth "* ]]; then
+  case $cmd in touch|role-context) exit 0;; esac
+  echo "error: herdrctl が古く、認可と呼び出し元(ADR 0007)を確かめられないため渡しません: $HC(herdrctl を入れ直す)" >&2
+  exit 1
+fi
+case $cmd in
+  # 読み取りだけ。DB を開かない(壊れた DB でも今の向き先を確かめられる)。セッションの環境変数を書き換えずに渡す
+  whoami) TB_ROOT=$TB_ROOT HERDR_ROOT=$HERDR_ROOT exec "$HC" tb "$@";;
+  touch) ( go_exec "$@" ) >/dev/null 2>&1 || :; exit 0;;            # hook 用。常に 0、何も出さない
+  role-context) ( go_exec "$@" ) 2>/dev/null || :; exit 0;;         # hook 用。常に 0
+esac
+go_exec "$@"

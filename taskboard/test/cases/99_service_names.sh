@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # サービスの名前(tb agent <動詞> / tb recipe <動詞>)が古い名前と同じに動くこと、同じ操作名で認可されること。
-# TB_IMPL=go では、Go に移し終えた動詞だけが herdrctl に渡り、まだ bash の動詞は bash に残ること
+# 古い名前とサービスの名前が、同じ herdrctl のコマンドに届くこと
 _saved_env=$(declare -p TB_DB TB_POLICY HERDR_PANE_ID FAKE_AGENTS 2>/dev/null)
 export TB_DB=$TMP/svcnames.db TB_POLICY=$TMP/svcnames.policy
 : >"$TB_POLICY"

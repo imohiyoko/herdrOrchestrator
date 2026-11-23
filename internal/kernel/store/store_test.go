@@ -2,9 +2,7 @@ package store
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -83,6 +81,22 @@ func TestSessionViewsAndGuards(t *testing.T) {
 	if _, err := a.Exec(`DELETE FROM main.tasks WHERE id='T-b'`); err == nil {
 		t.Error("delete of other session's row was not stopped")
 	}
+	// 以下は taskboard/test/cases/89_session_guard.sh から(bash 版の sql() を直接試していたもの)
+	if _, err := a.Exec(`UPDATE main.tasks SET herdr_session='b' WHERE id='T-a'`); err == nil {
+		t.Error("moving a row to another session was not stopped")
+	}
+	if _, err := a.Exec(`UPDATE main.tasks SET title='ok' WHERE herdr_session='a'`); err != nil {
+		t.Errorf("update of own rows: %v", err)
+	}
+	if _, err := a.Exec(`UPDATE tasks SET title='y'`); err == nil || !strings.Contains(err.Error(), "it is a view") {
+		t.Errorf("write through the view: err = %v, want 'cannot modify ... view'", err)
+	}
+	if _, err := a.Exec(`INSERT INTO main.config (herdr_session, key, body, updated_by, updated_at) VALUES ('*', 'limits', 'x', 'h', 'x')`); err != nil {
+		t.Errorf("config '*' row: %v", err)
+	}
+	if _, err := a.Exec(`INSERT INTO main.config (herdr_session, key, body, updated_by, updated_at) VALUES ('b', 'limits', 'x', 'h', 'x')`); err == nil || !strings.Contains(err.Error(), "(config)") {
+		t.Errorf("config of another session: err = %v, want guard", err)
+	}
 }
 
 func TestFailedMigrationKeepsVersion(t *testing.T) {
@@ -130,37 +144,6 @@ func TestNoSchemaFilesCreatesNoDB(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Dir(p)); !os.IsNotExist(err) {
 		t.Errorf("directory was created: %v", err)
-	}
-}
-
-// bash の tb と Go の store が同じスキーマ(sqlite_master)を作ることを確かめる(契約テスト)。
-// TB_PARITY=1 のときだけ流す(CI の ubuntu。bash・sqlite3・jq が要る)。
-func TestSameSchemaAsBashTB(t *testing.T) {
-	if runtime.GOOS == "windows" || os.Getenv("TB_PARITY") != "1" {
-		t.Skip("TB_PARITY=1 のときだけ(bash の tb と突き合わせる)")
-	}
-	for _, c := range []string{"bash", "sqlite3", "jq"} {
-		if _, err := exec.LookPath(c); err != nil {
-			t.Skipf("%s が無い", c)
-		}
-	}
-	dir := t.TempDir()
-	bashDB, goDB := filepath.Join(dir, "bash.db"), filepath.Join(dir, "go.db")
-	cmd := exec.Command("bash", "../../../taskboard/bin/tb", "list")
-	cmd.Env = append(os.Environ(), "TB_DB="+bashDB, "HERDR_BIN=false", "HERDR_SESSION=s1", "HERDR_SOCKET_PATH=")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("tb list: %v\n%s", err, out)
-	}
-	open(t, goDB, "s1", nil).Close()
-	dump := func(p string) string {
-		out, err := exec.Command("sqlite3", p, "SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name; PRAGMA user_version;").Output()
-		if err != nil {
-			t.Fatalf("sqlite3 %s: %v", p, err)
-		}
-		return string(out)
-	}
-	if b, g := dump(bashDB), dump(goDB); b != g {
-		t.Errorf("schema differs\n--- bash\n%s\n--- go\n%s", b, g)
 	}
 }
 

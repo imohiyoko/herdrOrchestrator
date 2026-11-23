@@ -14,12 +14,15 @@ _ct() { local s=$1; s="${s#"${s%%[![:space:]]*}"}"; printf '%s' "${s%"${s##*[![:
 EXP_AGENT_OPS="new stop revive spawn compact model slash"   # run_op の case と spawn / compact / model-set / slash
 EXP_SETUP_STEPS="hooks scheduler webui launchctl"       # setup/CLAUDE.md の手順
 EXP_GATE_ACTIONS="merge approve execute"                # gate.sh の --action と execute
-SEND_KINDS_CODE=$(sed -n 's/^SEND_KINDS="\(.*\)"$/\1/p' "$TBROOT/lib/send.sh")
-EFFECTS_CODE=$(sed -n 's/^EFFECTS="\(.*\)"$/\1/p' "$TBROOT/lib/proxy.sh")
+# tb の中身は Go(internal/)。定義の行から読む
+SEND_KINDS_CODE=$(sed -n 's/^var SendKinds = \[\]string{\(.*\)}$/\1/p' "$REPO/internal/message/deliver.go" | tr -d '",')
+EFFECTS_CODE=$(sed -n 's/^var Effects = \[\]string{\(.*\)}$/\1/p' "$REPO/internal/proxy/proxy.go" | tr -d '",')
 
 # コードが承認判定に渡す操作名(動的な部分は *)
 _code_ops() {
-  { grep -hoE '(approval_of|set_approval (allow|ask)) +"[^"]+"' "$TBROOT"/lib/*.sh "$TBROOT"/bin/tb | sed -E 's/^[^"]*"//; s/"$//'
+  # Go の判定の呼び出し(.Of / .Authorize / setApproval)。"x:" + 変数 は x:*
+  { grep -rhoE --include='*.go' --exclude='*_test.go' '(\.Of|\.Authorize)\("[^"]+"( *\+ *[A-Za-z_.()]+)*|setApproval\([a-z]+, "(allow|ask)", "[^"]+"( *\+ *[A-Za-z_.()]+)*' "$REPO/internal" \
+      | sed -E 's/^[^"]*"(allow|ask)", //; s/^[^"]*"//; s/" *\+ *[A-Za-z_.()]+/*/g; s/"$//'
     grep -hoE 'tb approval (check )?[A-Za-z0-9:<>*._-]+' "$REPO"/roles/*.md "$REPO"/setup/examples/roles/*.md "$REPO"/setup/CLAUDE.md | sed -E 's/^tb approval (check )?//; s/<[^>]*>/*/g' \
       | grep -vxE 'list|approve|reject|allow|ask|help'   # tb approval のサブコマンドは操作名ではない
   } | sed -E 's/\$\{[^}]*\}|\$[A-Za-z0-9_]+/*/g' | grep -E '^[a-z][A-Za-z0-9._:*?-]*$' | sort -u   # 「tb approval <操作>」のような説明文の記号は除く
@@ -94,7 +97,7 @@ _cat_problems() {
           [[ " $SEND_KINDS_CODE " == *" $op "* ]] || echo "実在しない(send の kind): $p"
         else
           lit=${p%:\*}   # agent:new:* → agent:new
-          grep -rqF -- "$lit" "$TBROOT"/lib "$TBROOT"/bin "$REPO"/roles "$REPO"/setup/examples "$REPO"/setup/CLAUDE.md || echo "実在しない(lib・roles・setup に出てこない): $p"
+          grep -rqF -- "$lit" "$REPO"/internal "$TBROOT"/bin "$REPO"/roles "$REPO"/setup/examples "$REPO"/setup/CLAUDE.md || echo "実在しない(コード・roles・setup に出てこない): $p"
         fi;;
       unwired)   # 承認判定に渡っていないこと(渡るようになったら active にする)
         while IFS= read -r op; do
@@ -104,7 +107,7 @@ _cat_problems() {
         done <<<"$CODE_OPS"
         if [[ $p == proxy:* ]]; then [[ " $EFFECTS_CODE " == *" ${p#proxy:} "* ]] || echo "実在しない(proxy の effect): $p"; fi;;
       reserved)
-        if [[ $p == gate:* ]]; then grep -qF -- "${p#gate:}" "$TBROOT/lib/gate.sh" || echo "実在しない(gate の操作): $p"; fi;;
+        if [[ $p == gate:* ]]; then grep -rqF --include='*.go' -- "\"${p#gate:}\"" "$REPO/internal/gate" "$REPO/internal/tbcli/gate.go" || echo "実在しない(gate の操作): $p"; fi;;
     esac
   done
 }

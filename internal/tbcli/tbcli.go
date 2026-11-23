@@ -1,4 +1,4 @@
-// Package tbcli は tb のコマンドの Go 版(ADR 0002 の手順 3)。bin/tb が TB_IMPL=go のとき、移し終えたコマンドをここへ渡す。
+// Package tbcli は tb のコマンド(ADR 0002)。taskboard/bin/tb は checkout の場所・DB・セッションを渡してここへ置き換わる。
 // 出力・終了コード・エラーの文面は bash の tb と同じにする(taskboard/test の契約テストを両方で流す)。
 package tbcli
 

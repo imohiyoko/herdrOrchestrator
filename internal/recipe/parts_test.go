@@ -1,27 +1,10 @@
 package recipe
 
 import (
-	"bytes"
-	"os"
-	"regexp"
-	"strings"
 	"testing"
 )
 
-// bash の PARTS_TABLE(taskboard/lib/recipes.sh)と同じ表か。移行の間は両方に同じ表を置く。
-func TestTableMatchesBash(t *testing.T) {
-	b, err := os.ReadFile("../../taskboard/lib/recipes.sh")
-	if err != nil {
-		t.Skip("recipes.sh がありません")
-	}
-	b = bytes.ReplaceAll(b, []byte("\r\n"), []byte("\n")) // Windows のチェックアウトは CRLF
-	m := regexp.MustCompile(`(?s)PARTS_TABLE='\n(.*?)\n'`).FindSubmatch(b)
-	if m == nil {
-		t.Fatal("PARTS_TABLE が見つかりません")
-	}
-	if strings.TrimSpace(string(m[1])) != strings.TrimSpace(Table) {
-		t.Fatal("recipe.Table が recipes.sh の PARTS_TABLE と違います")
-	}
+func TestTableParses(t *testing.T) {
 	if _, err := ParseTable(Table); err != nil {
 		t.Fatal(err)
 	}

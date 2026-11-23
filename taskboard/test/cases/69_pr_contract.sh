@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
 # --- tb pr(queue / watch)の使い方・誤りの文面・終了コード(bash と Go で同じ。期待値は bash の出力から作った)。
-# ガード・公開前検査・run・scan の動きは 93_prqueue.sh、watch は 94_notify.sh(どちらも TB_IMPL=go で Go を通る)
+# ガード・公開前検査・run・scan の動きは 93_prqueue.sh、watch は 94_notify.sh
 _pc_saved=$(env | grep -E '^(TB_DB|HERDR_PANE_ID|FAKE_AGENTS|TB_REPOS_FILE|PR_QUEUE_[A-Z_]+)=' || true)
 unset HERDR_PANE_ID PR_QUEUE_CONF PR_QUEUE_GH PR_QUEUE_REPO_DIR PR_QUEUE_BODY_ROOT PR_QUEUE_GIT
 export TB_DB=$TMP/prcontract.db TB_REPOS_FILE=$TMP/pc-repos.md

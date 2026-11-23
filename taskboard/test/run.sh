@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tb のテスト。本物の herdr は一切呼ばない(HERDR_BIN を疑似 herdr に固定)。
-# 各機能のテストは cases/NN_*.sh(taskboard/lib/ のファイルにおおむね対応)。
+# 各機能のテストは cases/NN_*.sh(サービスごと)。tb の中身は Go の herdrctl(TB_HERDRCTL で場所を渡す)。
 # ケースは「ユニット」ごとに別のプロセス・別の一時ディレクトリ(DB・設定・疑似 herdr の記録)で流し、ユニット同士は並列に流す。
 #   ユニット = 同じシェルで番号順に流すケースの並び。前のケースが作った状態(変数・DB)を使うケースは groups に 1 行で書く。
 #   groups に無いケースは 1 つで 1 ユニット。どのユニットでも最後に 99_zzz_session_sweep.sh を流す(そのユニットが作った DB を見る)
@@ -23,7 +23,8 @@ SWEEP=99_zzz_session_sweep.sh
 if [[ ${1-} == --unit ]]; then
   shift
   TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
-  export TB_IMPL=${TB_IMPL:-bash}   # 既定(未設定なら使える herdrctl があれば Go)に左右されない。Go は CI の tb contract が TB_IMPL=go で流す
+  # tb の中身は herdrctl(TB_HERDRCTL > PATH)。無ければ流さない
+  command -v "${TB_HERDRCTL:-herdrctl}" >/dev/null || { echo "herdrctl がありません(go build -o <場所> ./cmd/herdrctl して TB_HERDRCTL で渡す)"; echo "pass=0 fail=1"; exit 1; }
   export HERDR_SESSION_FILE=$TMP/no-herdr-session   # 手元の checkout の herdr-session に左右されない
   export TB_DB=$TMP/tasks.db TB_CONFIG=$TMP/projects.conf TB_LIMITS=$TMP/limits-default.conf
   unset HERDR_SOCKET_PATH   # 実行する pane の socket に左右されない(HSESS は HERDR_SOCKET_PATH を HERDR_SESSION より優先する)

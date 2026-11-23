@@ -62,7 +62,7 @@ eq "parts: 環境変数 PARTS_TABLE では差し替えられない" \
    "$(PARTS_TABLE='config-set | none | low | inside | - | key:config-key | x' $TB parts | awk -F'\t' '$1 == "config-set" {print $3}')" "human-only"
 eq "parts: 環境変数 PART_RISK_LEVELS では順位を変えられない" "$(PART_RISK_LEVELS='human-only high mid low' $TB part-risk config-set agent-status)" "human-only"
 eq "parts: 部品の一覧は設定のキーに無い(DB で増やせない)" "$($TB config list 2>/dev/null | grep -cE '^(parts|recipes?)\b')" "0"
-eq "parts: 表は lib/recipes.sh の中だけにある" "$(grep -l 'PARTS_TABLE=' "$HERE"/../lib/*.sh | xargs -n1 basename)" "recipes.sh"
+eq "parts: 表は internal/recipe/parts.go の中だけにある" "$(grep -rlE --include='*.go' --exclude='*_test.go' '^const Table = ' "$HERE/../../internal" | xargs -n1 basename)" "parts.go"
 
 # --- 権限カタログとの整合: 部品の操作名はカタログの active な項目に当たり、部品のリスク階層はカタログより低くない
 _pcat=$HERE/../config/approvals-catalog.conf

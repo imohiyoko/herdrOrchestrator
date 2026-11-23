@@ -6,7 +6,8 @@ on:
 permissions:
   contents: read
 jobs:
-  # 組の一覧は tests/run-all.sh --list から作る(組を足しても、ここは書き換えない)
+  # 組の一覧は tests/run-all.sh --list から作る(組を足しても、ここは書き換えない)。
+  # taskboard の組は tb の中身(herdrctl)を作って流すので go.yml の tb ジョブが流す(ここでは除く)
   plan:
     runs-on: ubuntu-latest
     outputs:
@@ -16,7 +17,7 @@ jobs:
         with:
           persist-credentials: false
       - id: list
-        run: echo "suites=$(bash tests/run-all.sh --list)" >> "$GITHUB_OUTPUT"
+        run: echo "suites=$(bash tests/run-all.sh --list | jq -c 'map(select(startswith("taskboard-") | not))')" >> "$GITHUB_OUTPUT"
   test:
     needs: plan
     runs-on: ubuntu-latest
@@ -30,6 +31,11 @@ jobs:
         with:
           persist-credentials: false
       - run: sudo apt-get update && sudo apt-get install -y sqlite3 jq
+      # tb の中身(herdrctl)。tb を呼ぶテスト(misc の tests/test_instance.sh など)のために PATH に置く
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: mkdir -p "$RUNNER_TEMP/bin" && go build -o "$RUNNER_TEMP/bin/herdrctl" ./cmd/herdrctl && echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - run: bash tests/run-all.sh "${{ matrix.suite }}"
   # ブランチ保護で必須にする 1 つのチェック(matrix の名前が変わっても、これだけ見ればよい)
   test-all:
