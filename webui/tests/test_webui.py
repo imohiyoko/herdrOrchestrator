@@ -557,21 +557,24 @@ check("未ログインの /api/notifications は 401(リダイレクトせず中
       r[0] == 401 and "Location" not in r[1] and "質問" not in r[2] and "alpha" not in r[2], str(r[:2]))
 check("無効な Cookie の /api/notifications も 401", Client(port).get("/api/notifications", cookie="herdr_webui_session=nope")[0] == 401)
 check("POST /api/notifications は 405", cl.raw("POST", "/api/notifications", {"a": "b"})[0] == 405)
-# 送信の承認待ち(tb send が policy で ask になったもの)
+# 送信の承認待ち(tb send が policy で ask になったもの)。承認待ちは 1 種類(Q-<n>。requests 表。トリガーが outbox の pending から作る)
 _c = sqlite3.connect(env["WEBUI_TB_DB"])
 _c.executescript("INSERT INTO outbox (from_name,from_pane,from_session,target,kind,text,status,created_at) VALUES ('conductor','w0:p1','s','w1','task','調べて <b>x</b>','pending','t');"
                  "INSERT INTO outbox (from_name,from_pane,from_session,target,kind,text,status,created_at) VALUES ('conductor','w0:p1','s','w1','task','済','sent','t');")
 _c.commit(); _c.close()
 time.sleep(3.2)  # 通知のキャッシュ切れを待つ
 r = cl.get("/api/notifications")
-_it = [it for it in json.loads(r[2])["items"] if it["id"].startswith("o:")] if r[0] == 200 else []
-check("送信の承認待ちが通知に出る(承認コマンド付き)", [it["id"] for it in _it] == ["o:1"] and "tb approval approve O-1" in _it[0]["how"] and "tb approval approve" not in _it[0]["body"], str(_it))
+_it = [it for it in json.loads(r[2])["items"] if it["id"].startswith("q:") and "send:task w1" in it["title"]] if r[0] == 200 else []
+_qid = _it[0]["id"][2:] if len(_it) == 1 else "?"
+check("送信の承認待ちが Q-<n> で通知に出る(承認コマンド付き)", len(_it) == 1 and _it[0]["kind"] == "approval_pending" and _it[0]["title"].startswith(f"Q-{_qid} conductor")
+      and f"tb approval approve Q-{_qid}" in _it[0]["how"] and "--always" in _it[0]["how"] and f"tb approval reject Q-{_qid}" in _it[0]["how"]
+      and "tb approval approve" not in _it[0]["body"], str(_it))
 check("送信の承認待ちは /notifications でエスケープ", "&lt;b&gt;x&lt;/b&gt;" in cl.get("/notifications")[2])
 _nb = cl.get("/notifications")[2]
-check("通知は 3 行(何が / 中身 / 対応)で、対応に承認コマンドが出る", "対応: 送ってよければ手元で tb approval approve O-1" in _nb)
+check("通知は 3 行(何が / 中身 / 対応)で、対応に承認コマンドが出る", f"対応: 承認するなら手元で tb approval approve Q-{_qid}" in _nb)
 _ib = cl.get("/inbox")[2]
 check("報告・承認待ち: 承認待ちの節に、どこでどう承認するかが出る",
-      "承認待ち(どこで・どう承認するか)" in _ib and "tb approval approve O-1" in _ib.split("要対応の報告")[0] and "手元で tb …" in _ib)
+      "承認待ち(どこで・どう承認するか)" in _ib and f"tb approval approve Q-{_qid}" in _ib.split("要対応の報告")[0] and "手元で tb …" in _ib)
 check("報告・承認待ち: 質問には答え方(tb send --kind answer)と対応済みの付け方が出る", "--kind answer" in _ib and "tb resolve C-" in _ib)
 # outbox 一覧(読み取り専用。queued が 60 秒超なら強調)
 _old = (datetime.now(timezone.utc) - timedelta(seconds=300)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -1233,7 +1236,13 @@ _c.close()
 check("tb resolve で DB に記録(メモも)", _row == (1, "決めた <b>x</b>"), str(_row))
 time.sleep(3.2)  # needs_human のキャッシュ切れを待つ
 ib = cl.get("/inbox?resolved=done")[2]
-check("対応済みは要対応から消え、バッジが減る", '<span class="badge">2</span>' in ib and 'name=id value="1"' not in ib)
+_c = sqlite3.connect(env["WEBUI_TB_DB"])
+_nq = _c.execute("SELECT COUNT(*) FROM requests r WHERE herdr_session='default' AND ((r.source='cmd' AND r.status='pending') OR (r.source='outbox' AND EXISTS "
+                 "(SELECT 1 FROM outbox o WHERE o.id=r.source_id AND o.status='pending')) OR (r.source='agent_ops' AND EXISTS "
+                 "(SELECT 1 FROM agent_ops a WHERE a.id=r.source_id AND a.status='pending')))").fetchone()[0]
+_c.close()
+check("対応済みは要対応から消え、バッジが減る(バッジは報告・代行・blocked の agent と承認待ち Q-<n> の合計)",
+      f'<span class="badge">{2 + _nq}</span>' in ib and 'name=id value="1"' not in ib, f"承認待ち {_nq}")
 check("結果の表示と、メモのエスケープ", "対応済みにしました" in ib and "決めた &lt;b&gt;x&lt;/b&gt;" in cl.get("/tasks/T-1")[2])
 check("緊急通知からも消える", "c:1" not in [it["id"] for it in json.loads(cl.get("/api/notifications")[2])["items"]])
 r = cl.raw("POST", "/resolve", {**good, "back": "//evil.example/x", "csrf": cl.csrf("/inbox")})
@@ -1324,7 +1333,9 @@ lid = regdb("SELECT max(id) FROM agent_ops")[0][0]
 time.sleep(3.2)
 ag = cl.get("/agents")[2]
 check("承認待ちの操作に承認・却下のボタン", f'name=id value="{lid}"' in ag and 'value="approve"' in ag and 'value="reject"' in ag)
-check("緊急通知にも出る", f"l:{lid}" in [it["id"] for it in json.loads(cl.get("/api/notifications")[2])["items"]])
+_ql = [it for it in json.loads(cl.get("/api/notifications")[2])["items"] if it["kind"] == "approval_pending" and "agent:new helper" in it["title"]]
+check("緊急通知にも Q-<n> で出る(agent 一覧へのリンク)", len(_ql) == 1 and _ql[0]["href"].endswith("/agents#ops") and _ql[0]["title"].startswith("Q-"), str(_ql))
+check("承認待ちの操作の id は Q-<n>(元の L-<n> も添える)", _ql and f'{_ql[0]["title"].split()[0]}<br><span class=note>L-{lid}</span>' in ag)
 check("id が数字でなければ 400", cl.raw("POST", "/agent-op", {"op": "approve", "id": "1;x", "csrf": cl.csrf("/agents")})[0] == 400)
 r = cl.raw("POST", "/agent-op", {"op": "approve", "id": str(lid), "csrf": cl.csrf("/agents")})
 check("承認すると実行する", r[0] == 302 and r[1].get("Location") == "/agents?op=done" and "--label helper" in flog(), str(r[:2]))

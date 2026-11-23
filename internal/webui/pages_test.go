@@ -52,6 +52,10 @@ INSERT INTO outbox (from_name, from_pane, from_session, target, kind, task_id, t
 INSERT INTO agent_ops (op, target, args, requested_by, status, created_at, herdr_session) VALUES
  ('stop', 'beta', '{"why":"idle"}', 'alpha', 'pending', '2026-01-01T00:00:00Z', 'default'),
  ('stop', 'beta', '{}', 'alpha', 'done', '2026-01-01T00:00:00Z', 'default');
+INSERT INTO requests (herdr_session, source, requester, op, target, priority, detail, status, created_at) VALUES
+ ('default', 'cmd', 'alpha', 'cmd:ticket:cancel', 'T-p-1', 2, 'tb ticket cancel T-p-1 <理由>', 'pending', '2026-01-01T05:00:00Z'),
+ ('default', 'cmd', 'alpha', 'cmd:ticket:cancel', 'T-p-2', 1, 'decided', 'done', '2026-01-01T05:00:00Z'),
+ ('other', 'cmd', 'alpha', 'cmd:ticket:cancel', 'T-p-3', 1, 'other session', 'pending', '2026-01-01T05:00:00Z');
 INSERT INTO agent_activity (session_id, pane_id, last_prompt_at, last_stop_at, updated_at, herdr_session) VALUES
  ('sess-b', 'p2', '2026-01-01T00:00:00Z', NULL, '2026-01-01T00:00:00Z', 'default');
 INSERT INTO notify_events (type, ref, text, hash, sinks, created_at, herdr_session) VALUES
@@ -490,7 +494,7 @@ func TestPagesGolden(t *testing.T) {
 		kinds[it.Kind]++
 	}
 	wantKinds := map[string]int{"comment_question": 2, "comment_blocked": 1, "proxy_pending": 1, "alert_result": 1, "alert_approval": 1,
-		"send_pending": 1, "agent_op_pending": 2, "agent_blocked": 2, "agent_stalled": 1, "ticket_rule": 2, "reminder_due": 3, "job_failed": 2}
+		"approval_pending": 4, "agent_blocked": 2, "agent_stalled": 1, "ticket_rule": 2, "reminder_due": 3, "job_failed": 2}
 	for k, n := range wantKinds {
 		if kinds[k] != n {
 			t.Errorf("%s: %d 件(want %d)", k, kinds[k], n)
@@ -499,7 +503,7 @@ func TestPagesGolden(t *testing.T) {
 	if len(kinds) != len(wantKinds) {
 		t.Errorf("kinds: %v", kinds)
 	}
-	if n := q.data().badgeCount(); n != 6 { // 報告 3(question 2・blocked 1)+ 代行 1 + blocked の agent 2
+	if n := q.data().badgeCount(); n != 10 { // 報告 3(question 2・blocked 1)+ 代行 1 + blocked の agent 2 + 承認待ち 4(送信 1・agent の操作 2・コマンド 1)
 		t.Errorf("badge=%d", n)
 	}
 }

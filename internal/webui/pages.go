@@ -173,16 +173,23 @@ func ageLabel(sec int, ok bool) string {
 
 func (s *Server) pageOutbox(q *rq, _ pageCtx) (string, string) {
 	var rows [][]string
-	for _, o := range q.data().outboxRows() {
+	v := q.data()
+	for _, o := range v.outboxRows() {
 		st, age := E(o.status), E(ageLabel(o.age, o.hasAge))
 		if o.stuck {
 			st, age = `<span class=warn>`+st+`</span>`, `<span class=warn>`+age+`</span>`
 		}
-		rows = append(rows, []string{"O-" + o.id, st, E(o.fromName), E(o.target), E(o.kind), E(o.taskID), age, E(o.text)})
+		id := "O-" + o.id
+		if o.status == "pending" {
+			if qid := v.requestOf("outbox", o.id); qid != "" {
+				id += `<br><span class=note>` + qid + `</span>`
+			}
+		}
+		rows = append(rows, []string{id, st, E(o.fromName), E(o.target), E(o.kind), E(o.taskID), age, E(o.text)})
 	}
 	body := table([]string{"id", "状態", "from", "宛先", "種別", "タスク", "経過", "本文(先頭 80 文字)"}, rows)
 	body += fmt.Sprintf("<p class=note>新しい順に最大 100 件。queued のまま %d 秒を超えたものは赤で強調"+
-		"(scheduler の flush が止まっていないか見てください)。承認は手元で tb approval approve。この画面からは操作できません。</p>", queuedWarnSec)
+		"(scheduler の flush が止まっていないか見てください)。pending(承認待ち)の送信は Q-&lt;n&gt; として「報告・承認待ち」に出ます。承認は手元で tb approval approve Q-&lt;n&gt;。この画面からは操作できません。</p>", queuedWarnSec)
 	return "送信 (outbox)", body
 }
 

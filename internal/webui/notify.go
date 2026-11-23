@@ -57,9 +57,40 @@ func (v *sv) needsHuman() human {
 	return human{comments, proxies, blocked}
 }
 
+// badgeCount は「報告・承認待ち」の件数: 報告の question/blocked、代行依頼、blocked の agent、承認待ち(Q-<n>)。
 func (v *sv) badgeCount() int {
 	h := v.needsHuman()
-	return len(h.comments) + len(h.proxies) + len(h.blocked)
+	return len(h.comments) + len(h.proxies) + len(h.blocked) + len(v.pendingRequests(notifyMax))
+}
+
+// reqPendingSQL は承認待ち(Q-<n>)のうち、まだ決まっていないもの(tb approval list と同じ。internal/tbcli の reqPending)。
+// 送信と agent の操作は元の行(outbox・agent_ops)の状態が正、コマンドは requests の状態が正。
+const reqPendingSQL = `((r.source='cmd' AND r.status='pending')
+  OR (r.source='outbox' AND EXISTS (SELECT 1 FROM outbox o WHERE o.id=r.source_id AND o.status='pending'))
+  OR (r.source='agent_ops' AND EXISTS (SELECT 1 FROM agent_ops a WHERE a.id=r.source_id AND a.status='pending')))`
+
+// pendingRequests は承認待ち(Q-<n>)。優先度の高い順、同じなら古い順(tb approval list と同じ)。
+func (v *sv) pendingRequests(limit int) []row {
+	return v.q("SELECT r.id, r.source, r.source_id, r.requester, r.op, r.target, r.priority, r.detail, r.created_at FROM requests r WHERE "+
+		reqPendingSQL+" ORDER BY r.priority DESC, r.id LIMIT ?", limit)
+}
+
+// requestOf は元の行(outbox・agent_ops の id)の承認待ちの番号(Q-<n>)。無ければ ""。
+func (v *sv) requestOf(source string, id any) string {
+	if r := v.q("SELECT id FROM requests WHERE source=? AND source_id=?", source, id); len(r) > 0 {
+		return "Q-" + pyStr(r[0]["id"])
+	}
+	return ""
+}
+
+func priorityLabel(p any) string {
+	switch intOf(p) {
+	case 2:
+		return "high"
+	case 0:
+		return "low"
+	}
+	return "normal"
 }
 
 func (v *sv) agentOps(status string, limit int) []row {
@@ -303,19 +334,25 @@ func (v *sv) urgentItems() []item {
 				short("A-"+id+" "+pyStr(al["title"]), 80), short(or(al["body"], ""), 200),
 				"解析役を起動してよければ手元で tb alert-approve A-" + id + "(今後も自動なら --always)", "/notifications", Clean(or(al["last_seen"], ""))})
 		}
-		for _, o := range v.q("SELECT * FROM outbox WHERE status='pending' ORDER BY id DESC LIMIT 100") {
-			id := pyStr(o["id"])
-			add(item{"o:" + id, "send_pending", "送信の承認待ち",
-				short(fmt.Sprintf("O-%s %s → %s (%s)", id, pyStr(o["from_name"]), pyStr(o["target"]), pyStr(o["kind"])), 80), short(o["text"], 200),
-				"送ってよければ手元で tb approval approve O-" + id + "(今後も許可なら --always)、止めるなら tb approval reject O-" + id,
-				"/notifications", Clean(or(o["created_at"], ""))})
-		}
-		for _, o := range v.agentOps("pending", notifyMax) {
-			id := pyStr(o["id"])
-			add(item{"l:" + id, "agent_op_pending", "agent 操作の承認待ち",
-				short(fmt.Sprintf("L-%s %s → %s %s", id, pyStr(o["requested_by"]), pyStr(o["op"]), pyStr(o["target"])), 80), short(or(o["args"], ""), 200),
-				"Web UI の agent 一覧の「承認待ちの操作」で承認か却下(手元なら tb agent-approve L-" + id + " / tb agent-reject L-" + id + ")",
-				"/agents#ops", Clean(or(o["created_at"], ""))})
+		// 承認待ちは 1 種類(Q-<n>。送信・agent の操作・ask で止まったコマンド)。tb approval list と同じ順
+		for _, r := range v.pendingRequests(notifyMax) {
+			id := pyStr(r["id"])
+			label, how, href := "承認待ち", "承認するなら手元で tb approval approve Q-"+id, "/inbox#approvals"
+			if p := priorityLabel(r["priority"]); p != "normal" {
+				label += "(優先度 " + p + ")"
+			}
+			switch r["source"] {
+			case "outbox", "agent_ops":
+				how += "(今後も許可なら --always)"
+			}
+			how += "、却下は tb approval reject Q-" + id
+			if r["source"] == "agent_ops" {
+				how += "。agent の操作は Web UI の agent 一覧の「承認待ちの操作」からも決められる"
+				href = "/agents#ops"
+			}
+			add(item{"q:" + id, "approval_pending", label,
+				short(fmt.Sprintf("Q-%s %s → %s %s", id, pyStr(r["requester"]), pyStr(r["op"]), pyStr(r["target"])), 80), short(or(r["detail"], ""), 200),
+				how, href, Clean(or(r["created_at"], ""))})
 		}
 		agents, _ := getAgents(v.sess)
 		for _, a := range h.blocked {

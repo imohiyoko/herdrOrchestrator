@@ -38,7 +38,8 @@ func (s *Server) pageOverview(q *rq, c pageCtx) (string, string) {
 	body := errHTML(err) + "<h2>承認待ち</h2>" + table([]string{"種別", "件数", ""}, [][]string{
 		{"報告 (question/blocked)", strconv.Itoa(len(h.comments)), `<a href="/inbox">見る</a>`},
 		{"代行依頼 (pending-human)", strconv.Itoa(len(h.proxies)), `<a href="/inbox">見る</a>`},
-		{"blocked の agent", strconv.Itoa(len(h.blocked)), strings.Join(bl, ", ")}})
+		{"blocked の agent", strconv.Itoa(len(h.blocked)), strings.Join(bl, ", ")},
+		{"承認待ち (Q-&lt;n&gt;。送信・agent の操作・コマンド)", strconv.Itoa(len(v.pendingRequests(notifyMax))), `<a href="/inbox#approvals">見る</a>`}})
 	keys := make([]string, 0, len(counts))
 	for k := range counts {
 		keys = append(keys, k)

@@ -222,7 +222,11 @@ func (s *Server) pageAgents(q *rq, c pageCtx) (string, string) {
 		`<a href="/agent-new">新しい agent を作る</a></p>`
 	rows = nil
 	for _, o := range v.agentOps("pending", 50) {
-		rows = append(rows, []string{"L-" + pyStr(o["id"]), ev(o["requested_by"]), ev(o["op"]), ev(o["target"]), `<code>` + ev(o["args"]) + `</code>`,
+		id := "L-" + pyStr(o["id"])
+		if qid := v.requestOf("agent_ops", o["id"]); qid != "" {
+			id = qid + `<br><span class=note>` + id + `</span>`
+		}
+		rows = append(rows, []string{id, ev(o["requested_by"]), ev(o["op"]), ev(o["target"]), `<code>` + ev(o["args"]) + `</code>`,
 			ev(o["created_at"]), ifs(c.csrf != "", decideForm(c, o["id"]))})
 	}
 	body += `<h2 id="ops">承認待ちの操作(agent からの依頼)</h2>` + table([]string{"id", "依頼者", "操作", "対象", "内容", "時刻", ""}, rows)

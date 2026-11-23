@@ -751,3 +751,14 @@ func TestStatuses(t *testing.T) {
 		t.Error("不正な本文なら組み込みに戻る")
 	}
 }
+
+// 承認待ちの条件は tb approval list(internal/tbcli の reqPending)と同じ文にする(食い違うと画面と tb で件数がずれる)。
+func TestReqPendingSameAsTB(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "tbcli", "request.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "const reqPending = `"+reqPendingSQL+"`") {
+		t.Error("internal/tbcli/request.go の reqPending と reqPendingSQL が違う")
+	}
+}
