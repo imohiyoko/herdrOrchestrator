@@ -415,6 +415,7 @@ agent が何をしてよいかは、設定 `policy` の 1 表で決める(「設
   - `agent:flag` と `approve:*` は、allow の行で明示したときだけ許す
 - 人の端末からは判定にかけない(いつでも実行できる)。判定は agent の pane からの実行だけ
 - 呼び出し元は `HERDR_PANE_ID` の申告をそのまま信じず、本当にその pane の中から呼ばれたかを確かめる(herdr の `pane process-info` が返す pane の最初のプロセスが祖先にいるか、同じ端末か)。herdr の中で `HERDR_PANE_ID` を消しても、agent の pane を探して付け直す。確かめられなければ何もしない(`identity.unverified`、終了コード 3。hook の `touch` と `role-context` は確かめない)。同じ OS ユーザーの agent がわざと親子と端末を切る、tb を書き換える、といった回避は止められない(許容。ADR 0007)
+- scheduler(tick.sh)からの呼び出しは主体 `system:scheduler`(`TB_SYSTEM=scheduler`。herdr の外のときだけ)。policy に `system:scheduler <操作> <対象> = <効果>`(`system:*` も可)を書くと締められる。当たる行が無ければ人と同じく通る。主体 `*` の行は当たらない
 
 ```bash
 tb can <主体> <操作> <対象>            # 実際の判定と同じ順で、誰が誰に何をできるかを出す(読むだけ)
@@ -444,7 +445,7 @@ tb の全コマンドは表 `perms/commands.tbl` に行を持ち、呼び出し�
   - 主体は agent 名の glob か `@<役割>` か `*`。操作は `cmd:<サービス>:<動詞>` の glob。対象はコマンドでは `*`
   - 当たる行のうち、**いちばん厳しい効果**を採る(行の順番は関係ない)。当たる行が無ければ表の既定
   - 役割を確かめられない行は、締める向きにだけ効く。設定を読めないときは `deny`
-  - `human` と `system:<名前>` の行はまだ書けない(人は常に通る。system は ADR 0007 の段 1 から)
+  - `human` の行は書けない(人は常に通る)。`system:<名前>` の行は scheduler などの主体に効く(上の呼び出し元の項)
 - コマンドの中の操作(送信・停止など)も同じ `policy` の行で決める(上の「認可」)。delivery・protect・spawn の方針は、ADR 0007 の段 3 の続きで policy に移す
 - `ask-any` / `ask-human` の承認待ちはまだ無い。いまは agent からの実行を終了コード 20 で止める
 - コマンドを足したら表にも行を足す(足し忘れはテスト `test/cases/03_perms.sh` と `internal/kernel/perms` が落とす)

@@ -2,9 +2,9 @@
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
 # --- 呼び出し元の確かめ(ADR 0007 段 1a): HERDR_PANE_ID を信じず、pane の中から呼ばれたかを herdr とプロセスの親子・端末で確かめる
 # 疑似 herdr は、呼んだ tb の HERDR_PANE_ID の pane だけ、テストのプロセス(TB_TEST_SHELL_PID。tb の祖先)を pane の最初のプロセスとして返す
-_au_saved=$(declare -p TB_DB FAKE_AGENTS TB_CONFIG 2>/dev/null || true)   # 最後に元の宣言(未設定・export も)へ戻す
+_au_saved=$(declare -p TB_DB FAKE_AGENTS TB_CONFIG TB_SYSTEM 2>/dev/null || true)   # 最後に元の宣言(未設定・export も)へ戻す
 export TB_DB=$TMP/auth.db
-unset FAKE_AGENTS TB_CONFIG
+unset FAKE_AGENTS TB_CONFIG TB_SYSTEM
 au() { "$@" >/dev/null 2>"$TMP/auth.err"; echo $?; }   # 人だけのコマンド tb config unset で、人か agent か分からないかを見る
 eq "auth: outside herdr, no HERDR_PANE_ID → human" "$(au env -u HERDR_PANE_ID $TB config unset projects)" "0"
 eq "auth: a verified agent pane is the agent (human-only refused)" "$(HERDR_PANE_ID=wW:p1 au $TB config unset projects) $(grep -c "worker1" "$TMP/auth.err")" "1 1"
@@ -22,4 +22,17 @@ eq "auth: inside herdr, herdr cannot answer → unknown" "$(FAKE_LIST_FAIL=1 in_
 eq "auth: hooks (touch) are not stopped" "$(FAKE_SHELL_PID=999999 HERDR_PANE_ID=wW:p1 au $TB touch)" "0"
 eq "auth: inside herdr, an unreadable agent list → unknown (not a person's pane)" "$(FAKE_AGENTS='"x"' in_herdr env -u HERDR_PANE_ID "$TB" list >/dev/null 2>&1; echo $?)" "3"
 eq "auth: inside herdr, an empty agent list → human" "$(FAKE_AGENTS='[]' in_herdr env -u HERDR_PANE_ID "$TB" config unset projects >/dev/null 2>&1; echo $?)" "0"
-unset -f au in_herdr; unset TB_DB FAKE_AGENTS TB_CONFIG; eval "$_au_saved"; unset _au_saved
+# system:<名前>(scheduler など): herdr の外から TB_SYSTEM で名乗る。policy の system: の行だけを見る(当たらなければ人と同じ)
+_au_pol=${TB_POLICY-}; export TB_POLICY=$TMP/auth.policy; : >"$TB_POLICY"
+eq "auth: system without system: rows passes like a human (human-only command)" "$(TB_SYSTEM=scheduler au env -u HERDR_PANE_ID $TB config unset projects)" "0"
+printf 'system:scheduler cmd:config:unset * = deny\nsystem:* cmd:config:list * = ask-human\n* cmd:ticket:list * = deny\n' >"$TB_POLICY"
+eq "auth: a system: row restricts the scheduler (inner check)" "$(TB_SYSTEM=scheduler au env -u HERDR_PANE_ID $TB config unset projects) $(grep -c "system:scheduler" "$TMP/auth.err")" "1 1"
+eq "auth: a system:* glob row restricts at the entry" "$(TB_SYSTEM=scheduler au env -u HERDR_PANE_ID $TB config)" "20"
+eq "auth: rows for * (agents) do not apply to system" "$(TB_SYSTEM=scheduler au env -u HERDR_PANE_ID $TB list)" "0"
+eq "auth: without TB_SYSTEM the person's terminal is not restricted by system: rows" "$(au env -u HERDR_PANE_ID -u TB_SYSTEM $TB config unset projects)" "0"
+eq "auth: TB_SYSTEM inside an agent pane is ignored (still the agent)" "$(TB_SYSTEM=scheduler HERDR_PANE_ID=wW:p1 au $TB config unset projects) $(grep -c "worker1" "$TMP/auth.err")" "1 1"
+eq "auth: a malformed TB_SYSTEM → unknown (rc 3)" "$(TB_SYSTEM='Bad name' au env -u HERDR_PANE_ID $TB list)" "3"
+[[ -n $_au_pol ]] && export TB_POLICY=$_au_pol || unset TB_POLICY; unset _au_pol
+eq "auth: config set accepts system: rows and refuses a malformed one" "$(printf 'system:scheduler cmd:ticket:show * = deny\n' | env -u HERDR_PANE_ID -u TB_SYSTEM $TB config set policy >/dev/null 2>&1; echo $?) $(printf 'system:Bad cmd:ticket:show * = deny\n' | env -u HERDR_PANE_ID -u TB_SYSTEM $TB config set policy 2>&1 >/dev/null | grep -c 'system の主体は')" "0 1"
+env -u HERDR_PANE_ID $TB config unset policy >/dev/null 2>&1 || true
+unset -f au in_herdr; unset TB_DB FAKE_AGENTS TB_CONFIG TB_SYSTEM; eval "$_au_saved"; unset _au_saved

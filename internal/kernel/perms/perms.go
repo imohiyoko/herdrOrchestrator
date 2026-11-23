@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	tblperms "github.com/imohiyoko/herdrorchestrator/taskboard/perms"
@@ -160,6 +161,8 @@ type Judgement struct {
 	Human bool // 呼び出し元が人(行は見ない)
 }
 
+var reSystemSubject = regexp.MustCompile(`^system:[a-z*][a-z0-9*-]*$`)
+
 // Caller は Judge の主体に「今の呼び出し元」を渡す印(行の操作名が当たったときに初めて whoFn で引く)。
 const Caller = "@caller"
 
@@ -168,19 +171,28 @@ const Caller = "@caller"
 // readErr は設定を読めなかったとき(呼ぶ側が deny にする)。
 func Judge(db *sql.DB, session, who string, whoFn func() (string, error), op, target string, m Matcher) (j Judgement, readErr string, err error) {
 	j = Judgement{Best: -1, Unk: -1}
+	if who == "human" && identity.System != "" { // 人の端末の外から scheduler などが呼んだ
+		who = identity.System
+	}
 	if who == "human" {
 		j.Human = true
 		return j, "", nil
 	}
-	if db == nil {
+	sys := func() (Judgement, string, error) { // system: の行が当たらなければ人と同じ
+		if j.Best < 0 && (strings.HasPrefix(who, "system:") || (who == Caller && identity.System != "")) {
+			j.Human = true
+		}
 		return j, "", nil
+	}
+	if db == nil {
+		return sys()
 	}
 	body, _, found, re := config.LookupStrict(db, session, "policy")
 	if re != "" {
 		return j, re, nil
 	}
 	if !found {
-		return j, "", nil
+		return sys()
 	}
 	for _, line := range strings.Split(body, "\n") {
 		if i := strings.IndexByte(line, '#'); i >= 0 {
@@ -197,17 +209,33 @@ func Judge(db *sql.DB, session, who string, whoFn func() (string, error), op, ta
 			continue
 		}
 		s, o, tg := f[0], f[1], f[2]
-		if !util.Glob(o, op) || s == "human" || strings.HasPrefix(s, "system:") {
+		if !util.Glob(o, op) || s == "human" {
 			continue
 		}
 		if who == Caller {
 			if who, err = whoFn(); err != nil {
 				return j, "", err
 			}
+			if who == "human" && identity.System != "" {
+				who = identity.System
+			}
 			if who == "human" {
 				j.Human = true
 				return j, "", nil
 			}
+		}
+		if strings.HasPrefix(who, "system:") || strings.HasPrefix(s, "system:") { // system の主体には system: の行だけ。関係(~ / self)は持たない
+			if !strings.HasPrefix(who, "system:") || !strings.HasPrefix(s, "system:") || !util.Glob(s, who) ||
+				strings.HasPrefix(tg, "~") || tg == "self" {
+				continue
+			}
+			if target != "*" && m.targetMatch(db, session, "", target, tg) != 0 {
+				continue
+			}
+			if rk := Rank(v); rk > j.Best {
+				j.Best, j.BRule = rk, "policy: "+s+" "+o+" "+tg+" = "+v
+			}
+			continue
 		}
 		mm := 0
 		if who == "" {
@@ -232,7 +260,7 @@ func Judge(db *sql.DB, session, who string, whoFn func() (string, error), op, ta
 			j.Unk, j.URule = rk, "policy: "+s+" "+o+" "+tg+" = "+v+"(役割・関係を確かめられない)"
 		}
 	}
-	return j, "", nil
+	return sys()
 }
 
 // Resolve は既定(tier, rule)に判定の結果を重ねる(bash の perm_resolve)。floor が空なら下限なし。
@@ -271,6 +299,9 @@ func (t *Table) Tier(db *sql.DB, session, op, target string, who func() (string,
 		return "deny", "(設定 policy を読めない: " + readErr + ")", nil
 	}
 	if j.Human {
+		if identity.System != "" {
+			return "allow", "(" + identity.System + " に当たる system: の行が無いので、人と同じく通る)", nil
+		}
 		return tier, rule, nil
 	}
 	tier, rule = j.Resolve(tier, rule, r.Floor)
@@ -343,13 +374,16 @@ func SplitAct(a string) (op, target string) {
 
 // Authorize はコマンドの中の操作の効果と根拠(bash の perm_authorize)。主体の書き方は Judge と同じ(人なら allow)。
 func Authorize(db *sql.DB, session, who, op, target string, m Matcher) (tier, rule string) {
-	if who == "human" {
+	if who == "human" && identity.System == "" {
 		return "allow", "(人は常に通る)"
 	}
 	def := OpDefault(op)
 	j, readErr, _ := Judge(db, session, who, nil, op, target, m)
 	if readErr != "" {
 		return "deny", "(設定 policy を読めない: " + readErr + ")"
+	}
+	if j.Human { // system: の行が当たらなかった system も
+		return "allow", "(人は常に通る)"
 	}
 	return j.Resolve(def, "既定 "+def, "")
 }
@@ -378,12 +412,15 @@ func (d *Denied) Error() string { return d.Msg }
 // Enforce は効果で止めるか決める(bash の perm_enforce)。人の端末(pane なし・pane に agent がいない)なら常に通す。
 func Enforce(op, tier, rule, what string) error {
 	pane := identityPane()
-	if tier == "allow" || pane == "" {
+	if tier == "allow" || (pane == "" && identity.System == "") {
 		return nil
 	}
-	n, err := identity.PaneOwnerName(pane)
-	if err != nil {
-		return &Denied{1, what + ": herdr agent list に失敗したため、人の端末からの実行か確かめられません"}
+	n := identity.System // scheduler など(system: の行で締められた)
+	if pane != "" {
+		var err error
+		if n, err = identity.PaneOwnerName(pane); err != nil {
+			return &Denied{1, what + ": herdr agent list に失敗したため、人の端末からの実行か確かめられません"}
+		}
 	}
 	if n == "" {
 		return nil
@@ -399,7 +436,8 @@ func Enforce(op, tier, rule, what string) error {
 }
 
 // HumanPane は今の呼び出しが pane の外(人の端末)か。pane があっても agent がいなければ人だが、それは Enforce が herdr に聞いて決める。
-func HumanPane() bool { return identityPane() == "" }
+// system:<名前>(scheduler など)は pane の外でも policy の system: の行を見るので、ここでは人にしない。
+func HumanPane() bool { return identityPane() == "" && identity.System == "" }
 
 // Gate は入口(bin/tb の main と herdrctl の Run)。場所が entry の行だけ確かめる。表に無いコマンドは deny。
 // openDB は、設定 policy を読むときだけ呼ぶ(人の端末では DB を開かない)。
@@ -453,6 +491,9 @@ func check(op, what string, openDB func() (*sql.DB, string, func(), error)) erro
 		db, session = d, s
 	}
 	who := func() (string, error) {
+		if identityPane() == "" {
+			return "human", nil // Judge が system:<名前> に置き換える
+		}
 		n, err := identity.PaneOwnerName(identityPane())
 		if err != nil {
 			return "", &Denied{1, what + ": herdr agent list に失敗したため、呼び出し元を確かめられません"}
@@ -496,8 +537,10 @@ func ValidatePolicy(body string) string {
 			fmt.Fprintf(&bad, "%d 行目: 効果は allow / ask-any / ask-human / deny のどれかです: %s\n", i+1, v)
 			continue
 		}
-		if f[0] == "human" || strings.HasPrefix(f[0], "system:") {
-			fmt.Fprintf(&bad, "%d 行目: 主体 %s の行はまだ効きません(人は常に通る。system は ADR 0007 の段 1 から)\n", i+1, f[0])
+		if f[0] == "human" {
+			fmt.Fprintf(&bad, "%d 行目: 主体 human の行は効きません(人は常に通る)\n", i+1)
+		} else if strings.HasPrefix(f[0], "system:") && !reSystemSubject.MatchString(f[0]) {
+			fmt.Fprintf(&bad, "%d 行目: system の主体は system:<名前>(英小文字・数字・-、glob の *)です: %s\n", i+1, f[0])
 		}
 		if strings.HasPrefix(f[1], "cmd:") && f[2] != "*" {
 			fmt.Fprintf(&bad, "%d 行目: コマンドの操作(%s)の対象は * と書きます: %s\n", i+1, f[1], f[2])
