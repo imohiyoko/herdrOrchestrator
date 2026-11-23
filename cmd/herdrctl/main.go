@@ -24,7 +24,7 @@ commands:
   db migrate  tasks.db のスキーマを最新にする(tb と同じスキーマ。TB_DB で場所を変える)
   tb <cmd>     tb のコマンド(tb --commands で一覧)。ふつうは taskboard/bin/tb から呼ぶ
   sched show <job>  scheduler のジョブの実際に効く設定(JSON。scheduler/bin/show.sh が渡す)
-  webui serve  Web UI の Go 版(移行中。今はログインまわりと一部の画面だけ。ふつうは WEBUI_IMPL=go python3 webui/server.py から呼ぶ)
+  webui serve  Web UI の Go 版(移行中。ふつうは WEBUI_IMPL=go python3 webui/server.py から呼ぶ)
   help        この一覧を出す
 `
 

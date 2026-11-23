@@ -237,8 +237,9 @@ func (c pageCtx) one(name string) string {
 
 type pageFn func(s *Server, q *rq, c pageCtx) (string, string)
 
-// ported は Go に移し終えた画面。ほかはまだ Python 版にしかない(notPorted)。
-var ported = map[string]pageFn{
+// pages はパスごとの画面(/jobs/<job>・/docs/view・/tasks/<id>・/agents/<key> は server.go の route が別に扱う)。
+var pages = map[string]pageFn{
+	"/":              (*Server).pageOverview,
 	"/notifications": (*Server).pageNotifications,
 	"/outbox":        (*Server).pageOutbox,
 	"/sessions":      (*Server).pageSessions,
