@@ -83,7 +83,7 @@ web a TB_INSTANCE=training HERDR_SESSION=training
 eq "webui plist: 1 つだけ(ラベルは TB_INSTANCE によらず固定)" "$(ls "$TMP/genw-a" 2>/dev/null | tr '\n' ' ')" "local.herdr-webui.plist "
 eq "webui plist: label" "$(label_of "$TMP/genw-a/local.herdr-webui.plist")" "local.herdr-webui"
 eq "webui plist: セッションは渡さない(全セッションを返す)" "$(grep -c -e HERDR_SESSION -e TB_INSTANCE -e TB_UI_GATEWAY_PORT "$TMP/genw-a/local.herdr-webui.plist")" "0"
-eq "webui plist: server.py を動かす" "$(grep -c '/server.py<' "$TMP/genw-a/local.herdr-webui.plist")" "1"
+eq "webui plist: bin/serve.sh を動かす(中身は herdrctl webui serve)" "$(grep -c '/bin/serve.sh<' "$TMP/genw-a/local.herdr-webui.plist")" "1"
 web b TB_UI_GATEWAY_PORT=08811
 eq "webui plist: ポートの起点を渡す" "$(grep -A1 '<key>TB_UI_GATEWAY_PORT</key>' "$TMP/genw-b/local.herdr-webui.plist" | grep -c '<string>8811</string>')" "1"
 web c TB_UI_GATEWAY_PORT=80x; eq "webui plist: 数字でないポートは書かない" "$(ls "$TMP/genw-c" 2>/dev/null | wc -l | tr -d ' ')" "0"

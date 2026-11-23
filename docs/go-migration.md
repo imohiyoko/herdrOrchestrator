@@ -41,7 +41,7 @@
 | 6 | scheduler の判定・実行 | `herdrctl sched tick`(scheduler/bin/tick.sh が渡す)。曜日・時間帯・間隔・一時停止の判定、GATE・COMMAND(ロック・時間切れ)・PROMPT_CMD / PROMPT_RULES / PROMPT_VARS、herdr の状態の確かめと tb system-send での送信、ログの 1 行の形と理由の文言は tick.sh と同じ。時間切れはプロセスグループごと止める | 済み |
 | 6 | scheduler の起動器 | `herdrctl sched jobs` / `dispatch` / `gen-plist` / `install`(jobs.sh・dispatch.sh・gen-plist.sh・install.sh が lib.sh の `sched_go` から渡す)。dispatch はジョブごとに `herdrctl sched tick` を別のプロセスで並べる。plist の中身・ラベル・メッセージは元の bash 版と同じ | 済み |
 | 6 | scheduler の bash 版を消す | `scheduler/bin/*.sh` は環境をそろえて `herdrctl sched <サブコマンド>` に置き換わるだけ。herdrctl が無い・古いとエラー(exit 2)。展開($ や `)を含む定義のジョブは動かない(`setup/check.sh` の `job:<job>` が warn で知らせる) | 済み |
-| 6 | webui | webui | 移行中: 全画面と操作を Go に移し、既定を Go 版(`herdrctl webui serve`)にした(`WEBUI_IMPL=python` で Python 版)。`go test ./internal/webui` が同じ DB で Python 版と HTML を突き合わせ、`webui/tests` の境界テストは両方に流す。次は Python 版を消す |
+| 6 | webui | webui | 済み: 中身は Go(`herdrctl webui serve`。`webui/bin/serve.sh` から動かす)。Python 版(`webui/server.py`・`app/`)は消した。画面の HTML は `internal/webui/testdata` の期待値(消す前に Python 版と同じ出力だったもの)と比べ、`webui/tests` の境界テストは Go 版に流す |
 
 サービスのコマンドより先に、ほかのサービスが使う部品だけを移すことがある(例: approval の PR で `internal/agents` の役割の引き方と `internal/message` の届け方)。そのサービスのコマンドはまだ bash のままで、移す PR でこの部品を使う。
 

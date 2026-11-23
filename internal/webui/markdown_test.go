@@ -1,22 +1,14 @@
 package webui
 
 import (
-	"encoding/json"
 	"math/rand"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// renderMD が markdown.render(Python)と同じ HTML を返すか。手で書いた例と、記法の部品を混ぜた例で比べる。
-func TestRenderMDMatchesPython(t *testing.T) {
-	py, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skip("python3 が無い")
-	}
-	webui, _ := filepath.Abs("../../webui")
+// renderMD の HTML を期待値(testdata/markdown.json。Python 版 markdown.render と同じだったもの)と比べる。
+// 手で書いた例と、記法の部品を混ぜた例。
+func TestRenderMDGolden(t *testing.T) {
 	cases := []string{
 		"", "plain", "# h1", "###### h6", "####### h7", "#nospace", "  ## h2 ##  ", "# ", "#\tx #",
 		"**b** *i* ~~s~~ `c` __u__", "***x***", "**a**b**", "* not list*", "a*b*c", "*a*b", "_*x*_", "**\nx**",
@@ -44,25 +36,9 @@ func TestRenderMDMatchesPython(t *testing.T) {
 		}
 		cases = append(cases, b.String())
 	}
-	in, _ := json.Marshal(cases)
-	c := exec.Command(py, "-c", "import json,sys\nsys.path.insert(0, sys.argv[1])\nfrom app.markdown import render\n"+
-		"print(json.dumps([render(x) for x in json.load(sys.stdin)]))", webui)
-	c.Stdin = strings.NewReader(string(in))
-	c.Env = append(os.Environ(), "PYTHONUTF8=1", "PYTHONIOENCODING=utf-8")
-	out, err := c.Output()
-	if err != nil {
-		t.Fatal(err)
+	got := map[string]string{}
+	for _, x := range cases {
+		got[x] = renderMD(x)
 	}
-	var want []string
-	if err := json.Unmarshal(out, &want); err != nil {
-		t.Fatal(err)
-	}
-	bad := 0
-	for i, x := range cases {
-		if got := renderMD(x); got != want[i] {
-			if bad++; bad <= 20 {
-				t.Errorf("renderMD(%q)\n go: %q\n py: %q", x, got, want[i])
-			}
-		}
-	}
+	golden(t, "markdown", got)
 }

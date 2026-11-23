@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// registry は webui/app/registry.py と同じ: 待ち受けたポートの記録(STATE_DIR/gateway.json、ディレクトリ 700・ファイル 600)。
+// registry は待ち受けたポートの記録(STATE_DIR/gateway.json、ディレクトリ 700・ファイル 600)。
 
 const maxEntry = 4096
 

@@ -16,7 +16,7 @@ import (
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 )
 
-// 移し終えた画面が Python 版(webui/app/views.py)と同じ HTML を返すかを、同じ DB・同じ疑似 herdr・同じログで確かめる。
+// 画面の HTML を、決まった DB・疑似 herdr・ログで作って期待値と比べる。
 
 const fixtureSQL = `
 INSERT INTO config (herdr_session, key, body, updated_by, updated_at) VALUES
@@ -312,6 +312,9 @@ fi
 echo "unknown" >&2; exit 3
 `
 
+// fixtureNow は pagesFixture が「直近」の行に入れた時刻。
+var fixtureNow string
+
 func pagesFixture(t *testing.T) string {
 	if runtime.GOOS == "windows" {
 		t.Skip("疑似 herdr が sh")
@@ -323,13 +326,18 @@ func pagesFixture(t *testing.T) string {
 		t.Fatal(err)
 	}
 	schedDir, _ := filepath.Abs("../../scheduler")
-	if _, err := db.Exec(strings.ReplaceAll(fixtureSQL, "@SCHED@", schedDir)); err != nil {
+	// 「直近」の行は本当の今の時刻で入れる(SQL の 'now' で絞る読み取りがあるため)。期待値ではこの文字列を @NOW@ に置き換える
+	fixtureNow = time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	nowSQL := func(s string) string {
+		return strings.ReplaceAll(s, "strftime('%Y-%m-%dT%H:%M:%SZ', 'now')", "'"+fixtureNow+"'")
+	}
+	if _, err := db.Exec(nowSQL(strings.ReplaceAll(fixtureSQL, "@SCHED@", schedDir))); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(strings.ReplaceAll(docsFixtureSQL, "@DOCS@", dir)); err != nil {
+	if _, err := db.Exec(nowSQL(strings.ReplaceAll(docsFixtureSQL, "@DOCS@", dir))); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(agentsFixtureSQL); err != nil {
+	if _, err := db.Exec(nowSQL(agentsFixtureSQL)); err != nil {
 		t.Fatal(err)
 	}
 	for name, body := range docsFiles {
@@ -365,7 +373,7 @@ not json
 	webui, _ := filepath.Abs("../../webui")
 	for k, v := range map[string]string{
 		"WEBUI_TB_DB": dbp, "HERDR_BIN": herdr, "WEBUI_SCHED_LOGS": logs, "HERDR_SESSION": "default",
-		"HERDR_SESSION_FILE": filepath.Join(dir, "none"), "HERDR_SOCKET_PATH": "", "HERDR_SESSION_FROM_FILE": "",
+		"HERDR_SESSION_FILE": filepath.Join(dir, "none"), "XDG_CONFIG_HOME": "", "HERDR_SOCKET_PATH": "", "HERDR_SESSION_FROM_FILE": "",
 		"TB_STATUSES": "", "TB_CONFIG_DIR": filepath.Join(dir, "config"), "WEBUI_ROOT": webui,
 		"XDG_STATE_HOME": filepath.Join(dir, "state"), "WEBUI_POLICY": "", "TB_POLICY": "", "TB_ROLES": filepath.Join(dir, "roles"),
 		"WEBUI_SCHED_JOBS": filepath.Join(dir, "jobs"), "WEBUI_SCHED_SETTINGS": filepath.Join(dir, "settings"), "SCHED_FILE_FALLBACK": "",
@@ -381,42 +389,10 @@ not json
 	return webui
 }
 
-const pyRender = `
-import json, sys
-sys.path.insert(0, sys.argv[1])
-from urllib.parse import parse_qs
-from datetime import datetime, timezone
-from app import views, reqctx, data, jobview
-FIXED = datetime(2026, 3, 4, 12, 34, 56, tzinfo=timezone.utc)
-views.next_runs = lambda info: jobview.next_runs(info, now=FIXED)
-class FixedDT(datetime):
-    @classmethod
-    def now(cls, tz=None):
-        return FIXED.astimezone(tz) if tz else FIXED.astimezone().replace(tzinfo=None)
-views.datetime = FixedDT
-out = {}
-with reqctx.use("default", "default"), data.request_db():
-    for u in json.loads(sys.argv[2]):
-        p, _, query = u.partition("?")
-        ctx = {"csrf": "X"}
-        if p.startswith("/jobs/"):
-            ctx["norefresh"] = True
-            title, body = views.page_job(p[6:], "X", saved=parse_qs(query).get("saved") == ["1"])
-        else:
-            r = views.route(p, parse_qs(query), ctx)
-            if r is None:
-                out[u] = None
-                continue
-            title, body = r
-        out[u] = [title, body, views.page(title, body, p, data.badge_count(), "<LOGOUT>", refresh=not ctx.get("norefresh"), scripts=ctx.get("scripts", ()))]
-    out["api"] = json.dumps({"items": data.urgent_items(), "poll_sec": data.NOTIFY_POLL_SEC}, ensure_ascii=False)
-print(json.dumps(out))
-`
-
-func TestPagesMatchPython(t *testing.T) {
-	py, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skip("python3 が無い")
+// 画面ごとの HTML を期待値(testdata/pages.json。Python 版と同じ出力だったもの)と比べる。
+func TestPagesGolden(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("fixture が /etc/hostname への symlink を使う(期待値は Linux で作った)")
 	}
 	webui := pagesFixture(t)
 	paths := []string{"/notifications", "/outbox", "/sessions", "/ledger",
@@ -461,19 +437,12 @@ func TestPagesMatchPython(t *testing.T) {
 	nowFn = func() time.Time { return time.Date(2026, 3, 4, 12, 34, 56, 0, time.UTC) }
 	defer func() { nowFn = time.Now }()
 	t.Setenv("SCHED_HERDRCTL", buildHerdrctl(t))
-	pj, _ := json.Marshal(paths)
-	c := exec.Command(py, "-c", pyRender, webui, string(pj))
-	raw, err := c.Output()
-	if err != nil {
-		t.Fatalf("python: %v", err)
-	}
-	var want map[string]any
-	if err := json.Unmarshal(raw, &want); err != nil {
-		t.Fatal(err)
-	}
+	hb, _ := os.ReadFile("/etc/hostname")
+	hostname := pyDecodeUTF8(hb)
 	s := &Server{Log: os.Stderr}
 	q := &rq{name: "default"}
 	defer func() { q.v.close() }() // q.v は途中で作られるので、閉じるときの値を見る
+	out := map[string]any{}
 	for _, u := range paths {
 		p, query, _ := strings.Cut(u, "?")
 		opts := &pageOpts{}
@@ -484,34 +453,37 @@ func TestPagesMatchPython(t *testing.T) {
 			title, body = s.pageJob(q, name, "X", "", len(saved) == 1 && saved[0] == "1")
 		} else if tt, bb, found, handled := s.routeDetail(q, p, query, "X", opts); handled {
 			if !found {
-				if want[u] != nil {
-					t.Errorf("%s: Go は 404、Python は %v", u, want[u])
-				}
+				out[u] = nil
 				continue
 			}
 			title, body = tt, bb
 		} else {
 			title, body = pages[p](s, q, pageCtx{csrf: "X", opts: opts, qs: pyParseQS(query)})
 		}
-		w, ok := want[u].([]any)
-		if !ok {
-			t.Errorf("%s: Python は 404", u)
-			continue
-		}
-		if title != w[0] {
-			t.Errorf("%s title: %q != %q", p, title, w[0])
-		}
-		if body != w[1] {
-			t.Errorf("%s body differs:\n%s", u, firstDiff(body, w[1].(string)))
-		}
-		if full := s.page(q, title, body, p, "<LOGOUT>", *opts); full != w[2] {
-			t.Errorf("%s page differs:\n%s", u, firstDiff(full, w[2].(string)))
+		// 枠(ナビ・CSS)は毎回同じなので、本文と CSS を置き換えて持つ
+		full := s.page(q, title, body, p, "<LOGOUT>", *opts)
+		full = strings.Replace(strings.Replace(full, body, "@BODY@", 1), s.css(), "@CSS@", 1)
+		// fixture の symlink の先(/etc/hostname)の中身は機械ごとに違う
+		body = strings.ReplaceAll(body, "<pre>"+E(hostname)+"</pre>", "<pre>@HOSTNAME@</pre>")
+		out[u] = []string{title, body, full}
+	}
+	out["api"] = notificationsJSON(q.data().urgentItems())
+	out["css"] = s.css()
+	// 一時ディレクトリと checkout の場所は実行ごとに違うので置き換える
+	raw, _ := json.Marshal(out)
+	norm := string(raw)
+	realRepo, _ := filepath.EvalSymlinks(filepath.Dir(webui))
+	realHome, _ := filepath.EvalSymlinks(home) // macOS の /var → /private/var
+	for _, x := range [][2]string{{realRepo, "@REPO@"}, {filepath.Dir(webui), "@REPO@"}, {realHome, "@DIR@"}, {home, "@DIR@"}, {fixtureNow, "@NOW@"}} {
+		for _, f := range []func(string) string{func(s string) string { return s }, url.QueryEscape, url.PathEscape} {
+			norm = strings.ReplaceAll(norm, f(x[0]), x[1])
 		}
 	}
-	if got := notificationsJSON(q.data().urgentItems()); got != want["api"] {
-		t.Errorf("api differs:\n go: %s\n py: %s", got, want["api"])
-	}
-	// 中身の確かめ(Python と同じであるだけでなく、思ったものが出ているか)
+	norm = strings.ReplaceAll(norm, strings.Repeat("あ", 1000), "@あx1000@") // 大きいファイル(big.txt)の中身
+	var got map[string]any
+	json.Unmarshal([]byte(norm), &got)
+	golden(t, "pages", got)
+	// 中身の確かめ(期待値と同じであるだけでなく、思ったものが出ているか)
 	items := q.data().urgentItems()
 	kinds := map[string]int{}
 	for _, it := range items {
@@ -640,10 +612,10 @@ var (
 	herdrctlErr  error
 )
 
-// buildHerdrctl は Python 版の定期実行の画面が呼ぶ herdrctl(scheduler/bin/show.sh が渡す先)を作る。
 // startEnv はテストが環境変数を変える前の環境。
 var startEnv = os.Environ()
 
+// buildHerdrctl はテストが使う herdrctl(定期実行の画面の SCHED_HERDRCTL、書き込みの tb)を作る。
 func buildHerdrctl(t *testing.T) string {
 	herdrctlOnce.Do(func() {
 		dir, err := os.MkdirTemp("", "herdrctl-")
@@ -672,7 +644,7 @@ func firstDiff(got, want string) string {
 		i++
 	}
 	a := max(0, i-200)
-	return " go: …" + got[a:min(len(got), i+300)] + "\n py: …" + want[a:min(len(want), i+300)]
+	return "  got: …" + got[a:min(len(got), i+300)] + "\n want: …" + want[a:min(len(want), i+300)]
 }
 
 // 定期実行のスケジュールの保存・戻す(書き込みは本物の tb job。herdrctl を作って使う)。

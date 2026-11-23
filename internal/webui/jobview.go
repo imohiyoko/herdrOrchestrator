@@ -11,7 +11,7 @@ import (
 	"unicode/utf8"
 )
 
-// jobview.go は webui/app/jobview.py: 定期実行ジョブの「何が・誰に・いつ・承認は」を読み取りで見せる。
+// jobview.go は定期実行ジョブの「何が・誰に・いつ・承認は」を読み取りで見せる。
 // conf は実行しない(PROMPT などの記述を、展開せずにそのまま読む)。本文は表示前にトークンらしい文字列をマスクする。
 
 const (

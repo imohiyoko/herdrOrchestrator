@@ -314,7 +314,7 @@ for job in $db_jobs $(for conf in "$JOBS"/*.conf; do [ -f "$conf" ] && basename 
 done
 
 # --- 6. Web UI --------------------------------------------------------------------
-# ログイン情報と待ち受けたポートは checkout をまたいでホームの 1 か所(webui/app/config.py の STATE_DIR と同じ)
+# ログイン情報と待ち受けたポートは checkout をまたいでホームの 1 か所(internal/webui の StateDir と同じ)
 WSTATE="${XDG_STATE_HOME:-$HOME/.local/state}/herdr-webui"
 if [ -f "$WSTATE/auth.json" ]; then
   mode=$(perm_of "$WSTATE/auth.json")
@@ -339,6 +339,11 @@ if is_mac; then
     report warn "webui:old-plist" "旧版の plist が残っている: $l(Web UI は 1 プロセスになった)" \
       "launchctl bootout gui/\$(id -u)/$l && rm $f(人の承認が要る)"
   done
+  # Python 版(webui/server.py)を動かす plist は、server.py を消したので起動できない
+  if grep -q '/server\.py<' "$LA_DIR/local.herdr-webui.plist" 2>/dev/null; then
+    report warn "webui:old-plist" "登録済みの plist が消した Python 版(webui/server.py)を動かす: local.herdr-webui" \
+      "bash webui/bin/gen-plist.sh で作り直し、launchctl bootout gui/\$(id -u)/local.herdr-webui のあと cp して bootstrap し直す(人の承認が要る)"
+  fi
 fi
 
 # --- 7. プリセット ---------------------------------------------------------------

@@ -18,7 +18,7 @@ import (
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 )
 
-// data.go は webui/app/data.py の Go 版(tasks.db とログの読み取り。読み取り専用)。
+// data.go は tasks.db とログの読み取り(読み取り専用)。
 
 // row は 1 行(列名 → 値。値は int64 / float64 / string / []byte / nil)。
 type row map[string]any

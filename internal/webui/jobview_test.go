@@ -1,21 +1,12 @@
 package webui
 
 import (
-	"encoding/json"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
 	"testing"
 )
 
-// mask・shell の値の読み取り・tb のサブコマンドの推定が、Python 版(webui/app/jobview.py)と同じ結果を返すか。
-func TestJobviewMatchesPython(t *testing.T) {
-	py, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skip("python3 が無い")
-	}
-	webui, _ := filepath.Abs("../../webui")
+// mask・shell の値の読み取り・tb のサブコマンドの推定を、期待値(testdata/jobview.json。Python 版 jobview.py と同じだったもの)と比べる。
+// shell の値の終わりの位置は文字数で持つ。
+func TestJobviewGolden(t *testing.T) {
 	texts := []string{
 		"", "plain", "ghp_abcdefghijklmnopqrstuvwxyz", "xghp_abcdefghijklmnopqrstuvwxyz", "あghp_abcdefghijklmnopqrstuvwxyz",
 		"ghp_abcdefghijklmnopqrstuvwxyzあ", "ghp_abcdefghijklmnopqrstuvwxyz-", "ghp_short", "github_pat_ABCDEFGHIJ_abcdefghij_xyz",
@@ -31,57 +22,22 @@ func TestJobviewMatchesPython(t *testing.T) {
 	var cmds = []string{"tb notify flush", "tb  message   flush", "tb flush", "xtb digest", "あtb digest", "tb digestx", "tb pr-watch",
 		"tb pr  watch", "tb pr-queue scan && tb pr queue run", "tb review-pack", "tb system-send x", "tb　pending", "tb compact-check;tb pending",
 		"tb notify flushあ", "(tb digest)"}
-	in, _ := json.Marshal(map[string]any{"texts": texts, "cmds": cmds})
-	script := `
-import json, sys
-sys.path.insert(0, sys.argv[1])
-from app import jobview
-d = json.load(sys.stdin)
-out = {"mask": [list(jobview.mask(x)) for x in d["texts"]],
-       "value": [list(jobview._value(x, 0)) for x in d["texts"]],
-       "cmd": [jobview.command_summary(x) for x in d["cmds"]]}
-print(json.dumps(out))
-`
-	c := exec.Command(py, "-c", script, webui)
-	c.Stdin = strings.NewReader(string(in))
-	c.Env = append(os.Environ(), "PYTHONUTF8=1", "PYTHONIOENCODING=utf-8") // Windows でも標準入出力を UTF-8 に
-	raw, err := c.Output()
-	if err != nil {
-		t.Fatalf("python: %v", err)
-	}
-	var want struct {
-		Mask  [][]any      `json:"mask"`
-		Value [][]any      `json:"value"`
-		Cmd   [][][]string `json:"cmd"`
-	}
-	if err := json.Unmarshal(raw, &want); err != nil {
-		t.Fatal(err)
-	}
-	for i, x := range texts {
+	got := map[string]any{}
+	for _, x := range texts {
 		m, n := mask(x)
-		if m != want.Mask[i][0] || float64(n) != want.Mask[i][1] {
-			t.Errorf("mask(%q) = %q, %d; Python %q, %v", x, m, n, want.Mask[i][0], want.Mask[i][1])
-		}
 		v, inexact, end := shValue(x, 0)
-		// Python の位置は文字数、Go はバイト数なので文字数にそろえる
 		if end > len(x) {
 			end = len(x)
 		}
-		if v != want.Value[i][0] || inexact != want.Value[i][1] || float64(len([]rune(x[:end]))) != want.Value[i][2] {
-			t.Errorf("shValue(%q) = %q, %v, %d; Python %v", x, v, inexact, end, want.Value[i])
-		}
+		got["mask "+x] = []any{m, n}
+		got["value "+x] = []any{v, inexact, len([]rune(x[:end]))}
 	}
-	for i, x := range cmds {
-		got := commandSummary(x)
-		var labels, wl []string
-		for _, g := range got {
+	for _, x := range cmds {
+		var labels []string
+		for _, g := range commandSummary(x) {
 			labels = append(labels, g[0])
 		}
-		for _, w := range want.Cmd[i] {
-			wl = append(wl, w[0])
-		}
-		if strings.Join(labels, ",") != strings.Join(wl, ",") {
-			t.Errorf("commandSummary(%q) = %v; Python %v", x, labels, wl)
-		}
+		got["cmd "+x] = labels
 	}
+	golden(t, "jobview", got)
 }

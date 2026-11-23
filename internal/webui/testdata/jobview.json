@@ -1,0 +1,473 @@
+{
+ "cmd (tb digest)": [
+  "tb digest"
+ ],
+ "cmd tb  message   flush": [
+  "tb message flush"
+ ],
+ "cmd tb compact-check;tb pending": [
+  "tb compact-check",
+  "tb pending"
+ ],
+ "cmd tb digestx": null,
+ "cmd tb flush": [
+  "tb message flush"
+ ],
+ "cmd tb notify flush": [
+  "tb notify flush"
+ ],
+ "cmd tb notify flushあ": null,
+ "cmd tb pr  watch": [
+  "tb pr watch"
+ ],
+ "cmd tb pr-queue scan && tb pr queue run": [
+  "tb pr queue scan",
+  "tb pr queue run"
+ ],
+ "cmd tb pr-watch": [
+  "tb pr watch"
+ ],
+ "cmd tb review-pack": [
+  "tb review pack"
+ ],
+ "cmd tb system-send x": [
+  "tb system-send"
+ ],
+ "cmd tb　pending": [
+  "tb pending"
+ ],
+ "cmd xtb digest": null,
+ "cmd あtb digest": null,
+ "mask ": [
+  "",
+  0
+ ],
+ "mask   ": [
+  "  ",
+  0
+ ],
+ "mask \"$HOME\"": [
+  "\"$HOME\"",
+  0
+ ],
+ "mask \"a\"b": [
+  "\"a\"b",
+  0
+ ],
+ "mask \"a\\\"b\" # c": [
+  "\"a\\\"b\" # c",
+  0
+ ],
+ "mask \"open\\": [
+  "\"open\\",
+  0
+ ],
+ "mask $(date) x": [
+  "$(date) x",
+  0
+ ],
+ "mask 'open": [
+  "'open",
+  0
+ ],
+ "mask 'x' # c": [
+  "'x' # c",
+  0
+ ],
+ "mask -----BEGIN PRIVATE KEY-----\nopen ended": [
+  "[マスク]",
+  1
+ ],
+ "mask -----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY----- tail": [
+  "[マスク] tail",
+  1
+ ],
+ "mask AKIAABCDEFGHIJKLMNO": [
+  "AKIAABCDEFGHIJKLMNO",
+  0
+ ],
+ "mask AKIAABCDEFGHIJKLMNOP": [
+  "[マスク]",
+  1
+ ],
+ "mask AKIAABCDEFGHIJKLMNOPQ": [
+  "AKIAABCDEFGHIJKLMNOPQ",
+  0
+ ],
+ "mask Authorization: Bearer abcdefghijklmnop": [
+  "Authorization: [マスク] [マスク]",
+  2
+ ],
+ "mask BASIC　abcdefghijklmnop": [
+  "BASIC [マスク]",
+  1
+ ],
+ "mask TOKEN : 'abcdefgh'": [
+  "TOKEN : [マスク]'",
+  1
+ ],
+ "mask a ghp_abcdefghijklmnopqrstuvwxyz b sk-abcdefghijklmnopqrstuvwxyz token=zzzzzzzz": [
+  "a [マスク] b [マスク] token=[マスク]",
+  3
+ ],
+ "mask a\\\nb\nc": [
+  "a\\\nb\nc",
+  0
+ ],
+ "mask abc def # c": [
+  "abc def # c",
+  0
+ ],
+ "mask api-key=\"secretvalue\"": [
+  "api-key=[マスク]\"",
+  1
+ ],
+ "mask api_key　=　abcdefgh": [
+  "api_key　=　[マスク]",
+  1
+ ],
+ "mask a　#c": [
+  "a　#c",
+  0
+ ],
+ "mask basic abc": [
+  "basic abc",
+  0
+ ],
+ "mask echo 'x'#v2": [
+  "echo 'x'#v2",
+  0
+ ],
+ "mask ghp_abcdefghijklmnopqrstuvwxyz": [
+  "[マスク]",
+  1
+ ],
+ "mask ghp_abcdefghijklmnopqrstuvwxyz-": [
+  "[マスク]-",
+  1
+ ],
+ "mask ghp_abcdefghijklmnopqrstuvwxyzあ": [
+  "ghp_abcdefghijklmnopqrstuvwxyzあ",
+  0
+ ],
+ "mask ghp_short": [
+  "ghp_short",
+  0
+ ],
+ "mask github_pat_ABCDEFGHIJ_abcdefghij_xyz": [
+  "[マスク]",
+  1
+ ],
+ "mask passwd:abcdefghi x": [
+  "passwd:[マスク] x",
+  1
+ ],
+ "mask password=abc": [
+  "password=abc",
+  0
+ ],
+ "mask plain": [
+  "plain",
+  0
+ ],
+ "mask secret=abc\"def": [
+  "secret=abc\"def",
+  0
+ ],
+ "mask sk-abcdefghijklmnopqrst-": [
+  "[マスク]-",
+  1
+ ],
+ "mask sk-abcdefghijklmnopqrstuvwx_y--": [
+  "[マスク]--",
+  1
+ ],
+ "mask sk-abcdefghijklmnopqrstuvwxyz": [
+  "[マスク]",
+  1
+ ],
+ "mask token=abcdef": [
+  "token=[マスク]",
+  1
+ ],
+ "mask x\tdef#y": [
+  "x\tdef#y",
+  0
+ ],
+ "mask xBearer abcdefghijklmnop": [
+  "xBearer abcdefghijklmnop",
+  0
+ ],
+ "mask xghp_abcdefghijklmnopqrstuvwxyz": [
+  "xghp_abcdefghijklmnopqrstuvwxyz",
+  0
+ ],
+ "mask xoxb-1234567890-": [
+  "[マスク]-",
+  1
+ ],
+ "mask xoxb-1234567890-abc": [
+  "[マスク]",
+  1
+ ],
+ "mask xoxb-123456789_": [
+  "xoxb-123456789_",
+  0
+ ],
+ "mask {a,b}": [
+  "{a,b}",
+  0
+ ],
+ "mask ~/x": [
+  "~/x",
+  0
+ ],
+ "mask あBearer abcdefghijklmnop": [
+  "あBearer abcdefghijklmnop",
+  0
+ ],
+ "mask あghp_abcdefghijklmnopqrstuvwxyz": [
+  "あghp_abcdefghijklmnopqrstuvwxyz",
+  0
+ ],
+ "value ": [
+  "",
+  false,
+  0
+ ],
+ "value   ": [
+  "",
+  false,
+  2
+ ],
+ "value \"$HOME\"": [
+  "$HOME",
+  true,
+  7
+ ],
+ "value \"a\"b": [
+  "a",
+  true,
+  3
+ ],
+ "value \"a\\\"b\" # c": [
+  "a\\\"b",
+  true,
+  6
+ ],
+ "value \"open\\": [
+  "open\\",
+  true,
+  6
+ ],
+ "value $(date) x": [
+  "$(date) x",
+  true,
+  9
+ ],
+ "value 'open": [
+  "open",
+  true,
+  5
+ ],
+ "value 'x' # c": [
+  "x",
+  false,
+  3
+ ],
+ "value -----BEGIN PRIVATE KEY-----\nopen ended": [
+  "-----BEGIN PRIVATE KEY-----",
+  true,
+  27
+ ],
+ "value -----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY----- tail": [
+  "-----BEGIN RSA PRIVATE KEY-----",
+  true,
+  31
+ ],
+ "value AKIAABCDEFGHIJKLMNO": [
+  "AKIAABCDEFGHIJKLMNO",
+  false,
+  19
+ ],
+ "value AKIAABCDEFGHIJKLMNOP": [
+  "AKIAABCDEFGHIJKLMNOP",
+  false,
+  20
+ ],
+ "value AKIAABCDEFGHIJKLMNOPQ": [
+  "AKIAABCDEFGHIJKLMNOPQ",
+  false,
+  21
+ ],
+ "value Authorization: Bearer abcdefghijklmnop": [
+  "Authorization: Bearer abcdefghijklmnop",
+  true,
+  38
+ ],
+ "value BASIC　abcdefghijklmnop": [
+  "BASIC　abcdefghijklmnop",
+  false,
+  22
+ ],
+ "value TOKEN : 'abcdefgh'": [
+  "TOKEN : 'abcdefgh'",
+  true,
+  18
+ ],
+ "value a ghp_abcdefghijklmnopqrstuvwxyz b sk-abcdefghijklmnopqrstuvwxyz token=zzzzzzzz": [
+  "a ghp_abcdefghijklmnopqrstuvwxyz b sk-abcdefghijklmnopqrstuvwxyz token=zzzzzzzz",
+  true,
+  79
+ ],
+ "value a\\\nb\nc": [
+  "a\\",
+  true,
+  4
+ ],
+ "value abc def # c": [
+  "abc def",
+  true,
+  11
+ ],
+ "value api-key=\"secretvalue\"": [
+  "api-key=\"secretvalue\"",
+  true,
+  21
+ ],
+ "value api_key　=　abcdefgh": [
+  "api_key　=　abcdefgh",
+  false,
+  18
+ ],
+ "value a　#c": [
+  "a",
+  false,
+  4
+ ],
+ "value basic abc": [
+  "basic abc",
+  true,
+  9
+ ],
+ "value echo 'x'#v2": [
+  "echo 'x'#v2",
+  true,
+  11
+ ],
+ "value ghp_abcdefghijklmnopqrstuvwxyz": [
+  "ghp_abcdefghijklmnopqrstuvwxyz",
+  false,
+  30
+ ],
+ "value ghp_abcdefghijklmnopqrstuvwxyz-": [
+  "ghp_abcdefghijklmnopqrstuvwxyz-",
+  false,
+  31
+ ],
+ "value ghp_abcdefghijklmnopqrstuvwxyzあ": [
+  "ghp_abcdefghijklmnopqrstuvwxyzあ",
+  false,
+  31
+ ],
+ "value ghp_short": [
+  "ghp_short",
+  false,
+  9
+ ],
+ "value github_pat_ABCDEFGHIJ_abcdefghij_xyz": [
+  "github_pat_ABCDEFGHIJ_abcdefghij_xyz",
+  false,
+  36
+ ],
+ "value passwd:abcdefghi x": [
+  "passwd:abcdefghi x",
+  true,
+  18
+ ],
+ "value password=abc": [
+  "password=abc",
+  false,
+  12
+ ],
+ "value plain": [
+  "plain",
+  false,
+  5
+ ],
+ "value secret=abc\"def": [
+  "secret=abc\"def",
+  true,
+  14
+ ],
+ "value sk-abcdefghijklmnopqrst-": [
+  "sk-abcdefghijklmnopqrst-",
+  false,
+  24
+ ],
+ "value sk-abcdefghijklmnopqrstuvwx_y--": [
+  "sk-abcdefghijklmnopqrstuvwx_y--",
+  false,
+  31
+ ],
+ "value sk-abcdefghijklmnopqrstuvwxyz": [
+  "sk-abcdefghijklmnopqrstuvwxyz",
+  false,
+  29
+ ],
+ "value token=abcdef": [
+  "token=abcdef",
+  false,
+  12
+ ],
+ "value x\tdef#y": [
+  "x\tdef#y",
+  true,
+  7
+ ],
+ "value xBearer abcdefghijklmnop": [
+  "xBearer abcdefghijklmnop",
+  true,
+  24
+ ],
+ "value xghp_abcdefghijklmnopqrstuvwxyz": [
+  "xghp_abcdefghijklmnopqrstuvwxyz",
+  false,
+  31
+ ],
+ "value xoxb-1234567890-": [
+  "xoxb-1234567890-",
+  false,
+  16
+ ],
+ "value xoxb-1234567890-abc": [
+  "xoxb-1234567890-abc",
+  false,
+  19
+ ],
+ "value xoxb-123456789_": [
+  "xoxb-123456789_",
+  false,
+  15
+ ],
+ "value {a,b}": [
+  "{a,b}",
+  true,
+  5
+ ],
+ "value ~/x": [
+  "~/x",
+  true,
+  3
+ ],
+ "value あBearer abcdefghijklmnop": [
+  "あBearer abcdefghijklmnop",
+  true,
+  24
+ ],
+ "value あghp_abcdefghijklmnopqrstuvwxyz": [
+  "あghp_abcdefghijklmnopqrstuvwxyz",
+  false,
+  31
+ ]
+}

@@ -6,10 +6,8 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -273,35 +271,22 @@ func TestShQuote(t *testing.T) {
 	}
 }
 
-// TestPythonCompat は Python 版(webui/auth.py)と Go 版でログイン情報のファイルを入れ替えられること。
-func TestPythonCompat(t *testing.T) {
-	py, err := exec.LookPath("python3")
-	if err != nil || runtime.GOOS == "windows" {
-		t.Skip("python3 が無い")
+// TestAuthFileFromPython は Python 版(webui/auth.py)が書いたログイン情報(testdata/auth-py/auth.json)を Go 版が読めること。
+// 使っている人の手元には Python 版が作った auth.json が残っているので、Python 版を消したあとも読めないといけない。
+func TestAuthFileFromPython(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("testdata", "auth-py", "auth.json"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	webui, _ := filepath.Abs("../../webui")
-	run := func(code string, dir string) string {
-		c := exec.Command(py, "-c", "import sys; sys.path.insert(0, sys.argv[1]); import auth; a = auth.Auth(sys.argv[2])\n"+code, webui, dir)
-		c.Env = append(os.Environ(), "WEBUI_FAIL_DELAY=0")
-		out, err := c.CombinedOutput()
-		if err != nil {
-			t.Fatalf("%s: %v %s", code, err, out)
-		}
-		return strings.TrimSpace(string(out))
+	d := t.TempDir()
+	if err := os.WriteFile(filepath.Join(d, "auth.json"), b, 0o600); err != nil {
+		t.Fatal(err)
 	}
-	// Go で作って Python で確かめる
-	d1 := t.TempDir()
-	a, _ := NewAuth(d1)
-	a.Setup("alice", "correcthorse12")
-	tok, _ := a.CreateSession()
-	if got := run("print(a.attempt('alice', 'correcthorse12'), bool(a.session_hash('"+tok+"')))", d1); got != "True True" {
-		t.Fatalf("Python から: %s", got)
+	a, err := NewAuth(d)
+	if err != nil {
+		t.Fatal(err)
 	}
-	// Python で作って Go で確かめる
-	d2 := t.TempDir()
-	ptok := run("a.setup('bob', 'batterystaple12'); print(a.create_session())", d2)
-	b, _ := NewAuth(d2)
-	if !b.Attempt("bob", "batterystaple12") || b.Attempt("bob", "nope") || b.SessionHash(ptok) == "" {
-		t.Fatal("Go から")
+	if !a.Attempt("bob", "batterystaple12") || a.Attempt("bob", "batterystaple13") || a.Attempt("alice", "batterystaple12") {
+		t.Fatal("Python 版の auth.json で照合できない")
 	}
 }

@@ -18,7 +18,8 @@ from datetime import datetime, timedelta, timezone
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SERVER = os.path.join(os.path.dirname(HERE), "server.py")
+SERVER = os.path.join(os.path.dirname(HERE), "bin", "serve.sh")   # 中身は herdrctl webui serve
+REPO = os.path.dirname(os.path.dirname(HERE))
 SCHEMA_DIR = os.path.join(os.path.dirname(os.path.dirname(HERE)), "taskboard", "schema")
 TMP = tempfile.mkdtemp(prefix="webui-test-")
 procs, socks = [], []
@@ -100,7 +101,7 @@ def make_env(name, **extra):
 
 
 def start(env):
-    p = subprocess.Popen([sys.executable, SERVER], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    p = subprocess.Popen(["bash", SERVER], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     procs.append(p)
     return p
 
@@ -1004,73 +1005,6 @@ check("ジョブ詳細: POST は従来のスケジュール保存だけ(prompt �
       cl.raw("POST", "/jobs/pj", {"csrf": cl.csrf("/jobs/pj"), "action": "save", "interval": "5", "interval_unit": "min", "start": "09:00", "end": "10:00", "days": "daily", "enabled": "1", "prompt": "HACK"})[0] == 302
       and "HACK" not in open(os.path.join(_J, "pj.conf")).read() and "HACK" not in cl.get("/jobs/pj")[2])
 _c = sqlite3.connect(env["WEBUI_TB_DB"]); _c.execute("DELETE FROM config WHERE key='sched-settings:pj'"); _c.commit(); _c.close()
-# 次回の予定(時刻を固定した単体の確認)
-sys.path.insert(0, os.path.dirname(HERE))
-import app.jobview as _jv  # noqa: E402
-from zoneinfo import ZoneInfo as _ZI  # noqa: E402
-_inf = {"enabled": True, "tz": "Asia/Tokyo", "interval_sec": 1800, "start": "09:00", "end": "21:00", "days": "weekdays"}
-check("次回: 土曜の昼は月曜 09:00 から", _jv.next_runs(_inf, datetime(2026, 11, 14, 10, 0, tzinfo=_ZI("Asia/Tokyo")), 2)[0] == ["2026-11-16 09:00:00", "2026-11-16 09:30:00"])
-check("次回: 平日の 09:10 の次は 09:30", _jv.next_runs(_inf, datetime(2026, 11, 16, 9, 10, tzinfo=_ZI("Asia/Tokyo")), 1)[0] == ["2026-11-16 09:30:00"])
-check("次回: 終了後は翌営業日", _jv.next_runs(_inf, datetime(2026, 11, 20, 22, 0, tzinfo=_ZI("Asia/Tokyo")), 1)[0] == ["2026-11-23 09:00:00"])
-check("次回: 一時停止は予定なし", _jv.next_runs({**_inf, "enabled": False})[0] == [])
-check("次回: 不正な TZ は「不明」", "不明" in _jv.next_runs({**_inf, "tz": "No/Such"})[1])
-# conf の読み取り(CodeRabbit 指摘): 閉じ引用符の直後の # と、引用符内・継続行の中の代入
-def _jd(body):
-    os.environ["WEBUI_SCHED_JOBS"] = _J
-    os.environ["SCHED_FILE_FALLBACK"] = "1"
-    open(os.path.join(_J, "unit.conf"), "w").write(body)
-    return _jv.job_defs("unit")
-for _q in ("'", '"'):
-    _d = _jd(f"PROMPT_FILE={_q}/repo/scheduler/body.txt{_q}#v2\n")
-    check(f"conf: {_q} の閉じ引用符の直後の # はコメントにしない(連結として不完全)", "PROMPT_FILE" in _d["_complex"], str(_d))
-    _d = _jd(f"PROMPT_FILE={_q}/repo/scheduler/body.txt{_q} # note\n")
-    check(f"conf: {_q} の閉じ引用符のあとに空白を置いた # はコメント(完全)", "PROMPT_FILE" not in _d["_complex"] and _d["PROMPT_FILE"] == "/repo/scheduler/body.txt", str(_d))
-_d = _jd("PROMPT='説明\nPROMPT_FILE=/repo/scheduler/body.txt\n終わり'\n")
-check("conf: 複数行 PROMPT の中の PROMPT_FILE= は代入として読まない", "PROMPT_FILE" not in _d and "PROMPT_FILE=/repo/scheduler/body.txt" in _d["PROMPT"], str(_d))
-_d = _jd('PROMPT="説明\nCOMMAND=rm -rf x\n終わり"\n')
-check("conf: 二重引用符の複数行の中の COMMAND= も代入として読まない", "COMMAND" not in _d, str(_d))
-_d = _jd("PROMPT=abc\\\nPROMPT_FILE=/x/y\nSKIP_IF=working\n")
-check("conf: 行末 \\ の継続行の中の代入は読まず、引用符の外の次の代入は読む", "PROMPT_FILE" not in _d and _d["SKIP_IF"] == "working", str(_d))
-_d = _jd("PROMPT='a'\nPROMPT_FILE=/repo/scheduler/b.txt\n")
-check("conf: 引用符が閉じたあとの行の代入は読む", _d["PROMPT_FILE"] == "/repo/scheduler/b.txt", str(_d))
-# 説明(conf の先頭コメント)と、COMMAND からの推定
-_jd("# 1 行目の説明\n# 2 行目\n# 注意: COMMAND は bash -c でそのまま実行される\n# token=ghp_abcdefghijklmnopqrstuvwxyz0123\nCOMMAND='cd /x && bin/tb flush'\n# 後ろのコメントは説明に入れない\n")
-_ab = _jv.job_about("unit")
-check("説明: 先頭のコメントだけ、注意書きは省き、トークンはマスク", _ab[:2] == ["1 行目の説明", "2 行目"] and len(_ab) == 3 and "ghp_" not in _ab[2], str(_ab))
-check("説明: 一覧の 1 行は先頭コメントの 1 行目", _jv.job_summary("unit", {"kind": "command"}) == "1 行目の説明")
-_jd("# 鍵の例\n# -----BEGIN RSA PRIVATE KEY-----\n# MIIEowIBAAKCAQEAsecretbody1234567890\n# -----END RSA PRIVATE KEY-----\nCOMMAND=true\n")
-_ab = _jv.job_about("unit")
-check("説明: 行をまたぐ秘密鍵のブロックは中身ごと伏せる", "MIIEow" not in " ".join(_ab) and "[マスク]" in " ".join(_ab), str(_ab))
-_jd("COMMAND='cd /x && HERDR_SESSION=default bin/tb notify flush; bin/tb digest'\n")
-check("説明: コメントが無ければ tb のサブコマンドから推す(notify flush は flush と取り違えない)",
-      [c for c, _ in _jv.command_summary(_jv.job_defs("unit")["COMMAND"])] == ["tb notify flush", "tb digest"]
-      and "通知" in _jv.job_summary("unit", {"kind": "command"}))
-_jd("COMMAND='cd /x && bin/tb message flush; bin/tb flush'\n")
-check("説明: tb message flush と古い名前 tb flush は同じ説明",
-      [c for c, _ in _jv.command_summary(_jv.job_defs("unit")["COMMAND"])] == ["tb message flush"])
-_jd("COMMAND='cd /x && bin/tb review pack --mark; bin/tb review-pack'\n")
-check("説明: tb review pack と古い名前 tb review-pack は同じ説明",
-      [c for c, _ in _jv.command_summary(_jv.job_defs("unit")["COMMAND"])] == ["tb review pack"])
-_jd("COMMAND='cd /x && bin/tb pr watch; bin/tb pr-watch; bin/tb pr queue scan; bin/tb pr-queue run'\n")
-check("説明: tb pr watch / pr queue と古い名前 tb pr-watch / pr-queue は同じ説明",
-      [c for c, _ in _jv.command_summary(_jv.job_defs("unit")["COMMAND"])] == ["tb pr watch", "tb pr queue scan", "tb pr queue run"])
-os.remove(os.path.join(_J, "unit.conf"))
-# 既定は DB だけ(scheduler と同じ): SCHED_FILE_FALLBACK が無ければ jobs/*.conf のジョブは一覧に出さず、「未取り込み」として知らせる
-import app.jobs as _jobs  # noqa: E402
-os.environ.pop("SCHED_FILE_FALLBACK", None)
-_tbdb_saved = os.environ.get("WEBUI_TB_DB")
-os.environ["WEBUI_TB_DB"] = env["WEBUI_TB_DB"]
-check("既定: ファイルだけのジョブは一覧に出さない", "job1" not in _jobs.job_names() and "pj" not in _jobs.job_names(), str(_jobs.job_names()))
-check("既定: ファイルだけのジョブは未取り込みとして出す", "job1" in _jobs.unimported_jobs())
-check("既定: ファイルの定義は読まない", _jv.job_text("job1", 1000) is None)
-os.environ["SCHED_FILE_FALLBACK"] = "1"
-check("SCHED_FILE_FALLBACK=1: ファイルのジョブも出す", "job1" in _jobs.job_names() and _jv.job_text("job1", 1000) is not None)
-os.environ.pop("SCHED_FILE_FALLBACK", None)
-if _tbdb_saved is None:
-    os.environ.pop("WEBUI_TB_DB", None)
-else:
-    os.environ["WEBUI_TB_DB"] = _tbdb_saved
-
 # ---- 権限カタログ × policy(読み取りのみ)
 check("カタログ: 操作ごとの現在の権限の節", "操作ごとの現在の権限(カタログ × policy)" in P[2])
 def _crow(html, pat):
@@ -1103,33 +1037,8 @@ check("カタログ: 既定に落ちているものだけ", "proxy:read-only" in
 _A = cl.get("/perms?allowed=1")[2].split("ルール一覧")[0]
 check("カタログ: allow になっているものだけ", "agent:new:*" in _A and "setup:hooks" not in _A and "<code>send:task:*</code>" not in _A)
 check("カタログ: 不正な絞り込み値は無視して 200", cl.get("/perms?kind=zzz&state=%27")[0] == 200)
-check("カタログ: 場所は固定で env で差し替える口が無い", "WEBUI_CATALOG" not in open(os.path.join(os.path.dirname(SERVER), "app", "config.py"), encoding="utf-8").read())
+check("カタログ: 場所は固定で env で差し替える口が無い", "WEBUI_CATALOG" not in open(os.path.join(REPO, "internal", "webui", "perms.go"), encoding="utf-8").read())
 check("カタログ: GET だけ(絞り込みも検索も method=post を増やさない)", cl.get("/perms?kind=gate")[2].count("method=post") == 1)
-
-# カタログの読み込みと表示の単体テスト(perms.CATALOG を差し替える)。説明にタグ・制御文字・| を入れても壊れない
-sys.path.insert(0, os.path.dirname(HERE))
-import app.perms as _perms  # noqa: E402
-import app.views as _views  # noqa: E402
-_cf = os.path.join(TMP, "unit-catalog.conf")
-open(_cf, "w", encoding="utf-8").write(
-    "# 注釈\n"
-    "send:task:*   | send | local-write | high | conditional | active | 説明 <script>alert(1)</script> \x01制御 | 縦線を含む説明\n"
-    "send:info:*   | send | local-write | mid | yes | active | 正常な行\n"
-    "agent:new:x   | role | local-write | mid | yes | active | 種別がパターンの先頭と違う\n"
-    "setup:hooks   | setup | local-write | human-only | yes | active | human-only なのに allow 候補が yes\n"
-    "role:change   | role | local-write | high | conditional | active | 対象の無い操作名が conditional\n"
-    "send:info:*   | send | local-write | mid | yes | active | 重複\n"
-    "gate:merge    | gate | external-write | human-only | no | bogus | 状態が不正\n"
-    "gate:x | gate | none | low | no\n")
-_perms.CATALOG = _cf
-_cat, _cerr, _cbad = _perms.load_catalog()
-check("カタログ単体: 正しい 2 行だけ読み、不正な行(種別・human-only・conditional・重複・状態・項目不足)を数える",
-      [c["pattern"] for c in _cat] == ["send:task:*", "send:info:*"] and _cbad == 6 and not _cerr, str((len(_cat), _cbad)))
-check("カタログ単体: 説明の | は残り、制御文字は除かれる", "縦線を含む説明" in _cat[0]["desc"] and "\x01" not in _cat[0]["desc"])
-_html = _views._catalog_section({}, [], "", _cat, "", _cbad)
-check("カタログ単体: 説明のタグはエスケープされ、不正な行のスキップ件数が出る", "<script>" not in _html and "&lt;script&gt;" in _html and "6 件" in _html)
-_perms.CATALOG = os.path.join(TMP, "no-such-catalog.conf")
-check("カタログ単体: ファイルが無ければエラー文を返す", _perms.load_catalog()[1] != "" and "読めません" in _views._catalog_section({}, [], "", *_perms.load_catalog()[:2], 0))
 
 # conf を一時的に差し替えて境界を確かめる(読み取りだけの画面なので、戻せば元の表示に戻る)
 _orig = open(_AP, encoding="utf-8").read()
@@ -1607,20 +1516,6 @@ r = anon.raw("POST", "/reset", {**base_, "csrf": anon.csrf("/login"), "password"
 check("シンボリックリンクの POST は拒否", r[0] == 403 and Client(port2).login(pw=NEWPW)[0] == 302 and os.path.islink(ALLOW))
 os.remove(ALLOW)
 
-# 時刻の注入(待たない)
-import importlib.util  # noqa: E402
-spec = importlib.util.spec_from_file_location("webui_auth", os.path.join(os.path.dirname(HERE), "auth.py"))
-am = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(am)
-ut = os.path.join(TMP, "unit-run")
-ua = am.Auth(ut)
-open(ua.allow_path, "w").close()
-t0 = os.stat(ua.allow_path).st_mtime
-check("[注入] 9 分後は ok", ua.reset_state(t0 + 540) == "ok")
-check("[注入] 10 分ちょうどは ok、10 分 1 秒後は expired", ua.reset_state(t0 + 600) == "ok" and ua.reset_state(t0 + 601) == "expired")
-check("[注入] 作成より未来すぎる時刻は invalid", ua.reset_state(t0 - 3600) == "invalid")
-check("[注入] 許可なしは missing", (os.remove(ua.allow_path) or ua.reset_state()) == "missing")
-
 check("PUT /reset は 405", anon.raw("PUT", "/reset")[0] == 405)
 check("GET /reset は設定済みで 200(情報のみ)", anon.get("/reset")[0] == 200)
 
@@ -1640,9 +1535,9 @@ leak = [x for x in (PW, NEWPW, WRONG, cookie_val, old.split("=", 1)[1], "legacy-
 check("ログ(stdout/stderr)にパスワード・セッション値を出さない", not leak, f"{len(leak)} 件")
 leak2 = [x for x in ("failbody-", "reportbody-", "SECOND-LINE-SECRET", "TITLETAIL", "REPORT-TAIL", "owner=alpha", "send:task:dd-x", "send:task:w1", "approvals.conf") if x in out1 + out2]
 check("ログに送信履歴の本文・権限の検索語(URL のクエリ)を出さない", not leak2, str(leak2))
-_src = open(os.path.join(os.path.dirname(SERVER), "app", "perms.py"), encoding="utf-8").read()
+_src = "".join(open(os.path.join(REPO, "internal", "webui", f), encoding="utf-8").read() for f in ("perms.go", "permspage.go"))
 check("権限の画面は tb も他のコマンドも呼ばない(agent の pane から効く経路を作らない)",
-      "subprocess" not in _src and "os.system" not in _src and '"w"' not in _src and "data.config_text(\"policy\")" in _src)
+      "os/exec" not in _src and "WriteFile" not in _src and "OpenFile" not in _src and 'configText("policy")' in _src)
 
 # ================= DB 不在・ログ不在・壊れた DB
 for name, prep in (("nodb", None), ("baddb", lambda e_: open(e_["WEBUI_TB_DB"], "w").write("not a sqlite file"))):
@@ -1810,358 +1705,6 @@ check("multi: ログアウトすると、ほかのセッションの画面にも
 r = mc.get("/s/alpha/login", raw=True, cookie=None)
 check("multi: ログイン画面はそのセッションの下のフォーム", r[0] == 200 and 'action="/s/alpha/login"' in r[2] and 'href="/s/alpha/reset"' in r[2] and ">alpha<" in r[2])
 stop(pm)
-
-# ---- 表示にセッション名の生の HTML 特殊文字が出ない(多層防御の確認。URL の名前は SESSION_RE で絞っている)
-sys.path.insert(0, os.path.dirname(HERE))
-import app.views as _v2  # noqa: E402
-import app.reqctx as _rc2  # noqa: E402
-with _rc2.use("a<b>&\"x", "default"):
-    check("セッション名はエスケープされて出る(ヘッダ)", "<b>" not in _v2.inst_label() and "&lt;b&gt;" in _v2.inst_label())
-    check("セッション名はエスケープされて出る(タイトル)", "<b>" not in _v2.page("t", "", "/", 0))
-
-# ---- セッションの一覧(app/sessions.py): DB の行・herdr のディレクトリ・default・プロセスのセッション。'*' や不正な名前は出さない
-import app.sessions as _sess  # noqa: E402
-_old = {k: os.environ.get(k) for k in ("WEBUI_TB_DB", "XDG_CONFIG_HOME", "HERDR_SESSION", "HERDR_SOCKET_PATH")}
-try:
-    os.environ["WEBUI_TB_DB"] = env["WEBUI_TB_DB"]
-    os.environ["XDG_CONFIG_HOME"] = env["XDG_CONFIG_HOME"]
-    os.environ["HERDR_SESSION"] = "zeta"
-    os.environ.pop("HERDR_SOCKET_PATH", None)
-    os.makedirs(os.path.join(env["XDG_CONFIG_HOME"], "herdr", "sessions", "bad name"), exist_ok=True)
-    open(os.path.join(env["XDG_CONFIG_HOME"], "herdr", "sessions", "afile"), "w").write("")
-    _sess.forget()
-    check("sessions: 一覧(DB の beta と default、ディレクトリの gamma、プロセスの zeta)",
-          _sess.known() == ["beta", "default", "gamma", "zeta"], str(_sess.known()))
-    check("sessions: 一覧に無い名前・不正な名前は通さない", not _sess.is_known("nope") and not _sess.is_known("*") and not _sess.is_known("bad name")
-          and not _sess.is_known("afile") and _sess.is_known("gamma"))
-finally:
-    for _k, _v in _old.items():
-        if _v is None:
-            os.environ.pop(_k, None)
-        else:
-            os.environ[_k] = _v
-    _sess.forget()
-
-# ---- /docs から run/ とログイン情報の置き場を読めない
-import app.docs as _docs2  # noqa: E402
-_rb = os.path.join(TMP, "docs-runbase")
-for _sub in ("", "instance-other"):
-    os.makedirs(os.path.join(_rb, _sub), exist_ok=True)
-    open(os.path.join(_rb, _sub, "notes.txt"), "w").write("x")
-_old = {k: os.environ.get(k) for k in ("WEBUI_RUN_BASE", "WEBUI_RUN_DIR", "WEBUI_STATE_DIR", "WEBUI_AUTH_DIR")}
-try:
-    os.environ["WEBUI_RUN_BASE"] = _rb
-    os.environ.pop("WEBUI_RUN_DIR", None)
-    check("docs: run/ 配下は開かない", _docs2.denied(os.path.realpath(os.path.join(_rb, "notes.txt"))) is not None)
-    check("docs: 旧版の run/instance-<名>/ も開かない", _docs2.denied(os.path.realpath(os.path.join(_rb, "instance-other", "auth.json"))) is not None)
-    # 実体で比べる: 綴り違い(大文字小文字を区別しないボリューム)・別名(symlink)でも、run の配下は開かない
-    _alias = os.path.join(TMP, "docs-run-alias")
-    os.symlink(_rb, _alias)
-    check("docs: run への symlink 経由でも開かない", _docs2.denied(os.path.join(_alias, "instance-other", "auth.json")) is not None)
-    check("docs: run への symlink 経由・存在しないファイルでも開かない", _docs2.denied(os.path.join(_alias, "instance-other", "nope.json")) is not None)
-    _case = os.path.join(os.path.dirname(_rb), os.path.basename(_rb).upper())
-    if os.path.exists(_case):   # 大文字小文字を区別しないボリューム(macOS の既定)
-        check("docs: 綴りを変えた run(大文字小文字違い)でも開かない", _docs2.denied(os.path.join(_case, "instance-other", "auth.json")) is not None)
-        _dd = os.path.join(TMP, "docs-case"); os.makedirs(os.path.join(_dd, ".ssh"), exist_ok=True)
-        check("docs: 綴りを変えた .SSH も開かない", _docs2.denied(os.path.join(_dd, ".SSH", "x")) is not None)
-    check("docs: 無関係な存在しないパスは開く判定(denied でない)", _docs2.denied(os.path.join(TMP, "no-such-dir", "a.md")) is None)
-    check("docs: run の隣の別ディレクトリ(前方一致だけ同じ名前)は denied でない",
-          _docs2.denied(os.path.join(os.path.dirname(_rb), os.path.basename(_rb) + "-x", "a.md")) is None)
-    _ex = os.path.join(TMP, "docs-explicit-run"); os.makedirs(_ex, exist_ok=True)
-    os.environ["WEBUI_RUN_DIR"] = _ex
-    check("docs: WEBUI_RUN_DIR 明示でも、その場所は開かない", _docs2.denied(os.path.realpath(os.path.join(_ex, "auth.json"))) is not None)
-    _sd = os.path.join(TMP, "docs-state"); os.makedirs(_sd, exist_ok=True)
-    os.environ["WEBUI_STATE_DIR"] = _sd
-    os.environ.pop("WEBUI_AUTH_DIR", None)
-    check("docs: 共通のログイン情報・記録(ホームの置き場)は開かない",
-          _docs2.denied(os.path.join(_sd, "auth.json")) is not None and _docs2.denied(os.path.join(_sd, "gateway.json")) is not None)
-finally:
-    for _k, _v in _old.items():
-        if _v is None:
-            os.environ.pop(_k, None)
-        else:
-            os.environ[_k] = _v
-
-# ================= 関係グラフ(app/graph.py。tb agents --graph と同じ SQL とまとめ方)と規則の @<役割>
-sys.path.insert(0, os.path.dirname(HERE))
-import app.graph as _graph  # noqa: E402
-import app.perms as _perms2  # noqa: E402
-_rd = os.path.join(TMP, "graph-roles")
-os.makedirs(_rd, exist_ok=True)
-for _r in ("conductor", "worker", "watcher"):
-    open(os.path.join(_rd, _r + ".md"), "w").write("x")
-open(os.path.join(_rd, "map.conf"), "w").write("*-conductor = conductor\nworker* = worker\nwatch* = watcher\n")
-_pc = os.path.join(TMP, "graph-projects.conf")
-open(_pc, "w").write("# c\nprojb = b-conductor\n")
-_old = {k: os.environ.get(k) for k in ("TB_ROLES", "TB_CONFIG")}
-os.environ.update(TB_ROLES=_rd, TB_CONFIG=_pc)
-check("graph: 役割は名前の .md > 台帳の role > map.conf", [_graph.role_of(n, r) for n, r in
-      (("conductor", None), ("b-conductor", None), ("worker1", None), ("helper", "worker"), ("helper", None), ("_x", None))]
-      == ["conductor", "conductor", "worker", "worker", None, None])
-_rows = [{"verb": "lead", "src": None, "dst": "worker2", "project": "projb", "status": "ok", "n": 1, "last_at": "a"},
-         {"verb": "lead", "src": None, "dst": "worker2", "project": "proja", "status": "ok", "n": 1, "last_at": "b"},
-         {"verb": "send:task", "src": "conductor", "dst": "worker1", "project": None, "status": "ok", "n": 2, "last_at": "c"},
-         {"verb": "report", "src": "worker2", "dst": None, "project": "projb", "status": "ok", "n": 1, "last_at": "d"},
-         {"verb": "spawn", "src": "worker1", "dst": "worker1", "project": None, "status": "ok", "n": 1, "last_at": "e"}]
-_es = _graph.edges(_rows)
-check("graph: project の端は指揮官で埋め、自分への辺は捨てる(1 体に複数の上流)",
-      [(x["from"], x["verb"], x["to"]) for x in _es] == [("b-conductor", "lead", "worker2"), ("conductor", "send:task", "worker1"),
-                                                         ("conductor", "lead", "worker2"), ("worker2", "report", "b-conductor")])
-_ns = [{"name": n, "role": _graph.role_of(n)} for n in ("conductor", "b-conductor", "worker1", "worker2", "<b>x</b>")]
-_mm = _graph.mermaid(_ns, _es + [{"verb": "send:task", "from": "worker1", "to": "worker2", "status": "denied", "n": 1, "last_at": ""}])
-check("graph: ロールごとの subgraph とラベルつきの辺(拒否は点線)", 'subgraph g0["conductor"]' in _mm and 'subgraph g2["役割なし"]' in _mm
-      and "-- 依頼 x2 -->" in _mm and "-. 依頼 拒否 .->" in _mm and "<b>" not in _mm, _mm)
-check("graph: 規則の @役割", [_graph.name_matches(n, p) for n, p in (("worker1", "@worker"), ("worker1", "@cond*"), ("x", "@worker"), ("x", "x"))]
-      == [True, False, False, True])
-open(os.path.join(_rd, "manager.md"), "w").write("x")
-open(os.path.join(_rd, "hr.md"), "w").write("x")
-check("graph: 複数ロール(台帳はカンマ区切り)と @a+b", _graph.role_of("helper", "hr, manager") == "hr,manager"
-      and [_graph.name_matches("helper", p, "hr,manager") for p in ("@hr", "@hr+manager", "@hr+worker", "@manag*")] == [True, True, False, True])
-def _pr(*lines):
-    """policy の行(<主体> <操作> <対象> = <効果>)を perms.decide が使う形に。"""
-    out = []
-    for i, ln in enumerate(lines):
-        lhs, v = ln.split("=")
-        f = lhs.split()
-        out.append({"no": i + 1, "subject": f[0], "op": f[1], "target": f[2], "effect": v.strip(), "value": v.strip(),
-                    "raw": " ".join(f), "pattern": " ".join(f), "note": ""})
-    return out
-
-
-_rules = _pr("* send:* @worker = allow")
-import app.data as _data2  # noqa: E402
-_qc = _data2.q_checked
-_data2.q_checked = lambda *a, **k: ([], True)   # 台帳は読めるが行が無い
-check("perms: 対象 @役割 の行を役割で照合(当たらなければ既定の表)", [_perms2.decide(_rules, op)[0] for op in ("send:task:worker1", "send:task:conductor", "role:change")]
-      == ["allow", "ask", "ask"])
-check("perms: いちばん厳しい行が勝つ(行の順番は関係ない)",
-      [_perms2.decide(_pr("* send:task * = allow", "* send:task @worker = deny"), "send:task:worker1")[0],
-       _perms2.decide(_pr("* send:task @worker = deny", "* send:task * = allow"), "send:task:worker1")[0]] == ["deny", "deny"])
-check("perms: 関係(~child)の行は確かめられないので締める向きにだけ効く",
-      [_perms2.decide(_pr("@lead send:task ~child = allow"), "send:task:w1", "lead1")[0],
-       _perms2.decide(_pr("* send:info ~child = deny"), "send:info:w1", "lead1")[0]] == ["ask", "deny"])
-_data2.q_checked = lambda *a, **k: ([], False)
-check("perms: 台帳を読めないときは @役割 を map.conf で一致させない(名前の役割ファイルは使う。確かめられない行は締める向きだけ)",
-      [_perms2.decide(_rules, "send:task:worker1")[0],
-       _perms2.decide(_pr("* send:* @conductor = allow"), "send:task:conductor")[0],
-       _perms2.decide(_pr("* send:task @worker = deny", "* send:task * = allow"), "send:task:worker1")[0]]
-      == ["ask", "allow", "deny"])
-_data2.q_checked = _qc
-os.makedirs(os.path.join(_rd, "sessions", "s2"), exist_ok=True)
-open(os.path.join(_rd, "sessions", "s2", "auditor.md"), "w").write("a")
-open(os.path.join(_rd, "sessions", "s2", "map.conf"), "w").write("worker* = auditor\n")
-_hs = os.environ.get("HERDR_SESSION")
-_hsock = os.environ.get("HERDR_SOCKET_PATH")   # session_name() は HERDR_SESSION より先にこちらを見る
-
-
-def _in_session(s, f):
-    os.environ["HERDR_SESSION"] = s
-    os.environ.pop("HERDR_SOCKET_PATH", None)
-    try:
-        return f()
-    finally:
-        for k, v in (("HERDR_SESSION", _hs), ("HERDR_SOCKET_PATH", _hsock)):
-            if v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = v
-
-
-check("graph: ロールは herdr セッション固有(このセッションの roles/sessions/<s>/ があればそこだけ)",
-      [_in_session("default", lambda: _graph.role_of("worker1")), _in_session("s2", lambda: _graph.role_of("worker1")),
-       _in_session("s2", lambda: _graph.role_of("worker1", "worker")), _in_session("s9", lambda: _graph.role_of("worker1")),
-       _in_session("s2", lambda: _graph.name_matches("worker1", "@auditor"))]
-      == ["worker", "auditor", "auditor", "worker", True])
-check("perms: 拡張 glob の行(!(...) など)は判定できないとして止まる(allow と決めつけない)",
-      _perms2.decide(_pr("* send:task @!(conductor) = ask", "* send:task * = allow"), "send:task:worker1")[0] == "unknown")
-for _k, _v in _old.items():
-    if _v is None:
-        os.environ.pop(_k, None)
-    else:
-        os.environ[_k] = _v
-
-# ---- 待ち受けたポートの記録(app/registry.py): 形式どおりのものだけ、書いたプロセスが居なければ動いていない扱い
-import app.registry as _reg  # noqa: E402
-_os = os.environ.get("WEBUI_STATE_DIR")
-os.environ["WEBUI_STATE_DIR"] = os.path.join(TMP, "reg-state")
-os.makedirs(os.environ["WEBUI_STATE_DIR"], mode=0o700)
-_gp = os.path.join(os.environ["WEBUI_STATE_DIR"], "gateway.json")
-_res = []
-for _d in ({"port": "80", "pid": os.getpid()}, {"port": True, "pid": os.getpid()}, {"port": 80, "pid": 0}, {"port": 80, "pid": -1},
-           {"port": 80, "pid": 2 ** 22 + 12345}, [1]):
-    json.dump(_d, open(_gp, "w"))
-    _res.append(_reg.read_gateway())
-check("registry: 形式違い・pid が 0 や負・居ないプロセスの記録は動いていない扱い", _res == [None] * 6, str(_res))
-check("registry: pid が 0 や負なら kill しない", not _reg.pid_ok({"pid": 0}) and not _reg.pid_ok({"pid": -1}) and not _reg.pid_ok({}))
-json.dump({"port": 80, "pid": 1}, open(_gp, "w"))
-_reg.clear_gateway()
-check("registry: 他のプロセスの記録は消さない", os.path.exists(_gp))
-_reg.write_gateway(80)
-check("registry: 自分の記録は 600 で書き、消せる", mode(_gp) == "0o600" and (_reg.clear_gateway() or not os.path.exists(_gp)))
-if _os is None:
-    os.environ.pop("WEBUI_STATE_DIR")
-else:
-    os.environ["WEBUI_STATE_DIR"] = _os
-
-# ================= ログイン情報は複数のプロセスで共有する(失敗回数のロックも共有。渡り歩いて回数を稼げない)
-import auth as _auth2  # noqa: E402
-_ad = os.path.join(TMP, "shared-auth")
-_a1, _a2 = _auth2.Auth(_ad), _auth2.Auth(_ad)
-_a1.setup("u", "long-enough-pass-1")
-_ol = os.environ.get("WEBUI_LOCK_MAX")
-os.environ["WEBUI_LOCK_MAX"] = "3"
-for _i in range(3):
-    (_a1 if _i % 2 == 0 else _a2).attempt("u", "wrong-wrong-wrong")
-check("auth: 失敗回数は置き場で共有(別のプロセスで数えてもロックする)", _a1.locked_for() > 0 and _a2.locked_for() > 0)
-check("auth: ロックの記録は 0600", mode(os.path.join(_ad, "lockout.json")) == "0o600" and mode(_ad) == "0o700")
-if _ol is None:
-    os.environ.pop("WEBUI_LOCK_MAX")
-else:
-    os.environ["WEBUI_LOCK_MAX"] = _ol
-_t1 = _a1.create_session()
-_t2 = _a2.create_session()
-check("auth: 別のプロセスで作ったセッションも有効(書き込みが互いを消さない)", _a2.session_hash(_t1) and _a1.session_hash(_t2))
-_a2.destroy_session(_t1)
-check("auth: 別のプロセスでのログアウトも効く", _a1.session_hash(_t1) is None and _a1.session_hash(_t2))
-
-# ================= DB は全セッション共有。各セッションの Web UI は自分のセッションの行だけを読む(app/data.py の一時ビュー)
-sys.path.insert(0, os.path.dirname(HERE))
-from app import data as _data  # noqa: E402
-check("data: 一時ビューを作る表は taskboard/sql/session_tables(tb と同じ一覧)",
-      "tasks" in _data.session_tables() and "config" in _data.session_tables() and all(re.fullmatch(r"[a-z_]+", t) for t in _data.session_tables()))
-_sdb = os.path.join(TMP, "sessions.db")
-make_db(_sdb)
-_c = sqlite3.connect(_sdb)
-_c.execute("INSERT INTO tasks (id,project,title,status,created_at,updated_at,herdr_session) VALUES ('T-o-001','o','other','todo','t','t','other')")
-_c.execute("INSERT INTO comments (task_id,kind,text,from_name,from_pane,from_session,created_at,herdr_session) "
-           "VALUES ('T-o-001','question','other q','x','p','s','t','other')")
-_c.commit(); _c.close()
-_old_db, _old_hs = os.environ.get("WEBUI_TB_DB"), os.environ.get("HERDR_SESSION")
-os.environ["WEBUI_TB_DB"] = _sdb
-os.environ["HERDR_SESSION"] = "default"
-_d_ids = [r["id"] for r in _data.q("SELECT id FROM tasks ORDER BY id")]
-_d_cm = _data.q("SELECT COUNT(*) AS n FROM comments c JOIN tasks t ON t.id=c.task_id")[0]["n"]
-os.environ["HERDR_SESSION"] = "other"
-_o_ids = [r["id"] for r in _data.q("SELECT id FROM tasks ORDER BY id")]
-check("sessions: default の Web UI に別のセッションの行は出ない", _d_ids == ["T-1"] and _d_cm == 1, f"{_d_ids} {_d_cm}")
-check("sessions: other の Web UI は other の行だけ", _o_ids == ["T-o-001"], str(_o_ids))
-check("sessions: 読み取り専用のまま(書き込めない)", not _data.q("INSERT INTO tasks (id,project,title,created_at,updated_at) VALUES ('x','x','x','t','t') RETURNING id"))
-# セッションはリクエストの文脈(app/reqctx.py)から読む。プロセスの環境(ここでは other)より文脈が勝つ
-from app import reqctx as _rc, herdr as _hd, handler as _hdl  # noqa: E402
-with _rc.use("default", "default"):
-    _ctx_ids = [r["id"] for r in _data.q("SELECT id FROM tasks ORDER BY id")]
-    _ctx_base, _ctx_link = _rc.base(), _hdl.with_base('<a href="/tasks">')
-    _ctx_env = _rc.child_env({"HERDR_SOCKET_PATH": "/h/.config/herdr/sessions/other/herdr.sock", "HERDR_PANE_ID": "p"})
-check("reqctx: 文脈のセッションの行を読む(プロセスの環境は other)", _ctx_ids == ["T-1"], str(_ctx_ids))
-check("reqctx: BASE とリンクは文脈の名前", (_ctx_base, _ctx_link) == ("/s/default", '<a href="/s/default/tasks">'), f"{_ctx_base} {_ctx_link}")
-check("reqctx: 子プロセスには文脈のセッションを HERDR_SESSION で渡し、socket のパスは外す",
-      _ctx_env.get("HERDR_SESSION") == "default" and "HERDR_SOCKET_PATH" not in _ctx_env and _ctx_env.get("HERDR_PANE_ID") == "p", str(_ctx_env))
-check("reqctx: プロセスと同じセッションなら環境はそのまま", _rc.child_env({"X": "1"}) == {"X": "1"})
-_calls = []
-for _s in ("sa", "sb", "sa"):
-    with _rc.use(_s, _s):
-        _hd.cached("t-key", lambda s=_s: _calls.append(s) or s)
-check("reqctx: herdr の結果キャッシュはセッションごと", _calls == ["sa", "sb"], str(_calls))
-check("reqctx: 文脈の外はプロセスの設定に落ちる", _rc.session() == "other")
-# 設定(config 表): このセッションの行 → 共通の行(*) → checkout のファイル。環境変数で明示したファイルが最優先
-_c = sqlite3.connect(_sdb)
-_c.execute("INSERT INTO config VALUES ('*','projects','pj = shared-cond','human','t'), ('sa','projects','pj = sa-cond','human','t'), ('*','policy','* send:* * = allow','human','t')")
-_c.commit(); _c.close()
-from app import graph as _g3  # noqa: E402
-_old_tc = os.environ.pop("TB_CONFIG", None)
-_old_wa = os.environ.pop("WEBUI_POLICY", None)
-try:
-    _cfg_t = []
-    for _s in ("sa", "sb"):
-        with _rc.use(_s, _s):
-            _cfg_t.append((_g3.target_for("pj"), _data.config_text("projects")[1]))
-    check("config: projects はこのセッションの行、無ければ共通の行", _cfg_t == [("sa-cond", "db:sa"), ("shared-cond", "db:*")], str(_cfg_t))
-    with _rc.use("sb", "sb"):
-        _ap = _data.config_text("policy")
-        _pl = __import__("app.perms", fromlist=["x"]).conf_path_label()
-    check("config: policy も DB から(出どころの表示つき)", _ap[0] == "* send:* * = allow" and "全セッション共通" in _pl, f"{_ap} {_pl}")
-    os.environ["TB_CONFIG"] = os.path.join(TMP, "explicit-projects.conf")
-    open(os.environ["TB_CONFIG"], "w").write("pj = file-cond\n")
-    with _rc.use("sa", "sa"):
-        check("config: 環境変数で明示したファイルが DB より先", _g3.target_for("pj") == "file-cond")
-    open(os.environ["TB_CONFIG"], "w").write("pj = file-cond\n* = star-lead\n")
-    with _rc.use("sa", "sa"):
-        check("config: projects の * の行は既定の宛先で、project の行が優先(core.sh と同じ)",
-              (_g3.target_for("pj"), _g3.target_for("other")) == ("file-cond", "star-lead"))
-    # 役割の定義も DB から(role:<名前> / role-map)。このセッションの行 > 共通の行 > roles/ のファイル
-    _c = sqlite3.connect(_sdb)
-    _c.execute("INSERT INTO config VALUES ('sa','role:zrole','z の役割','human','t'), ('*','role-map','z* = zrole','human','t')")
-    _c.commit(); _c.close()
-    _rl = []
-    for _s in ("sa", "sb"):
-        with _rc.use(_s, _s):
-            _rl.append((_g3.role_of("z1"), "zrole" in _g3.role_names()))
-    check("roles: DB の役割と対応(このセッションの行だけが効く)", _rl == [("zrole", True), (None, False)], str(_rl))
-finally:
-    for _k, _v in (("TB_CONFIG", _old_tc), ("WEBUI_POLICY", _old_wa)):
-        if _v is None:
-            os.environ.pop(_k, None)
-        else:
-            os.environ[_k] = _v
-for _k, _v in (("WEBUI_TB_DB", _old_db), ("HERDR_SESSION", _old_hs)):
-    if _v is None:
-        os.environ.pop(_k, None)
-    else:
-        os.environ[_k] = _v
-
-# ================= チケットの状態は設定 statuses から読む(tb の lib/core.sh と同じ。名前ではなく分類で判断する)
-_stdb = os.path.join(TMP, "statuses.db")
-make_db(_stdb)
-_old_db, _old_hs = os.environ.get("WEBUI_TB_DB"), os.environ.get("HERDR_SESSION")
-_old_cache = _data.STATUS_CACHE_SEC
-_old_st, _old_cd = os.environ.pop("TB_STATUSES", None), os.environ.pop("TB_CONFIG_DIR", None)   # 外の設定に頼らない
-os.environ["WEBUI_TB_DB"] = _stdb
-os.environ["HERDR_SESSION"] = "default"
-_data.STATUS_CACHE_SEC = 0   # 設定を書き換えながら確かめる
-from app import views as _vw  # noqa: E402
-try:
-    check("statuses: 設定が無ければ組み込みの 6 つ", _data.status_names() == ["todo", "in_progress", "review", "done", "blocked", "cancelled"]
-          and _data.board_columns() == ["todo", "in_progress", "review", "blocked", "done", "cancelled"], str(_data.status_names()))
-    _c = sqlite3.connect(_stdb)
-    _c.execute("INSERT INTO config VALUES ('*','statuses','backlog todo = 未着手\ndoing active\nshipped done\nqa review\ndropped cancelled  # 取り消し','human','t')")
-    _c.execute("INSERT INTO tasks (id,project,title,status,owner_agent,created_at,updated_at,herdr_session) VALUES "
-               "('T-s-001','s','作業中','doing','alpha','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','default'),"
-               "('T-s-002','s','期限切れ','backlog',NULL,'t','t','default'),('T-s-003','s','閉じた','shipped',NULL,'t','t','default')")
-    _c.execute("UPDATE tasks SET due='2000-01-01' WHERE id IN ('T-s-002','T-s-003')")
-    _c.execute("INSERT INTO agents (herdr_session,name,state,created_by,created_at,updated_at) VALUES ('default','alpha','running','human','t','t')")
-    _c.commit(); _c.close()
-    check("statuses: 設定の順の一覧", _data.status_names() == ["backlog", "doing", "shipped", "qa", "dropped"], str(_data.status_names()))
-    check("statuses: ボードは分類の順", _data.board_columns() == ["backlog", "doing", "qa", "shipped", "dropped"], str(_data.board_columns()))
-    check("statuses: 組み込みの名前も分類で数える", _data.st_names("active") == ["doing", "in_progress"] and _data.st_main("blocked") == "blocked",
-          str(_data.st_names("active")))
-    check("statuses: SQL の置き場を埋める", _data.stq("x IN (__CLOSED_STATUSES__)") == "x IN ('shipped','dropped','done','cancelled')", _data.stq("x IN (__CLOSED_STATUSES__)"))
-    check("statuses: 作業中の分類で停滞を判断", _vw.task_stale({"status": "doing", "updated_at": "2026-01-01T00:00:00Z"}) is not None
-          and _vw.task_stale({"status": "backlog", "updated_at": "2026-01-01T00:00:00Z"}) is None)
-    check("statuses: 閉じた分類は期限切れにしない", _vw.due_state({"status": "shipped", "due": "2000-01-01"}) is None
-          and _vw.due_state({"status": "backlog", "due": "2000-01-01"}) == "overdue")
-    _ka = {r["name"]: r for r in _data.q(_data.KILLABLE_SQL)}
-    check("statuses: agent の未完了タスクも分類で数える(T-1 の in_progress と doing)", _ka["alpha"]["open_tasks"] == 2, str(_ka.get("alpha")))
-    _tt, _tb = _vw.page_tasks({})
-    check("statuses: タスク一覧の選択肢と件数は設定の状態", 'name=status value="backlog">' in _tb and "dropped 0" in _tb and "in_progress 1" in _tb, _tb[:400])
-    _tt, _tb = _vw.page_tasks({"status": ["todo"]})
-    check("statuses: 設定にもチケットにも無い状態での絞り込みは断る", "状態は backlog / doing / shipped / qa / dropped のどれかです" in _tb)
-    _tt, _tb = _vw.page_tasks({"status": ["in_progress"]})
-    check("statuses: 設定から外した状態のチケットが残っていれば絞り込める", "状態は" not in _tb and "T-1" in _tb and "T-s-001" not in _tb)
-    check("statuses: 残った状態も選択肢に出て、選んだまま再送信できる", 'name=status value="in_progress" checked>' in _tb)
-    check("statuses: 空の分類は空集合(NOT IN が効く)", _data.q("SELECT COUNT(*) AS n FROM tasks WHERE status NOT IN (SELECT NULL WHERE 0)")[0]["n"] > 0)
-    _tt, _tb = _vw.page_tasks({"due": ["overdue"]})
-    check("statuses: 期限切れは閉じた分類を数えない", "T-s-002" in _tb and "T-s-003" not in _tb)
-    _c = sqlite3.connect(_stdb)
-    _c.execute("UPDATE config SET body='broken' WHERE key='statuses'")
-    _c.commit(); _c.close()
-    check("statuses: 不正な本文なら組み込みに戻る", _data.status_names()[0] == "todo")
-finally:
-    _data.STATUS_CACHE_SEC = _old_cache
-    for _k, _v in (("WEBUI_TB_DB", _old_db), ("HERDR_SESSION", _old_hs), ("TB_STATUSES", _old_st), ("TB_CONFIG_DIR", _old_cd)):
-        if _v is None:
-            os.environ.pop(_k, None)
-        else:
-            os.environ[_k] = _v
 
 print()
 print("FAILED: " + ", ".join(fails) if fails else "all passed")

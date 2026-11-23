@@ -21,8 +21,8 @@ import (
 	"unicode/utf8"
 )
 
-// server は webui/app/handler.py と httpbase.py の Go 版。今はログインまわり(初回設定・ログイン・再設定・ログアウト)、
-// 同梱のスクリプトと、pages.go の pages の画面(Python 版の全画面)。知らないパスは 404。
+// server は HTTP の入口: ログインまわり(初回設定・ログイン・再設定・ログアウト)、
+// 同梱のスクリプトと、pages.go の pages の画面。知らないパスは 404。
 
 const CSP = "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'unsafe-inline'; " +
 	"base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
@@ -774,7 +774,7 @@ func bind(start int) (net.Listener, int, error) {
 	return nil, 0, fmt.Errorf("herdr-webui: ポート %d〜%d がすべて使えません: %v", start, end, last)
 }
 
-// Serve は server.py の main。終了コードを返す。
+// Serve は herdrctl webui serve の本体。終了コードを返す。
 func Serve(stdout, stderr io.Writer) int {
 	ApplySession() // checkout の herdr-session ファイルでセッションを固定していれば、herdr にも渡す(/ の行き先)
 	if g := ReadGateway(true); g != nil {

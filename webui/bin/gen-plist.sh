@@ -17,7 +17,6 @@ fi
 OUT_DIR="${OUT_DIR:-$ROOT/generated}"
 LOG_DIR="$ROOT/logs"
 LOG_NAME="launchd-webui"
-PY="${PYTHON3:-$(command -v python3)}"
 mkdir -p "$OUT_DIR" "$LOG_DIR"
 OUT="$OUT_DIR/$LABEL.plist"
 cat >"$OUT" <<PLIST
@@ -29,8 +28,8 @@ cat >"$OUT" <<PLIST
   <string>$LABEL</string>
   <key>ProgramArguments</key>
   <array>
-    <string>$PY</string>
-    <string>$ROOT/server.py</string>
+    <string>/bin/bash</string>
+    <string>$ROOT/bin/serve.sh</string>
   </array>
   <key>WorkingDirectory</key>
   <string>$ROOT</string>

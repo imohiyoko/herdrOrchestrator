@@ -963,7 +963,7 @@ tb config history policy           # 変更の履歴(config_changes)
   ファイルを直接読むと、別のセッション向けや古い本文を読みかねない。そのため `tb config import` は取り込んだファイルを `~/.local/state/herdr/config-imported/<日時>/` へ退かす(戻すときはそこからコピー)。
   念のため `permissions.deny` に `Read(//<ORCH_DIR>/taskboard/config/*.conf)` を入れておくとよい
 - ファイルに残す設定: この Mac 全体を守るもの(gate 系・risk-rules・pr-queue・proxy-allowlist・repos.md・spawn-rules)と、コードと版を合わせる既定値(`approvals-catalog.conf`・`*.example`)。役割(roles/)は今は `roles/sessions/<セッション>/` で分ける
-- Web UI も同じ順で引く(`webui/app/data.py` の `config_text`。今は projects と policy)
+- Web UI も同じ順で引く(`internal/webui/data.go` の `configText`)
 
 ### agent に返す文面(`messages`)
 
@@ -1002,7 +1002,7 @@ DB は 1 つで、全部の herdr セッションが共有する(既定は `${XD
 - タスク ID(`T-<project>-NNN`)だけは DB 全体で一意(採番は全セッションの行を見る)。C- / O- / A- / L- などの番号も DB 全体の通し番号
 - agent の台帳・`tb_flags`・`notify_seen`・`observations` は、セッションとの組で一意(同じ agent 名が別のセッションにいてよい)
 - hook の活動記録(`agent_activity`)は Claude の session id で引く。書いたセッションも残り、`tb activity` の一覧はセッションごと
-- Web UI も同じ DB を、自分のセッションの行だけ読む(`webui/app/data.py` の一時ビュー)
+- Web UI も同じ DB を、自分のセッションの行だけ読む(`internal/webui/data.go` の一時ビュー)
 - 共有の SQL(`sql/agent_edges.sql`)は表の名前のまま書き、tb も Web UI も同じ一時ビュー(下の「SQL の書き方」)で絞る
 
 ### SQL の書き方(tb の `internal/kernel/store`)
@@ -1014,7 +1014,7 @@ tb は、接続ごとに `herdr_session` 列を持つ表(一覧は [`sql/session
 
 書き込みは必ず `main.<表>` と書く(ビューには書けず、SQLite が `cannot modify … because it is a view` で止めるので付け忘れも分かる)。
 INSERT は `herdr_session` 列に `$SQS` を、UPDATE / DELETE は `WHERE herdr_session=$SQS AND …` を書く(見張りは最後の防ぎで、絞りは書く)。
-Web UI(`webui/app/data.py` の `session_views`)も同じ一覧から同じビューを作る(書き込みはしない)。
+Web UI(`internal/webui/data.go` の `conn`)も同じ一覧から同じビューを作る(書き込みはしない)。
 ビュー経由(INSTEAD OF トリガー)にしないのは、`changes()` / `last_insert_rowid()` / `RETURNING` がビュー経由では効かないため。
 見張りなしの `sql_all` を使うのは、スキーマの移行、hook の活動記録(会話が別のセッションで再開されたら行ごと移す)、`tb config import` の別セッションの行の取り込みだけ。
 表を足して `herdr_session` 列を持たせたら `sql/session_tables` にも足す(テスト `89_session_guard` がスキーマとの食い違いを落とす)。

@@ -193,6 +193,10 @@ fresh; : >"$R/webui/run/token"; run; has "廃止された token" warn webui:toke
 fresh; echo '{"port": 8801, "pid": 1}' >"$WS/gateway.json"; run; has "待ち受けたポート" info webui:port "http://127.0.0.1:8801/"
 fresh; echo '<plist><dict/></plist>' >"$LA/local.herdr-webui-gateway.plist"; run; has "旧版の入口の plist は warn" warn webui:old-plist "local.herdr-webui-gateway"
 fresh; echo '<plist><dict/></plist>' >"$LA/local.herdr-staging-webui.plist"; run; has "旧版のセッションごとの plist は warn" warn webui:old-plist "local.herdr-staging-webui"
+fresh; printf '<plist><array><string>/usr/bin/python3</string><string>%s/webui/server.py</string></array></plist>\n' "$R" >"$LA/local.herdr-webui.plist"; run
+has "Python 版(server.py)を動かす plist は warn" warn webui:old-plist "server.py"
+fresh; printf '<plist><array><string>/bin/bash</string><string>%s/webui/bin/serve.sh</string></array></plist>\n' "$R" >"$LA/local.herdr-webui.plist"; run
+hasnt "serve.sh を動かす plist は warn しない" warn webui:old-plist
 
 # --- DB: 共有の 1 か所(ホーム)。旧形式(checkout ごと)の DB が残っていれば warn ---
 fresh; run; has "DB は共有の置き場を見る" ok taskboard:db "$H/.local/state/herdr/tasks.db"; hasnt "旧形式の DB が無ければ何も言わない" warn taskboard:legacy-db
