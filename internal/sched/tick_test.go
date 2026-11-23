@@ -36,3 +36,19 @@ func TestSodLabelAndInterval(t *testing.T) {
 		t.Errorf("intervalLabel = %s", got)
 	}
 }
+
+func TestLoadFromBodies(t *testing.T) {
+	for _, k := range []string{"SCHED_WINDOW", "SCHED_START", "SCHED_END", "SCHED_INTERVAL_MIN", "SCHED_INTERVAL_SEC"} {
+		t.Setenv(k, "")
+	}
+	d := t.TempDir()
+	e := Env{Root: d, JobsDir: d, SettingsDir: d, DB: d + "/none.db", Session: "default"}
+	e.Bodies = map[string]string{"sched-job:x": "TARGET=a\nPROMPT=hi\nWINDOW=09:00-10:00\nINTERVAL_MIN=5\n"}
+	if j, err := e.Load("x"); err != nil || j.Src != "db" || j.IntervalSec != 300 {
+		t.Fatalf("Load = %+v, %v", j, err)
+	}
+	e.Bodies["sched-job:x"] = "TARGET=a\nPROMPT=$(id)\nWINDOW=09:00-10:00\nINTERVAL_MIN=5\n"
+	if _, err := e.Load("x"); err == nil {
+		t.Fatal("展開を含む定義が通った")
+	}
+}

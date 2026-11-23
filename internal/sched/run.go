@@ -6,11 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"strings"
 )
 
 const usage = `usage: herdrctl sched <command>
 
 commands:
+  --features   受け持てるものを空白区切りで出す
+  lint <job>   標準入力のジョブ定義を Go 版が読めるかを確かめる(上書き設定と SCHED_* は今のものを使う。setup/check.sh が使う)
   show <job>   実際に効く設定(定義 + 上書き設定 + SCHED_*)を JSON 1 行で出す(scheduler/bin/show.sh の Go 版)
   tick <job>   この回に実行する回を判定して実行し、logs/<job>.log に記録する(scheduler/bin/tick.sh の Go 版)
   jobs         ジョブ名の一覧(scheduler/bin/jobs.sh の Go 版)
@@ -21,6 +25,9 @@ commands:
   install {install|uninstall|status} <job> | --dispatch
                launchd に登録する・外す・状態を見る(scheduler/bin/install.sh の Go 版)
 `
+
+// Features は Go 版が受け持てるもの(scheduler/bin/lib.sh の sched_go が、既定で Go にしてよいかをこれで決める)。
+var Features = []string{"show", "tick", "jobs", "dispatch", "gen-plist", "install", "lint"}
 
 // Run は herdrctl sched <args>。終了コードは scheduler に合わせる(die は 2)。
 func Run(args []string, stdout, stderr io.Writer) int {
@@ -56,6 +63,25 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			return finish(err, stderr)
 		}
 		return rc
+	case "lint":
+		name := ""
+		if len(args) > 1 {
+			name = args[1]
+		}
+		body, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return finish(err, stderr)
+		}
+		e := DefaultEnv()
+		e.Bodies = map[string]string{"sched-job:" + name: string(body)}
+		j, err := e.Load(name)
+		if err == nil {
+			_, err = DaysToNums(j.Name, j.Days) // show / tick と同じく DAYS も確かめる
+		}
+		return finish(err, stderr)
+	case "--features":
+		fmt.Fprintln(stdout, strings.Join(Features, " "))
+		return 0
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0

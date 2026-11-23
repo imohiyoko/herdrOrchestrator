@@ -102,6 +102,8 @@ agent の名前・プロンプト・権限(approvals / grants / routes / deliver
   (毎分の起動が 1 回で済む)。登録は承認後に `install.sh install --dispatch`。個別の plist から移るときは、移したジョブの個別の plist を
   (承認後に)`install.sh uninstall <job>` で外す。`check.sh` が「二重に動く」と言ったら、この外し忘れ。
 - `check.sh` が「古い形式の plist」と言ったら、gen-plist → install をやり直す。
+- `check.sh` が「Go 版の scheduler が読めない」と言ったら、理由(展開 `$` や `` ` `` など)を見せ、`KEY=値` だけで書き直した本文を作って差分を見せ、
+  承認後に `bash taskboard/bin/tb job set <job> < <本文のファイル>` で書き直す(scheduler は既定で Go 版が動き、Go 版は conf を bash として実行しない)。
 
 ### 5. Web UI(`webui:*` / `launchd:webui`)
 - `webui/README.md` の要点(127.0.0.1 のみ・ログイン必須・変更できるのはスケジュールだけ)を説明する。

@@ -25,6 +25,7 @@ func die(format string, a ...any) error { return &Die{fmt.Sprintf(format, a...)}
 type Env struct {
 	Root, JobsDir, SettingsDir, DB, Session string
 	FilesOK                                 bool
+	Bodies                                  map[string]string // DB より先に引く本文(キー → 本文)。sched lint が標準入力の定義を読ませる
 }
 
 // DefaultEnv は lib.sh と同じ既定。SCHED_ROOT は scheduler のディレクトリ(scheduler/bin の show.sh などが渡す)。
@@ -46,6 +47,9 @@ func DefaultEnv() Env {
 
 // dbBody は sched_db_body: DB のこのセッションの行 > 共通の行(*)。DB が無い・読めない・本文が NULL なら無い。
 func (e Env) dbBody(key string) (string, bool) {
+	if b, ok := e.Bodies[key]; ok {
+		return strings.TrimRight(b, "\n"), true // 空でも渡された本文として読む(ファイルへ戻らない)
+	}
 	if st, err := os.Stat(e.DB); err != nil || !st.Mode().IsRegular() {
 		return "", false
 	}
