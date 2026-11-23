@@ -81,17 +81,19 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return approval.NewJudge(db, session).Relation(a, b, rel)
 	}
 	approval.Warn = func(msg string) { fmt.Fprintln(stderr, msg) }
+	approved := false
 	if args[0] != "touch" && args[0] != "role-context" {
+		// tb approval approve が立てた子(承認済みの依頼の機械的な実行)なら、依頼者として動き、ask を通す
+		var err error
+		if approved, err = approvedRun(args); err != nil {
+			return finish(err, stderr)
+		}
+	}
+	if args[0] != "touch" && args[0] != "role-context" && !approved {
 		// 呼び出し元の確かめ(HERDR_PANE_ID を信じず、pane の中かを herdr とプロセスの親子で確かめる。ADR 0007 段 1a。bash の auth_or_die)
 		if _, msg := identity.Authenticate(); msg != "" {
 			fmt.Fprintln(stderr, "tb: [identity.unverified] "+msg)
 			return 3
-		}
-	}
-	if args[0] != "touch" && args[0] != "role-context" {
-		// tb approval approve が立てた子(承認済みの依頼の実行)なら、ask を通す
-		if err := approvedRun(args); err != nil {
-			return finish(err, stderr)
 		}
 	}
 	if args[0] != "touch" {

@@ -2,11 +2,14 @@ package tbcli
 
 // 承認待ちを 1 か所に(ADR 0007 の段 4。表 requests、ID は Q-<n>)。
 // 送信(outbox)と agent の操作(agent_ops)は、元の表に pending の行ができるとトリガーがここに足す(状態の正は元の行)。
-// ask で止まったコマンドは、ここに中身(引数と標準入力)ごと積み、承認されたら承認した側がそのコマンドを実行する。
+// ask で止まったコマンドは、ここに中身(引数と標準入力)ごと積み、承認されたら依頼者の権限で機械的に実行する(承認した側の権限は使わない)。
 
 import (
 	"bytes"
+	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/approval"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/herdr"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/identity"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/perms"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
@@ -258,14 +262,20 @@ func requestDecide(sub string, args []string, w, stderr io.Writer) error {
 	if !r.payload.Valid || json.Unmarshal([]byte(r.payload.String), &pl) != nil || len(pl.Args) == 0 {
 		return die("%s の中身を読めません", r.qid())
 	}
-	res, err := db.Exec(`UPDATE main.requests SET status='approved', decided_by=?, decided_at=? WHERE id=? AND status='pending'`, ap.name, nowTS(), r.id)
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return err
+	}
+	keyHex := hex.EncodeToString(key)
+	res, err := db.Exec(`UPDATE main.requests SET status='approved', decided_by=?, decided_at=?, run_key=? WHERE id=? AND status='pending'`,
+		ap.name, nowTS(), keyHash(keyHex), r.id)
 	if err != nil {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n != 1 {
 		return die("%s は承認待ちではありません(ほかで決まりました)", r.qid())
 	}
-	fmt.Fprintf(w, "%s approved by %s: tb %s\n", r.qid(), ap.name, strings.Join(pl.Args, " "))
+	fmt.Fprintf(w, "%s approved by %s: %s として実行します: tb %s\n", r.qid(), ap.name, r.requester, strings.Join(pl.Args, " "))
 	flush(w)
 	self, err := os.Executable()
 	if err != nil {
@@ -273,7 +283,15 @@ func requestDecide(sub string, args []string, w, stderr io.Writer) error {
 	}
 	var out bytes.Buffer
 	cmd := exec.Command(self, append([]string{"tb"}, pl.Args...)...)
-	cmd.Env = append(os.Environ(), "TB_APPROVED_REQUEST="+r.qid())
+	// 承認した側の pane・呼び出し元は渡さない(子は依頼者として動く。承認した側の権限は使わない)
+	var env []string
+	for _, kv := range os.Environ() {
+		k, _, _ := strings.Cut(kv, "=")
+		if k != "HERDR_PANE_ID" && k != "TB_SYSTEM" && k != "TB_APPROVED_REQUEST" && k != "TB_APPROVED_KEY" {
+			env = append(env, kv)
+		}
+	}
+	cmd.Env = append(env, "TB_APPROVED_REQUEST="+r.qid(), "TB_APPROVED_KEY="+keyHex)
 	cmd.Stdin = strings.NewReader(pl.Stdin)
 	cmd.Stdout = io.MultiWriter(w, &out)
 	cmd.Stderr = io.MultiWriter(stderr, &out)
@@ -303,44 +321,69 @@ func requestDecide(sub string, args []string, w, stderr io.Writer) error {
 	return nil
 }
 
-// approvedRun は TB_APPROVED_REQUEST の確かめ(tb approval approve が立てた子の実行)。承認した本人が、承認したコマンドを 1 回だけ実行できる。
-func approvedRun(args []string) error {
-	q := os.Getenv("TB_APPROVED_REQUEST")
-	if q == "" {
-		return nil
+func keyHash(k string) string {
+	h := sha256.Sum256([]byte(k))
+	return hex.EncodeToString(h[:])
+}
+
+// approvedRun は tb approval approve が立てた子(承認したコマンドの機械的な実行)の確かめ。
+// 鍵が合い、承認済みでまだ実行していないときだけ、依頼者として 1 回だけ動く(呼び出し元は依頼者、ask は通す、deny は通さない)。
+// 承認した側の権限は使わない(承認する権限しか持たない承認者でも、依頼者の権限で実行される)。
+func approvedRun(args []string) (bool, error) {
+	q, key := os.Getenv("TB_APPROVED_REQUEST"), os.Getenv("TB_APPROVED_KEY")
+	if q == "" && key == "" {
+		return false, nil
 	}
 	os.Unsetenv("TB_APPROVED_REQUEST")
+	os.Unsetenv("TB_APPROVED_KEY")
 	db, _, done, err := permDB()
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer done()
 	r, ok, err := loadRequest(db, qidNum(q))
-	if err != nil || !ok || r.source != "cmd" || r.status != "approved" {
-		return die("承認済みの依頼ではありません: %s", q)
-	}
-	who := "human"
-	if pane := os.Getenv("HERDR_PANE_ID"); pane != "" {
-		if who, err = identity.PaneOwnerName(pane); err != nil || who == "" {
-			who = "human"
-		}
+	if err != nil || !ok || r.source != "cmd" || r.status != "approved" || key == "" {
+		return false, die("承認済みの依頼ではありません: %s", q)
 	}
 	var pl struct {
 		Args []string `json:"args"`
 	}
 	_ = json.Unmarshal([]byte(r.payload.String), &pl)
-	if r.decidedBy.String != who || strings.Join(pl.Args, "\x00") != strings.Join(args, "\x00") {
-		return die("承認済みの依頼と、実行する人かコマンドが違います: %s", q)
+	if strings.Join(pl.Args, "\x00") != strings.Join(args, "\x00") {
+		return false, die("承認済みの依頼とコマンドが違います: %s", q)
 	}
-	res, err := db.Exec(`UPDATE main.requests SET status='running' WHERE id=? AND status='approved'`, r.id)
+	res, err := db.Exec(`UPDATE main.requests SET status='running', run_key=NULL WHERE id=? AND status='approved' AND run_key=?`, r.id, keyHash(key))
 	if err != nil {
-		return err
+		return false, err
 	}
 	if n, _ := res.RowsAffected(); n != 1 {
-		return die("承認済みの依頼はもう実行しました: %s", q)
+		return false, die("承認済みの依頼の鍵が合わないか、もう実行しました: %s", q)
+	}
+	// 依頼者として動く
+	identity.System = ""
+	os.Unsetenv("HERDR_PANE_ID")
+	switch {
+	case r.requester == "human":
+	case strings.HasPrefix(r.requester, "system:"):
+		identity.System = r.requester
+	default:
+		as, err := herdr.Agents()
+		if err != nil {
+			return false, die("herdr agent list に失敗したため、依頼者 %s として実行できません", r.requester)
+		}
+		pane := ""
+		for _, a := range as {
+			if a.Name == r.requester {
+				pane = a.PaneID
+			}
+		}
+		if pane == "" {
+			return false, die("依頼者 %s がもういないため実行できません(%s)", r.requester, q)
+		}
+		os.Setenv("HERDR_PANE_ID", pane)
 	}
 	perms.Approved = true
-	return nil
+	return true, nil
 }
 
 // requestPriority は tb approval priority Q-<n> high|normal|low(依頼者か人だけ)。
