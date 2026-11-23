@@ -105,7 +105,7 @@ lead1        approve:agent:stop  ~report      = allow       # 旧 grants の app
 
 | 段 | 内容 | 振る舞い |
 |---|---|---|
-| 1 | 認証: herdr に「プロセス → pane」を尋ねる口を作り(herdr 側の変更が要る。下の「確認できていないこと」)、tb の `authenticate` をそれに替える。Web UI と scheduler の印 | 主体の決め方だけが変わる。`HERDR_PANE_ID` を消しても人にはなれない |
+| 1 | 認証: tb が「呼び出し元はその pane の中か」を herdr の pane process-info とプロセスの親子で確かめる(段 1a。herdr は変えない)。Web UI と scheduler の印 | 主体の決め方だけが変わる。`HERDR_PANE_ID` を消しても人にはなれない |
 | 2 | `policy` の表と `authorize`。PR 197 の門の中身を替える | 既定の表で、今と同じ |
 | 3 | `tb policy import` と、コマンドの中の判定の置き換え。古いキーと関数を消す | 変換した行で、今と同じ |
 | 4 | 承認待ちを 1 つにする(ask-any / ask-human の承認) | ask-* が exit 20 で止まる代わりに、承認待ちになる |
@@ -119,6 +119,17 @@ lead1        approve:agent:stop  ~report      = allow       # 旧 grants の app
   - 前は「上から最初に当たった行」だったので、厳しい方が勝つ policy では結果が変わる行がある(広い ask の下の狭い allow、ask に当たる grants)。import はそれを「確かめてほしい行」として出す。広い行で締めて狭い行で緩める書き方はできない(決めたことの 1 のとおり)
   - `tb approval allow` / `ask` は policy に「* <操作> <対象> = allow|ask-any」の行を書く(上と同じ分け方)
   - policy.conf と `perms/*.tbl` を gate の外せない保護対象に足した
+### 段 1 の進み具合(2026-11-23)
+
+- **人が決めたこと**: 別の OS ユーザーで動かす tb のサーバーは作らない(最低限で終える)。同じ OS ユーザーの agent による、わざとのなりすましは一部許容する
+- **段 1a(済み)**: `HERDR_PANE_ID` を信じず、tb(と herdrctl)を呼んだプロセスが本当にその pane の中で動いているかを確かめる。herdr は変えない
+  - 確かめ方: `herdr pane process-info <pane>` が返す pane の最初のプロセス(`shell_pid`)が呼び出し元の祖先にいるか、同じ端末(tty)を使っているか(親が先に終わって祖先から外れても、端末は残る)
+  - `HERDR_PANE_ID` が無くても、herdr の中(祖先か、同じ端末の持ち主の親に herdr のプロセスがいる)なら agent の pane を探し、見つかれば `HERDR_PANE_ID` を付け直す。`HERDR_PANE_ID` を消して人のふりをする、を止める。どの agent の pane でもなければ人の pane
+  - 確かめられないとき(申告した pane の中にいない、herdr に聞けない)は何もしない(`identity.unverified`、終了コード 3)。hook(`touch`、`role-context`)は止めない
+  - herdr の外(人の端末・scheduler・Web UI)は今までどおり人
+- **許容すること(段 1a で止めないもの)**: 親子関係と端末の両方を切る実行(`setsid` と新しい端末)、`HERDR_BIN` などで偽の herdr を使わせる、tb を書き換えて実行する、DB に直接書く。どれも同じ OS ユーザーで動く限り tb の中では止められない。止めるには OS のユーザーを分ける(代替案 C)
+- **これから**: scheduler・hook の主体 `system:<名前>` と、policy の `system:` の行
+
 - **段 3b(これから)**: `routes` / `delivery` の許可・拒否、`protect`、spawn の方針の自動承認、proxy check を policy に移し、古い仕組みを消す
 
 ## 人が決めたこと(2026-11-22。すべて推奨どおり)
@@ -130,6 +141,6 @@ lead1        approve:agent:stop  ~report      = allow       # 旧 grants の app
 
 ## 確認できていないこと・推測
 
-- **herdr が「プロセス → pane」を答えられるか**: herdr は外のツールで、このリポジトリには無い。pane のシェルのプロセス ID を持っているはずだが、それを尋ねる口があるかは確かめていない。無ければ herdr への機能追加の依頼になる。
+- **herdr が「プロセス → pane」を答えられるか**(確かめた): herdr は接続元の pid を OS から受け取れるが、ログに使うだけで答える口は無い。代わりに `pane process-info` が pane の最初のプロセスの pid を返すので、tb の側で親子を照らす(段 1a)。
 - **同じ OS ユーザーの限界**: agent が人の pane のシェルにコマンドを打ち込める(herdr の send 系の口を使える)なら、人の pane の子孫としてコマンドを動かせる。tb の `send` は宛先が agent だけだが、herdr を直接呼ばれると止められない。これは C(OS のユーザーを分ける)まで残る。
 - **DB と設定ファイル**: agent が DB や設定ファイルに直接書き込めるなら、tb を通さずに policy を書き換えられる。段 1 と同時に、DB と設定を agent から書けない場所に置く必要がある(ADR 0001 の L3 と同じ問題)。

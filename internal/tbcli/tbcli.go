@@ -5,6 +5,7 @@ package tbcli
 import (
 	"database/sql"
 	"github.com/imohiyoko/herdrorchestrator/internal/approval"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/identity"
 	"sort"
 
 	"bufio"
@@ -71,6 +72,13 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return approval.NewJudge(db, session).Relation(a, b, rel)
 	}
 	approval.Warn = func(msg string) { fmt.Fprintln(stderr, msg) }
+	if args[0] != "touch" && args[0] != "role-context" {
+		// 呼び出し元の確かめ(HERDR_PANE_ID を信じず、pane の中かを herdr とプロセスの親子で確かめる。ADR 0007 段 1a。bash の auth_or_die)
+		if _, msg := identity.Authenticate(); msg != "" {
+			fmt.Fprintln(stderr, "tb: [identity.unverified] "+msg)
+			return 3
+		}
+	}
 	if args[0] != "touch" {
 		// 権限段階の入口(ADR 0006。bash の main → perm_gate と同じ)
 		if err := permErr(perms.Gate(args, permDB)); err != nil {
