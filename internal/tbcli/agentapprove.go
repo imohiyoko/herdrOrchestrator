@@ -17,7 +17,7 @@ import (
 )
 
 // 承認待ちの操作(L-<n>)の承認と却下(taskboard/lib/agents.sh の cmd_agent-approve / cmd_agent-reject と
-// lib/slash.sh の slash_approve)。承認できるのは人か、grants の approve:agent:… で許された agent。
+// lib/slash.sh の slash_approve)。承認できるのは人か、policy の approve:agent:… の allow の行で許された agent。
 
 var reLid = regexp.MustCompile(`^L-[0-9]+$`)
 
@@ -74,7 +74,7 @@ func opRowOf(db *store.DB, id int64) (opRow, bool) {
 	return o, true
 }
 
-// agentOpAction は agent_op_action: 承認するときに grants で見る元の操作名(空 = 人だけ)。
+// agentOpAction は agent_op_action: 承認するときに policy の approve: で見る元の操作名(空 = 人だけ)。
 func agentOpAction(db *store.DB, o opRow) string {
 	a := o.parsed()
 	switch o.op {
@@ -192,7 +192,7 @@ func cmdAgentApprove(args []string, w, stderr io.Writer) error {
 	}
 	if always {
 		pat := "agent:" + aop + ":" + o.target
-		if setApproval(db, "allow", pat, io.Discard) == nil {
+		if setApproval(db, "allow", pat, io.Discard, stderr) == nil {
 			fmt.Fprintln(w, pat+" = allow(今後は承認なし)")
 		}
 	}
@@ -223,7 +223,7 @@ func slashApprove(db *store.DB, o opRow, always bool, ap approver, w, stderr io.
 	}
 	if always {
 		pat := "agent:slash:" + cmd + ":" + o.target
-		if setApproval(db, "allow", pat, io.Discard) == nil {
+		if setApproval(db, "allow", pat, io.Discard, stderr) == nil {
 			fmt.Fprintln(w, pat+" = allow(今後は承認なし)")
 		}
 	}

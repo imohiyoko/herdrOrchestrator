@@ -421,7 +421,7 @@ func sortUniq(xs []string) []string {
 var rePeekLines = regexp.MustCompile(`^[0-9]{1,3}$`)
 
 // cmdPeek は tb peek <agent 名> [--lines N]: agent の pane の直近の出力を読む。人と本人はそのまま、ほかの agent は
-// approvals の agent:read:<対象> が allow のときだけ(終了コード 20)。読んだ記録は read_log。
+// policy の agent:read <対象> が allow のときだけ(終了コード 20)。読んだ記録は read_log。
 func cmdPeek(args []string, w, stderr io.Writer) error {
 	if len(args) < 1 {
 		return usage("peek <agent 名> [--lines N]")

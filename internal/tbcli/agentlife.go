@@ -38,8 +38,8 @@ type opResult struct {
 	note string // 最初の指示を送れなかった・確かめられなかった理由(FP_NOTE)
 }
 
-// authorizeOp は authorize_op: 人なら true。agent なら approvals の agent:<op>:<名前> が allow のとき true、
-// それ以外は L-<n> を積んで「承認待ち」を出し、終了コード 20 を返す。
+// authorizeOp は authorize_op: 人なら true。agent なら policy の agent:<op> <名前> が allow のとき true、
+// deny なら記録して終了コード 4、それ以外は L-<n> を積んで「承認待ち」を出し、終了コード 20 を返す。
 func authorizeOp(db *store.DB, op, target, args, by string, w io.Writer) (bool, error) {
 	if by == "human" {
 		return true, nil
@@ -57,8 +57,16 @@ func authorizeOp(db *store.DB, op, target, args, by string, w io.Writer) (bool, 
 	if v == "allow" {
 		return true, nil
 	}
+	if v == "deny" {
+		ts := nowTS()
+		if _, err := db.Exec(`INSERT INTO main.agent_ops (herdr_session, op, target, args, requested_by, status, result, created_at, decided_at) VALUES (?,?,?,?,?, 'rejected', ?, ?, ?)`,
+			db.Session, op, target, args, by, "認可: "+rule, ts, ts); err != nil {
+			return false, err
+		}
+		return false, &exit{4, "agent:" + op + " " + target + " は実行できません(deny。" + rule + ")"}
+	}
 	res, err := db.Exec(`INSERT INTO main.agent_ops (herdr_session, op, target, args, requested_by, status, result, created_at) VALUES (?,?,?,?,?, 'pending', ?, ?)`,
-		db.Session, op, target, args, by, "approvals: "+rule, nowTS())
+		db.Session, op, target, args, by, "認可: "+rule, nowTS())
 	if err != nil {
 		return false, err
 	}
@@ -687,7 +695,7 @@ func cmdAgentRestart(args []string, w, stderr io.Writer) error {
 			s, _ := j.Of("agent:stop:"+name, by)
 			v, _ := j.Of("agent:revive:"+name, by)
 			if s != "allow" || v != "allow" {
-				why = "approvals で agent:stop:" + name + " と agent:revive:" + name + " の両方が allow ではありません(stop=" + s + " revive=" + v + ")。人が実行するか、人が許可してください"
+				why = "policy で agent:stop と agent:revive(" + name + ")の両方が allow ではありません(stop=" + s + " revive=" + v + ")。人が実行するか、人が許可してください"
 			}
 		}
 		if why != "" {
@@ -873,13 +881,13 @@ func cmdAgentNew(args []string, w, stderr io.Writer) error {
 		}
 		pat := envOr("TB_SWEEPER_PATTERN", "sweeper*")
 		if by != "human" && !util.Glob(pat, by) {
-			// 作る前の agent は台帳に無い。grants の @<役割> の対象は、要求された役割(--role)で比べる
+			// 作る前の agent は台帳に無い。policy の @<役割> の対象は、要求された役割(--role)で比べる
 			j := approval.NewJudge(db.DB, db.Session)
 			if role != "" {
 				j.Roles.Hint(name, role)
 			}
 			if _, ok := j.GrantOf(by, "agent:flag", name); !ok {
-				return die("agent-new --killable を付けられるのは人、判定役(%s)、grants で agent:flag を許された agent だけです(%s)", pat, by)
+				return die("agent-new --killable を付けられるのは人、判定役(%s)、policy で agent:flag を許された agent だけです(%s)", pat, by)
 			}
 		}
 	}

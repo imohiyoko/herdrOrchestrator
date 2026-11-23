@@ -28,7 +28,7 @@ tb job history <job> [--settings]   変更の履歴
 (古い名前 tb sched-job も同じに使える。tb sched-job だけなら list)
 `
 
-// requireHuman はコマンドの中の人だけの確かめ(bash の require_human)。段階は権限段階の表(ADR 0006)と設定 approvals の cmd: の行で決まる。
+// requireHuman はコマンドの中の人だけの確かめ(bash の require_human)。段階は権限段階の表(ADR 0006)と設定 policy の行で決まる。
 func requireHuman(what string) error {
 	return permErr(perms.RequireHuman(what, permDB))
 }
