@@ -748,3 +748,31 @@ cmd_recipe-cancel() {
   REQ_BY=$by
   echo "R-$id cancelled"
 }
+
+# ---------- tb recipe <動詞>(サービス recipe)----------
+# 古い名前(recipe-set / parts / part-check など)も同じに動く。古い名前は bash を消す PR で外す
+cmd_recipe() {
+  if [[ $# -eq 0 ]]; then recipe_usage; exit 2; fi
+  local sub=$1; shift
+  case $sub in
+    set|rm|list|show|history|run|runner|queue|cancel) "cmd_recipe-$sub" "$@";;
+    part)
+      local v=${1:-}; shift || true
+      case $v in
+        list) cmd_parts "$@";;
+        check|risk) "cmd_part-$v" "$@";;
+        *) usage "recipe part: 不明なサブコマンド ${v:-(なし)}(list / check / risk)";;
+      esac;;
+    help|-h|--help) recipe_usage;;
+    *) usage "recipe: 不明なサブコマンド $sub(tb recipe で一覧)";;
+  esac
+}
+recipe_usage() {
+  cat <<'USAGE'
+tb recipe set <名前> [--file F] / tb recipe rm <名前>   登録・置き換え / 消す(人だけ。古い名前 tb recipe-set など)
+tb recipe list [--json] / tb recipe show <名前> / tb recipe history [<名前>] [--json]
+tb recipe run <名前> [--target A] [--task T-..] [--dry-run] [<名前>=<値> ...]   実行の入口
+tb recipe queue [--all] [--json] / tb recipe cancel R-<n> / tb recipe runner [--max N]   待ち行列と外の実行役
+tb recipe part list [--json] / tb recipe part check <部品> [<名前>=<値> ...] / tb recipe part risk <部品> ...   部品(古い名前 tb parts / part-check / part-risk)
+USAGE
+}

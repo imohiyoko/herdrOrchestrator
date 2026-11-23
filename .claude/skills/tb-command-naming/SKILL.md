@@ -37,7 +37,7 @@ tb team show backend
    | `move` | 状態・置き場所を動かす |
    | `run` | 実行する(レシピ、ジョブなど) |
 
-   これで言えないときは、そのサービスで自然な動詞を使ってよい(`tb ticket claim`、`tb agent spawn`)。同じ意味の動詞を増やさない(`delete` と `rm`、`ls` と `list` を混ぜない)
+   これで言えないときは、そのサービスで自然な動詞を使ってよい(`tb ticket claim`、`tb agent spawn`)。agent を作るのは `add` ではなく `tb agent open`(止めるのは `stop`。人の決定 2026-11-23)。同じ意味の動詞を増やさない(`delete` と `rm`、`ls` と `list` を混ぜない)
 5. 引数・オプションの書き方、終了コード(使い方の誤り = 2、対象なし = 1 など)は今の tb と同じにする
 6. `tb <サービス名>` だけ、または `tb <サービス名> help` で、そのサービスのサブコマンドの一覧を出す
 
@@ -52,14 +52,14 @@ ADR 0002(サービスの境界)と ADR 0004(3 つの層とモジュール)から
 | `notify` | チケットの通り道 | 通知の規則、イベントからの通知 | notify, notifyrules / `notify` |
 | `message` | 機能 | agent への連絡・保留・inbox・送信の履歴 | send, transport(の外向き), digest / `message send/flush/outbox/inbox/read`(古い名前 `send` `flush` `outbox` `inbox` `inbox-read`)。`report` `pending` はまだ古い名前だけ |
 | `digest` | 機能 | まとめ送り | digest / `digest` `digests` |
-| `agent` | 機能 | agent の作成・停止・復活・上限・モデル・役割 | agents, spawn, limits, models, roles, shed / `agent-*` `role-*` `model-set` `limits` |
+| `agent` | 機能 | agent の作成・停止・復活・上限・モデル・役割 | agents, spawn, limits, models, roles, shed / `agent list/open/stop/revive/restart/flag/ops/approve/reject/kinds/shed/spawn/can/org/peek/slash`、`agent spawn freeze/unfreeze`、`agent model set`、`agent compact check`、`agent role show/list/write/edit/unset/set/log/broadcast/status`(古い名前 `agents` `agent-*` `spawn-*` `can` `org` `peek` `slash` `model-set` `compact-check` `role-*` `roles`)。`limits` はまだ古い形のまま |
 | `alert` | 機能 | アラート | alerts / `alert` `alert-*` `alerts` |
 | `review` | 機能 | 会計役のレビュー材料・レビューの提出 | review, gate / `review pack/submit`(古い名前 `review-pack` `review-submit`) |
 | `proposal` | 機能 | 会計役 → 設定役の改善提案(project proposal のチケット) | review / `proposal add/list/show/resolve`(古い名前 `proposal --role ...` `proposals` `proposal-resolve`) |
 | `pr` | 機能 | PR キュー・PR の見張り | prqueue / `pr queue add/list/show/approve/reject/retry/run/scan` `pr watch`(古い名前 `pr-queue` `pr-watch`) |
 | `gate` | 機能 | ゲート | gate / `gate` |
 | `approval` | 土台(authz) | 承認・人だけの判定 | approvals, risk / `approval check/allow/ask/approve/reject`(古い名前 `approval <操作>` `allow` `ask` `approve` `reject`) |
-| `recipe` | 機能 | レシピと部品(ADR 0005) | recipes / `recipe-*` `parts` `part-*` |
+| `recipe` | 機能 | レシピと部品(ADR 0005) | recipes / `recipe set/rm/list/show/history/run/runner/queue/cancel`、`recipe part list/check/risk`(古い名前 `recipe-*` `parts` `part-*`) |
 | `conv` | 機能 | 会話の下書き・振り分け・学習 | conv, convlearn, convstage / `conv route/draft/voice/…` `conv pair-add/ledger/candidate-adopt/…` `conv stage/stage-set/gate/…`(古い名前 `conv-<サブコマンド>`) |
 | `reminder` | 機能 | リマインダー・期限 | reminders / `reminder list/check/publish/scan/nudge`(古い名前 `reminders` `due-scan` `nudge`)。`deadlines-import` はまだ古い名前だけ |
 | `job` | 機能 | scheduler のジョブ | schedjobs, schedwatch / `sched-job` |
@@ -73,7 +73,7 @@ ADR 0002(サービスの境界)と ADR 0004(3 つの層とモジュール)から
 ## 実装の置き方
 
 - **bash**: tb は 1 語目を `cmd_<名前>` に渡す(`taskboard/bin/tb` の `main`)。`tb ticket move` なら `cmd_ticket` を 1 つ定義し、その中で 2 語目以降で分ける。サブコマンドの関数は `cmd_ticket_move` のように `cmd_<サービス名>_<動詞>` にし、そのサービスの `taskboard/lib/*.sh` に置く(新しいサービスなら新しいファイル)。`main` の名前の検査(`^[a-z][a-z-]*$`)は `_` を通さないので、`cmd_ticket_move` が 1 語目(`tb ticket_move`)として呼ばれることはない。`main` は変えなくてよい
-- **Go(herdrctl)**: `herdrctl tb ticket move ...` を同じ引数で受ける。`herdrctl tb --commands` にはサービス名(`ticket`)を出す。サービスのコマンドは、そのサービスのパッケージ(`internal/tickets` など、ADR 0004)に置く。1 つのサービスのサブコマンドの一部だけを Go に移すことはできない(1 語目で渡す先が決まる)ので、移すときはサービスごとにまとめて移す
+- **Go(herdrctl)**: `herdrctl tb ticket move ...` を同じ引数で受ける。`herdrctl tb --commands` にはサービス名(`ticket`)を出す。サービスのコマンドは、そのサービスのパッケージ(`internal/tickets` など、ADR 0004)に置く。サービスの一部の動詞だけを先に Go に移すときは、`herdrctl tb --commands` に `<サービス名>.<動詞>`(3 語なら `<サービス名>.<動詞>.<動詞>`)を出す。bin/tb はその動詞だけを herdrctl に渡し、残りの動詞は bash の `cmd_<サービス名>` に回す(Go の表は `internal/tbcli/services.go`)。サービスをまるごと移し終えたら、1 語目(`ticket`)を出す
 - **認可の表**(ADR 0006 / 0007): 新しいコマンド・サブコマンドは、`taskboard/perms/commands.tbl` に行を足す(道 `<サービス名>.<動詞>`、操作名 `cmd:<サービス名>:<動詞>`、agent への既定 `allow` / `ask-any` / `ask-human` / `deny`、下限 `allow`、確かめる場所)。古い名前を別名として残すなら、同じ操作名の行を足す。コマンドの中で `require_human "tb <語...>"`(Go は `requireHuman`)を使うなら、その語の道の行を `inner` にする。足し忘れると `03_perms.sh` と `internal/kernel/perms` のテストが落ちる
 - **help.txt**: 新しいコマンドは `tb <サービス名> ...` の行として、そのサービスの近くに書く
 - **テスト**: `testing` スキルに従う。ケースの名前は `NN_<機能>.sh` のまま(サービス名を入れてもよい)
