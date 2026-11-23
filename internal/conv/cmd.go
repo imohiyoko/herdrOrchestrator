@@ -29,7 +29,7 @@ func usage(f string, a ...any) error { return &Err{2, fmt.Sprintf(f, a...)} }
 func die(f string, a ...any) error   { return &Err{1, fmt.Sprintf(f, a...)} }
 func quiet(code int) error           { return &Err{code, ""} }
 
-// requireHuman はコマンドの中の人だけの確かめ(bash の require_human)。段階は権限段階の表(ADR 0006)と設定 approvals の cmd: の行で決まる。
+// requireHuman はコマンドの中の人だけの確かめ(bash の require_human)。段階は権限段階の表(ADR 0006)と設定 policy の行で決まる。
 func requireHuman(what string) error {
 	var d *perms.Denied
 	if err := perms.RequireHuman(what, nil); errors.As(err, &d) {
