@@ -912,9 +912,10 @@ cmd_agent() {
     model)
       [[ ${1:-} == set ]] || usage "agent model: サブコマンドは set だけです(tb agent model set ...)"
       shift; cmd_model-set "$@";;
-    compact)
-      [[ ${1:-} == check ]] || usage "agent compact: サブコマンドは check だけです(tb agent compact check ...)"
-      shift; cmd_compact-check "$@";;
+    compact)   # ほかの動詞と同じく名前で引く(cmd_compact-<動詞>。lib/compact.sh)
+      local cv=${1:-}
+      [[ $cv == check ]] || usage "agent compact: サブコマンドは check だけです(tb agent compact check ...)"
+      shift; "cmd_compact-$cv" "$@";;
     role)
       local v=${1:-}; shift || true
       case $v in
