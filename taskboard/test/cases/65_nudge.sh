@@ -114,6 +114,8 @@ eq "nudge --wake: 閉じた分類は使い方の誤り" "$($TB nudge --wake done
 eq "nudge --wake: 知らない名前は使い方の誤り" "$($TB nudge --wake actve --dry-run 2>&1 >/dev/null | head -1)" "--wake: 分類にも状態(設定 statuses)にもない名前です: actve"
 eq "nudge --wake: 値が無い" "$(rc $TB nudge --dry-run --wake)" "2"
 eq "nudge --wake: 空の値" "$(rc $TB nudge --wake '' --dry-run)" "2"
+eq "nudge --wake: 空の値はほかの --wake があっても断る" "$(rc $TB nudge --wake '' --wake todo --dry-run) $(rc $TB nudge --wake ' ' --wake todo --dry-run)" "2 2"
+eq "nudge --wake: # を注釈として落とさない" "$(rc $TB nudge --wake 'todo #actve' --dry-run)" "2"
 : >"$TB_NUDGE"
 # 明示した宛先に当たる agent がいなければ、黙って終わらずに skip の行を出す
 eq "nudge: 当たらない宛先 → skip の行" "$($TB nudge no-such-agent --dry-run | cut -f1-3 | tr '\t' ' ')" "no-such-agent - skip"

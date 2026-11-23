@@ -59,23 +59,27 @@ func ValidateNudge(st tickets.StatusSet) config.Validator {
 }
 
 // ParseWakeArg は tb reminder nudge --wake の値(分類か状態の名前。カンマか空白で区切る。複数回は足し合わせる)。
-// 設定 nudge の wake と同じ形の検査に加えて、今の分類にも状態にも無い名前も断る(打ち間違いで誰も催促しないのを防ぐ)。
+// 設定 nudge の wake と同じ名前の決まりに加えて、今の分類にも状態にも無い名前も断る(打ち間違いで誰も催促しないのを防ぐ)。
+// 設定の本文としては読まない(# を注釈として落とさず、名前ごとに検査する)。
 func ParseWakeArg(st tickets.StatusSet, vals []string) (wake []string, bad string) {
-	var names []string
-	for _, v := range vals {
-		names = append(names, strings.FieldsFunc(v, func(r rune) bool { return r == ',' || config.IsSpace(r) })...)
-	}
-	if len(names) == 0 {
-		return nil, "--wake に分類か状態の名前が必要です\n"
-	}
-	_, wake, bad = ParseNudge(st, "wake "+strings.Join(names, " "))
-	bad = strings.ReplaceAll(bad, "1 行目: wake の", "--wake の")
-	bad = strings.ReplaceAll(bad, "1 行目: ", "--wake: ")
 	var b strings.Builder
-	b.WriteString(bad)
-	for _, w := range wake {
-		if !slices.Contains(tickets.Categories, w) && st.Cat(w) == "" {
-			fmt.Fprintf(&b, "--wake: 分類にも状態(設定 statuses)にもない名前です: %s\n", w)
+	for _, v := range vals {
+		names := strings.FieldsFunc(v, func(r rune) bool { return r == ',' || config.IsSpace(r) })
+		if len(names) == 0 {
+			b.WriteString("--wake に分類か状態の名前が必要です\n")
+			continue
+		}
+		for _, w := range names {
+			switch {
+			case config.CharLen(w) > 30 || strings.ContainsAny(w, "],\"'`\\*?[#"):
+				fmt.Fprintf(&b, "--wake の状態の名前に使えない文字があります: %s\n", w)
+			case w == "done" || w == "cancelled" || st.Cat(w) == "done" || st.Cat(w) == "cancelled":
+				fmt.Fprintf(&b, "--wake: 閉じた状態(done / cancelled の分類)は催促できません: %s\n", w)
+			case !slices.Contains(tickets.Categories, w) && st.Cat(w) == "":
+				fmt.Fprintf(&b, "--wake: 分類にも状態(設定 statuses)にもない名前です: %s\n", w)
+			default:
+				wake = append(wake, w)
+			}
 		}
 	}
 	return wake, b.String()
