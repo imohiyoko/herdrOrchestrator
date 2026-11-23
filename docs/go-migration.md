@@ -41,7 +41,7 @@ Go に移すサービスは、`.claude/skills/tb-command-naming` の形(`tb <サ
 | 6 | scheduler の判定・実行 | `herdrctl sched tick`(scheduler/bin/tick.sh の Go 版。`SCHED_IMPL=go` で tick.sh が渡すので、dispatch.sh から動かすジョブも Go になる)。曜日・時間帯・間隔・一時停止の判定、GATE・COMMAND(ロック・時間切れ)・PROMPT_CMD / PROMPT_RULES / PROMPT_VARS、herdr の状態の確かめと tb system-send での送信、ログの 1 行の形と理由の文言は tick.sh と同じ。時間切れはプロセスグループごと止める | 済み |
 | 6 | scheduler の起動器 | `herdrctl sched jobs` / `dispatch` / `gen-plist` / `install`(jobs.sh・dispatch.sh・gen-plist.sh・install.sh の Go 版。`SCHED_IMPL=go` で各スクリプトが lib.sh の `sched_go` から渡す)。dispatch はジョブごとに `herdrctl sched tick` を別のプロセスで並べる。plist の中身・ラベル・メッセージは bash 版と同じ | 済み |
 | 6 | scheduler の既定 | `SCHED_IMPL` 未設定なら、使える herdrctl(`herdrctl sched --features` にそのサブコマンドがある)があれば Go、無ければ bash(tb の `TB_IMPL` と同じ考え)。`SCHED_IMPL=bash` で bash に戻せる | 済み |
-| 6 | webui | webui | まだ(ADR 0002 の手順 5) |
+| 6 | webui | webui | 移行中: ログインまわりとサーバーの土台は Go(`herdrctl webui serve`、`WEBUI_IMPL=go`)。画面は順に移す |
 
 サービスのコマンドより先に、ほかのサービスが使う部品だけを移すことがある(例: approval の PR で `internal/agents` の役割の引き方と `internal/message` の届け方)。そのサービスのコマンドはまだ bash のままで、移す PR でこの部品を使う。
 
