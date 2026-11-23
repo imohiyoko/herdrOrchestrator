@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
-# --- チケットの状態を動かすコマンド(claim / done / block / cancel)の使い方・文面・終了コード・履歴・通知(bash と Go で同じ。期待値は bash の出力から作った)。project は tsc / tsc2 だけを使う
+# --- チケットの状態を動かすコマンド(claim / done / block / cancel)の使い方・文面・終了コード・履歴・通知(期待値は消した bash 版の出力から作った。今はこれが約束)。project は tsc / tsc2 だけを使う
 _ts_saved=$(env | grep -E '^(FAKE_AGENTS|HERDR_PANE_ID|TB_STATUSES|TB_NOTIFY_ENABLED|TB_NOTIFY_DEDUPE_SEC)=' || true)
 unset HERDR_PANE_ID
 export FAKE_AGENTS='[{"pane_id":"w1:p1","name":"w1","agent_status":"idle","agent_session":{"value":"s1"}}]'

@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
-# --- tb limits の使い方・文面・終了コード・書く本文(bash と Go で同じ。期待値は bash の出力から作った)。DB は自分のものを使う
+# --- tb limits の使い方・文面・終了コード・書く本文(期待値は消した bash 版の出力から作った。今はこれが約束)。DB は自分のものを使う
 _lc_saved=$(declare -p HERDR_PANE_ID TB_DB TB_LIMITS TB_SPAWN_POLICY TB_ANALYST_MAX FAKE_AGENTS FAKE_WORKSPACES 2>/dev/null || true)
 unset HERDR_PANE_ID TB_ANALYST_MAX TB_SPAWN_POLICY FAKE_WORKSPACES
 export TB_DB=$TMP/lc.db TB_LIMITS=$TMP/lc-limits.conf; rm -f "$TB_LIMITS" "$TB_LIMITS.example"

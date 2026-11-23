@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
-# --- tb message(send / flush / outbox / inbox / read)の出力・文面・終了コードの細かいところ(bash と Go で同じ。期待値は bash の出力から作った)
+# --- tb message(send / flush / outbox / inbox / read)の出力・文面・終了コードの細かいところ(期待値は消した bash 版の出力から作った。今はこれが約束)
 _mc_vars="HERDR_PANE_ID TB_DB TB_POLICY_A TB_ROLES TB_DELIVERY TB_ROUTES TB_CONFIG TB_LIMITS FAKE_AGENTS FAKE_STATUS FAKE_LIST_FAIL FAKE_PROMPT_RC"
 declare -A _mc_saved=()
 for _v in $_mc_vars; do if [[ -v $_v ]]; then _mc_saved[$_v]=${!_v}; fi; done

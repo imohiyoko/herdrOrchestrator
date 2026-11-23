@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
-# --- tb notify の出力・文面・整形の細かいところ(bash と Go で同じ。期待値は bash の出力から作った)
+# --- tb notify の出力・文面・整形の細かいところ(期待値は消した bash 版の出力から作った。今はこれが約束)
 _saved_pane=${HERDR_PANE_ID-}; unset HERDR_PANE_ID
 _nc_old_db=$TB_DB _nc_old_agents=${FAKE_AGENTS-}
 export TB_DB=$TMP/ncontract.db TB_NOTIFY_CONF=$TMP/nc-notify.conf TB_NOTIFY_DIR=$TMP/nc-out TB_REPOS_FILE=$TMP/nc-repos.md TB_CURL=$TMP/nc-curl TB_NOTIFY_RULES=$TMP/nc-rules.conf

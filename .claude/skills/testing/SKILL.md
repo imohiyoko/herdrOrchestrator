@@ -9,7 +9,7 @@ description: このリポジトリでテストを設計・追加・修正・実�
 
 ## まず決めること
 
-1. **どの部品の振る舞いか** を決め、下の表のテストに足す。bash の `tb` を変えたら tb のケース、`webui/app/*.py` なら test_webui.py、という対応にする
+1. **どの部品の振る舞いか** を決め、下の表のテストに足す。tb(`taskboard/bin/tb` や herdrctl の `internal/tbcli` など)を変えたら tb のケース、`webui/app/*.py` なら test_webui.py、という対応にする
 2. **何を確かめるか**: 正常系だけでなく、境界(0 件・上限ちょうど・期日の当日)、失敗の終了コード(使い方の誤り=2、対象なし=1 など、そのコマンドの約束)、もう一度流しても変わらないこと(冪等)、秘密が DB・ログ・送信本文に出ないことを考える
 3. **バグ修正では先に再現テストを書く**。直す前に FAIL し、直した後に ok になるのを確かめてからコミットする
 4. **時刻・日付に頼らない**。`TB_TODAY`(tb の「今日」)、scheduler の `NOW`、固定の ISO 時刻を使う。`sleep` で待たない(待つ処理は `*_SEC` / `*_POLL_SEC` の環境変数で短くする)
@@ -83,7 +83,7 @@ CI は `--shard 1of4` … `4of4` を別のジョブで流す。組は `taskboard
 
 ### tb の中身は herdrctl
 
-`taskboard/bin/tb` は `herdrctl tb` に置き換わるだけ(bash の実装は消した)。ケースを流す前に herdrctl を作り、`TB_HERDRCTL` で渡す(無ければ PATH の herdrctl)。CI の `tb` ジョブ(go.yml)も同じに流す。
+`taskboard/bin/tb` は `herdrctl tb` に置き換わるだけ(bash の実装は消した)。ケースを流す前に herdrctl を作り、`TB_HERDRCTL` で渡す(無ければ PATH の herdrctl)。CI(test.yml)は herdrctl を作って PATH に置き、`taskboard-1of4` … の組として流す。scheduler の組も同じ(`bin/*.sh` の中身は `herdrctl sched`)。
 
 ```bash
 go build -o /tmp/herdrctl ./cmd/herdrctl
@@ -111,7 +111,7 @@ herdrctl が無いと run.sh は流さずに止まる。コードを直したら
 ## Go(herdrctl)
 
 - `t.TempDir()` と `t.Setenv()` で隔離する。CI は ubuntu / macOS / Windows で `go vet ./...` と `go test ./...` を流すので、パスは `filepath`、改行や実行権限に OS の差が出ないようにする
-- bash の tb と同じ結果になることの突き合わせ(`TestSameSchemaAsBashTB`)は `TB_PARITY=1` のときだけ(bash・sqlite3・jq が要る)
+- 消した bash 版の出力を写した golden(`internal/approval/testdata/risk_golden.json` など)は、今はそれが約束。振る舞いを意図して変えたときだけ `-update` で書き直し、差分を確かめる
 
 ## やってはいけないこと
 

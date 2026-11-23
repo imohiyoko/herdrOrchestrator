@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
-# --- tb review(pack / submit)と tb gate の使い方・誤りの文面・終了コード(bash と Go で同じ。期待値は bash の出力から作った)
+# --- tb review(pack / submit)と tb gate の使い方・誤りの文面・終了コード(期待値は消した bash 版の出力から作った。今はこれが約束)
 _rg_saved=$(env | grep -E '^(TB_DB|HERDR_PANE_ID|FAKE_AGENTS|TB_SCHED_LOGS)=' || true)
 unset HERDR_PANE_ID
 export TB_DB=$TMP/rgcontract.db TB_SCHED_LOGS=$TMP/rg-logs

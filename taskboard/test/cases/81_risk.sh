@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # run.sh から番号順に source される。リスク評価(第 1 段: 評価を出すだけ)の tb への組み込み。
-# 評価そのもの(規則ファイル・語・fail-closed)は internal/approval の risk_cases_test.go と risk_test.go(bash 版の出力を写した golden)
+# 評価そのもの(規則ファイル・語・fail-closed)は internal/approval の risk_cases_test.go と risk_test.go(消した bash 版の出力を写した golden)
 RK=$TMP/risk; mkdir -p "$RK"
 # --- tb への組み込み(判定は変えない)
 export TB_DB=$TMP/risk.db TB_CONFIG=$TMP/send.conf TB_POLICY_A=$TMP/approvals-risk.conf

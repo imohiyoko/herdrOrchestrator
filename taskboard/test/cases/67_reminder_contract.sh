@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
-# --- tb reminder(list / check / publish / scan / nudge)と古い名前の使い方・文面・終了コード(bash と Go で同じ。期待値は bash の出力から作った)
+# --- tb reminder(list / check / publish / scan / nudge)と古い名前の使い方・文面・終了コード(期待値は消した bash 版の出力から作った。今はこれが約束)
 _rc_saved=$(env | grep -E '^(TB_DB|TB_CONFIG|TB_REPOS_FILE|TB_GH_BIN|FAKE_AGENTS|FAKE_LIST_FAIL|TB_NUDGE|HERDR_PANE_ID)=' || true)
 unset FAKE_LIST_FAIL HERDR_PANE_ID
 export TB_DB=$TMP/rcontract.db TB_CONFIG=$TMP/rc-projects.conf TB_REPOS_FILE=$TMP/rc-repos.md TB_GH_BIN=$TMP/rc-no-gh

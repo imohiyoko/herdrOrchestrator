@@ -7,7 +7,8 @@ import (
 	"testing"
 )
 
-// Glob を bash の [[ s == pattern ]] と突き合わせる。
+// Glob を bash の [[ s == pattern ]] と突き合わせる。tb の実装は Go だけになったが、設定(policy など)の glob の書き方は
+// bash の [[ ]](extglob を含む)と同じという約束なので、bash そのものを正にして比べる(bash 4 以上がある所だけ)。
 func TestGlobMatchesBash(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("bash と比べる")
@@ -29,7 +30,7 @@ func TestGlobMatchesBash(t *testing.T) {
 	}
 }
 
-// modernBash は bash 4 以上があるか(tb の bash 版は mapfile・declare -A を使うので 4 以上が前提。macOS の /bin/bash 3.2 とは比べない)。
+// modernBash は bash 4 以上があるか(macOS の /bin/bash 3.2 は extglob などの振る舞いが違うので比べない)。
 func modernBash(t *testing.T) {
 	t.Helper()
 	out, err := exec.Command("bash", "-c", `echo "${BASH_VERSINFO[0]}"`).Output()

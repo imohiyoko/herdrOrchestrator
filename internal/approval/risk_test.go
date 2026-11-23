@@ -2,24 +2,26 @@ package approval
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 )
 
-// リスク評価を、bash 版(taskboard/lib/risk.sh。消した)の出力を写した testdata/risk_golden.json と突き合わせる
-// (規則ファイルの読み方・誤りの文面・寄与の行)。RISK_BASH_LIB に古い risk.sh を渡すと、bash と比べて golden を書き直す。
+var updateGolden = flag.Bool("update", false, "testdata/risk_golden.json を今の出力で書き直す")
+
+// リスク評価を testdata/risk_golden.json と突き合わせる(規則ファイルの読み方・誤りの文面・寄与の行)。
+// golden は消した bash 版(taskboard/lib/risk.sh)の出力から作ったもので、今はこれが約束。
+// 振る舞いを意図して変えたときや入力を足したときは go test ./internal/approval -run TestRiskGolden -update で書き直し、差分を確かめてコミットする。
 func TestRiskGolden(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("規則ファイルに FIFO・シンボリックリンクを使う")
 	}
-	lib := os.Getenv("RISK_BASH_LIB")
 	golden := map[string]string{}
-	if lib == "" {
+	if !*updateGolden {
 		b, err := os.ReadFile("testdata/risk_golden.json")
 		if err != nil {
 			t.Fatal(err)
@@ -114,36 +116,18 @@ R-13 | target.state in (stopped,running) | risk:1 | 宛先の状態
 			got := r.Format() + r.Oneline()
 			key := fmt.Sprintf("%s/%d", name, idx)
 			n++
-			if lib == "" {
-				want, ok := golden[key]
-				if !ok {
-					t.Errorf("golden に無い: %s", key)
-				} else if got != want {
-					t.Errorf("%s %q:\n got:  %q\n want: %q", name, in, got, want)
-				}
+			if *updateGolden {
+				golden[key] = got
 				continue
 			}
-			var sh strings.Builder
-			sh.WriteString("source " + shq(lib) + "\nsource " + shq(filepath.Join(filepath.Dir(lib), "notify.sh")) + " 2>/dev/null || true\n")
-			sh.WriteString("RISK_RULES=" + shq(f) + "\n")
-			sh.WriteString("unset RISK_IN_SENDER_ROLE RISK_IN_TARGET_ROLE RISK_IN_TARGET_STATE RISK_IN_SENDER_MODEL\n") // 親の環境から入らないように
-			for i, v := range []string{"RISK_IN_SENDER_ROLE", "RISK_IN_TARGET_ROLE", "RISK_IN_TARGET_STATE", "RISK_IN_SENDER_MODEL"} {
-				if in[i] != "-" {
-					sh.WriteString(v + "=" + shq(in[i]) + "\n")
-				}
+			if want, ok := golden[key]; !ok {
+				t.Errorf("golden に無い: %s", key)
+			} else if got != want {
+				t.Errorf("%s %q:\n got:  %q\n want: %q", name, in, got, want)
 			}
-			sh.WriteString("RISK_IN_TEXT=" + shq(in[4]) + "; RISK_IN_KIND=" + shq(in[5]) + "\nrisk_eval; risk_format; risk_oneline\n")
-			out, err := exec.Command("bash", "-c", sh.String()).CombinedOutput()
-			if err != nil {
-				t.Fatalf("%s: bash: %v\n%s", name, err, out)
-			}
-			if got != string(out) {
-				t.Errorf("%s %q:\n go:   %q\n bash: %q", name, in, got, out)
-			}
-			golden[key] = string(out)
 		}
 	}
-	if lib != "" {
+	if *updateGolden {
 		b, _ := json.MarshalIndent(golden, "", "  ")
 		if err := os.WriteFile("testdata/risk_golden.json", append(b, '\n'), 0o644); err != nil {
 			t.Fatal(err)
@@ -152,5 +136,3 @@ R-13 | target.state in (stopped,running) | risk:1 | 宛先の状態
 		t.Errorf("golden の数が違う: %d / %d", n, len(golden))
 	}
 }
-
-func shq(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }

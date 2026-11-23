@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
-# --- tb approval の出力・文面・終了コードの細かいところ(bash と Go で同じ。期待値は bash の出力から作った)
+# --- tb approval の出力・文面・終了コードの細かいところ(期待値は消した bash 版の出力から作った。今はこれが約束)
 _ac_vars="HERDR_PANE_ID TB_DB TB_POLICY_A TB_ROLES TB_POLICY_G TB_POLICY TB_DELIVERY TB_ROUTES TB_ORG TB_CONFIG TB_LIMITS FAKE_AGENTS FAKE_STATUS"
 declare -A _ac_saved=()
 for _v in $_ac_vars; do if [[ -v $_v ]]; then _ac_saved[$_v]=${!_v}; fi; done

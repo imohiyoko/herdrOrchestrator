@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
-# --- tb role-* / roles の使い方・文面・終了コード(bash と Go で同じ。期待値は bash の出力から作った)。DB は自分のものを使う
+# --- tb role-* / roles の使い方・文面・終了コード(期待値は消した bash 版の出力から作った。今はこれが約束)。DB は自分のものを使う
 _rc_saved=$(declare -p HERDR_PANE_ID HERDR_SESSION TB_DB TB_ROLES TB_POLICY_A TB_POLICY_G TB_ROLE_ADMIN TB_ROLE_MAX FAKE_AGENTS FAKE_STATUS FAKE_PROMPT_RC VISUAL EDITOR 2>/dev/null || true)
 unset HERDR_PANE_ID HERDR_SESSION TB_ROLE_ADMIN TB_ROLE_MAX FAKE_STATUS FAKE_PROMPT_RC VISUAL
 export TB_DB=$TMP/rc.db TB_ROLES=$TMP/rc-roles TB_POLICY_A=$TMP/rc-appr.conf TB_POLICY_G=$TMP/rc-grants.conf
