@@ -260,7 +260,7 @@ def next_runs(info, now=None, n=3):
 
 
 def send_task_decision(target):
-    """参考: 通常の tb send(send:task:<宛先>)の判定(allow / ask-any / ask-human / deny / unknown。主体 * の行と既定の表)。policy の読み取りだけ。読めなければ None。"""
+    """参考: 通常の tb send(send:task:<宛先>)の判定(allow / ask / deny / unknown。主体 * の行と既定の表)。policy の読み取りだけ。読めなければ None。"""
     rules, err = perms.load_rules()
     if err or not target:
         return None

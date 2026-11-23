@@ -1,4 +1,4 @@
-// Package perms は tb の認可(主体 × 操作 × 対象 → allow / ask-any / ask-human / deny。ADR 0006 / ADR 0007。taskboard/lib/perms.sh)。
+// Package perms は tb の認可(主体 × 操作 × 対象 → allow / ask / deny。ADR 0006 / ADR 0007。taskboard/lib/perms.sh)。
 // 既定は taskboard/perms/commands.tbl(コマンド)と ops.tbl(コマンドの中の操作)。どちらも埋め込み。人が変えるのは設定 policy の行だけ(<主体> <操作> <対象> = <効果>)。
 // 当たる行のうち、いちばん厳しい効果を採る。人は常に通る。
 package perms
@@ -18,11 +18,17 @@ import (
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/util"
 )
 
-// Tiers は効果(緩い順)。
-var Tiers = []string{"allow", "ask-any", "ask-human", "deny"}
+// Tiers は効果(緩い順)。ask は承認待ち。承認できるのは人と、policy の approve:<操作> を許された agent。
+var Tiers = []string{"allow", "ask", "deny"}
+
+// legacyAsk は前の効果(承認できる人を効果で分けていた)。読むときは ask と同じ。書く(tb config set など)ときは断る。
+var legacyAsk = map[string]bool{"ask-any": true, "ask-human": true}
 
 // Rank は効果の順位(知らない値は deny)。
 func Rank(t string) int {
+	if legacyAsk[t] {
+		t = "ask"
+	}
 	for i, x := range Tiers {
 		if x == t {
 			return i
@@ -275,6 +281,9 @@ func (j Judgement) Resolve(tier, rule, floor string) (string, string) {
 	if j.Unk > Rank(tier) {
 		tier, rule = Tiers[j.Unk], j.URule
 	}
+	if legacyAsk[floor] {
+		floor = "ask"
+	}
 	if floor != "" && Rank(tier) < Rank(floor) {
 		rule += "(下限 " + floor + " より緩いので " + floor + ")"
 		tier = floor
@@ -397,6 +406,9 @@ var Relations = map[string]bool{"~child": true, "~descendant": true, "~parent": 
 	"~report": true, "~subordinate": true, "~manager": true, "~superior": true, "~peer": true}
 
 func valid(v string) bool {
+	if legacyAsk[v] {
+		return true
+	}
 	for _, x := range Tiers {
 		if x == v {
 			return true
@@ -430,7 +442,7 @@ func Enforce(op, tier, rule, what string) error {
 		return nil
 	}
 	switch tier {
-	case "ask-any", "ask-human":
+	case "ask":
 		return &Denied{20, what + " は承認が要ります(" + op + " = " + tier + "。" + rule + ")。承認待ちの仕組みはまだ無いため実行しません。人が自分の端末で実行してください(agent '" + n + "')"}
 	}
 	if strings.HasPrefix(rule, "policy:") {
@@ -640,8 +652,12 @@ func ValidatePolicy(body string) string {
 			fmt.Fprintf(&bad, "%d 行目: 主体・操作・対象の 3 つを空白で区切って書きます: %s\n", i+1, l)
 			continue
 		}
+		if legacyAsk[v] {
+			fmt.Fprintf(&bad, "%d 行目: %s は ask にまとめました(承認できる agent は approve:<操作> の行で決める): %s\n", i+1, v, l)
+			continue
+		}
 		if !valid(v) {
-			fmt.Fprintf(&bad, "%d 行目: 効果は allow / ask-any / ask-human / deny のどれかです: %s\n", i+1, v)
+			fmt.Fprintf(&bad, "%d 行目: 効果は allow / ask / deny のどれかです: %s\n", i+1, v)
 			continue
 		}
 		if f[0] == "human" {

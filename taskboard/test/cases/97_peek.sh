@@ -4,7 +4,7 @@
 _saved_pane=${HERDR_PANE_ID-}; unset HERDR_PANE_ID
 _saved_appr=${TB_POLICY_A-}
 export TB_DB=$TMP/peek.db TB_POLICY_A=$TMP/peek-appr.conf
-printf '* agent:read @worker = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
+printf '* agent:read @worker = allow\n* send:info * = ask\n* send:answer * = ask\n' >"$TB_POLICY_A"
 pk() { printf '{"pane_id":"w%s:p1","name":"%s","agent_status":"idle","agent_session":{"value":"s-%s"}}' "$1" "$1" "$1"; }
 export FAKE_AGENTS="[$(pk conductor),$(pk worker1),$(pk sweeper)]"
 : >"$FAKE_LOG"

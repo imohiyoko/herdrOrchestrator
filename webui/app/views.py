@@ -1402,7 +1402,7 @@ def page_perms(qs, ctx=None):
             warns = []
             row = perms.policy_row(val, pat)
             op_, _, rest = row[2:].partition(" ")
-            probe = {"subject": "*", "op": op_, "target": rest.split(" = ")[0], "effect": "allow" if val == "allow" else "ask-any"}
+            probe = {"subject": "*", "op": op_, "target": rest.split(" = ")[0], "effect": "allow" if val == "allow" else "ask"}
             w = perms.warning(probe)
             if val == "allow" and pat == "*":
                 warns.append("全体を allow にします(どの agent の、どの操作も承認なし)")
@@ -1418,7 +1418,7 @@ def page_perms(qs, ctx=None):
     pat_form = ('<form method=get action="/perms"><p>'
                 f'<label>パターン <input type=text name=pat value="{e(pat)}" size=30 placeholder="send:task:worker1"></label> '
                 f'<label>値 <select name=val><option value=allow{" selected" if val == "allow" else ""}>allow(承認なしで進めてよい)</option>'
-                f'<option value=ask{" selected" if val == "ask" else ""}>ask(承認が要る。ask-any)</option></select></label> '
+                f'<option value=ask{" selected" if val == "ask" else ""}>ask(承認が要る)</option></select></label> '
                 '<button type=submit>コマンド行を組み立てる</button></p></form>')
     body += ("<h2>変更したいとき</h2>" + pat_form + cmd_html +
              "<p class=note>権限の変更は、この画面ではできません(ボタンも POST もありません)。人が端末で <code>tb approval allow</code> / <code>tb approval ask</code> を実行します(設定 policy の行を書きます)。"

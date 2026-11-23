@@ -16,7 +16,7 @@ eq "perms: every command has a one-word row (the fallback for other words)" \
   "$(comm -23 <(printf '%s\n' "$pm_cmds") <(pm_rows | awk '$1 !~ /\./ {print $1}' | sort -u))" ""
 eq "perms: every non-comment line has exactly 5 columns" "$(sed 's/#.*//' "$PM_TBL" | awk 'NF != 0 && NF != 5')" ""
 eq "perms: rows are well-formed (cmd:<service>:<verb>, known tiers, default >= floor, entry|inner|none)" \
-  "$(pm_rows | awk 'function r(t){return t=="allow"?0:t=="ask-any"?1:t=="ask-human"?2:t=="deny"?3:-1}
+  "$(pm_rows | awk 'function r(t){return t=="allow"?0:t=="ask"?1:t=="ask"?2:t=="deny"?3:-1}
     $2 !~ /^cmd:[a-z]+:[a-z][a-z-]*$/ || r($3) < 0 || r($4) < 0 || r($3) < r($4) || $5 !~ /^(entry|inner|none)$/ {print}')" ""
 eq "perms: a path appears once" "$(pm_rows | awk '{print $1}' | sort | uniq -d)" ""
 eq "perms: the same operation has the same default and floor on every row" \
@@ -60,11 +60,11 @@ export HERDR_PANE_ID=wW:p1
 eq "perms: agent runs an allow command (default)" "$(rc $TB cancel "$t1")" "0"
 eq "perms: default allow does not ask herdr who is calling (no extra herdr call)" "$(: >"$FAKE_LOG"; $TB list -p pm >/dev/null; grep -c '^list' "$FAKE_LOG" || true)" "0"
 
-printf 'pw1 cmd:ticket:cancel * = ask-human\n' >"$TB_POLICY"
-eq "perms: tightened to ask-human for pw1 → agent stops with 20" "$(rc $TB cancel "$t2")" "20"
+printf 'pw1 cmd:ticket:cancel * = ask\n' >"$TB_POLICY"
+eq "perms: tightened to ask for pw1 → agent stops with 20" "$(rc $TB cancel "$t2")" "20"
 eq "perms: the old name and the service name share one operation" "$(rc $TB ticket cancel "$t2")" "20"
 eq "perms: the message names the operation and the row" \
-  "$($TB cancel "$t2" 2>&1 >/dev/null | grep -c 'cmd:ticket:cancel = ask-human。policy: pw1 cmd:ticket:cancel \* = ask-human')" "1"
+  "$($TB cancel "$t2" 2>&1 >/dev/null | grep -c 'cmd:ticket:cancel = ask。policy: pw1 cmd:ticket:cancel \* = ask')" "1"
 eq "perms: nothing was done" "$($TB show "$t2" | jq -r .status)" "todo"
 eq "perms: a row for pw1 does not touch pw2" "$(HERDR_PANE_ID=wW:p2 rc $TB cancel "$t3")" "0"
 eq "perms: a human terminal is not stopped" "$(env -u HERDR_PANE_ID bash -c "$TB cancel $t2 >/dev/null 2>&1; echo \$?")" "0"
@@ -74,9 +74,9 @@ eq "perms: a glob row applies (deny → 1)" "$(rc $TB show "$t1")" "1"
 eq "perms: a pane with no agent is a human (rows do not apply)" "$(HERDR_PANE_ID=wW:p9 rc $TB show "$t1")" "0"
 eq "perms: the gate also covers commands moved to herdrctl (tb list)" "$($TB list -p pm 2>&1 >/dev/null)" \
   "tb: tb list は実行できません(cmd:ticket:list = deny。policy: * cmd:ticket:* * = deny)(agent 'pw1')"
-printf 'pw* cmd:ticket:show * = allow\npw1 cmd:ticket:show * = ask-any\n' >"$TB_POLICY"
+printf 'pw* cmd:ticket:show * = allow\npw1 cmd:ticket:show * = ask\n' >"$TB_POLICY"
 eq "perms: the strictest matching row wins, whatever the order (→ 20)" "$(rc $TB show "$t1")" "20"
-printf 'pw1 cmd:ticket:show * = ask-any\npw* cmd:ticket:show * = allow\n' >"$TB_POLICY"
+printf 'pw1 cmd:ticket:show * = ask\npw* cmd:ticket:show * = allow\n' >"$TB_POLICY"
 eq "perms: the strictest matching row wins in the other order too" "$(rc $TB show "$t1")" "20"
 printf 'pw1 cmd:ticket:show * = nonsense\npw1 cmd:ticket:show = deny\n' >"$TB_POLICY"
 eq "perms: rows with an unknown effect or without 3 columns are ignored (default allow)" "$(rc $TB show "$t1")" "0"
@@ -84,7 +84,9 @@ printf 'human cmd:ticket:show * = deny\n' >"$TB_POLICY"
 eq "perms: rows for human do not apply (agent default allow)" "$(rc $TB show "$t1")" "0"
 eq "perms: rows for human do not stop a human" "$(env -u HERDR_PANE_ID bash -c "$TB show $t1 >/dev/null 2>&1; echo \$?")" "0"
 eq "perms: config set refuses a human row" "$(printf 'human cmd:ticket:show * = deny\n' | env -u HERDR_PANE_ID $TB config set policy 2>&1 >/dev/null | grep -c '主体 human の行は効きません')" "1"
-eq "perms: config set refuses an unknown effect" "$(printf 'pw1 cmd:ticket:show * = maybe\n' | env -u HERDR_PANE_ID $TB config set policy 2>&1 >/dev/null | grep -c '効果は allow / ask-any / ask-human / deny')" "1"
+eq "perms: config set refuses the old ask-any / ask-human (merged into ask)" "$(printf 'pw1 cmd:ticket:show * = ask-human\n' | env -u HERDR_PANE_ID $TB config set policy 2>&1 >/dev/null | grep -c 'ask にまとめました')" "1"
+eq "perms: a stored old ask-human row still reads as ask" "$(printf 'pw1 cmd:ticket:cancel * = ask-human\n' >"$TB_POLICY"; HERDR_PANE_ID=wW:p1 rc $TB cancel "$t1"; : >"$TB_POLICY")" "20"
+eq "perms: config set refuses an unknown effect" "$(printf 'pw1 cmd:ticket:show * = maybe\n' | env -u HERDR_PANE_ID $TB config set policy 2>&1 >/dev/null | grep -c '効果は allow / ask / deny')" "1"
 if [[ $(id -u) != 0 ]]; then
   printf 'pw1 cmd:ticket:show * = allow\n' >"$TB_POLICY"; chmod 000 "$TB_POLICY"
   eq "perms: a policy file that cannot be read → deny (not the default)" "$(rc $TB show "$t1")" "1"
@@ -105,8 +107,8 @@ fi
 # 下限は今はすべて allow(表の下限の列で守りを足せる。下限で丸める処理は internal/kernel/perms のテストで確かめる)
 eq "perms: every floor in the table is allow (the human tunes tiers by config)" "$(pm_rows | awk '$4 != "allow"')" ""
 # require_human の中の確かめも表と設定で決まる。deny の既定は設定で緩められる
-printf '@nobody-role cmd:ticket:resolve * = allow\npw1 cmd:ticket:resolve * = ask-human\n' >"$TB_POLICY"
-eq "perms: a deny default loosened to ask-human → 20 instead of 1" "$(rc $TB resolve C-1)" "20"
+printf '@nobody-role cmd:ticket:resolve * = allow\npw1 cmd:ticket:resolve * = ask\n' >"$TB_POLICY"
+eq "perms: a deny default loosened to ask → 20 instead of 1" "$(rc $TB resolve C-1)" "20"
 eq "perms: reopen is a separate operation (still deny → 1)" "$(rc $TB reopen C-1)" "1"
 printf 'pw1 cmd:ticket:resolve * = allow\n' >"$TB_POLICY"
 eq "perms: a deny default loosened to allow → the command itself runs (no gate message)" \

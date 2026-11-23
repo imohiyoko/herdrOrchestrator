@@ -5,7 +5,7 @@ _saved_db=$TB_DB; _saved_appr=${TB_POLICY_A-}; _saved_grants=${TB_POLICY_G-}; _s
 export TB_DB=$TMP/recipes.db TB_POLICY_A=$TMP/rc-approvals.conf TB_POLICY_G=$TMP/rc-grants.conf TB_RECIPE_POLL_SEC=0.05
 export FAKE_AGENTS='[{"pane_id":"wL:p1","name":"lead","agent_session":{"value":"sl"}},{"pane_id":"wW:p1","name":"w1","agent_session":{"value":"s1"}}]'
 unset HERDR_PANE_ID
-printf '* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"; : >"$TB_POLICY_G"
+printf '* send:info * = ask\n* send:answer * = ask\n' >"$TB_POLICY_A"; : >"$TB_POLICY_G"
 rsql() { sqlite3 "$TB_DB" "$@"; }
 asw1() { HERDR_PANE_ID=wW:p1 "$@"; }       # w1 の pane から
 aslead() { HERDR_PANE_ID=wL:p1 "$@"; }     # lead の pane から
@@ -81,7 +81,7 @@ eq "recipe-run: 名前に : は使えない" "$(rc "$TB" recipe-run 'a:b' --targ
 # --- レシピの操作名の判定(approvals の既定 ask)
 eq "recipe-run: 判定が ask なら 20 で、部品は動かない" "$(asw1 rc "$TB" recipe-run look; gets)" "20
 0"
-printf '* recipe:look * = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
+printf '* recipe:look * = allow\n* send:info * = ask\n* send:answer * = ask\n' >"$TB_POLICY_A"
 out=$(asw1 "$TB" recipe-run look 2>&1); r=$?
 eq "recipe-run: allow なら読み取りの部品を順に実行する" "$r|$(tail -2 <<<"$out")" "0|w1 idle
 w1 idle"
@@ -94,7 +94,7 @@ eq "recipe-run: 記録は recipe_run / recipe_step × 2 / recipe_end(done)、依
 eq "recipe-run: recipe_run の ref は判定の操作名" "$(rsql "SELECT ref FROM task_events WHERE id=$eid;")" "recipe:look:w1"
 eq "recipe-run: 記録は tb events に出る" "$($TB events --kind recipe_end | tail -1 | cut -f4,6,7)" "recipe_end	done	w1"
 eq "recipe-run: 他者を対象にすると操作名の対象が変わる" "$(asw1 "$TB" recipe-run look --target lead | head -1)" "recipe look target=lead risk=low: allow(policy: * recipe:look * = allow)"
-printf '* recipe:look w1 = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
+printf '* recipe:look w1 = allow\n* send:info * = ask\n* send:answer * = ask\n' >"$TB_POLICY_A"
 eq "recipe-run: 対象が許可の範囲の外なら ask(20)" "$(asw1 rc "$TB" recipe-run look --target lead)" "20"
 # grants: 操作は recipe:<名前>(対象を除く)。approvals が ask でも、grants の行で allow
 : >"$TB_POLICY_A"; printf 'lead recipe:look w1 = allow\n' >"$TB_POLICY_G"
@@ -104,7 +104,7 @@ eq "recipe-run: tb can も同じ判定" "$($TB can lead recipe:look w1 | head -1
 : >"$TB_POLICY_G"
 
 # --- 部品ごとの判定: レシピの許可は部品の許可の代わりにならない
-printf '* recipe:* * = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
+printf '* recipe:* * = allow\n* send:info * = ask\n* send:answer * = ask\n' >"$TB_POLICY_A"
 : >"$FAKE_LOG"
 out=$(asw1 "$TB" recipe-run rs note=memo 2>&1); r=$?
 eq "recipe-run: レシピが allow でも、部品の agent:stop / revive が ask なら 20" "$r" "20"
@@ -112,7 +112,7 @@ eq "recipe-run: 止めた step と理由を出す" "$(grep -c 'step 2 (agent-res
 eq "recipe-run: 止めたら、前の読み取りの部品も実行しない(全部を判定してから実行)" "$(gets)" "0"
 eid=$(rsql "SELECT max(id) FROM task_events WHERE kind='recipe_run';")
 eq "recipe-run: 止めたときも step ごとの判定を記録する" "$(rsql "SELECT old FROM task_events WHERE ref='E-$eid' AND kind='recipe_step' ORDER BY id;" | paste -sd,)" "1 agent-status,2 agent-restart"
-printf '* recipe:* * = allow\n* agent:stop w1 = allow\n* agent:revive w1 = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
+printf '* recipe:* * = allow\n* agent:stop w1 = allow\n* agent:revive w1 = allow\n* send:info * = ask\n* send:answer * = ask\n' >"$TB_POLICY_A"
 out=$(asw1 "$TB" recipe-run rs 2>&1); r=$?
 eq "recipe-run: 判定が全部 allow で外の実行役の部品があれば、その場では実行せず待ち行列に置く(0)" "$r|$(tail -1 <<<"$out" | grep -c '^R-[0-9]* queued')" "0|1"
 eq "recipe-run: 何も止めていない・起動していない" "$(grep -cE '^(pane-close|start) ' "$FAKE_LOG")" "0"
@@ -124,7 +124,7 @@ printf '* recipe:* * = allow\n* approve:* * = allow\n' >"$TB_POLICY_G"
 eq "recipe-run: 人だけの部品は agent から 4(approvals / grants を全部許可しても)" "$(asw1 "$TB" recipe-run cfg 2>&1 | grep -c '人だけの部品(コードで固定)'; asw1 rc "$TB" recipe-run cfg)" "2
 4"
 eq "recipe-run: 人の端末なら人だけの判定は通る(config-set の実行はまだ無いので 4)" "$($TB recipe-run cfg --target w1 2>&1 | grep -c '人だけ')$(rc "$TB" recipe-run cfg --target w1)" "04"
-: >"$TB_POLICY_G"; printf '* recipe:* * = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
+: >"$TB_POLICY_G"; printf '* recipe:* * = allow\n* send:info * = ask\n* send:answer * = ask\n' >"$TB_POLICY_A"
 
 # --- 引数
 eq "recipe-run: 宣言していない引数は 2" "$(asw1 rc "$TB" recipe-run rs bogus=1)" "2"

@@ -64,10 +64,10 @@ HERDR_PANE_ID=wworker1:p1 $TB send b-conductor --text up2 --kind info >/dev/null
 grsql "ALTER TABLE agents RENAME COLUMN role_x TO role;"
 eq "routes: a ! rule whose role cannot be read stops (does not fall through to * -> *)" "$(grsql "SELECT status FROM outbox WHERE text='up2';") $(grsql "SELECT reason FROM outbox WHERE text='up2';" | grep -c '確かめられません')" "denied 1"
 export TB_POLICY_A=$TMP/graph-appr.conf
-printf '* send:info @conductor = ask-any\n* send:* @worker = allow\n* agent:stop @watch* = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
+printf '* send:info @conductor = ask\n* send:* @worker = allow\n* agent:stop @watch* = allow\n* send:info * = ask\n* send:answer * = ask\n' >"$TB_POLICY_A"
 eq "approvals: send:*:@worker matches by the target's role" "$($TB approval send:task:worker3 | tr '\n' ' ')" "allow rule: policy: * send:* @worker = allow "
 eq "approvals: role glob" "$($TB approval agent:stop:watcher | head -1) $($TB approval agent:stop:worker1 | head -1)" "allow ask"
-eq "approvals: @role does not match a name without that role" "$($TB approval send:info:b-conductor | head -1) $($TB approval send:info:nobody | sed -n 2p)" "ask rule: policy: * send:info * = ask-any"
+eq "approvals: @role does not match a name without that role" "$($TB approval send:info:b-conductor | head -1) $($TB approval send:info:nobody | sed -n 2p)" "ask rule: policy: * send:info * = ask"
 eq "allow: @ is accepted in a pattern" "$(rc $TB allow 'send:answer:@worker') $($TB allow 'send:answer:@worker' | grep -c '^\* send:answer @worker = allow')" "0 1"
 export TB_CONFIG=$_saved_conf TB_POLICY_A=$_saved_appr
 if [[ -n $_saved_routes ]]; then export TB_ROUTES=$_saved_routes; else unset TB_ROUTES; fi
@@ -76,16 +76,16 @@ unset FAKE_AGENTS; export HERDR_PANE_ID=$_saved_pane
 # --- tb role-set(ロール変更は人と人事役だけ)/ role-log / 関係グラフの role の辺
 _saved_pane=${HERDR_PANE_ID-}; unset HERDR_PANE_ID
 export TB_DB=$TMP/graph.db TB_POLICY_A=$TMP/graph-appr2.conf
-printf '* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
+printf '* send:info * = ask\n* send:answer * = ask\n' >"$TB_POLICY_A"
 export FAKE_AGENTS="[$(ag conductor),$(ag worker1),$(ag worker2),$(ag hr1),$(ag watcher)]"
 $TB agents >/dev/null 2>&1
 eq "role-set: unknown role → 2" "$(rc $TB role-set worker1 nosuch)" "2"
 eq "role-set: not from a non-hr agent" "$(HERDR_PANE_ID=wworker1:p1 $TB role-set worker2 watcher 2>&1 | grep -c '人事役(@hr)、policy で role:change')" "1"
 eq "role-set: hr needs role:change = allow (20)" "$(HERDR_PANE_ID=whr1:p1 rc $TB role-set worker2 watcher)" "20"
-printf '@hr role:change * = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
+printf '@hr role:change * = allow\n* send:info * = ask\n* send:answer * = ask\n' >"$TB_POLICY_A"
 eq "role-set: hr cannot change itself or grant hr" "$(HERDR_PANE_ID=whr1:p1 rc $TB role-set hr1 worker) $(HERDR_PANE_ID=whr1:p1 rc $TB role-set worker2 hr)" "1 1"
 eq "role-set: hr with allow" "$(HERDR_PANE_ID=whr1:p1 $TB role-set worker2 watcher --reason 'ログ番に' | cut -d' ' -f1-5)" "worker2 role worker -> watcher"
-eq "role-set: the new role is used by rules" "$($TB approval agent:stop:worker2 >/dev/null; printf '* agent:stop @watcher = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"; $TB approval agent:stop:worker2 | head -1)" "allow"
+eq "role-set: the new role is used by rules" "$($TB approval agent:stop:worker2 >/dev/null; printf '* agent:stop @watcher = allow\n* send:info * = ask\n* send:answer * = ask\n' >"$TB_POLICY_A"; $TB approval agent:stop:worker2 | head -1)" "allow"
 eq "role-set: a human can grant hr" "$($TB role-set worker1 hr | cut -d' ' -f1-5)" "worker1 role worker -> hr"
 eq "role-set: a name with its own roles file is refused" "$(rc $TB role-set watcher worker)" "1"
 eq "role-log: newest first, with who and why" "$($TB role-log | cut -f2-5 | tr '\t\n' '| ')" "worker1|worker -> hr|human| worker2|worker -> watcher|hr1|ログ番に "
@@ -95,7 +95,7 @@ unset FAKE_AGENTS; export TB_POLICY_A=$_saved_appr HERDR_PANE_ID=$_saved_pane
 # --- マージ前の修正: 作成の承認は要求した役割で / human は予約名 / 台帳を読めないときは @ に一致させない
 _saved_pane=${HERDR_PANE_ID-}; unset HERDR_PANE_ID
 export TB_DB=$TMP/graph.db TB_POLICY_A=$TMP/graph-appr3.conf TB_SPAWN_RETRY_SEC=0 TB_AGENT_CWD=$TMP
-printf '* agent:new @worker = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
+printf '* agent:new @worker = allow\n* send:info * = ask\n* send:answer * = ask\n' >"$TB_POLICY_A"
 export FAKE_AGENTS="[$(ag conductor),$(ag worker1)]"
 out=$(HERDR_PANE_ID=wconductor:p1 $TB agent-new worker9 --role watcher 2>&1; echo "rc=$?")
 eq "agent-new: @worker approval does not cover a worker-named agent asking for another role" "$(tail -1 <<<"$out") $(grep -c 'pending' <<<"$out")" "rc=20 1"
@@ -110,11 +110,11 @@ eq "agent-new: human is reserved" "$(rc $TB agent-new human)" "2"
 export FAKE_AGENTS="[$(ag conductor),$(ag human)]"
 eq "requester: an agent named human is not treated as the human" "$(HERDR_PANE_ID=whuman:p1 rc $TB role-set conductor worker)" "1"
 export FAKE_AGENTS="[$(ag conductor),$(ag worker1)]"
-printf '* agent:stop @worker = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
+printf '* agent:stop @worker = allow\n* send:info * = ask\n* send:answer * = ask\n' >"$TB_POLICY_A"
 eq "approvals: @worker matches a worker by map.conf" "$($TB approval agent:stop:worker3 | head -1)" "allow"
 eq "approvals: @role does not match when the registry cannot be read" "$(sqlite3 "$TB_DB" "ALTER TABLE agents RENAME TO agents_x;"; $TB approval agent:stop:worker3 2>/dev/null | head -1; sqlite3 "$TB_DB" "ALTER TABLE agents_x RENAME TO agents;")" "ask"
 eq "approvals: @role does not match when only the role lookup fails" "$(sqlite3 "$TB_DB" "ALTER TABLE agents RENAME COLUMN role TO role_x;"; $TB approval agent:stop:worker3 2>/dev/null | head -1; sqlite3 "$TB_DB" "ALTER TABLE agents RENAME COLUMN role_x TO role;")" "ask"
-printf '* agent:stop @nosuch = ask-any\n* * * = allow\n' >"$TB_POLICY_A"
+printf '* agent:stop @nosuch = ask\n* * * = allow\n' >"$TB_POLICY_A"
 eq "approvals: a role rule that cannot be checked stops at ask (does not fall through to * = allow)" "$(sqlite3 "$TB_DB" "ALTER TABLE agents RENAME COLUMN role TO role_x;"; $TB approval agent:stop:worker3 2>/dev/null | head -1; sqlite3 "$TB_DB" "ALTER TABLE agents RENAME COLUMN role_x TO role;") $($TB approval agent:stop:worker3 | head -1)" "ask allow"
 eq "role-set: old_role is the effective role (registry role without a file falls back to map.conf)" "$(sqlite3 "$TB_DB" "UPDATE agents SET role='gone' WHERE name='worker1';"; $TB role-set worker1 watcher >/dev/null; sqlite3 "$TB_DB" "SELECT old_role FROM role_changes ORDER BY id DESC LIMIT 1;")" "worker"
 eq "role-set: change and history are written together" "$($TB role-set worker1 watcher >/dev/null; sqlite3 "$TB_DB" "SELECT (SELECT role FROM agents WHERE name='worker1')||' '||(SELECT new_role FROM role_changes ORDER BY id DESC LIMIT 1);")" "watcher watcher"

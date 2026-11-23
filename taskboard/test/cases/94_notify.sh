@@ -7,7 +7,7 @@ _nt_vars="TB_DB TB_CONFIG TB_POLICY_A TB_ROUTES TB_ANALYST_RETRY_SEC TB_ANALYST_
 for _v in $_nt_vars; do if [[ -n ${!_v+x} ]]; then printf -v "_nt_old_$_v" '%s' "${!_v}"; else printf -v "_nt_unset_$_v" 1; fi; done
 export TB_DB=$TMP/notify.db TB_CONFIG=$TMP/nt-projects.conf TB_POLICY_A=$TMP/nt-appr.conf TB_ROUTES=$TMP/nt-routes.conf TB_ANALYST_RETRY_SEC=0 TB_ANALYST_CWD=$TMP
 export TB_NOTIFY_CONF=$TMP/notify.conf TB_NOTIFY_DIR=$TMP/nout TB_REPOS_FILE=$TMP/repos.md TB_GH_BIN=$TMP/gh TB_CURL=$TMP/curl
-printf '* alert:analyze * = ask-any\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
+printf '* alert:analyze * = ask\n* send:info * = ask\n* send:answer * = ask\n' >"$TB_POLICY_A"
 unset TB_NOTIFY_ENABLED TB_NOTIFY_SLACK_TARGET TB_NOTIFY_RATE_PER_MIN TB_NOTIFY_ACK_TIMEOUT_MIN
 export FAKE_AGENTS='[{"pane_id":"wC:p1","name":"conductor","agent_session":{"value":"sc"}},{"pane_id":"wW:p1","name":"worker1","agent_session":{"value":"sw"}},{"pane_id":"wX:p1","name":"watch1","agent_session":{"value":"sx"}},{"pane_id":"wN:p1","name":"notifier","agent_session":{"value":"sn"}}]'
 : >"$FAKE_LOG"

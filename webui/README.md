@@ -287,7 +287,7 @@ herdr は `tests/fake/herdr`(疑似)、DB・ログ・ログイン情報の置き
   それ以外は「強制停止」で、確認のチェックを入れないと送れない。止めても台帳に会話(session)と cwd が残る
 - **復活**: 「停止中の agent」から「同じ会話で復活」(`claude --resume <session>`)か「新しい会話で復活」
 - **新規作成**: `/agent-new`。専用の workspace で claude を起動する。役割は `roles/` から選べ、起動時に SessionStart hook が渡す
-- **承認待ちの操作**: agent(指揮官など)が `tb agent-*` を使い、policy の `agent:<op>`(対象は agent 名)が ask-any だったものは
+- **承認待ちの操作**: agent(指揮官など)が `tb agent-*` を使い、policy の `agent:<op>`(対象は agent 名)が ask だったものは
   「承認待ちの操作」に出る(緊急通知にも出る)。「承認して実行」か「却下」
 - 結果は画面上部(実行した / 承認待ちに積んだ / 前提を満たさない / 失敗)と、「直近の操作」(`agent_ops`)に出る
 

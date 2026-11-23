@@ -18,7 +18,7 @@ model   |  | deny  | busy |  | 既定で拒否
 bad!    |  | allow | busy |  | 名前が不正
 oddargs | a;b | allow | busy | | 引数が不正
 CONF
-printf '* agent:slash:mcp @worker = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
+printf '* agent:slash:mcp @worker = allow\n* send:info * = ask\n* send:answer * = ask\n' >"$TB_POLICY_A"
 export FAKE_AGENTS="[$(sl_ag conductor wC:p1),$(sl_ag worker1 wW1:p1),$(sl_ag worker2 wW2:p1 working),$(sl_ag worker3 wW3:p1 done),$(sl_ag sweeper wS:p1),$(sl_ag watcher wT:p1 blocked)]"
 : >"$FAKE_LOG"
 $TB agents >/dev/null

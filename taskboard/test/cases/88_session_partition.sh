@@ -71,7 +71,7 @@ sqlite3 "$OLD" "INSERT INTO tasks (id, project, title, parent_id, created_at, up
   INSERT INTO proposals (role_file, title, text, status, by_name, created_at) VALUES ('-','old proposal','x','open','au','t');"
 before=$(sqlite3 "$OLD" .dump | cksum)
 HERDR_SESSION=main "$TB" add -p pj -t 'main 1' >/dev/null; HERDR_SESSION=main "$TB" add -p pj -t 'main 2' >/dev/null
-printf '* alert:analyze * = ask-any\n' >"$TMP/sp-policy.conf"; TB_POLICY=$TMP/sp-policy.conf HERDR_SESSION=main "$TB" alert --title 'main alert' >/dev/null 2>&1
+printf '* alert:analyze * = ask\n' >"$TMP/sp-policy.conf"; TB_POLICY=$TMP/sp-policy.conf HERDR_SESSION=main "$TB" alert --title 'main alert' >/dev/null 2>&1
 FAKE_AGENTS='[{"pane_id":"wM:p1","name":"wm","agent_session":{"value":"sm1"}}]' HERDR_PANE_ID=wM:p1 HERDR_SESSION=main "$TB" comment T-pj-001 --kind progress --text 'main c' >/dev/null 2>&1
 export FAKE_AGENTS='[{"pane_id":"wK:p1","name":"wk","agent_status":"idle","agent_session":{"value":"s-new"}}]'
 HERDR_SESSION=imp "$TB" agents >/dev/null; unset FAKE_AGENTS

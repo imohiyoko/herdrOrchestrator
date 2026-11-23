@@ -9,7 +9,7 @@ export TB_DB=$TMP/org.db TB_POLICY_A=$TMP/org-appr.conf TB_ROLES=$TMP/org-roles 
 export TB_ORG=$TMP/org.conf TB_DELIVERY=$TMP/org-delivery.conf TB_PROTECT=$TMP/org-protect.conf
 mkdir -p "$TB_ROLES"; for r in lead worker hr; do echo "ROLE-$r" >"$TB_ROLES/$r.md"; done
 printf 'boss = lead\nlead* = lead\nw* = worker\nhr1 = hr\n' >"$TB_ROLES/map.conf"
-printf '* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
+printf '* send:info * = ask\n* send:answer * = ask\n' >"$TB_POLICY_A"
 og_() { printf '{"pane_id":"w%s:p1","name":"%s","agent_status":"idle","agent_session":{"value":"s-%s"}}' "$1" "$1" "$1"; }
 export FAKE_AGENTS="[$(og_ boss),$(og_ lead1),$(og_ lead2),$(og_ w1),$(og_ w2),$(og_ w3),$(og_ kid),$(og_ hr1),$(og_ loner)]"
 $TB agents >/dev/null 2>&1
@@ -73,13 +73,13 @@ cat >"$TB_DELIVERY" <<'D'
 D
 eq "org delivery: to one's own manager (granted) / to another lead" "$($TB can w1 send:task lead1 | head -1) $($TB can w1 send:task lead2 | head -1)" "allow deny"
 eq "org delivery: hold to a report (approvals still ask), a non-report falls to the default block" "$($TB can lead1 send:info w1 | head -1) $(rc $TB can lead1 send:task w3)" "ask 4"
-printf '* send:info w1 = allow\n* send:answer * = ask-any\n' >"$TB_POLICY_A"   # 厳しい方が勝つので、info の締める行は置かない
+printf '* send:info w1 = allow\n* send:answer * = ask\n' >"$TB_POLICY_A"   # 厳しい方が勝つので、info の締める行は置かない
 eq "org can: hold with policy allow is hold (exit 21)" "$($TB can lead1 send:info w1 | head -1) $(rc $TB can lead1 send:info w1)" "hold 21"
-printf '* send:info w1 = ask-any\n* send:task * = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
+printf '* send:info w1 = ask\n* send:task * = allow\n* send:info * = ask\n* send:answer * = ask\n' >"$TB_POLICY_A"
 eq "org can: hold with approvals ask is ask" "$($TB can lead1 send:info w1 | head -1) $(rc $TB can lead1 send:info w1)" "ask 20"
-printf '* send:task * = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
+printf '* send:task * = allow\n* send:info * = ask\n* send:answer * = ask\n' >"$TB_POLICY_A"
 eq "org can: delivery now + approvals allow = allow (exit 0)" "$(rc $TB can w1 send:task lead1) $($TB can w1 send:task lead1 | sed -n 2p)" "0 rule: delivery: @worker -> ~manager : task=now"
-printf '* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
+printf '* send:info * = ask\n* send:answer * = ask\n' >"$TB_POLICY_A"
 
 # tb can: stop は protect が先、role:change / agent:flag は人事役・判定役・grants、人は端末からそのまま
 printf 'w3 = 受け口\n' >"$TB_PROTECT"

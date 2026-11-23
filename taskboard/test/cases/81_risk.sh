@@ -7,7 +7,7 @@ export TB_DB=$TMP/risk.db TB_CONFIG=$TMP/send.conf TB_POLICY_A=$TMP/approvals-ri
 : >"$TB_POLICY_A"   # 既定の表(perms/ops.tbl)で決まる
 export FAKE_AGENTS='[{"pane_id":"wC:p1","name":"conductor","agent_session":{"value":"sc"}},{"pane_id":"wW:p1","name":"worker1","agent_session":{"value":"s1"}}]'
 : >"$FAKE_LOG"
-eq "approval: no extra args → output exactly as before (no risk lines)" "$($TB approval send:task:worker1; echo "rc=$?")" "$(printf 'ask\nrule: 既定 ask-any\nrc=20')"
+eq "approval: no extra args → output exactly as before (no risk lines)" "$($TB approval send:task:worker1; echo "rc=$?")" "$(printf 'ask\nrule: 既定 ask\nrc=20')"
 out=$($TB approval send:info:worker1 --to worker1 --text 'git push now'); r=$?
 eq "approval: with --to/--text → allow stays allow (rc 0), risk lines appended" "$r|$(sed -n '1,2p' <<<"$out" | tr '\n' '|')$(grep -c '^risk: ask' <<<"$out")|$(grep -c '^risk-reason: R-02 +ask' <<<"$out")" "0|allow|rule: 既定 allow|1|1"
 # tb send: 結果(status・終了コード・配送)は評価に影響されず、reason に評価が追記される

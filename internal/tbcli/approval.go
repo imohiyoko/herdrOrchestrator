@@ -23,7 +23,7 @@ import (
 
 const approvalUsage = `tb approval check <操作> [--by A] [--to 宛先 --text 本文 [--kind K]]   1 行目 allow|ask|deny、2 行目 rule:(終了コード 0=allow 20=ask 4=deny)
 tb approval allow <操作のパターン>    今後は許可する(人だけ。設定 policy に * <操作> <対象> = allow の行を書く)
-tb approval ask <操作のパターン>      承認制に戻す(人だけ。設定 policy に * <操作> <対象> = ask-any の行を書く)
+tb approval ask <操作のパターン>      承認制に戻す(人だけ。設定 policy に * <操作> <対象> = ask の行を書く)
 tb approval list [--json]             承認待ちの一覧(送信 O-<n> と agent の操作 L-<n>。古い順)
 tb approval approve O-<n>|L-<n> [--always]  承認する(O- は送信を届ける。L- は tb agent-approve と同じ)
 tb approval reject O-<n>|L-<n>        却下する(L- は tb agent-reject と同じ)
@@ -172,7 +172,7 @@ func approvalCheck(db *store.DB, args []string, w, stderr io.Writer) error {
 
 func nowTS() string { return time.Now().UTC().Format("2006-01-02T15:04:05Z") }
 
-// setApproval は set_approval: 設定 policy に「* <操作名> <対象> = allow|ask-any」の行を書く
+// setApproval は set_approval: 設定 policy に「* <操作名> <対象> = allow|ask」の行を書く
 // (主体・操作名・対象が同じ行があれば書き換え、無ければ末尾に足す)。書いたあとに、もっと厳しい行が当たっていないか確かめる。
 func setApproval(db *store.DB, val, pat string, w io.Writer, stderr io.Writer) error {
 	if err := validAction(pat); err != nil {
@@ -181,7 +181,7 @@ func setApproval(db *store.DB, val, pat string, w io.Writer, stderr io.Writer) e
 	if err := requireHuman("tb " + val); err != nil {
 		return err
 	}
-	eff := "ask-any"
+	eff := "ask"
 	if val == "allow" {
 		eff = "allow"
 	}
@@ -309,11 +309,6 @@ func approverCheck(j *approval.Judge, cmd, act, by string) (approver, error) {
 	}
 	if who == by {
 		return approver{}, die("%s: 自分の依頼は承認できません(agent '%s')。人が自分の端末で実行します", cmd, who)
-	}
-	if agents.NameRE.MatchString(by) {
-		if tier, r := j.Authorize(act, by); tier == "ask-human" {
-			return approver{}, die("%s は人が自分の端末で実行します(%s からの %s は ask-human のため、人だけが承認できます。%s)", cmd, by, act, r)
-		}
 	}
 	rule, ok := j.GrantOf(who, "approve:"+act, by)
 	if !ok {

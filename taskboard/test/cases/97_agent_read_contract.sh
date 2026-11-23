@@ -8,7 +8,7 @@ export TB_ORG=$TMP/ar-org.conf TB_DELIVERY=$TMP/ar-delivery.conf TB_PROTECT=$TMP
 rm -rf "$TB_ROLES" "$TB_POLICY_G" "$TB_ORG" "$TB_DELIVERY" "$TB_PROTECT"
 mkdir -p "$TB_ROLES"; for r in lead worker hr; do echo "ROLE-$r" >"$TB_ROLES/$r.md"; done
 printf 'boss = lead\nlead* = lead\nw* = worker\nhr1 = hr\n' >"$TB_ROLES/map.conf"
-printf '* agent:read @worker = allow\n* agent:stop w2 = allow\n* send:info * = allow\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
+printf '* agent:read @worker = allow\n* agent:stop w2 = allow\n* send:info * = allow\n* send:answer * = ask\n' >"$TB_POLICY_A"
 arag() { printf '{"pane_id":"w%s:p1","name":"%s","agent_status":"idle","agent_session":{"value":"s-%s"}}' "$1" "$1" "$1"; }
 export FAKE_AGENTS="[$(arag boss),$(arag lead1),$(arag w1),$(arag w2),$(arag hr1),$(arag sweeper1)]"
 $TB agents >/dev/null 2>&1
@@ -38,16 +38,16 @@ eq "can: self read" "$(arerr $TB can w1 agent:read w1)" $'allow\nrule: 本人は
 # can: send
 eq "can: send default block" "$(arerr $TB can w1 send:task w2)" $'deny\nrule: default: w1 は指揮官ではない(worker からの報告は tb comment、依頼はチケットを使う)\nrc=4'
 printf 'lead1 -> @worker : task=now info=now\nw1 -> lead1 : info=hold answer=now task=block\n' >"$TB_DELIVERY"
-eq "can: send delivery now, approvals ask" "$(arerr $TB can lead1 send:task w1)" $'ask\nrule: delivery: lead1 -> @worker : task=now\nrule: 認可: 既定 ask-any\nrc=20'
+eq "can: send delivery now, approvals ask" "$(arerr $TB can lead1 send:task w1)" $'ask\nrule: delivery: lead1 -> @worker : task=now\nrule: 認可: 既定 ask\nrc=20'
 eq "can: send delivery now, approvals allow" "$(arerr $TB can lead1 send:info w1)" $'allow\nrule: delivery: lead1 -> @worker : info=now\nrule: 認可: policy: * send:info * = allow\nrc=0'
 eq "can: send hold" "$(arerr $TB can w1 send:info lead1)" $'hold\nrule: delivery: w1 -> lead1 : info=hold(届けず宛先の inbox に置く)\nrule: 認可: policy: * send:info * = allow\nrc=21'
-eq "can: send hold but ask" "$(printf '* send:info w2 = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TMP/ar-appr2.conf"; TB_POLICY_A=$TMP/ar-appr2.conf arerr $TB can w1 send:info lead1)" $'ask\nrule: delivery: w1 -> lead1 : info=hold(届けず宛先の inbox に置く)\nrule: 認可: policy: * send:info * = ask-any\nrc=20'
-eq "can: send answer" "$(arerr $TB can w1 send:answer lead1)" $'ask\nrule: delivery: w1 -> lead1 : answer=now\nrule: 認可: policy: * send:answer * = ask-any\nrc=20'
+eq "can: send hold but ask" "$(printf '* send:info w2 = allow\n* send:info * = ask\n* send:answer * = ask\n' >"$TMP/ar-appr2.conf"; TB_POLICY_A=$TMP/ar-appr2.conf arerr $TB can w1 send:info lead1)" $'ask\nrule: delivery: w1 -> lead1 : info=hold(届けず宛先の inbox に置く)\nrule: 認可: policy: * send:info * = ask\nrc=20'
+eq "can: send answer" "$(arerr $TB can w1 send:answer lead1)" $'ask\nrule: delivery: w1 -> lead1 : answer=now\nrule: 認可: policy: * send:answer * = ask\nrc=20'
 eq "can: send block line" "$(arerr $TB can w1 send:task lead1)" $'deny\nrule: delivery: w1 -> lead1 : task=block\nrc=4'
 # can: stop
 eq "can: stop protected" "$(arerr $TB can lead1 agent:stop boss)" $'deny\nrule: protect: 最上位\nrc=4'
 eq "can: stop allow" "$(arerr $TB can lead1 agent:stop w2)" $'allow\nrule: policy: * agent:stop w2 = allow\nrc=0'
-eq "can: stop ask" "$(arerr $TB can lead1 agent:stop w1)" $'ask\nrule: 既定 ask-any\nrc=20'
+eq "can: stop ask" "$(arerr $TB can lead1 agent:stop w1)" $'ask\nrule: 既定 ask\nrc=20'
 # can: flag
 eq "can: flag sweeper" "$(arerr $TB can sweeper1 agent:flag w1)" $'allow\nrule: 判定役(sweeper*)\nrc=0'
 eq "can: flag custom sweeper" "$(TB_SWEEPER_PATTERN='lead*' arerr $TB can lead1 agent:flag w1)" $'allow\nrule: 判定役(lead*)\nrc=0'
@@ -56,19 +56,19 @@ printf 'lead1 agent:flag @worker = allow\n@lead role:change ~report = allow\nlea
 eq "can: flag grant" "$(arerr $TB can lead1 agent:flag w1)" $'allow\nrule: policy: lead1 agent:flag @worker = allow\nrc=0'
 # can: role:change
 eq "can: role:change grant" "$(printf 'w1 -> lead1\n' >"$TB_ORG"; arerr $TB can lead1 role:change w1)" $'allow\nrule: policy: @lead role:change ~report = allow\nrc=0'
-eq "can: role:change hr ask" "$(arerr $TB can hr1 role:change w2)" $'ask\nrule: 人事役(@hr)/ 認可: 既定 ask-any\nrc=20'
+eq "can: role:change hr ask" "$(arerr $TB can hr1 role:change w2)" $'ask\nrule: 人事役(@hr)/ 認可: 既定 ask\nrc=20'
 eq "can: role:change hr allow" "$(printf '@hr role:change * = allow\n' >"$TMP/ar-appr3.conf"; TB_POLICY_A=$TMP/ar-appr3.conf arerr $TB can hr1 role:change w2)" $'allow\nrule: policy: @hr role:change * = allow\nrc=0'
-eq "can: role:change custom admin" "$(TB_ROLE_ADMIN=lead arerr $TB can boss role:change w2)" $'ask\nrule: 人事役(@lead)/ 認可: 既定 ask-any\nrc=20'
+eq "can: role:change custom admin" "$(TB_ROLE_ADMIN=lead arerr $TB can boss role:change w2)" $'ask\nrule: 人事役(@lead)/ 認可: 既定 ask\nrc=20'
 eq "can: role:change deny" "$(arerr $TB can w1 role:change w2)" $'deny\nrule: 人事役(@hr)でなく、policy に role:change を許す行もない\nrc=4'
 eq "can: role:change role file" "$(arerr $TB can hr1 role:change worker)" $'deny\nrule: 役割 worker の定義があるため、台帳のロールは効かない(tb role-set は止まる)\nrc=4'
 # can: approve
 eq "can: approve self" "$(arerr $TB can w1 approve:agent:stop:w2 w1)" $'deny\nrule: 自分の依頼は承認できない\nrc=4'
-eq "can: approve grant" "$(arerr $TB can lead1 approve:agent:stop:w2 w1)" $'allow\nrule: policy: lead1 approve:agent:* @worker = allow(--always・--all 系・spawn-freeze 中・依頼が ask-human のものは人だけ)\nrc=0'
+eq "can: approve grant" "$(arerr $TB can lead1 approve:agent:stop:w2 w1)" $'allow\nrule: policy: lead1 approve:agent:* @worker = allow(--always・--all 系・spawn-freeze 中は人だけ)\nrc=0'
 eq "can: approve deny" "$(arerr $TB can w2 approve:agent:stop:w2 w1)" $'deny\nrule: policy に approve:agent:stop:w2 w1 を許す approve の行がない(承認は人だけ)\nrc=4'
 # can: そのほか
 eq "can: read allow" "$(arerr $TB can lead1 agent:read w1)" $'allow\nrule: policy: * agent:read @worker = allow\nrc=0'
-eq "can: read ask" "$(arerr $TB can w1 agent:read lead1)" $'ask\nrule: 既定 ask-any\nrc=20'
-eq "can: other op" "$(arerr $TB can w1 agent:new w2)" $'ask\nrule: 既定 ask-any\nrc=20'
+eq "can: read ask" "$(arerr $TB can w1 agent:read lead1)" $'ask\nrule: 既定 ask\nrc=20'
+eq "can: other op" "$(arerr $TB can w1 agent:new w2)" $'ask\nrule: 既定 ask\nrc=20'
 rm -f "$TB_POLICY_G" "$TB_ORG" "$TB_DELIVERY"
 
 # org
@@ -124,13 +124,13 @@ eq "peek: human" "$(arerr $TB peek w1 --lines 200)" $'screen of ww1:p1\nrc=0'
 eq "peek: text trailing newlines" "$(FAKE_READ_TEXT=$'a\n\nb\n\n' arerr $TB peek w1)" $'a\n\nb\nrc=0'
 eq "peek: self" "$(HERDR_PANE_ID=wlead1:p1 arerr $TB peek lead1)" $'screen of wlead1:p1\nrc=0'
 eq "peek: allowed" "$(HERDR_PANE_ID=wlead1:p1 arerr $TB peek w2 --lines 3)" $'screen of ww2:p1\nrc=0'
-eq "peek: denied" "$(HERDR_PANE_ID=ww1:p1 arerr $TB peek lead1)" $'tb: w1 は lead1 の中身を読めません(既定 ask-any)。必要なら人が policy に \'<主体> agent:read lead1 = allow\'(対象は @<役割> や ~child なども書ける)を足す\nrc=20'
+eq "peek: denied" "$(HERDR_PANE_ID=ww1:p1 arerr $TB peek lead1)" $'tb: w1 は lead1 の中身を読めません(既定 ask)。必要なら人が policy に \'<主体> agent:read lead1 = allow\'(対象は @<役割> や ~child なども書ける)を足す\nrc=20'
 eq "peek: agent list fails" "$(FAKE_LIST_FAIL=1 arerr $TB peek w1)" $'tb: herdr agent list に失敗しました\nrc=1'
 eq "peek: agent list fails from agent" "$(FAKE_LIST_FAIL=1 HERDR_PANE_ID=ww1:p1 arerr $TB peek w2)" $'tb: herdr agent list に失敗したため、実行者を特定できません\nrc=1'
 eq "peek: not running" "$(arerr $TB peek nobody)" $'tb: nobody は herdr で動いていません\nrc=1'
 eq "peek: read fails" "$(FAKE_READ_RC=3 HERDR_PANE_ID=wlead1:p1 arerr $TB peek w1)" $'tb: herdr agent read に失敗しました(w1)\nrc=1'
 eq "peek: herdr calls" "$(grep -c '^read ' "$FAKE_LOG")" $'5'
-eq "peek: read_log" "$(sqlite3 "$TB_DB" "SELECT reader, target, lines, status, COALESCE(rule,'<null>') FROM read_log ORDER BY id;")" $'human|w1|200|ok|<null>\nhuman|w1|40|ok|<null>\nlead1|lead1|40|ok|<null>\nlead1|w2|3|ok|policy: * agent:read @worker = allow\nw1|lead1|40|denied|既定 ask-any\nhuman|w1|40|failed|<null>\nhuman|nobody|40|failed|<null>\nlead1|w1|40|failed|policy: * agent:read @worker = allow'
+eq "peek: read_log" "$(sqlite3 "$TB_DB" "SELECT reader, target, lines, status, COALESCE(rule,'<null>') FROM read_log ORDER BY id;")" $'human|w1|200|ok|<null>\nhuman|w1|40|ok|<null>\nlead1|lead1|40|ok|<null>\nlead1|w2|3|ok|policy: * agent:read @worker = allow\nw1|lead1|40|denied|既定 ask\nhuman|w1|40|failed|<null>\nhuman|nobody|40|failed|<null>\nlead1|w1|40|failed|policy: * agent:read @worker = allow'
 
 unset HERDR_PANE_ID TB_DB TB_POLICY_A TB_ROLES TB_POLICY_G TB_ORG TB_DELIVERY TB_PROTECT TB_ROUTES TB_ROLE_ADMIN TB_SWEEPER_PATTERN FAKE_AGENTS FAKE_READ_RC FAKE_READ_TEXT
 eval "$_ar_saved"
