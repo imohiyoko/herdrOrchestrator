@@ -744,7 +744,7 @@ cmd_agent-reject() {
 
 # ---------- 組織図(設定 org)を見る / 誰が誰に何をできるか ----------
 # 組織図は全員が見られる(人も agent も。読むだけ)。上司の線は設定 org(lib/approvals.sh の org_manager_of)で決まり、
-# できることは grants / delivery / approvals / protect の行が ~report などの関係を使って決める。
+# できることは policy と delivery の行が ~report などの関係を使って決める(protect は人も止める安全装置で、関係は使わない)。
 # tb org [--json]             台帳の agent と、設定 org に書かれた上司を木で出す
 # tb org <agent 名> [--json]  その agent の上司・上の全員・直属の部下・同じ上司
 # tb org --me [--json]        叩いた agent(pane から tb が決める。自己申告にしない)について同じもの
