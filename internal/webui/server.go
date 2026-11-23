@@ -599,6 +599,10 @@ func (s *Server) post(q *rq, path string) {
 		s.text(q, 403, "Forbidden: フォームの有効期限切れです。画面を開き直してください")
 		return
 	}
+	if path == "/resolve" { // 報告を対応済みにする(書き込みは tb resolve)
+		s.safe(q, func() { s.postResolve(q, form) })
+		return
+	}
 	if authed {
 		s.text(q, 501, "Not Implemented(この操作は Go 版の Web UI にまだありません)")
 		return

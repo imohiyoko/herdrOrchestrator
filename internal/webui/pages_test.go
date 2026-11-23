@@ -2,6 +2,7 @@ package webui
 
 import (
 	"encoding/json"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -71,6 +72,14 @@ second line', 'sent', '2026-01-01T00:00:00Z', 'default'),
  ('report', NULL, 'beta', 'report 2', 'failed', '2026-01-03T00:00:00Z', 'default'),
  ('報 告', 'C-1', 'alpha', '', 'sent', '2026-01-03T00:00:00Z', 'default'),
  ('send', 'O-2', 'other', 'other session', 'sent', '2026-01-01T00:00:00Z', 'other');
+INSERT INTO inbox (herdr_session, outbox_id, recipient, from_name, kind, task_id, text, rule, created_at, read_at) VALUES
+ ('default', 1, 'beta', 'alpha', 'info', 'T-p-1', 'held <body>
+line 2', 'r1', '2026-01-01T00:00:00Z', NULL),
+ ('default', 2, 'beta', 'alpha', 'task', NULL, 'read one', 'r1', '2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z'),
+ ('other', 3, 'zeta', 'alpha', 'info', NULL, 'other session held', 'r1', '2026-01-01T00:00:00Z', NULL);
+INSERT INTO comments (task_id, kind, text, from_name, from_pane, from_session, created_at, resolved_at, resolved_note, herdr_session) VALUES
+ ('T-p-1', 'blocked', 'resolved with note', 'alpha', 'p1', 's', '2026-01-02T00:00:00Z', '2026-01-02T02:00:00Z', 'メモ <i>', 'default'),
+ ('T-p-1', 'progress', 'just info', 'alpha', 'p1', 's', '2026-01-02T00:00:00Z', NULL, NULL, 'default');
 INSERT INTO agents (herdr_session, name, kind, state, killable, created_by, created_at, updated_at) VALUES
  ('other', 'zeta', 'claude', 'running', 'no', 'human', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
 `
@@ -159,7 +168,9 @@ func TestPagesMatchPython(t *testing.T) {
 	paths := []string{"/notifications", "/outbox", "/sessions", "/ledger",
 		"/ledger?result=all", "/ledger?result=failed&kind=send", "/ledger?kind=report&target=beta&from=2026-01-02",
 		"/ledger?target=bad%20name&from=2026/01/01&to=x&kind=nope&result=weird", "/ledger?to=2026-01-02&target=&target=alpha",
-		"/ledger?kind=%E5%A0%B1+%E5%91%8A", "/ledger?result=busy&to=2026-01-01"}
+		"/ledger?kind=%E5%A0%B1+%E5%91%8A", "/ledger?result=busy&to=2026-01-01",
+		"/inbox", "/inbox?held=1", "/inbox?held=3", "/inbox?held=x1", "/inbox?held=999&resolved=done", "/inbox?resolved=already",
+		"/inbox?resolved=%20done"}
 	pj, _ := json.Marshal(paths)
 	c := exec.Command(py, "-c", pyRender, webui, string(pj))
 	raw, err := c.Output()
@@ -254,5 +265,53 @@ func TestPagesHTTP(t *testing.T) {
 	r := do(t, ts, "GET", "/s/default/notifications", ck, nil)
 	if !strings.Contains(r.body, `href="/s/default/tasks/T-p-1"`) || strings.Contains(r.body, "<script>x") {
 		t.Errorf("リンクの付け替えかエスケープ: %s", r.body)
+	}
+}
+
+func TestResolvePost(t *testing.T) {
+	pagesFixture(t)
+	dir := t.TempDir()
+	log := filepath.Join(dir, "args")
+	hc := filepath.Join(dir, "herdrctl")
+	os.WriteFile(hc, []byte(`#!/bin/sh
+[ "$1 $2" = "tb --features" ] && { echo "policy-ops auth"; exit 0; }
+echo "$* | db=$TB_DB pane=${HERDR_PANE_ID-unset}" >>"`+log+`"
+case "$3" in C-2) echo "C-2 はすでに対応済みです";; C-3) echo "tb: だめ" >&2; exit 1;; esac
+exit 0
+`), 0o755)
+	t.Setenv("TB_HERDRCTL", hc)
+	t.Setenv("HERDR_PANE_ID", "%9")
+	ts, srv := testServer(t)
+	srv.Auth.Setup("alice", "correcthorse12")
+	ck, _ := srv.Auth.CreateSession()
+	r := do(t, ts, "GET", "/s/default/inbox", ck, nil)
+	if r.code != 200 || !strings.Contains(r.body, `action="/s/default/resolve"`) || strings.Contains(r.body, "herdr-refresh") {
+		t.Fatalf("inbox: %d", r.code)
+	}
+	tok := csrf(t, r.body)
+	post := func(f url.Values) resp { f.Set("csrf", tok); return do(t, ts, "POST", "/s/default/resolve", ck, f) }
+	for _, c := range []struct {
+		form url.Values
+		code int
+		loc  string
+	}{
+		{url.Values{"id": {"1"}, "back": {"/inbox"}, "note": {"  メモ  "}}, 302, "/s/default/inbox?resolved=done"},
+		{url.Values{"id": {"2"}, "back": {"/tasks/T-p-1"}}, 302, "/s/default/tasks/T-p-1?resolved=already"},
+		{url.Values{"id": {"3"}, "back": {"https://evil/"}}, 302, "/s/default/inbox?resolved=error"},
+		{url.Values{"id": {"x"}}, 400, ""},
+	} {
+		if r := post(c.form); r.code != c.code || r.loc != c.loc {
+			t.Errorf("%v: %d %s", c.form, r.code, r.loc)
+		}
+	}
+	got, _ := os.ReadFile(log)
+	want := "tb resolve C-1 -m メモ | db=" + os.Getenv("WEBUI_TB_DB") + " pane=unset\n" +
+		"tb resolve C-2 | db=" + os.Getenv("WEBUI_TB_DB") + " pane=unset\n" +
+		"tb resolve C-3 | db=" + os.Getenv("WEBUI_TB_DB") + " pane=unset\n"
+	if string(got) != want {
+		t.Errorf("tb に渡したもの:\n%s\nwant:\n%s", got, want)
+	}
+	if r := do(t, ts, "POST", "/s/default/resolve", "", url.Values{"csrf": {tok}, "id": {"1"}}); r.code != 302 || r.loc != "/s/default/login" {
+		t.Errorf("未ログイン: %d %s", r.code, r.loc)
 	}
 }

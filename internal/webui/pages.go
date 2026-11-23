@@ -243,4 +243,5 @@ var ported = map[string]pageFn{
 	"/outbox":        (*Server).pageOutbox,
 	"/sessions":      (*Server).pageSessions,
 	"/ledger":        (*Server).pageLedger,
+	"/inbox":         (*Server).pageInbox,
 }
