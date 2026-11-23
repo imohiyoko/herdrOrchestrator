@@ -224,7 +224,7 @@ func proposalResolve(db *store.DB, args []string, w, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		if pt := proposal.Target(db.DB, db.Session); l.Name != pt {
+		if pt := proposal.Target(db.DB, db.Session); pt == "" || l.Name != pt {
 			return die("提案を閉じられるのは設定役(%s。projects の proposal の行)か人だけです", pt)
 		}
 	}

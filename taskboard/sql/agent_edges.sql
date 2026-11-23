@@ -1,7 +1,7 @@
 -- agent の関係エッジ(主体 -動詞→ 対象)。tb agents --graph と Web UI の /agent-graph が同じこの SQL を読む。
--- read は tb peek で他の agent の中身を読んだ記録(拒否は denied)。role は人事役が tb role-set でロールを変えた記録(人の操作は辺にしない)。
+-- read は tb peek で他の agent の中身を読んだ記録(拒否は denied)。role は agent が tb role-set でロールを変えた記録(人の操作は辺にしない)。
 -- 列: verb, src, dst, project, status, n(件数), last_at
--- src / dst が NULL の行は project の指揮官(config/projects.conf、無ければ conductor)で埋める(lead は src、report は dst)。
+-- src / dst が NULL の行は project の指揮官(設定 projects に書いた名前)で埋める(lead は src、report は dst)。
 -- __HELD_STATUSES__ は担当が持っている状態(分類 active / review / blocked。設定 statuses)の一覧で、読む側(tb・Web UI)が SQL のリテラルに置き換える。
 -- status は記録時点の判定(send の denied = routes.conf で拒否された試み)。期間は直近 7 日(lead と spawn は今の状態)
 SELECT 'spawn' AS verb, spawned_by AS src, name AS dst, NULL AS project, 'ok' AS status, 1 AS n, created_at AS last_at

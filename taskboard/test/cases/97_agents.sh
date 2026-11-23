@@ -4,7 +4,7 @@
 eq "agents: analyst flagged killable after returning a result (90_alerts)" "$(sqlite3 "$TMP/alerts.db" "SELECT killable||' '||killable_by FROM agents WHERE name='analyst-A1';")" "yes tb"
 _saved_pane=${HERDR_PANE_ID-}; unset HERDR_PANE_ID
 export TB_DB=$TMP/agents.db TB_POLICY_A=$TMP/appr-agent.conf TB_SPAWN_RETRY_SEC=0 TB_AGENT_CWD=$TMP
-printf '* send:info * = ask\n* send:answer * = ask\n' >"$TB_POLICY_A"
+printf '* send:info * = ask\n* send:answer * = ask\n@sweeper agent:flag * = allow\n' >"$TB_POLICY_A"
 A_C='{"pane_id":"wC:p1","name":"conductor","agent_status":"idle","agent_session":{"value":"sc"}}'
 A_W='{"pane_id":"wW:p1","name":"worker1","agent_status":"idle","agent_session":{"value":"s1"},"cwd":"/tmp"}'
 A_S='{"pane_id":"wS:p1","name":"sweeper","agent_status":"idle","agent_session":{"value":"ss"}}'
@@ -127,7 +127,7 @@ export TB_DB=$TMP/agents.db TB_POLICY_A=$TMP/appr-agent.conf TB_SPAWN_RETRY_SEC=
 export FAKE_AGENTS="[$A_C,$A_S]"
 eq "requester: herdr list failure is not treated as a human" "$(FAKE_LIST_FAIL=1 HERDR_PANE_ID=wC:p1 rc $TB agent-stop worker1 --force) $(FAKE_LIST_FAIL=1 HERDR_PANE_ID=wC:p1 rc $TB agent-reject L-1)" "1 1"
 printf '* agent:new * = allow\n* send:info * = ask\n* send:answer * = ask\n' >"$TB_POLICY_A"
-eq "agent-new --killable: not from a non-sweeper agent" "$(HERDR_PANE_ID=wC:p1 $TB agent-new helper5 --killable yes 2>&1 | grep -c '判定役')" "1"
+eq "agent-new --killable: not from a non-sweeper agent" "$(HERDR_PANE_ID=wC:p1 $TB agent-new helper5 --killable yes 2>&1 | grep -c 'policy で agent:flag')" "1"
 mkdir -p "$TMP/rel/sub"
 out=$(cd "$TMP/rel" && HERDR_PANE_ID=wC:p1 TB_POLICY_A=$TMP/appr-ask.conf $TB agent-new helper6 --cwd sub; true)
 eq "agent-new: relative --cwd stored as absolute" "$(sqlite3 "$TB_DB" "SELECT json_extract(args,'\$.cwd') FROM agent_ops WHERE target='helper6';")" "$TMP/rel/sub"

@@ -35,6 +35,10 @@ func Send(db *sql.DB, session, target, msg, id, kind string, stderr io.Writer) i
 	if kind == "" {
 		kind = "report"
 	}
+	if target == "" { // 既定の宛先はコードで決めない(設定 projects の * の行)
+		fmt.Fprintf(stderr, "tb: 宛先が決まっていません(設定 projects に *=<名前> か <project>=<名前> を書く: tb config edit projects)。未送信(pending に残す): %s\n", id)
+		return Failed
+	}
 	raw, _ := herdr.Call("agent", "get", target)
 	var g struct {
 		Result struct {

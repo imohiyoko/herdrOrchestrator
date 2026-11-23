@@ -514,7 +514,7 @@ tb agent-new <名前> [--cwd D] [--kind K] [--model M] [--role R] [--prompt P] [
 tb agent-stop <名前> [--force]
 tb agent-revive <名前> [--fresh] [--model M] [--prompt P]
 tb agent-restart <名前> [--prompt P]   # MCP が切れたときの復旧: 停止 + 同じ会話での復活
-tb agent-flag <名前> --killable yes|no|unknown [--reason R]   # 判定役(sweeper*)か人だけ
+tb agent-flag <名前> --killable yes|no|unknown [--reason R]   # 人か、policy で agent:flag を許された agent だけ
 tb agent-ops [--status pending|done|failed|rejected] [--json]
 tb agent-approve L-<n> [--always] / tb agent-reject L-<n>      # 人だけ
 ```
@@ -542,7 +542,7 @@ tb agent-approve L-<n> [--always] / tb agent-reject L-<n>      # 人だけ
   `--prompt` が無ければ「MCP を再接続した。前の作業を続け、MCP のツールが使えることを確かめ、まだなら tb comment で報告」という既定の一文を送る(準備完了を待ち、受け付けられたかも確かめる)。
   復活に失敗したら停止のまま残し、`tb agent-revive <名前> [--fresh]` を出して 0 以外で終わる(新しい会話は勝手に作らない)。
   `agent_ops` には op=revive、args.restart=1 の 1 行で、依頼者・停止と復活の結果・session が変わらなかったか・所要秒を残す。再開したが最初の指示を確認できないときは終了コード 10
-- **判定フラグ(killable)**: `yes|no|unknown`。付けられるのは判定役(利用例は `setup/examples/roles/sweeper.md`、軽いモデル。`TB_SWEEPER_PATTERN`、既定 `sweeper*`)と人、policy の allow の行で `agent:flag` を許された agent だけ(例 `my-judge agent:flag * = allow`)。
+- **判定フラグ(killable)**: `yes|no|unknown`。付けられるのは人と、policy の allow の行で `agent:flag` を許された agent だけ(例 `@sweeper agent:flag * = allow`。判定役の利用例は `setup/examples/roles/sweeper.md`)。
   yes を付けた後でその agent が新しい入力を受けたら、または会話が変わったら `stale` になり、停止には使えない(付け直しが要る)。
   解析役(`analyst-A<n>`)は `tb alert-result` を返した時点で tb が yes を付ける。判定役の定期実行は `scheduler/jobs/sweeper.conf.example`
 - **誰が実行できるか**: 人の端末(と Web UI)からはそのまま実行する。agent の pane からは policy の `agent:<op>`(op は `new|stop|revive`、対象は agent 名。既定 ask)を見て、
@@ -620,16 +620,16 @@ agent 同士の関係は 1 本の木ではなく、`主体 -動詞→ 対象` �
 - グループ化(`--group role`、関係グラフの枠)は組み合わせ単位(`[hr,manager]`)
 - 1 体が複数の project を抱えているかは、ロールの数とは別に会計役のレビュー材料(「仕事の混在」)で見る
 
-#### ロール変更は人事役の専用操作(`tb role-set`)
+#### ロール変更(`tb role-set`)
 
 agent ごとのロールを変える入口は `tb role-set <agent 名> <ロール> [--reason R]` に絞る(台帳の role を書き換え、`role_changes` に記録する)。
 
 - 人の端末からはそのまま実行できる
-- agent から実行できるのは人事役(`@hr`。`TB_ROLE_ADMIN` で変えられる)と、`tb role-set` に限り policy の allow の行で `role:change` を許された agent だけ(当たればそれで allow)。人事役も policy の `role:change` が allow でなければ(既定は ask)終了コード 20 で止まり、人の実行を求める
-- agent は自分のロールを変えられず、人事役のロールを付けることもできない(権限の自己拡大を防ぐ)
+- agent から実行できるかは policy の `role:change` の行だけで決まる(役割の名前では決めない。例 `@hr role:change * = allow`)。当たる行が allow でなければ(既定は ask)終了コード 20 で止まり、人の実行を求める
+- agent は自分のロールを変えられず、自分の持つ役割を付けることもできない(権限の自己拡大を防ぐ)
 - `roles/<名前>.md` がある agent は台帳のロールが効かないので拒否する
-- 記録は `tb role-log`。人事役による変更は関係グラフに `role` の辺として出る。会計役(auditor)は提案するだけで、変えない
-- 人事役のロールは、複数のうちの 1 つとしても agent からは付けられない(人だけ)
+- 記録は `tb role-log`。agent による変更は関係グラフに `role` の辺として出る
+- 自分の持つ役割は、複数のうちの 1 つとしても agent からは付けられない(人だけ)
 
 #### ロールは herdr セッション固有
 
@@ -787,7 +787,7 @@ tb agent-shed [--count N] [--json]        # 絞る候補の一覧。何も止め
 ## 会計役(定期レビュー)と改善提案
 
 会計役(利用例は `setup/examples/roles/auditor.md`)が scheduler の定期プロンプト(`scheduler/jobs/auditor.conf.example`)で、送受信・アラート・報告・承認・定期実行の
-記録を見直し、役割(プロンプト)の改善を設定役(`projects` の `proposal=<名前>` の行。無ければ `TB_HR_NAME`、既定 `hr`)に提案する。提案を閉じられるのは設定役と人。設定役が `roles/` を直す(`role:change` の承認規則に従う)。
+記録を見直し、役割(プロンプト)の改善を設定役(`projects` の `proposal=<名前>` の行。無ければ `*` の行の名前)に提案する。提案を閉じられるのは設定役と人。設定役が `roles/` を直す(`role:change` の承認規則に従う)。
 
 ```bash
 tb review pack [--since ISO] [--mark]   # レビュー材料。生ログではなく集計と上位だけ(トークン節約)。省略時は前回 --mark より後
@@ -813,12 +813,12 @@ tb proposal resolve P-<n> --status applied|rejected [--note N]   # 設定役か�
 tb role-context --source startup|resume|clear|compact --session-id S   # SessionStart hook 用(bin/tb-role-hook 経由)
 tb role-show [agent 名]            # その agent に渡す本文(省略時は自分)。agent は役割をファイルではなくこれで読む
 tb role-list                       # 役割名と出どころ(db:<セッション> / db:* / file:<パス>)
-tb role-write <役割名|@map> [--shared] < 本文   # 定義を書く(role-edit は $EDITOR)。人と人事役(role:change が allow のとき)
+tb role-write <役割名|@map> [--shared] < 本文   # 定義を書く(role-edit は $EDITOR)。人と、policy で role:change を許された agent
 tb role-broadcast [agent 名 ...]   # 動いている agent に「役割が更新された・tb role-show で読み直せ」と送る
 tb roles [--json]                  # agent ごとの役割・版・状態(current|outdated|never|no-role)
 ```
 
-- 人事役(agent)は、人事役の役割そのものと、map で人事役を付ける行は書けない(権限の自己拡大を防ぐ)。履歴は `tb config history` と同じ `config_changes`(書いた agent 名が残る)
+- agent は、自分の持つ役割の定義と、map で自分の持つ役割を付ける行は書けない(権限の自己拡大を防ぐ)。履歴は `tb config history` と同じ `config_changes`(書いた agent 名が残る)
 
 - 同じセッションに同じ版(`_common.md` + 役割ファイルの SHA-256)を渡し済みなら、`resume` と `role-broadcast` では送らない。compact の後は渡し直す
 - 一括送信は `[role-update / tb] ...` で始まる 1 行(版と役割名。ファイルのパスは送らない)。宛先が使用中なら送らず、終了コード 10
@@ -928,8 +928,8 @@ tb が `herdr agent prompt` で送ろうとしたものは、結果にかかわ�
 
 設定 `projects`(`project=指示役の agent 名` の行。下の「設定」の順で引く)に書く。
 
-- `*=<名前>` は既定の宛先。書いていない project と、project に属さない観測(`tb digest` のアラート・spawn・scheduler の観測、アラートの解析結果)はここへ送る。`*` の行も無ければ `conductor` に送る(役割の名前に頼らない構成にするなら `*` を書く)
-- `proposal=<名前>` は改善提案(`tb proposal`)の宛先と、提案チケットの担当。無ければ `TB_HR_NAME`(既定 `hr`)。この名前は指揮官(下の delivery の既定・nudge の除外)には数えない
+- `*=<名前>` は既定の宛先。書いていない project と、project に属さない観測(`tb digest` のアラート・spawn・scheduler の観測、アラートの解析結果)はここへ送る。`*` の行も無ければ宛先が決まらず、送らずに pending に残す(コードに既定の名前は無い。setup で `*` を書く)
+- `proposal=<名前>` は改善提案(`tb proposal`)の宛先と、提案チケットの担当。無ければ `*` の行の名前。この名前は指揮官(下の delivery の既定・nudge の除外)には数えない
 
 `report` は宛先の状態を `herdr agent get` で見て、`idle` / `done` のときだけ送る。
 `working` / `blocked` のほか、`unknown` や取得失敗でも送らない(既定は「割り込まずに pending に積む」)。
@@ -1054,7 +1054,7 @@ HERDR_SESSION=<その checkout のセッション> tb db-import /path/to/checkou
 
 `TB_DB`(DB パス。既定は全セッション共有の `~/.local/state/herdr/tasks.db`) / `TB_CONFIG`(projects.conf) / `HERDR_BIN`(herdr の実体。既定 `herdr`) / `TB_SCHEMA_DIR`(テスト用)
 DB パスと herdr の既定値は部品で共通の [`lib/herdr-env.sh`](../lib/herdr-env.sh)(Python は `lib/herdr_env.py`)で決まる。
-`TB_ROUTES`(routes.conf) / `TB_DELIVERY`(delivery.conf) / `TB_HR_NAME`(hr) / `TB_SCHED_LOGS` / `TB_REVIEW_TOP`(8) / `TB_ANALYST_MAX`(2) / `TB_ANALYST_CWD` / `TB_ANALYST_MODEL` / `TB_AGENT_CWD` / `TB_SWEEPER_PATTERN`(`sweeper*`) / `TB_LIMITS`(limits.conf) / `TB_LIMIT_<キー大文字>`(各制限の上書き) / `TB_HANDOFF_DIR`(handoff の置き場) / `TB_SPAWN_RETRY_SEC`(3) / `TB_APPROVALS`(approvals.conf) / `TB_ROLES`(roles/) / `TB_ROLE_MAX`(12000) / `TB_SEND_MAX`(4000) / `TB_IMMEDIATE_KINDS`(既定 `question blocked`) / `TB_DIGEST_IDLE_MIN`(10) / `TB_DIGEST_STUCK_MIN`(30) / `TB_DIGEST_ITEM_MAX`(160) / `TB_DIGEST_MSG_MAX`(1800) / `TB_NUDGE_IDLE_MIN`(15) / `TB_NUDGE_MAX`(3)
+`TB_ROUTES`(routes.conf) / `TB_DELIVERY`(delivery.conf) / `TB_SCHED_LOGS` / `TB_REVIEW_TOP`(8) / `TB_ANALYST_MAX`(2) / `TB_ANALYST_CWD` / `TB_ANALYST_MODEL` / `TB_AGENT_CWD` / `TB_LIMITS`(limits.conf) / `TB_LIMIT_<キー大文字>`(各制限の上書き) / `TB_HANDOFF_DIR`(handoff の置き場) / `TB_SPAWN_RETRY_SEC`(3) / `TB_APPROVALS`(approvals.conf) / `TB_ROLES`(roles/) / `TB_ROLE_MAX`(12000) / `TB_SEND_MAX`(4000) / `TB_IMMEDIATE_KINDS`(既定 `question blocked`) / `TB_DIGEST_IDLE_MIN`(10) / `TB_DIGEST_STUCK_MIN`(30) / `TB_DIGEST_ITEM_MAX`(160) / `TB_DIGEST_MSG_MAX`(1800) / `TB_NUDGE_IDLE_MIN`(15) / `TB_NUDGE_MAX`(3)
 
 ## テスト
 

@@ -179,7 +179,7 @@ unset TB_NOTIFY_SLACK_VIA TB_NOTIFY_WEBHOOK_FILE
 # ---- 規則(show / test / run)と flush の期限のイベント
 cat >"$TB_NOTIFY_RULES" <<'R'
 # コメント
-status new=done -> file slack lead
+status new=done -> file slack conductor
 created -> stdout
 bogus -> file
 created priority>=high owner=worker1 -> webui file

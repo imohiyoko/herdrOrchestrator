@@ -2,7 +2,7 @@
 # run.sh から番号順に source される
 # --- outbox の自動再送まわり: セッション(approve/flush は tb のセッションへ届ける)、宛先なし時の exit 11、digest の「queued が長い」観測
 export TB_DB=$TMP/retry.db TB_CONFIG=$TMP/retry.conf TB_ROUTES=$TMP/retry-routes.conf TB_POLICY_A=$TMP/retry-approvals.conf
-printf 'rt=rt-conductor\n' >"$TB_CONFIG"; rm -f "$TB_ROUTES"
+printf '*=conductor\nrt=rt-conductor\n' >"$TB_CONFIG"; rm -f "$TB_ROUTES"
 printf '* send:info * = ask\n* send:answer * = ask\n' >"$TB_POLICY_A"
 export FAKE_AGENTS='[{"pane_id":"wC:p1","name":"conductor","agent_session":{"value":"sc"}},{"pane_id":"wW:p1","name":"worker1","agent_session":{"value":"s1"}}]'
 export FAKE_SESSION_LOG=$TMP/session.log

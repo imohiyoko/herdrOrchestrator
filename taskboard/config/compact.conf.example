@@ -7,4 +7,4 @@
 enabled = 0                  # 0 のあいだは何もしない(dry-run も「無効」と出すだけ)
 threshold_tokens = 150000    # 直近の入力トークン(input + cache_creation + cache_read)がこれを超えた agent が対象
 min_interval_sec = 1800      # 同じ agent に /compact を送ってから、この秒数は再び送らない
-exclude = conductor          # 対象外の agent 名(空白区切り)
+exclude =                    # 対象外の agent 名(空白区切り。projects に書いた指揮官は書かなくても外れる)

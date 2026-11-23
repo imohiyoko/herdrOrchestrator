@@ -21,9 +21,6 @@ import (
 
 // 届け方(taskboard/lib/send.sh の delivery_mode / outbox_deliver)。送信のコマンドは internal/tbcli の message.go。
 
-// DefaultTarget は core.sh の DEFAULT_TARGET。
-const DefaultTarget = "conductor"
-
 // SendKinds は SEND_KINDS。
 var SendKinds = []string{"task", "info", "answer"}
 
@@ -57,9 +54,10 @@ func noSpace(s string) string {
 	}, s)
 }
 
-// TargetFor は target_for(project の指示役。* なら既定の宛先)。
+// TargetFor は target_for(project の指示役。* なら既定の宛先)。設定 projects に書いた名前だけを使い、
+// どちらの行も無ければ空(宛先は決まっていない。役割の名前をコードで決め打ちしない)。
 func TargetFor(db *sql.DB, session, project string) string {
-	t, star, exact := DefaultTarget, "", ""
+	t, star, exact := "", "", ""
 	for _, p := range projectsPairs(db, session) {
 		if p[0] == "*" {
 			star = p[1]
@@ -77,9 +75,12 @@ func TargetFor(db *sql.DB, session, project string) string {
 	return t
 }
 
-// ConductorNames は conductor_names(指揮官として扱う名前)。
+// ConductorNames は conductor_names(指揮官として扱う名前 = 設定 projects に書いた宛先。proposal の行は除く)。
 func ConductorNames(db *sql.DB, session string) []string {
-	out := []string{TargetFor(db, session, "*")}
+	var out []string
+	if t := TargetFor(db, session, "*"); t != "" {
+		out = append(out, t)
+	}
 	for _, p := range projectsPairs(db, session) {
 		if p[0] == "proposal" || p[0] == "*" {
 			continue

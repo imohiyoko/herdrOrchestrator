@@ -52,16 +52,28 @@ tb は役職を前提にしない。既定で agent に渡るのは `roles/_comm
 agent の名前・プロンプト・権限(設定 `policy`。届け方は `delivery`)・返す文面(messages)で決める。
 役割の文面を渡したいときだけ、利用者に `setup/examples/` を見せて、使うものを選んでもらう(全部入れなくてよい。自分で書いてもよい)。
 
+- 勧める分け方(利用者の規模に合わせて選ぶ。1〜2 体なら役割を分けなくてよい)。tb のコードは役割の名前を知らないので、
+  役割が「できること」は下の設定の行だけで決まる。文面を入れただけでは何も許されないことを必ず伝える。
+  行の例は `setup/examples/role-config.conf`。
+  - **指揮役**(`conductor`): 仕事を割り振り、報告を受ける。1 つのプロジェクトに 1 体。`projects` の `*=<名前>`(とプロジェクトごとの `<project>=<名前>`)に書いた
+    名前が指揮官として扱われる(報告・digest・アラートの届け先、既定の delivery の送り手、slash / model-set / agent shed / compact の対象外、agent から再起動できない)。
+    **役割を使わない構成でも `*` の行は必ず書く**(無いと報告の宛先が決まらず、送られずに残る)。
+  - **人事役**(`hr`): 役割の文面とロールの付け替え、改善提案の受け手。agent が 3 体を超え、役割を変える場面があるときに勧める。
+    `policy` に `@hr role:change * = allow`、`projects` に `proposal=<名前>`。自分の持つ役割を配る・書き換えるのは人だけ。
+  - **判定役**(`sweeper`): 止めてよいかの印を付ける。長く動かす構成で、止め忘れが問題になるときに勧める。`policy` に `@sweeper agent:flag * = allow`。
+  - **worker** / **見張り**(`watcher`)/ **解析**(`analyst`)/ **会計**(`auditor`)/ **下書き**(`drafter`): 特別な権限は要らない。
+    見張り・会計は定期実行のジョブ(「4. scheduler のジョブ」)と組にする。
+  役割の名前は自由に変えてよい(`policy` の `@<役割>` と `projects` の名前を合わせて直す)。
 - 役割の文面: `setup/examples/roles/<役割>.md`(conductor / hr / worker / watcher / analyst / sweeper / auditor / drafter)。
   承認後に `bash taskboard/bin/tb role-write <役割> --shared < setup/examples/roles/<役割>.md` で DB に書く
   (`--shared` は全セッション共通。このセッションだけなら外す)。agent 名が役割名と違うときは
   `bash taskboard/bin/tb role-write @map --shared < setup/examples/roles/map.conf`(agent 名のパターン = 役割)。
   入れた後、動いている agent には `tb role-broadcast` で知らせる。戻すときは `bash taskboard/bin/tb role-unset <役割|@map> --shared`。
 - 役割に合わせた設定(どれも `tb config edit <キー>` か `tb config set <キー> < 本文`。書く前に差分を見せる):
-  - `projects`: 報告の宛先。`*=<指揮役の agent 名>`(既定の宛先)、`<project>=<名前>`、提案の受け手は `proposal=<名前>`。
-    `*` の行が無いと、宛先は `conductor` という名前の agent になる。
+  - `projects`: 報告の宛先。`*=<指揮役の agent 名>`(既定の宛先)、`<project>=<名前>`、提案の受け手は `proposal=<名前>`(無ければ `*` の名前)。
+    `*` の行が無いと宛先が決まらない(コードに既定の名前は無い)。
   - `policy`: 誰に何を許すか(1 行 `<主体> <操作> <対象> = allow|ask|deny`。当たる行のうちいちばん厳しい効果で決まる)。
-    例 `sweeper agent:flag * = allow`(止めてよいかの印)、`@hr role:change * = allow`(ロールの付け替え)。
+    例 `@sweeper agent:flag * = allow`(止めてよいかの印)、`@hr role:change * = allow`(ロールの付け替え)。どちらも行が無ければ人だけ(role:change は人の承認待ち)。
     承認待ちの承認を任せるなら `<承認者> approve:<元の操作> <依頼者> = allow`
     (例 `@conductor approve:send:task:* ~report = allow` = 直属の部下からの依頼の送信を指揮役が承認できる。`--always` と `--all` 系は人だけ)。
     scheduler からの呼び出しは主体 `system:scheduler` で、`system:scheduler <操作> <対象> = deny` などで締められる。

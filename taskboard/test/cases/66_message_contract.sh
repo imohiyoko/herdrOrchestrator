@@ -6,7 +6,8 @@ declare -A _mc_saved=()
 for _v in $_mc_vars; do if [[ -v $_v ]]; then _mc_saved[$_v]=${!_v}; fi; done
 unset HERDR_PANE_ID FAKE_STATUS FAKE_LIST_FAIL FAKE_PROMPT_RC TB_ROUTES TB_LIMITS
 export TB_DB=$TMP/mcontract.db TB_POLICY_A=$TMP/mc-appr.conf TB_ROLES=$TMP/mc-roles TB_DELIVERY=$TMP/mc-delivery.conf TB_CONFIG=$TMP/mc-projects.conf
-rm -f "$TB_DELIVERY" "$TB_CONFIG"
+rm -f "$TB_DELIVERY"
+printf '*=conductor\n' >"$TB_CONFIG"
 printf '* send:* * = allow\n' >"$TB_POLICY_A"
 mkdir -p "$TB_ROLES"; echo "ROLE-worker" >"$TB_ROLES/worker.md"; printf 'w* = worker\n' >"$TB_ROLES/map.conf"
 mc_() { printf '{"pane_id":"w%s:p1","name":"%s","agent_session":{"value":"s-%s"}}' "$1" "$1" "$1"; }

@@ -49,17 +49,16 @@ eq "can: stop protected" "$(arerr $TB can lead1 agent:stop boss)" $'deny\nrule: 
 eq "can: stop allow" "$(arerr $TB can lead1 agent:stop w2)" $'allow\nrule: policy: * agent:stop w2 = allow\nrc=0'
 eq "can: stop ask" "$(arerr $TB can lead1 agent:stop w1)" $'ask\nrule: 既定 ask\nrc=20'
 # can: flag
-eq "can: flag sweeper" "$(arerr $TB can sweeper1 agent:flag w1)" $'allow\nrule: 判定役(sweeper*)\nrc=0'
-eq "can: flag custom sweeper" "$(TB_SWEEPER_PATTERN='lead*' arerr $TB can lead1 agent:flag w1)" $'allow\nrule: 判定役(lead*)\nrc=0'
-eq "can: flag deny" "$(arerr $TB can w1 agent:flag w2)" $'deny\nrule: 判定役でなく、policy に agent:flag を許す行もない\nrc=4'
+eq "can: flag sweeper by name alone is not special" "$(TB_SWEEPER_PATTERN='sweeper*' arerr $TB can sweeper1 agent:flag w1)" $'deny\nrule: policy に agent:flag を許す行がない\nrc=4'
+eq "can: flag deny" "$(arerr $TB can w1 agent:flag w2)" $'deny\nrule: policy に agent:flag を許す行がない\nrc=4'
 printf 'lead1 agent:flag @worker = allow\n@lead role:change ~report = allow\nlead1 approve:agent:* @worker = allow\n' >"$TB_POLICY_G"
 eq "can: flag grant" "$(arerr $TB can lead1 agent:flag w1)" $'allow\nrule: policy: lead1 agent:flag @worker = allow\nrc=0'
 # can: role:change
 eq "can: role:change grant" "$(printf 'w1 -> lead1\n' >"$TB_ORG"; arerr $TB can lead1 role:change w1)" $'allow\nrule: policy: @lead role:change ~report = allow\nrc=0'
-eq "can: role:change hr ask" "$(arerr $TB can hr1 role:change w2)" $'ask\nrule: 人事役(@hr)/ 認可: 既定 ask\nrc=20'
+eq "can: role:change hr ask" "$(arerr $TB can hr1 role:change w2)" $'ask\nrule: 既定 ask\nrc=20'
 eq "can: role:change hr allow" "$(printf '@hr role:change * = allow\n' >"$TMP/ar-appr3.conf"; TB_POLICY_A=$TMP/ar-appr3.conf arerr $TB can hr1 role:change w2)" $'allow\nrule: policy: @hr role:change * = allow\nrc=0'
-eq "can: role:change custom admin" "$(TB_ROLE_ADMIN=lead arerr $TB can boss role:change w2)" $'ask\nrule: 人事役(@lead)/ 認可: 既定 ask\nrc=20'
-eq "can: role:change deny" "$(arerr $TB can w1 role:change w2)" $'deny\nrule: 人事役(@hr)でなく、policy に role:change を許す行もない\nrc=4'
+eq "can: role:change: no role name is special (any agent goes by policy)" "$(TB_ROLE_ADMIN=lead arerr $TB can w1 role:change w2)" $'ask\nrule: 既定 ask\nrc=20'
+eq "can: role:change deny" "$(printf '* role:change * = deny\n' >"$TMP/ar-appr4.conf"; TB_POLICY_A=$TMP/ar-appr4.conf arerr $TB can w1 role:change w2)" $'deny\nrule: policy: * role:change * = deny\nrc=4'
 eq "can: role:change role file" "$(arerr $TB can hr1 role:change worker)" $'deny\nrule: 役割 worker の定義があるため、台帳のロールは効かない(tb role-set は止まる)\nrc=4'
 # can: approve
 eq "can: approve self" "$(arerr $TB can w1 approve:agent:stop:w2 w1)" $'deny\nrule: 自分の依頼は承認できない\nrc=4'

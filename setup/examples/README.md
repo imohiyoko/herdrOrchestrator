@@ -9,6 +9,7 @@ tb は役職(指揮官・人事・見張りなど)を前提にしない。既定
 | `roles/<役割>.md` | 役割の文面(conductor 指揮官 / hr 人事 / worker / watcher 見張り / analyst 解析 / sweeper 判定 / auditor 会計 / drafter 下書き) |
 | `roles/map.conf` | agent 名のパターン → 役割(例 `worker* = worker`) |
 | `org.conf` | 組織図(誰の上司は誰か)の例。`tb config set org` で入れる。全員が `tb org` で見られる |
+| `role-config.conf` | 役割ごとに入れる projects と policy の行(指揮役の宛先、人事役の role:change、判定役の agent:flag)。役割ができることはこの行だけで決まる |
 | `org-rules.conf` | 組織図の関係(`~report` / `~manager` など)を使う policy と delivery の行の例 |
 | `statuses.conf` | チケットの状態の例(確認を 2 段にし、名前を日本語にする)。`tb config set statuses --shared` で入れる。書式は `taskboard/config/statuses.conf.example` |
 | `presets/roles.conf` | 上の役割で workspace を並べるプリセット(`presets/<名前>.conf` にコピーして使う) |

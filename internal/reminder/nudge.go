@@ -504,6 +504,10 @@ func (n *Nudge) Run() ([]NudgeRow, error) {
 		if sender == owner {
 			sender = message.TargetFor(n.DB, n.Session, "*")
 		}
+		if sender == "" {
+			row(owner, pick, "skip", "送り手が決まっていない(設定 projects に *=<名前> が無い)")
+			continue
+		}
 		if sender == owner {
 			row(owner, pick, "skip", "送り手が本人と同じ")
 			continue

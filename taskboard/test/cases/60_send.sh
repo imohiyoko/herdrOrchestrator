@@ -3,7 +3,7 @@
 # --- send(指揮官 → worker)
 export TB_DB=$TMP/send.db TB_CONFIG=$TMP/send.conf TB_ROUTES=$TMP/routes.conf TB_POLICY_A=$TMP/approvals-all.conf
 printf '* * * = allow\n' >"$TB_POLICY_A"   # この節は宛先ルールを確かめる(承認は後の approvals 節)
-printf 'sp=sp-conductor\n' >"$TB_CONFIG"; rm -f "$TB_ROUTES"
+printf '*=conductor\nsp=sp-conductor\n' >"$TB_CONFIG"; rm -f "$TB_ROUTES"
 : >"$FAKE_LOG"
 export FAKE_AGENTS='[{"pane_id":"wC:p1","name":"conductor","agent_session":{"value":"sc"}},{"pane_id":"wP:p1","name":"sp-conductor","agent_session":{"value":"sp"}},{"pane_id":"wW:p1","name":"worker1","agent_session":{"value":"s1"}},{"pane_id":"wW:p2","name":"worker2","agent_session":{"value":"s2"}},{"pane_id":"wS:p1","name":"setup","agent_session":{"value":"ss"}}]'
 ssql() { sqlite3 "$TB_DB" "$@"; }

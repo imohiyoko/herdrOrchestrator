@@ -4,6 +4,7 @@
 RK=$TMP/risk; mkdir -p "$RK"
 # --- tb への組み込み(判定は変えない)
 export TB_DB=$TMP/risk.db TB_CONFIG=$TMP/send.conf TB_POLICY_A=$TMP/approvals-risk.conf
+printf '*=conductor\n' >"$TB_CONFIG"
 : >"$TB_POLICY_A"   # 既定の表(perms/ops.tbl)で決まる
 export FAKE_AGENTS='[{"pane_id":"wC:p1","name":"conductor","agent_session":{"value":"sc"}},{"pane_id":"wW:p1","name":"worker1","agent_session":{"value":"s1"}}]'
 : >"$FAKE_LOG"

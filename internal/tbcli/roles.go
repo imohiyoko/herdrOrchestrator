@@ -28,7 +28,22 @@ var (
 	reRoleItem = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 )
 
-func roleAdmin() string { return envOr("TB_ROLE_ADMIN", "hr") }
+// holdsRole は by が役割 role を持っているか(自分の持つ役割の定義は人だけが書き換える)。
+func holdsRole(j *approval.Judge, by, role string) bool { return j.Roles.Match(by, "@"+role) == 0 }
+
+// grantsRoleChange は役割 roles(カンマ区切り)を持つと policy の行で role:change が許されるようになるか。
+// 役割の名前では決めず、役割の無いときと比べて policy の行だけで判定する(そういう役割を配る・書き換えるのは人だけ)。
+func grantsRoleChange(j *approval.Judge, roles string) bool {
+	const probe = "role-probe.tb" // 台帳に無い名前。役割は Hint で与える
+	defer j.Roles.Forget(probe)
+	j.Roles.Hint(probe, "")
+	if _, ok := j.GrantOf(probe, "role:change", "*"); ok {
+		return false
+	}
+	j.Roles.Hint(probe, roles)
+	_, ok := j.GrantOf(probe, "role:change", "*")
+	return ok
+}
 
 // paneAgent は agent_name_by_pane(無ければ空。herdr に聞けなければ err)。
 func paneAgent(pane string) (string, error) { return identity.PaneOwnerName(pane) }
@@ -217,21 +232,14 @@ func roleWriteArgs(args []string) (name string, shared bool, err error) {
 	return name, shared, nil
 }
 
-// roleAdminCheck は role_admin_check: 人事役(agent)が役割を変えてよいか。target は policy の対象、cmd は人に頼むときのコマンド。
-// single なら target は 1 体の agent で、policy の行で許されていれば人事役でなくてよい(tb role-set)。
-func roleAdminCheck(db *store.DB, j *approval.Judge, by, target, cmd string, single bool, stderr io.Writer) error {
-	value, rule := "", ""
-	if r, ok := j.GrantOf(by, "role:change", target); single && ok {
-		value, rule = "allow", r
+// roleChangeCheck は agent が役割を変えてよいか。決めるのは policy の role:change の行だけ(役割の名前では決めない)。
+// target は policy の対象、cmd は人に頼むときのコマンド。
+func roleChangeCheck(db *store.DB, j *approval.Judge, by, target, cmd string, stderr io.Writer) error {
+	value, rule := "allow", ""
+	if r, ok := j.GrantOf(by, "role:change", target); ok {
+		rule = r
 	} else {
-		if j.Roles.Match(by, "@"+roleAdmin()) != 0 {
-			return die("ロールを変えられるのは人と人事役(@%s)だけです(%s)", roleAdmin(), by)
-		}
-		if r, ok := j.GrantOf(by, "role:change", target); ok {
-			value, rule = "allow", r
-		} else {
-			value, rule = j.Of("role:change", by)
-		}
+		value, rule = j.Of("role:change", by)
 	}
 	if value == "deny" {
 		return die("role:change は実行できません(deny。%s)(%s)", rule, by)
@@ -244,7 +252,7 @@ func roleAdminCheck(db *store.DB, j *approval.Judge, by, target, cmd string, sin
 	return nil
 }
 
-// rolePut は role_put: 役割の本文を DB に書く(人か、許された人事役)。
+// rolePut は role_put: 役割の本文を DB に書く(人か、policy で role:change を許された agent)。
 func rolePut(db *store.DB, name, body, how string, shared bool, w, stderr io.Writer) error {
 	key, _ := agents.KeyOf(name)
 	by, err := requester()
@@ -253,17 +261,21 @@ func rolePut(db *store.DB, name, body, how string, shared bool, w, stderr io.Wri
 	}
 	j := approval.NewJudge(db.DB, db.Session)
 	if by != "human" {
-		admin := roleAdmin()
-		if name == admin {
-			return die("人事役の役割(%s)を書き換えられるのは人だけです", admin)
+		if holdsRole(j, by, name) {
+			return die("自分の持つ役割(%s)を書き換えられるのは人だけです", name)
+		}
+		if name != "@map" && grantsRoleChange(j, name) {
+			return die("policy で role:change を許される役割(%s)を書き換えられるのは人だけです", name)
 		}
 		if name == "@map" {
 			for _, line := range strings.Split(body, "\n") {
-				_, x, _ := strings.Cut(line, "=")
+				k, x, _ := strings.Cut(line, "=")
 				x = util.ReadRest(x, "=")
-				x = config.Trim(cutHash(x))
-				if strings.Contains(","+strings.ReplaceAll(x, " ", "")+",", ","+admin+",") {
-					return die("人事役(%s)を付ける対応を書けるのは人だけです", admin)
+				if pat := config.Trim(cutHash(k)); pat != "" && util.Glob(pat, by) {
+					return die("自分に当たる対応(%s)は書けません(自分のロールは変えられません)", pat)
+				}
+				if x = strings.ReplaceAll(config.Trim(cutHash(x)), " ", ""); x != "" && grantsRoleChange(j, x) {
+					return die("policy で role:change を許される役割(%s)を付ける対応を書けるのは人だけです", x)
 				}
 			}
 		}
@@ -271,7 +283,7 @@ func rolePut(db *store.DB, name, body, how string, shared bool, w, stderr io.Wri
 		if shared {
 			sh = " --shared"
 		}
-		if err := roleAdminCheck(db, j, by, name, "tb role-write "+name+sh+" < 本文", false, stderr); err != nil {
+		if err := roleChangeCheck(db, j, by, name, "tb role-write "+name+sh+" < 本文", stderr); err != nil {
 			return err
 		}
 	}
@@ -396,19 +408,13 @@ func cmdRoleSet(args []string, w, stderr io.Writer) error {
 		return err
 	}
 	if by != "human" {
-		admin := roleAdmin()
-		if _, ok := j.GrantOf(by, "role:change", name); !ok && j.Roles.Match(by, "@"+admin) != 0 {
-			return die("ロールを変えられるのは人、人事役(@%s)、policy で role:change を許された agent だけです(%s)", admin, by)
-		}
 		if by == name {
 			return die("自分のロールは変えられません")
 		}
-		for _, x := range xs {
-			if x == admin {
-				return die("人事役のロール(%s)を付けられるのは人だけです", admin)
-			}
+		if grantsRoleChange(j, strings.Join(xs, ",")) {
+			return die("policy で role:change を許される役割(%s)を付けられるのは人だけです", strings.Join(xs, ","))
 		}
-		if err := roleAdminCheck(db, j, by, name, "tb role-set "+name+" "+role, true, stderr); err != nil {
+		if err := roleChangeCheck(db, j, by, name, "tb role-set "+name+" "+role, stderr); err != nil {
 			return err
 		}
 	}
@@ -422,7 +428,7 @@ func cmdRoleSet(args []string, w, stderr io.Writer) error {
 	}
 	r := agents.NewRoles(db.DB, db.Session)
 	if _, src, ok := r.LookupSrc(name); ok {
-		return die("役割 %s(%s)があるため、台帳のロールは効きません(その役割を人事役の手順で直す)", name, src)
+		return die("役割 %s(%s)があるため、台帳のロールは効きません(その役割の定義を直す)", name, src)
 	}
 	// 旧ロールは読んだ台帳の値から決め、変更はその値が変わっていないときだけ行う
 	var reg string

@@ -873,20 +873,19 @@ func cmdAgentNew(args []string, w, stderr io.Writer) error {
 	if kill != "yes" && kill != "no" && kill != "unknown" {
 		return usage("agent-new: --killable は yes|no")
 	}
-	if kill != "unknown" { // 判定フラグを付けられるのは agent-flag と同じく判定役か人だけ
+	if kill != "unknown" { // 判定フラグを付けられるのは agent-flag と同じく人か、policy で agent:flag を許された agent だけ
 		by, err := requester()
 		if err != nil {
 			return err
 		}
-		pat := envOr("TB_SWEEPER_PATTERN", "sweeper*")
-		if by != "human" && !util.Glob(pat, by) {
+		if by != "human" {
 			// 作る前の agent は台帳に無い。policy の @<役割> の対象は、要求された役割(--role)で比べる
 			j := approval.NewJudge(db.DB, db.Session)
 			if role != "" {
 				j.Roles.Hint(name, role)
 			}
 			if _, ok := j.GrantOf(by, "agent:flag", name); !ok {
-				return die("agent-new --killable を付けられるのは人、判定役(%s)、policy で agent:flag を許された agent だけです(%s)", pat, by)
+				return die("agent-new --killable を付けられるのは人と、policy で agent:flag を許された agent だけです(%s)", by)
 			}
 		}
 	}
