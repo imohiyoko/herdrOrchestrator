@@ -39,6 +39,9 @@ eq "svc: tb agent alone lists subcommands (2)" "$($TB agent 2>/dev/null | grep -
 2"
 eq "svc: tb recipe alone lists subcommands (2)" "$($TB recipe 2>/dev/null | grep -c '^tb recipe '; rc $TB recipe)" "5
 2"
+eq "svc: spawn freeze is a role name under both names" "$($TB agent-spawn freeze 2>&1 | grep -c 'agent-spawn: --task'; rc $TB agent-spawn freeze) $($TB agent spawn freeze 2>&1 | grep -c 'agent-spawn: --task'; rc $TB agent spawn freeze)" "1
+2 1
+2"
 eq "svc: unknown verbs are usage errors" "$(rc $TB agent bogus) $(rc $TB agent role bogus) $(rc $TB agent model x) $(rc $TB agent compact x) $(rc $TB recipe bogus) $(rc $TB recipe part bogus)" "2 2 2 2 2 2"
 
 # ---- 認可: 新しい名前も古い名前と同じ操作名(別名で逃れられない)
