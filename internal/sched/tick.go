@@ -402,7 +402,7 @@ func shell(cmd string, timeout int, stdout, stderr *os.File) (int, bool) {
 	if stderr != nil {
 		c.Stderr = stderr
 	}
-	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setGroup(c)
 	if err := c.Start(); err != nil {
 		return 127, false
 	}
@@ -412,7 +412,7 @@ func shell(cmd string, timeout int, stdout, stderr *os.File) (int, bool) {
 		mu.Lock()
 		timedOut = true
 		mu.Unlock()
-		_ = syscall.Kill(-c.Process.Pid, syscall.SIGKILL)
+		killGroup(c)
 	})
 	err := c.Wait()
 	timer.Stop()
@@ -429,8 +429,8 @@ func exitCode(c *exec.Cmd, err error) int {
 		}
 		return 0
 	}
-	if ws, ok := c.ProcessState.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
-		return 128 + int(ws.Signal())
+	if sig, ok := signaled(c.ProcessState); ok {
+		return 128 + sig
 	}
 	return c.ProcessState.ExitCode()
 }
@@ -516,7 +516,7 @@ func alive(pid string) bool {
 	if err != nil || n <= 0 {
 		return false
 	}
-	return syscall.Kill(n, 0) == nil
+	return pidAlive(n)
 }
 
 // runGate は GATE: 終了コード 0 のときだけ true。0 以外・時間切れ・起動失敗は skipped_gate を記録する。出力は捨てる。
@@ -639,7 +639,7 @@ func (t *ticker) selectPrompt() (string, int) {
 			return "", 1
 		}
 	}
-	if syscall.Access(f, 4) != nil {
+	if !readable(f) {
 		what := t.psrc + " の file:"
 		if t.psrc == "default" {
 			what = "PROMPT_FILE"
