@@ -21,7 +21,7 @@ import (
 )
 
 // 規則つきの子 agent 作成(taskboard/lib/spawn.sh の cmd_agent-spawn / spawn_check / spawn_recheck)。
-// 自動承認は LLM ではなく tb の決定的な規則(spawn-policy。人だけが編集)と approvals の agent:spawn:<子の名前>。
+// 自動承認は LLM ではなく tb の決定的な規則(spawn-policy。人だけが編集)と policy の agent:spawn <子の名前>。
 
 const briefMax = 2000
 
@@ -342,9 +342,15 @@ func cmdAgentSpawn(args []string, w, stderr io.Writer) error {
 		j := approval.NewJudge(db.DB, db.Session)
 		j.Roles.Hint(name, arole) // 子はまだ台帳に無い。名前からの推定でなく要求された役割で判定する
 		var v string
-		v, rule = j.Of("agent:spawn:"+name, "")
+		v, rule = j.Of("agent:spawn:"+name, parent) // 主体は親(子を作る agent)
+		if v == "deny" {
+			ts := nowTS()
+			_, _ = db.Exec(`INSERT INTO main.agent_ops (herdr_session, op, target, args, requested_by, status, result, created_at, decided_at) VALUES (?, 'new', ?, ?, ?, 'rejected', ?, ?, ?)`,
+				db.Session, name, opArgs, parent, "認可: "+rule, ts, ts)
+			return &exit{4, "agent-spawn を拒否しました(agent:spawn " + name + " は deny。" + rule + ")"}
+		}
 		if v != "allow" {
-			why = "approvals: " + rule
+			why = "認可: " + rule
 		}
 	}
 	if why != "" {
@@ -360,7 +366,7 @@ func cmdAgentSpawn(args []string, w, stderr io.Writer) error {
 		return &exit{20, ""}
 	}
 	r := doAgentNew(db, name, cwd, p.model, arole, prompt, "unknown", parent, parent, task, kindDefault, stderr)
-	recordOp(db, "new", name, opArgs, parent, r.code, r.out+" / policy: spawn-policy ok, approvals "+rule)
+	recordOp(db, "new", name, opArgs, parent, r.code, r.out+" / policy: spawn-policy ok, 認可 "+rule)
 	if r.code != 0 {
 		return &exit{r.code, r.out}
 	}

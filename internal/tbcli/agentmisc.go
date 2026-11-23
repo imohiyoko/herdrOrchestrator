@@ -123,7 +123,7 @@ func cmdAgentFlag(args []string, w, stderr io.Writer) error {
 		pat := envOr("TB_SWEEPER_PATTERN", "sweeper*")
 		if !util.Glob(pat, by) {
 			if _, ok := approval.NewJudge(db.DB, db.Session).GrantOf(by, "agent:flag", name); !ok {
-				return die("判定フラグを付けられるのは人、判定役(%s)、grants で agent:flag を許された agent だけです(%s)", pat, by)
+				return die("判定フラグを付けられるのは人、判定役(%s)、policy で agent:flag を許された agent だけです(%s)", pat, by)
 			}
 		}
 		if by == name {
