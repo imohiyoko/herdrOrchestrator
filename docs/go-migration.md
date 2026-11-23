@@ -22,7 +22,7 @@ Go に移すサービスは、`.claude/skills/tb-command-naming` の形(`tb <サ
 | 2 | proxy | `proxy request/list/resolve/check`(古い名前 `proxy-*` も) | 済み |
 | 2 | job | `job list/show/set/edit/unset/import/history`(古い名前 `sched-job` も) | 済み |
 | 2 | handoff | `handoff write`(古い形 `handoff <id>` も) | 済み |
-| 2 | whoami | `whoami` | まだ(`bin/tb` の入口を作り直すときに一緒に) |
+| 2 | whoami | `whoami`(呼び出し元の確かめと権限の門の前に答える。bin/tb はセッションの環境変数を書き換えずに渡す) | 済み |
 | 2 | 土台の小さいもの | scheduler からの送信 `system-send`、旧形式の DB の取り込み `db-import`(写しは VACUUM INTO で作り、Go のスキーマ移行で最新にしてから取り込む) | 済み |
 | 2 | 認可の表 | `policy`(`tb policy import [--apply]` で古い approvals / grants を policy の行に変換。checkout のファイルは状態ディレクトリへ退かす) | 済み |
 | 3 | config | `config list/show/set/edit/unset/import/history`(9 種類の設定の検査も Go に) | 済み |
