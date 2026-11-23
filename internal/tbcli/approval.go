@@ -191,7 +191,7 @@ func setApproval(db *store.DB, val, pat string, w io.Writer, stderr io.Writer) e
 	}
 	ops := perms.OpsOf(op)
 	if len(ops) == 0 {
-		return die("tb %s: %s はコマンドの中の操作に当たりません(コマンド cmd: や承認の委任 approve: は policy に直接書く: tb config edit policy)", val, pat)
+		return die("tb %s: %s はコマンドの中の操作に当たりません(コマンド cmd:・承認の委任 approve:・権限の変更 policy: は policy に直接書く: tb config edit policy)", val, pat)
 	}
 	cur, _, has, readErr := config.LookupStrict(db.DB, db.Session, "policy")
 	if readErr != "" {
@@ -241,6 +241,9 @@ func setApproval(db *store.DB, val, pat string, w io.Writer, stderr io.Writer) e
 	if bad := perms.ValidatePolicy(body); bad != "" {
 		fmt.Fprint(stderr, bad)
 		return die("policy の本文に問題があるため書きませんでした")
+	}
+	if err := requirePolicyWrite(cur, body, "tb "+val); err != nil {
+		return err
 	}
 	info, _ := config.Info("policy")
 	if f := os.Getenv(info.Env); f != "" {

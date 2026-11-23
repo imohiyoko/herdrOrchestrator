@@ -16,4 +16,5 @@ proxy:read-only    allow
 alert:analyze      allow
 agent:flag         deny
 approve:*          deny
+policy:*           deny     # 権限の変更(対象は変える行の主体。例: worker1 policy:send:* worker2 = allow)
 *                  ask-any

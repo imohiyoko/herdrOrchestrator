@@ -195,6 +195,58 @@ func DBPut(db *sql.DB, session, key, body, how string, shared bool, by string) e
 	return tx.Commit()
 }
 
+// DBRowAt は (このセッション|共通) の行そのものの本文(無ければ空)。引く順をたどらない。
+// 行が無い・表がまだ無いは空。問い合わせの失敗は err(権限の確かめに使うので、空とは分ける)。
+func DBRowAt(db *sql.DB, session, key string, shared bool) (string, error) {
+	var body string
+	err := db.QueryRow(`SELECT body FROM main.config WHERE herdr_session=? AND key=?`, rowSession(session, shared), key).Scan(&body)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) || noConfigTable(db) {
+			return "", nil
+		}
+		return "", err
+	}
+	return strings.TrimRight(body, "\n"), nil
+}
+
+// LookupWithout は、このセッションの行(shared なら共通の行も)が無いとしたら効く本文(unset のあとに効くもの)。
+// 環境変数で明示したファイルは見ない(そのときは unset できない)。
+func LookupWithout(db *sql.DB, session, key string, shared bool) (body, readErr string) {
+	k, known := keyInfo[key]
+	if !known {
+		return "", ""
+	}
+	if !shared && db != nil {
+		b, sh, ok, err := dbRow(db, "\x00", key) // 名前にならないセッション: 共通の行だけを引く
+		if err != nil {
+			return "", "db:" + err.Error()
+		}
+		if ok && sh {
+			return b, ""
+		}
+	}
+	f := filepath.Join(Dir(), k.File)
+	if Dir() == "" {
+		f = k.File
+	}
+	for _, p := range []string{f, f + ".example"} {
+		if p != f && !k.Example {
+			break
+		}
+		if isFile(p) {
+			b, ok := readBody(p)
+			if !ok {
+				return "", "file:" + p
+			}
+			return b, ""
+		}
+	}
+	if unreachable(f) {
+		return "", "stat:" + f
+	}
+	return "", ""
+}
+
 // HasRow は (このセッション|共通) の行がそのキーにあるか。
 func HasRow(db *sql.DB, session, key string, shared bool) (bool, error) {
 	var n int

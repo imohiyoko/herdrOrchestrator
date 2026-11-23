@@ -286,3 +286,16 @@ func TestOpsOf(t *testing.T) {
 		}
 	}
 }
+
+func TestPolicyDiff(t *testing.T) {
+	old := "a send:task * = allow\n# c\nb agent:stop * = deny"
+	new := "b agent:stop   *   = deny   # moved\na send:task * = ask-any\nc x:y * = allow"
+	var got []string
+	for _, c := range perms.PolicyDiff(old, new) {
+		got = append(got, c.Subject+"|"+c.Op+"|"+c.Line)
+	}
+	want := []string{"a|send:task|a send:task * = allow", "a|send:task|a send:task * = ask-any", "c|x:y|c x:y * = allow"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("got %q", got)
+	}
+}

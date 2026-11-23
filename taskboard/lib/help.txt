@@ -51,8 +51,8 @@ agent の活動記録(hook から。bin/tb-hook 経由が基本):
 tb db-import <旧 DB> [--session <名前>] [--dry-run]   旧形式(checkout ごと)の DB を、共有の DB の 1 セッション(既定は今のセッション)の行として取り込む。人の端末だけ。元の DB は読むだけ
 tb config [list]   設定(projects / policy / routes / delivery / limits / notify / compact / slash / sched-watch / spawn-policy / nudge / role-models / conv-routes / conv-learn / conv-stages / protect / org / labels / messages / statuses / system-labels)の出どころを出す。引く順: 環境変数で明示したファイル > DB のこのセッションの行 > DB の共通の行(*) > checkout の taskboard/config/<名前> > .example
 tb config show <キー> | history <キー>   今効いている本文 / 変更の履歴
-tb config set <キー> [--shared] < 本文 | edit <キー> [--shared] | unset <キー> [--shared]   DB のこのセッションの行(--shared なら全セッション共通の行)を書く・消す。人の端末だけ
-tb config import [--dry-run]   checkout の taskboard/config/*.conf を、全セッション共通の行として DB に取り込む(共通の行が既にあるキーは飛ばす)。人の端末だけ
+tb config set <キー> [--shared] < 本文 | edit <キー> [--shared] | unset <キー> [--shared]   DB のこのセッションの行(--shared なら全セッション共通の行)を書く・消す。agent は cmd:config:<動詞> と、policy なら変わる行ごとの policy:<行の操作> <行の主体> が要る
+tb config import [--dry-run]   checkout の taskboard/config/*.conf を、全セッション共通の行として DB に取り込む(共通の行が既にあるキーは飛ばす)。agent は cmd:config:import と、policy なら変わる行ごとの policy:<行の操作> <行の主体> が要る
 tb whoami [--short]   今の向き先(checkout・DB・herdr セッション・TB_INSTANCE・launchd ラベルの接頭辞・agent のペインか)と決まり方を出す。DB を開かず、何も書かない。--short はセッション名だけ
 tb touch --event UserPromptSubmit|Stop --session-id S [--pane-id P] [--tab-id T] [--workspace-id W] [--cwd D] [--prompt-id I]
          常に終了コード 0・出力なし。失敗は data/touch-errors.log に 1 行(理由コードのみ)
@@ -154,6 +154,7 @@ tb agent can [<主体>] <操作> <対象>   主体(省くと叩いた agent。pa
          終了コード 0=allow 20=ask(人の承認待ち)21=hold(inbox に置かれる)4=deny。主体 human は人の端末。
          操作: send:task|info|answer(delivery → policy)/ agent:stop(protect → policy)/ role:change / agent:flag / ほかは policy の操作名
          approve:<元の操作>(対象は依頼した agent。policy の approve: の allow の行だけで allow か deny)
+         policy:<行の操作>(対象は変える行の主体。agent が policy を書くとき、変わる行ごとに見る。既定 deny。例: worker1 policy:send:* worker2 = allow)
 tb approval check <操作> [--by A]  1 行目 allow|ask|deny、2 行目 rule:。終了コード 0=allow 20=ask 4=deny(例: send:task:worker1, role:change, setup:hooks)。--by で agent A から見た判定(設定 policy の主体の行も見る)
   [--to 宛先 --text 本文 [--kind K]]  付けると risk:(リスク評価。第 1 段は参考値で判定は変えない)を併記。設計: docs/risk-based-approvals.md
   別名(古い名前): tb approval <操作> ...(サブコマンドの名前 check / allow / ask / approve / reject と同じ操作名はこの形では書けない)
@@ -163,9 +164,9 @@ tb review submit <task-id> --lineage L --sha S --blocker N --should N --verdict 
 tb gate ingest-review <task-id> --pr <o>/<r>#<n> --sha <head の sha>   外部レビュー(CodeRabbit)を gh の読み取りで取り、送信者 ingest で記録する(agent の pane からは実行不可。スキップ・無い・取得失敗は記録しない)。docs/gate.md
 tb gate ingest-events <task-id> --pr <o>/<r>#<n>   PR の全レビュー(reviews / inline / issue)を、数値 id などの身元つきで追記専用の記録に残す(本文は保存しない。agent の pane からは実行不可)。判定には使わない。docs/gate.md
 tb gate reviewers <o>/<r>#<n> [--task <id>]   記録をレビュアーごとにまとめて表示する(読み取りだけ。gh は呼ばない)
-tb approval allow <パターン>   今後は承認なしにする(人の端末からだけ。設定 policy に * <操作> <対象> = allow を書く)
+tb approval allow <パターン>   今後は承認なしにする(設定 policy に * <操作> <対象> = allow を書く。agent は cmd:approval:allow と policy:<操作> * が要る)
   別名(古い名前): tb allow <パターン>
-tb approval ask <パターン>     承認制に戻す(人の端末からだけ。設定 policy に * <操作> <対象> = ask-any を書く)
+tb approval ask <パターン>     承認制に戻す(設定 policy に * <操作> <対象> = ask-any を書く。agent は cmd:approval:ask と policy:<操作> * が要る)
   別名(古い名前): tb ask <パターン>
 tb approval list [--json]      承認待ちの一覧(送信 O-<n> と agent の操作 L-<n>。古い順。ID・操作・依頼者・対象・作った時刻)
 tb approval approve O-<n>|L-<n> [--always]   承認する。L-<n> は tb agent-approve と同じ。O-<n> は承認待ちの送信を届ける。--always なら send:<kind>:<宛先> を allow にする(人だけ)。
@@ -174,7 +175,7 @@ tb approval approve O-<n>|L-<n> [--always]   承認する。L-<n> は tb agent-a
 tb approval reject O-<n>|L-<n>   却下する(L-<n> は tb agent-reject と同じ)。O-<n> は承認待ちの送信を却下する(承認と同じく、人か approve: の許可がある agent)
   別名(古い名前): tb reject O-<n>
 tb approval                    approval のサブコマンドの一覧
-tb policy import [--apply]     古い設定 approvals / grants を設定 policy の行に変換する(人だけ。--apply で書いて古い設定を消す。ADR 0007)
+tb policy import [--apply]     古い設定 approvals / grants を設定 policy の行に変換する(--apply で書いて古い設定を消す。agent は cmd:policy:import と、足す行ごとの policy:<行の操作> <行の主体> が要る。ADR 0007)
 
 アラート(見張り役 → 解析役の agent を起動 → 結果を指揮官・Web UI へ):
 tb alert --title T [--body B|--body-file F] [--key K] [--json]   見張り役が登録(緊急度は付けない)
