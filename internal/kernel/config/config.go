@@ -195,6 +195,15 @@ func DBPut(db *sql.DB, session, key, body, how string, shared bool, by string) e
 	return tx.Commit()
 }
 
+// DBRowAt は (このセッション|共通) の行そのものの本文(無ければ空)。引く順をたどらない。
+func DBRowAt(db *sql.DB, session, key string, shared bool) string {
+	var body string
+	if db.QueryRow(`SELECT body FROM main.config WHERE herdr_session=? AND key=?`, rowSession(session, shared), key).Scan(&body) != nil {
+		return ""
+	}
+	return strings.TrimRight(body, "\n")
+}
+
 // HasRow は (このセッション|共通) の行がそのキーにあるか。
 func HasRow(db *sql.DB, session, key string, shared bool) (bool, error) {
 	var n int

@@ -5,6 +5,7 @@ package perms
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -148,6 +149,9 @@ func (m Matcher) targetMatch(db *sql.DB, session, who, target, t string) int {
 			return RelMatch(db, session, who, target, t)
 		}
 		return 2
+	}
+	if t == target { // 対象そのものが名前のパターン(policy:<操作> の対象は行の主体。* や @役割 も書いたとおりに当てる)
+		return 0
 	}
 	return m.name(db, session, target, t)
 }
@@ -490,9 +494,18 @@ func check(op, what string, openDB func() (*sql.DB, string, func(), error)) erro
 		defer done()
 		db, session = d, s
 	}
-	who := func() (string, error) {
+	tier, rule, err := std.Tier(db, session, op, "", callerFn(what))
+	if err != nil {
+		return err
+	}
+	return Enforce(op, tier, rule, what)
+}
+
+// callerFn は今の呼び出し元(pane の agent 名。人と pane の外は "human"。Judge が system:<名前> に置き換える)。
+func callerFn(what string) func() (string, error) {
+	return func() (string, error) {
 		if identityPane() == "" {
-			return "human", nil // Judge が system:<名前> に置き換える
+			return "human", nil
 		}
 		n, err := identity.PaneOwnerName(identityPane())
 		if err != nil {
@@ -503,12 +516,106 @@ func check(op, what string, openDB func() (*sql.DB, string, func(), error)) erro
 		}
 		return n, nil
 	}
-	tier, rule, err := std.Tier(db, session, op, "", who)
+}
+
+// PolicyChange は policy の本文の差分の 1 行(足した行か消した行。効果を変えた行は両方に出る)。
+type PolicyChange struct{ Subject, Op, Line string }
+
+func policyRowsOf(body string) (keys []string, rows map[string]PolicyChange) {
+	rows = map[string]PolicyChange{}
+	for _, line := range config.Lines(body) {
+		l := config.Trim(config.StripComment(line))
+		lhs, v, ok := strings.Cut(l, "=")
+		if !ok {
+			continue
+		}
+		f := strings.Fields(lhs)
+		if len(f) != 3 {
+			continue
+		}
+		k := strings.Join(f, " ") + " = " + config.Trim(v)
+		keys = append(keys, k)
+		rows[k] = PolicyChange{f[0], f[1], k}
+	}
+	return keys, rows
+}
+
+// PolicyDiff は old から new への行の差分(足した行・消した行。並べ替えとコメントは差分にしない)。
+func PolicyDiff(old, new string) []PolicyChange {
+	ok, orows := policyRowsOf(old)
+	nk, nrows := policyRowsOf(new)
+	count := map[string]int{}
+	for _, k := range ok {
+		count[k]++
+	}
+	for _, k := range nk {
+		count[k]--
+	}
+	var out []PolicyChange
+	seen := map[string]bool{}
+	for _, k := range append(ok, nk...) {
+		if count[k] == 0 || seen[k] {
+			continue
+		}
+		seen[k] = true
+		if r, has := orows[k]; has {
+			out = append(out, r)
+		} else {
+			out = append(out, nrows[k])
+		}
+	}
+	return out
+}
+
+// RequirePolicyWrite は policy を old から new に変える前の確かめ(人は常に通る)。
+// 変わる行ごとに、呼び出し元に操作 policy:<行の操作> 対象 <行の主体> が許されているかを見る(既定は deny)。
+// 権限の種類を並べた表は持たない: 行の操作名をそのまま使うので、新しく足した操作も同じ書き方で絞れる。
+// 例: worker1 policy:send:* worker2 = allow(worker1 は worker2 の send:* の行だけを変えてよい)。
+func RequirePolicyWrite(old, new, what string, openDB func() (*sql.DB, string, func(), error)) error {
+	if HumanPane() {
+		return nil
+	}
+	ch := PolicyDiff(old, new)
+	if len(ch) == 0 {
+		return nil
+	}
+	if openDB == nil {
+		openDB = OpenDB
+	}
+	var db *sql.DB
+	session := ""
+	if openDB != nil {
+		d, s, done, err := openDB()
+		if err != nil {
+			return err
+		}
+		defer done()
+		db, session = d, s
+	}
+	who, err := callerFn(what)()
 	if err != nil {
 		return err
 	}
-	return Enforce(op, tier, rule, what)
+	for _, c := range ch {
+		op, target := "policy:"+c.Op, c.Subject
+		if target == "*" {
+			target = anySubject // Judge は対象 * を「行の対象を見ない」に使うので、主体 * の行は別の印で渡す(当たるのは対象 * の行だけ)
+		}
+		tier, rule := Authorize(db, session, who, op, target, Matcher{})
+		if err := Enforce(op, tier, rule, what+"(変わる行: "+c.Line+")"); err != nil {
+			var d *Denied
+			if errors.As(err, &d) && d.Code == 1 && tier == "deny" && !strings.HasPrefix(rule, "policy:") {
+				d.Msg = what + " は実行できません(変わる行: " + c.Line + ")。" + op + " を対象 " + c.Subject +
+					" に許す行がありません(既定 deny。人が policy に書く: <agent> " + op + " " + c.Subject + " = allow)(agent '" + who + "')"
+			}
+			return err
+		}
+	}
+	return nil
 }
+
+// anySubject は主体 * の行を変えるときの対象(名前にもパターンにもならない文字列)。
+const anySubject = "\x00*"
 
 func identityPane() string { return getenv("HERDR_PANE_ID") }
 
@@ -562,9 +669,9 @@ func opReserved(op string) bool {
 	if i := strings.IndexAny(op, "*?\\["); i >= 0 {
 		pre = op[:i]
 	} else {
-		return strings.HasPrefix(op, "cmd:") || strings.HasPrefix(op, "approve:") || op == "agent:flag"
+		return strings.HasPrefix(op, "cmd:") || strings.HasPrefix(op, "approve:") || strings.HasPrefix(op, "policy:") || op == "agent:flag"
 	}
-	for _, r := range []string{"cmd:", "approve:", "agent:flag"} {
+	for _, r := range []string{"cmd:", "approve:", "policy:", "agent:flag"} {
 		if strings.HasPrefix(r, pre) || strings.HasPrefix(pre, r) {
 			return true
 		}

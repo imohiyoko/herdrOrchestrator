@@ -154,6 +154,7 @@ tb agent can [<主体>] <操作> <対象>   主体(省くと叩いた agent。pa
          終了コード 0=allow 20=ask(人の承認待ち)21=hold(inbox に置かれる)4=deny。主体 human は人の端末。
          操作: send:task|info|answer(delivery → policy)/ agent:stop(protect → policy)/ role:change / agent:flag / ほかは policy の操作名
          approve:<元の操作>(対象は依頼した agent。policy の approve: の allow の行だけで allow か deny)
+         policy:<行の操作>(対象は変える行の主体。agent が policy を書くとき、変わる行ごとに見る。既定 deny。例: worker1 policy:send:* worker2 = allow)
 tb approval check <操作> [--by A]  1 行目 allow|ask|deny、2 行目 rule:。終了コード 0=allow 20=ask 4=deny(例: send:task:worker1, role:change, setup:hooks)。--by で agent A から見た判定(設定 policy の主体の行も見る)
   [--to 宛先 --text 本文 [--kind K]]  付けると risk:(リスク評価。第 1 段は参考値で判定は変えない)を併記。設計: docs/risk-based-approvals.md
   別名(古い名前): tb approval <操作> ...(サブコマンドの名前 check / allow / ask / approve / reject と同じ操作名はこの形では書けない)

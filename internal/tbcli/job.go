@@ -33,6 +33,11 @@ func requireHuman(what string) error {
 	return permErr(perms.RequireHuman(what, permDB))
 }
 
+// requirePolicyWrite は設定 policy を old から new に変える前の確かめ(変わる行ごとに policy:<操作> を見る)。
+func requirePolicyWrite(old, new, what string) error {
+	return permErr(perms.RequirePolicyWrite(old, new, what, permDB))
+}
+
 // permErr は perms の断りを tb の終了コード(1 か 20)にする。
 func permErr(err error) error {
 	var d *perms.Denied

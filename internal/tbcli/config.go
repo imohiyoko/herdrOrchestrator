@@ -144,6 +144,11 @@ func configChange(db *store.DB, st tickets.StatusSet, sub string, args []string,
 		if envFile != "" {
 			return die("%s でファイルを明示しています(DB の行は使っていません)", info.Env)
 		}
+		if key == "policy" {
+			if err := requirePolicyWrite(policyBefore(db, shared), "", "tb config unset policy"); err != nil {
+				return err
+			}
+		}
 		if err := config.Unset(db.DB, db.Session, key, shared); err != nil {
 			return err
 		}
@@ -170,6 +175,11 @@ func configChange(db *store.DB, st tickets.StatusSet, sub string, args []string,
 			return die("%s の本文に問題があるため書きませんでした", key)
 		}
 	}
+	if key == "policy" {
+		if err := requirePolicyWrite(policyBefore(db, shared && envFile == ""), body, "tb config "+sub+" policy"); err != nil {
+			return err
+		}
+	}
 	if envFile != "" {
 		if err := writeConfigFile(envFile, body); err != nil {
 			return err
@@ -179,6 +189,16 @@ func configChange(db *store.DB, st tickets.StatusSet, sub string, args []string,
 	}
 	fmt.Fprintf(w, "%s: %s\n", key, source())
 	return nil
+}
+
+// policyBefore は設定 policy を書く前の本文。共通の行(--shared)はその行そのもの(ほかのセッションにも効くため)。
+// それ以外は今このセッションに効いている本文(書いたあとに効くものとの差分を確かめる)。
+func policyBefore(db *store.DB, shared bool) string {
+	if shared {
+		return config.DBRowAt(db.DB, db.Session, "policy", true)
+	}
+	cur, _, _ := config.Lookup(db.DB, db.Session, "policy")
+	return cur
 }
 
 // writeConfigFile は config_put のファイルの書き方: 同じディレクトリの一時ファイルに書いて置き換える(今のファイルの権限を保つ)。
@@ -256,6 +276,11 @@ func configImport(db *store.DB, args []string, w io.Writer) error {
 		if dry {
 			fmt.Fprintf(w, "%s: %s を共通の行として取り込みます\n", k, f)
 			continue
+		}
+		if k == "policy" {
+			if err := requirePolicyWrite(policyBefore(db, true), readBodyFile(f), "tb config import"); err != nil {
+				return err
+			}
 		}
 		if err := mkdest(); err != nil {
 			return err

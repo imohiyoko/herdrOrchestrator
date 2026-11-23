@@ -292,6 +292,9 @@ func cmdPolicyImport(args []string, w, stderr io.Writer) error {
 			fmt.Fprint(stderr, bad)
 			return die("policy の本文に問題があるため書きませんでした")
 		}
+		if err := requirePolicyWrite(cur, body, "tb policy import"); err != nil {
+			return err
+		}
 		info, _ := config.Info("policy")
 		if f := os.Getenv(info.Env); f != "" {
 			if err := writeConfigFile(f, body); err != nil {
