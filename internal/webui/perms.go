@@ -1,6 +1,7 @@
 package webui
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -39,13 +40,18 @@ func rank(eff string) int {
 // pyFields は str.split()(空白の並びで区切る)。
 func pyFields(s string) []string { return strings.FieldsFunc(s, pyIsSpace) }
 
-// readUpTo は open(..., errors="replace").read(n)(n 文字まで)。
+// readUpTo は open(..., errors="replace").read(n)(n 文字まで)。1 文字は 4 バイトまでなので、それより先は読まない。
 func readUpTo(path string, n int) (string, bool) {
-	b, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return "", false
 	}
-	s := strings.ToValidUTF8(string(b), "�")
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, int64(n)*4+4))
+	if err != nil {
+		return "", false
+	}
+	s := strings.ToValidUTF8(string(b), "\uFFFD")
 	s = strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", "\n"), "\r", "\n")
 	if utf8.RuneCountInString(s) > n {
 		s = string([]rune(s)[:n])
@@ -266,14 +272,12 @@ func (p *perms) stricterOver(r *rule) *rule {
 	return nil
 }
 
-func (p *perms) examples(r *rule) []string {
-	if hasBracket(r) {
-		return nil
-	}
-	var out []string
+// examples は行ごとの「この行で決まる操作の例」(例の操作を 1 回ずつ判定して、決めた行ごとにまとめる)。
+func (p *perms) examples() map[*rule][]string {
+	out := map[*rule][]string{}
 	for _, op := range sampleOps {
-		if _, hit := p.decide(op); hit == r {
-			out = append(out, op)
+		if _, hit := p.decide(op); hit != nil && !hasBracket(hit) {
+			out[hit] = append(out[hit], op)
 		}
 	}
 	return out

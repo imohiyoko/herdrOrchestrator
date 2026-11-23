@@ -182,6 +182,7 @@ func (s *Server) pagePerms(q *rq, c pageCtx) (string, string) {
 		}
 	}
 	var rows [][]string
+	exm := p.examples()
 	for _, r := range rules {
 		var notes []string
 		if w := permWarning(r); w != "" {
@@ -213,7 +214,7 @@ func (s *Server) pagePerms(q *rq, c pageCtx) (string, string) {
 		}
 		mark := sel(hit == r, ` style="background:#fff8c5"`)
 		var ex []string
-		for i, x := range p.examples(r) {
+		for i, x := range exm[r] {
 			if i == 8 {
 				break
 			}
