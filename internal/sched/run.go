@@ -12,6 +12,7 @@ const usage = `usage: herdrctl sched <command>
 
 commands:
   show <job>   実際に効く設定(定義 + 上書き設定 + SCHED_*)を JSON 1 行で出す(scheduler/bin/show.sh の Go 版)
+  tick <job>   この回に実行する回を判定して実行し、logs/<job>.log に記録する(scheduler/bin/tick.sh の Go 版)
 `
 
 // Run は herdrctl sched <args>。終了コードは scheduler に合わせる(die は 2)。
@@ -27,6 +28,12 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			name = args[1]
 		}
 		return finish(show(DefaultEnv(), name, stdout), stderr)
+	case "tick":
+		name := ""
+		if len(args) > 1 {
+			name = args[1]
+		}
+		return Tick(DefaultTickEnv(), name, stdout, stderr)
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0
