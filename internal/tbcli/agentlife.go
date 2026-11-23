@@ -730,8 +730,8 @@ func roleConflict(r *agents.Roles, name, role string) (string, bool) {
 	return "", false
 }
 
-// doAgentNew は do_agent_new(tb agent-spawn の子の作成は bash のまま)。
-func doAgentNew(db *store.DB, name, cwd, model, role, prompt, kill, by, kind string, stderr io.Writer) opResult {
+// doAgentNew は do_agent_new(sby / stask は tb agent-spawn の子のときだけ)。
+func doAgentNew(db *store.DB, name, cwd, model, role, prompt, kill, by, sby, stask, kind string, stderr io.Writer) opResult {
 	if r := kindCheckLaunch(kind, model, ""); r != nil {
 		return *r
 	}
@@ -765,7 +765,7 @@ func doAgentNew(db *store.DB, name, cwd, model, role, prompt, kill, by, kind str
 	}
 	sp, ok := transport.Spawn(env.TBDB(), kind, name, cwd, kindLaunchArgs(kind, "", modelWithRoleDefault(db, model, kind, name, role)))
 	setPane := func() {
-		_, _ = db.Exec(`UPDATE main.agents SET pane_id=?, spawned_by=NULL, spawn_task=NULL WHERE herdr_session=? AND name=?`, sp.Pane, db.Session, name)
+		_, _ = db.Exec(`UPDATE main.agents SET pane_id=?, spawned_by=NULLIF(?,''), spawn_task=NULLIF(?,'') WHERE herdr_session=? AND name=?`, sp.Pane, sby, stask, db.Session, name)
 	}
 	if !ok {
 		if sp.Kept { // 人の操作待ち: pane は残っているので台帳にも残す(最初の指示は送らない)
@@ -916,5 +916,5 @@ func cmdAgentNew(args []string, w, stderr io.Writer) error {
 		}
 	}
 	kv = append(kv, "killable", kill)
-	return opEntry(db, "new", name, jsonC(kv...), by, w, func() opResult { return doAgentNew(db, name, cwd, model, role, prompt, kill, by, kind, stderr) })
+	return opEntry(db, "new", name, jsonC(kv...), by, w, func() opResult { return doAgentNew(db, name, cwd, model, role, prompt, kill, by, "", "", kind, stderr) })
 }
