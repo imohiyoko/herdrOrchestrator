@@ -30,7 +30,7 @@ eq "compact: below threshold skipped" "$(grep -c '^small 4000 skip(below thresho
 eq "compact: working skipped" "$(grep -c '^busy - skip(working)' <<<"$out")" "1"
 eq "compact: excluded (config list and conductor) skipped" "$(grep -c '^skipme - skip(excluded)' <<<"$out") $(grep -c '^conductor - skip(excluded)' <<<"$out")" "1 1"
 eq "compact: compacted within min_interval skipped" "$(grep -c '^recent 203000 skip(compacted' <<<"$out")" "1"
-eq "compact: no approvals rule (ask) skipped with the line to add" "$(grep -c "^noappr 203000 skip(approval: agent:compact:noappr is ask; add 'agent:compact:\* = allow'" <<<"$out")" "1"
+eq "compact: no policy row (ask-any) skipped with the line to add" "$(grep -c "^noappr 203000 skip(approval: agent:compact:noappr is ask-any; add '\* agent:compact \* = allow'" <<<"$out")" "1"
 eq "compact: output never contains transcript content" "$(grep -c SECRET-BODY <<<"$out")" "0"
 eq "compact: tail too short for the last usage line → falls back to reading the whole transcript" "$(COMPACT_TAIL_BYTES=40 $TB compact-check 2>&1 | grep -c '^big 203000 would-compact')" "1"
 eq "compact: tail cut inside the usage line → falls back too" "$(COMPACT_TAIL_BYTES=150 $TB compact-check 2>&1 | grep -c '^big 203000 would-compact')" "1"

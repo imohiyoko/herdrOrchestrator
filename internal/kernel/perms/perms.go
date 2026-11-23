@@ -261,7 +261,7 @@ func (t *Table) Tier(db *sql.DB, session, op, target string, who func() (string,
 	if !ok {
 		return "deny", "(表に無い操作: deny)", nil
 	}
-	tier, rule = r.Default, "(既定 "+r.Default+")"
+	tier, rule = r.Default, "既定 "+r.Default
 	j, readErr, err := Judge(db, session, Caller, who, op, target, Matcher{})
 	if err != nil {
 		return "", "", err
@@ -351,7 +351,7 @@ func Authorize(db *sql.DB, session, who, op, target string, m Matcher) (tier, ru
 	if readErr != "" {
 		return "deny", "(設定 policy を読めない: " + readErr + ")"
 	}
-	return j.Resolve(def, "(既定 "+def+")", "")
+	return j.Resolve(def, "既定 "+def, "")
 }
 
 // Relations は policy の対象に書ける関係。
@@ -507,4 +507,50 @@ func ValidatePolicy(body string) string {
 		}
 	}
 	return bad.String()
+}
+
+// InnerOps は古い approvals が見ていたコマンドの中の操作の族(bash の POLICY_INNER_OPS と同じ)。
+var InnerOps = []string{"send:task", "send:info", "send:answer", "agent:new", "agent:stop", "agent:revive", "agent:spawn",
+	"agent:compact", "agent:model", "agent:read", "agent:slash:*", "role:change", "alert:analyze", "proxy:read-only",
+	"proxy:write", "proxy:external", "setup:*", "recipe:*"}
+
+func opReserved(op string) bool {
+	pre := op
+	if i := strings.IndexAny(op, "*?\\["); i >= 0 {
+		pre = op[:i]
+	} else {
+		return strings.HasPrefix(op, "cmd:") || strings.HasPrefix(op, "approve:") || op == "agent:flag"
+	}
+	for _, r := range []string{"cmd:", "approve:", "agent:flag"} {
+		if strings.HasPrefix(r, pre) || strings.HasPrefix(pre, r) {
+			return true
+		}
+	}
+	return false
+}
+
+// OpsOf は古い形の操作名の glob を、policy に書く操作名にする。cmd:・approve:・agent:flag に当たりうる glob は
+// 中の操作の族に絞る(そのまま書くと、前は当たらなかったコマンドや承認の委任まで許してしまう)。
+func OpsOf(op string) []string {
+	if !opReserved(op) {
+		return []string{op}
+	}
+	var out []string
+	for _, f := range InnerOps {
+		if util.Glob(op, f) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// SubjectOf は古い approvals の行を policy に書くときの主体。role:change は人事役(TB_ROLE_ADMIN、既定 hr)にだけ効いていた。
+func SubjectOf(op string) string {
+	if op == "role:change" {
+		if a := os.Getenv("TB_ROLE_ADMIN"); a != "" {
+			return "@" + a
+		}
+		return "@hr"
+	}
+	return "*"
 }

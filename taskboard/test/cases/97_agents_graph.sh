@@ -67,8 +67,8 @@ export TB_POLICY_A=$TMP/graph-appr.conf
 printf '* send:info @conductor = ask-any\n* send:* @worker = allow\n* agent:stop @watch* = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
 eq "approvals: send:*:@worker matches by the target's role" "$($TB approval send:task:worker3 | tr '\n' ' ')" "allow rule: policy: * send:* @worker = allow "
 eq "approvals: role glob" "$($TB approval agent:stop:watcher | head -1) $($TB approval agent:stop:worker1 | head -1)" "allow ask"
-eq "approvals: @role does not match a name without that role" "$($TB approval send:info:b-conductor | head -1) $($TB approval send:info:nobody | sed -n 2p)" "ask rule: (既定 ask-any)"
-eq "allow: @ is accepted in a pattern" "$(rc $TB allow 'send:answer:@worker') $(grep -c '^send:answer:@worker = allow' "$TB_POLICY_A")" "0 1"
+eq "approvals: @role does not match a name without that role" "$($TB approval send:info:b-conductor | head -1) $($TB approval send:info:nobody | sed -n 2p)" "ask rule: policy: * send:info * = ask-any"
+eq "allow: @ is accepted in a pattern" "$(rc $TB allow 'send:answer:@worker') $($TB allow 'send:answer:@worker' | grep -c '^\* send:answer @worker = allow')" "0 1"
 export TB_CONFIG=$_saved_conf TB_POLICY_A=$_saved_appr
 if [[ -n $_saved_routes ]]; then export TB_ROUTES=$_saved_routes; else unset TB_ROUTES; fi
 unset FAKE_AGENTS; export HERDR_PANE_ID=$_saved_pane
@@ -80,9 +80,9 @@ printf '* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
 export FAKE_AGENTS="[$(ag conductor),$(ag worker1),$(ag worker2),$(ag hr1),$(ag watcher)]"
 $TB agents >/dev/null 2>&1
 eq "role-set: unknown role → 2" "$(rc $TB role-set worker1 nosuch)" "2"
-eq "role-set: not from a non-hr agent" "$(HERDR_PANE_ID=wworker1:p1 $TB role-set worker2 watcher 2>&1 | grep -c '人事役(@hr)、grants で role:change')" "1"
+eq "role-set: not from a non-hr agent" "$(HERDR_PANE_ID=wworker1:p1 $TB role-set worker2 watcher 2>&1 | grep -c '人事役(@hr)、policy で role:change')" "1"
 eq "role-set: hr needs role:change = allow (20)" "$(HERDR_PANE_ID=whr1:p1 rc $TB role-set worker2 watcher)" "20"
-printf '* role:change * = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
+printf '@hr role:change * = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
 eq "role-set: hr cannot change itself or grant hr" "$(HERDR_PANE_ID=whr1:p1 rc $TB role-set hr1 worker) $(HERDR_PANE_ID=whr1:p1 rc $TB role-set worker2 hr)" "1 1"
 eq "role-set: hr with allow" "$(HERDR_PANE_ID=whr1:p1 $TB role-set worker2 watcher --reason 'ログ番に' | cut -d' ' -f1-5)" "worker2 role worker -> watcher"
 eq "role-set: the new role is used by rules" "$($TB approval agent:stop:worker2 >/dev/null; printf '* agent:stop @watcher = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"; $TB approval agent:stop:worker2 | head -1)" "allow"

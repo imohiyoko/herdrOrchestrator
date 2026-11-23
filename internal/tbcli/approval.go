@@ -173,6 +173,10 @@ func setApproval(db *store.DB, val, pat string, w io.Writer, stderr io.Writer) e
 	if target == "" {
 		target = "*"
 	}
+	ops := perms.OpsOf(op)
+	if len(ops) == 0 {
+		return die("tb %s: %s はコマンドの中の操作に当たりません(コマンド cmd: や承認の委任 approve: は policy に直接書く: tb config edit policy)", val, pat)
+	}
 	cur, _, has, readErr := config.LookupStrict(db.DB, db.Session, "policy")
 	if readErr != "" {
 		return die("設定 policy を読めないため書きません(%s)", readErr)
@@ -183,23 +187,35 @@ func setApproval(db *store.DB, val, pat string, w io.Writer, stderr io.Writer) e
 	}
 	ts := nowTS()
 	var b strings.Builder
-	found := false
+	done := map[string]bool{}
 	for _, line := range lines {
 		l := config.Trim(cutHash(line))
 		lhs, _, isRule := strings.Cut(l, "=")
 		f := strings.Fields(lhs)
-		if isRule && len(f) == 3 && f[0] == "*" && f[1] == op && f[2] == target {
-			if !found {
-				b.WriteString("* " + op + " " + target + " = " + eff + "   # " + ts + " に人が変更(tb approval " + val + ")\n")
+		hit := ""
+		if isRule && len(f) == 3 && f[2] == target {
+			for _, o := range ops {
+				if f[0] == perms.SubjectOf(o) && f[1] == o {
+					hit = o
+				}
 			}
-			found = true
-		} else {
-			b.WriteString(line + "\n")
 		}
+		if hit == "" {
+			b.WriteString(line + "\n")
+			continue
+		}
+		if done[hit] {
+			continue
+		}
+		b.WriteString(perms.SubjectOf(hit) + " " + hit + " " + target + " = " + eff + "   # " + ts + " に人が変更(tb approval " + val + ")\n")
+		done[hit] = true
 	}
 	body := strings.TrimSuffix(b.String(), "\n")
-	if !found {
-		row := "* " + op + " " + target + " = " + eff + "   # " + ts + " に人が追加(tb approval " + val + ")"
+	for _, o := range ops {
+		if done[o] {
+			continue
+		}
+		row := perms.SubjectOf(o) + " " + o + " " + target + " = " + eff + "   # " + ts + " に人が追加(tb approval " + val + ")"
 		if body == "" {
 			body = row
 		} else {
@@ -221,8 +237,10 @@ func setApproval(db *store.DB, val, pat string, w io.Writer, stderr io.Writer) e
 	if _, err := db.Exec(`INSERT INTO main.approval_changes (herdr_session, pattern, value, created_at) VALUES (?, ?, ?, ?)`, db.Session, pat, val, nowTS()); err != nil {
 		return err
 	}
-	fmt.Fprintf(w, "* %s %s = %s\n", op, target, eff)
-	if val == "allow" && !strings.ContainsAny(pat, "*?") {
+	for _, o := range ops {
+		fmt.Fprintf(w, "%s %s %s = %s\n", perms.SubjectOf(o), o, target, eff)
+	}
+	if val == "allow" && !strings.ContainsAny(pat, "*?") && perms.SubjectOf(op) == "*" {
 		if tier, rule := approval.NewJudge(db.DB, db.Session).Authorize(pat, ""); tier != "allow" {
 			fmt.Fprintf(stderr, "tb: 注意: もっと厳しい行が当たるため、%s はまだ %s です(%s)\n", pat, tier, rule)
 		}

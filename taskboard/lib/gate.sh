@@ -27,7 +27,7 @@ GATE_CAP_MERGE=1
 # 設定の有無にかかわらず効くパス規則(設定ファイルで外せない。判定・承認・ゲートの設定そのもの)
 # .github(末尾なし)はパスそのものの変更用。bin/tb(全コマンドの入口)とテスト基盤・gate のテストの変更も、判定を弱める経路なので常に人に回す
 # 基準: 「ガバナンス・権限・コードの取得や実行の入口」。どの階層でも効く(**/ は根直下にも当たる)。大文字小文字は区別しない
-GATE_BUILTIN_PATHS=('.github' '.github/**' '**/.github' '**/.github/**' '**/gate*.conf' '**/gate-paths.conf' '**/gate*.sh' '**/approvals.conf' '**/risk-rules.conf'
+GATE_BUILTIN_PATHS=('.github' '.github/**' '**/.github' '**/.github/**' '**/gate*.conf' '**/gate-paths.conf' '**/gate*.sh' '**/approvals.conf' '**/policy.conf' '**/perms/*.tbl' '**/risk-rules.conf'
   '**/bin/tb' '**/run-all.sh' '**/test/run.sh' '**/tests/run.sh' '**/test/cases/*gate*' '**/tests/*gate*'
   # agent への指示・権限・拡張を決めるファイル(振る舞いを変える設定)。どの階層でも
   '**/.claude' '**/.claude/**' '**/CLAUDE.md' '**/CLAUDE.local.md' '**/AGENTS.md' '**/GEMINI.md' '**/copilot-instructions.md'

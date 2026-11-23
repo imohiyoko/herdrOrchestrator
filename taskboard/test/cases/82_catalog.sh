@@ -150,8 +150,10 @@ _conf_unknown() {  # stdin=conf の本文 → 未知の規則を空白区切り�
   done
   printf '%s' "$out"
 }
-ex=$(cat "$TBROOT/config/approvals.conf.example")
-eq "catalog: 既定の approvals(approvals.conf.example)の規則がすべてカタログに載っている" "$(printf '%s\n' "$ex" | _conf_unknown)" ""
+# 既定の表(perms/ops.tbl)の操作がカタログに載っている。agent:flag と approve:* は既定 deny で、policy の allow の行で明示するもの(カタログの外)
+ex=""
+while read -r k; do _cat_covers "$k" || _cat_covers "$k:x" || ex+="$k "; done < <(sed 's/#.*//' "$TBROOT/perms/ops.tbl" | awk 'NF == 2 && $1 != "*" && $1 != "agent:flag" && $1 != "approve:*" {print $1}')
+eq "catalog: 既定の表(perms/ops.tbl)の操作がすべてカタログに載っている" "$ex" ""
 # 手元の approvals.conf(取り込み前に人が書いたもの)は、未知の規則を警告するだけ(テストは落とさない)
 w=""; [[ ! -f $TBROOT/config/approvals.conf ]] || w=$(_conf_unknown <"$TBROOT/config/approvals.conf")
 [[ -z $w ]] && ok "catalog: 手元の approvals.conf に未知の規則は無い" || echo "warn catalog: 手元の approvals.conf にカタログに無い規則: $w"

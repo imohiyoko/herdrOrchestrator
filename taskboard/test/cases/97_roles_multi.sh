@@ -8,7 +8,7 @@ mkdir -p "$TB_ROLES"
 for r in hr manager task worker; do echo "ROLE-$r" >"$TB_ROLES/$r.md"; done
 echo "COMMON" >"$TB_ROLES/_common.md"
 printf 'hrm* = hr,manager\nhrt* = hr, task\nworker* = worker\n' >"$TB_ROLES/map.conf"
-printf '* role:change * = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
+printf '@hr role:change * = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
 rm_() { printf '{"pane_id":"w%s:p1","name":"%s","agent_status":"idle","agent_session":{"value":"s-%s"}}' "$1" "$1" "$1"; }
 export FAKE_AGENTS="[$(rm_ hrm1),$(rm_ hrt1),$(rm_ worker1)]"
 $TB agents >/dev/null 2>&1
@@ -18,7 +18,7 @@ eq "role-context: _common then each role file" "$(grep -cE '^(COMMON|ROLE-hr|ROL
 printf '* send:task @hr+task = allow\n* agent:stop @hr = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
 eq "approvals: @hr+task needs both roles" "$($TB approval send:task:hrt1 | head -1) $($TB approval send:task:hrm1 | head -1)" "allow ask"
 eq "approvals: @hr matches any agent that has hr among its roles" "$($TB approval agent:stop:hrm1 | head -1) $($TB approval agent:stop:worker1 | head -1)" "allow ask"
-printf '* role:change * = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
+printf '@hr role:change * = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
 eq "role-set: a comma list" "$($TB role-set worker1 worker,manager | cut -d' ' -f1-5)" "worker1 role worker -> worker,manager"
 eq "role-set: every role must exist" "$(rc $TB role-set worker1 worker,nosuch)" "2"
 eq "role-set: an hr agent cannot grant hr inside a list" "$(HERDR_PANE_ID=whrm1:p1 rc $TB role-set worker1 task,hr)" "1"

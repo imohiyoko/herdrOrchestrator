@@ -27,7 +27,7 @@ eq "approve: the requester cannot approve its own ask (even with a grant)" "$(as
 eq "approve: --always is for the human only" "$(as lead1 rc $TB approve O-1 --always 2>/dev/null) $(dsql "SELECT status FROM outbox WHERE id=1;") $($TB approval send:task:w2 | head -1)" "1 pending ask"
 eq "approve: the parent with @lead approve:send:task:* ~child delivers it" "$(as lead1 $TB approve O-1)" "O-1 approved and sent to w2"
 eq "approve: delivered to the target" "$(grep '^prompt' "$FAKE_LOG" | tail -1 | grep -c 'please do X')" "1"
-eq "approve: the approver and its rule are recorded" "$(dsql "SELECT reason LIKE '%agent lead1(policy: @lead approve:send:task:* ~child)が承認% = allow' FROM outbox WHERE id=1;")" "1"
+eq "approve: the approver and its rule are recorded" "$(dsql "SELECT reason LIKE '%agent lead1(policy: @lead approve:send:task:* ~child = allow)が承認%' FROM outbox WHERE id=1;")" "1"
 eq "approve: twice → error" "$(as lead1 rc $TB approve O-1 2>/dev/null)" "1"
 # 操作で絞る: lead の許可は send:task だけ(info は承認できない)
 as w1 $TB send w2 --kind info --text fyi >/dev/null 2>&1
@@ -36,7 +36,7 @@ eq "approve: w2 may approve w1's ask (w* approve:send:* w*)" "$(as w2 $TB approv
 # 依頼者で絞る: lead1 の子ではない w2 からの依頼は承認できない
 as w2 $TB send w1 --text 'from w2' >/dev/null 2>&1
 eq "approve: scoped by the requester (w2 is not lead1's child)" "$(as lead1 rc $TB approve O-3 2>/dev/null) $(dsql "SELECT status FROM outbox WHERE id=3;")" "1 pending"
-eq "reject: an agent with the grant rejects it, recorded" "$(as w1 $TB reject O-3) $(dsql "SELECT status, reason LIKE '%agent w1(policy: w* approve:send:* w*)が却下% = allow' FROM outbox WHERE id=3;")" "O-3 rejected denied|1"
+eq "reject: an agent with the grant rejects it, recorded" "$(as w1 $TB reject O-3) $(dsql "SELECT status, reason LIKE '%agent w1(policy: w* approve:send:* w* = allow)が却下%' FROM outbox WHERE id=3;")" "O-3 rejected denied|1"
 as w1 $TB send w2 --text 'second' >/dev/null 2>&1
 eq "reject: refused without a grant" "$(as rev1 rc $TB reject O-4 2>/dev/null) $(dsql "SELECT status FROM outbox WHERE id=4;")" "1 pending"
 eq "approve: a missing O-<n> from an agent pane is refused as a human-only command" "$(as lead1 $TB approve O-99 2>&1 | grep -c '人が自分の端末で実行します')" "1"
@@ -58,14 +58,14 @@ eq "agent-reject: an agent cannot reject a row being run" "$(as rev1 rc $TB agen
 dsql "UPDATE agent_ops SET decided_at=NULL WHERE id=${lid#L-};"
 out=$(as rev1 $TB agent-approve "$lid" 2>&1)
 eq "agent-approve: rev1 approve:agent:stop:* w1 runs it" "$(grep -c 'w2 stopped' <<<"$out") $(grep -c '^pane-close ww2:p1' "$FAKE_LOG")" "1 1"
-eq "agent-approve: the approver is recorded" "$(dsql "SELECT status, result LIKE '%agent rev1(policy: rev1 approve:agent:stop:* w1)が承認% = allow' FROM agent_ops WHERE id=${lid#L-};")" "done|1"
+eq "agent-approve: the approver is recorded" "$(dsql "SELECT status, result LIKE '%agent rev1(policy: rev1 approve:agent:stop:* w1 = allow)が承認%' FROM agent_ops WHERE id=${lid#L-};")" "done|1"
 lid2=$(dsql "SELECT 'L-'||id FROM agent_ops WHERE status='pending' AND op='stop' LIMIT 1;")
-eq "agent-reject: by the granted agent, recorded" "$(as rev1 $TB agent-reject "$lid2") $(dsql "SELECT status, result LIKE '%agent rev1(policy: rev1 approve:agent:stop:* w1)が却下% = allow' FROM agent_ops WHERE id=${lid2#L-};")" "$lid2 rejected rejected|1"
+eq "agent-reject: by the granted agent, recorded" "$(as rev1 $TB agent-reject "$lid2") $(dsql "SELECT status, result LIKE '%agent rev1(policy: rev1 approve:agent:stop:* w1 = allow)が却下%' FROM agent_ops WHERE id=${lid2#L-};")" "$lid2 rejected rejected|1"
 # 人だけが決める承認待ち: model-set --all・slash --all・spawn-freeze 中の spawn
 dsql "INSERT INTO agent_ops (herdr_session, op, target, args, requested_by, status, result, created_at) VALUES
   ('default','revive','w1','{\"model_set\":1,\"model\":\"haiku\",\"all\":1}','w2','pending','--all は人の承認が要ります','x'),
   ('default','slash','*','{\"command\":\"clear\",\"args\":\"\",\"all\":1}','w2','pending','slash --all は常に人の承認','x'),
-  ('default','revive','w1','{\"model_set\":1,\"model\":\"haiku\"}','w2','pending','認可: (既定 ask-any)','x');"
+  ('default','revive','w1','{\"model_set\":1,\"model\":\"haiku\"}','w2','pending','認可: 既定 ask-any','x');"
 ml=$(dsql "SELECT 'L-'||id FROM agent_ops WHERE op='revive' AND json_extract(args,'\$.all')=1;")
 sl=$(dsql "SELECT 'L-'||id FROM agent_ops WHERE op='slash';")
 m1=$(dsql "SELECT 'L-'||id FROM agent_ops WHERE op='revive' AND json_extract(args,'\$.all') IS NULL;")

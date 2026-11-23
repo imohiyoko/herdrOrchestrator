@@ -119,7 +119,7 @@ eq "gate H-01: case-insensitive" "$(gtf FILE 'FILE M Roles/x.md' | G1 merge | ha
 eq "gate H-01: nested path matches" "$(gtf FILE 'FILE M sub/dir/CLAUDE.md' | G1 merge | hardl | cut -c1-5)" "H-01 "
 eq "gate H-01: unrelated docs path does not hit" "$(gtf FILE 'FILE M docs/roles-overview.md' | G1 merge | hardl)" "none"
 # 組み込みのパス規則は、パス規則ファイルが空でも効く(外せない)
-for p in '.github/workflows/ci.yml' 'taskboard/config/gate.conf' 'taskboard/config/gate-paths.conf' 'taskboard/lib/gate.sh' 'taskboard/config/approvals.conf' 'x/config/risk-rules.conf' 'gate.conf'; do
+for p in '.github/workflows/ci.yml' 'taskboard/config/gate.conf' 'taskboard/config/gate-paths.conf' 'taskboard/lib/gate.sh' 'taskboard/config/approvals.conf' 'taskboard/config/policy.conf' 'taskboard/perms/ops.tbl' 'x/config/risk-rules.conf' 'gate.conf'; do
   eq "gate H-01 builtin: $p hits with an empty paths file" "$(gtf FILE "FILE M $p" | gt merge "$GT/gate.conf" "$GT/empty-paths.conf" | hardl | cut -c1-5)" "H-01 "
 done
 for p in 'taskboard/bin/tb' 'bin/tb' 'tests/run-all.sh' 'taskboard/test/run.sh' 'webui/tests/run.sh' 'taskboard/test/cases/98_gate.sh' 'tests/test_gate.sh' '.github'; do

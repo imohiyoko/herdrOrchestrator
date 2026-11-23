@@ -228,33 +228,62 @@ cmd_approval_check() {
 # (主体・操作名・対象が同じ行があれば書き換え、無ければ末尾に足す)。policy はいちばん厳しい行が勝つので、
 # もっと厳しい行が当たる操作は allow にしても変わらない(書いたあとに確かめて、そう言う)
 # パターンの分け方: 対象の無い操作(role:change など)は対象 *、send:task:w1 → send:task と w1、agent:* のように語が足りなければ操作名 agent:* と対象 *
-policy_row_of_pattern() {  # $1=古い形のパターン → PR_OP PR_TARGET
+policy_row_of_pattern() {  # $1=古い形のパターン → PR_OP PR_TARGET PR_OPS(書く行の操作名。広い glob は中の操作に絞る)
   perm_split_act "$1"; PR_OP=$PS_OP; PR_TARGET=${PS_TARGET:-*}
+  policy_ops_of "$PR_OP"; PR_OPS=("${PO_OPS[@]}")
+}
+# 古い approvals が見ていたのはコマンドの中の操作だけ。cmd:・approve:・agent:flag に当たりうる glob(* や agent:* など)を
+# そのまま policy に書くと、前は当たらなかったコマンドや承認の委任まで許してしまうので、中の操作の族に分けて書く
+POLICY_INNER_OPS=(send:task send:info send:answer agent:new agent:stop agent:revive agent:spawn agent:compact agent:model agent:read 'agent:slash:*' role:change alert:analyze proxy:read-only proxy:write proxy:external 'setup:*' 'recipe:*')
+_po_reserved() {  # $1=操作名の glob が cmd: / approve: / agent:flag に当たりうる → 0
+  local pre=${1%%[*?\[]*} r
+  if [[ $pre == "$1" ]]; then [[ $1 == cmd:* || $1 == approve:* || $1 == agent:flag ]]; return; fi
+  for r in cmd: approve: agent:flag; do [[ $r == "$pre"* || $pre == "$r"* ]] && return 0; done
+  return 1
+}
+# 古い approvals の role:change は人事役(@hr)にだけ効いていた(ほかの agent は grants が要った)。policy では主体を人事役にする
+policy_subject_of() { if [[ $1 == role:change ]]; then PO_SUBJ="@${TB_ROLE_ADMIN:-hr}"; else PO_SUBJ='*'; fi; }
+policy_ops_of() {  # $1=操作名の glob → PO_OPS
+  local f; PO_OPS=()
+  if ! _po_reserved "$1"; then PO_OPS=("$1"); return 0; fi
+  for f in "${POLICY_INNER_OPS[@]}"; do
+    # shellcheck disable=SC2053  # glob として比べる
+    [[ $f == $1 ]] && PO_OPS+=("$f")
+  done
+  return 0
 }
 set_approval() {  # $1=allow|ask $2=パターン
-  local val=$1 pat=$2 eff body found=0 line l s o t rest
+  local val=$1 pat=$2 eff body line l s o t rest op hit
+  local -a done_=()
   valid_action "$pat"
   require_human "tb $val"
   [[ $val == allow ]] && eff=allow || eff=ask-any
   policy_row_of_pattern "$pat"
-  body=""
+  ((${#PR_OPS[@]})) || die "tb $val: $pat はコマンドの中の操作に当たりません(コマンド cmd: や承認の委任 approve: は policy に直接書く: tb config edit policy)"
   config_lookup policy || true
   [[ -z $CFG_ERR ]] || die "設定 policy を読めないため書きません($CFG_ERR)"
+  body=""
   while IFS= read -r line || [[ -n $line ]]; do
     l=$(trim "${line%%#*}"); read -r s o t rest <<<"${l%%=*}"
-    if [[ $l == *=* && $s == '*' && $o == "$PR_OP" && $t == "$PR_TARGET" && -z $rest ]]; then
-      ((found)) || body+="* $PR_OP $PR_TARGET = $eff   # $(now) に人が変更(tb approval $val)"$'\n'
-      found=1
-    else
-      body+="$line"$'\n'
+    hit=""
+    if [[ $l == *=* && $t == "$PR_TARGET" && -z $rest ]]; then
+      for op in "${PR_OPS[@]}"; do policy_subject_of "$op"; [[ $s == "$PO_SUBJ" && $o == "$op" ]] && hit=$op; done
     fi
+    if [[ -z $hit ]]; then body+="$line"$'\n'; continue; fi
+    [[ " ${done_[*]} " == *" $hit "* ]] && continue   # 同じ行が 2 つあれば 1 つにする
+    policy_subject_of "$hit"
+    body+="$PO_SUBJ $hit $PR_TARGET = $eff   # $(now) に人が変更(tb approval $val)"$'\n'; done_+=("$hit")
   done <<<"$CFG_BODY"
   body=${body%$'\n'}
-  ((found)) || body+="${body:+$'\n'}* $PR_OP $PR_TARGET = $eff   # $(now) に人が追加(tb approval $val)"
+  for op in "${PR_OPS[@]}"; do
+    policy_subject_of "$op"
+    [[ " ${done_[*]} " == *" $op "* ]] || body+="${body:+$'\n'}$PO_SUBJ $op $PR_TARGET = $eff   # $(now) に人が追加(tb approval $val)"
+  done
   config_put policy "$body" "$val"
   sql "INSERT INTO main.approval_changes (herdr_session, pattern, value, created_at) VALUES ($SQS, $(q "$pat"), $(q "$val"), $(q "$(now)"));" >/dev/null
-  echo "* $PR_OP $PR_TARGET = $eff"
-  if [[ $val == allow && $pat != *[*?]* ]]; then   # 書いた行より厳しい行が当たっていないか(主体を問わない判定で確かめる)
+  for op in "${PR_OPS[@]}"; do policy_subject_of "$op"; echo "$PO_SUBJ $op $PR_TARGET = $eff"; done
+  policy_subject_of "$PR_OP"
+  if [[ $val == allow && $pat != *[*?]* && $PO_SUBJ == '*' ]]; then   # 書いた行より厳しい行が当たっていないか(主体を問わない判定で確かめる)
     config_forget policy; approval_of "$pat"
     [[ $APPROVAL_VALUE == allow ]] || echo "tb: 注意: もっと厳しい行が当たるため、$pat はまだ $APPROVAL_TIER です($APPROVAL_RULE)" >&2
   fi
@@ -367,7 +396,9 @@ policy_convert() {
   for ((i = 0; i < cnt; i++)); do
     if ((emit[i] == 0)); then PI_SKIP+="approvals ${ns[$i]} 行目: 既定(perms/ops.tbl)と同じなので書かない: ${ks[$i]} = ${vs[$i]}"$'\n'; continue; fi
     v=${vs[$i]}; [[ $v == ask ]] && v=ask-any
-    PI_ROWS+="* ${ops[$i]} ${ts[$i]} = $v   # approvals ${ns[$i]} 行目: ${ks[$i]} = ${vs[$i]}"$'\n'
+    policy_ops_of "${ops[$i]}"
+    ((${#PO_OPS[@]})) || { PI_SKIP+="approvals ${ns[$i]} 行目: コマンドの中の操作に当たらない(前から効いていない): ${ks[$i]} = ${vs[$i]}"$'\n'; continue; }
+    for d in "${PO_OPS[@]}"; do policy_subject_of "$d"; PI_ROWS+="$PO_SUBJ $d ${ts[$i]} = $v   # approvals ${ns[$i]} 行目: ${ks[$i]} = ${vs[$i]}"$'\n'; done
     [[ ${vs[$i]} == ask ]] || continue
     for ((j = 0; j < i; j++)); do   # 上の allow の行が、下の ask の行に締められる(上から最初の行で決まっていたのが、厳しい方が勝つになる)
       [[ ${vs[$j]} == allow ]] || continue

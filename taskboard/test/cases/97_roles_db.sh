@@ -8,7 +8,7 @@ export TB_DB=$TMP/rolesdb.db TB_ROLES=$TMP/rolesdb TB_POLICY_A=$TMP/rolesdb-appr
 rm -rf "$TB_ROLES"; mkdir -p "$TB_ROLES"
 printf '共通\n' >"$TB_ROLES/_common.md"; printf 'worker(ファイル)\n' >"$TB_ROLES/worker.md"; printf 'hr(ファイル)\n' >"$TB_ROLES/hr.md"
 printf 'w* = worker\nhr* = hr\n' >"$TB_ROLES/map.conf"
-printf '* role:change * = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
+printf '@hr role:change * = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
 RA() { HERDR_SESSION=sa "$TB" "$@"; }
 RB() { HERDR_SESSION=sb "$TB" "$@"; }
 

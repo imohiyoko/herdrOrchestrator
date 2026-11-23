@@ -143,7 +143,7 @@ perm_tier() {
   local op=$1 target=${2:-} def floor
   if [[ -z ${PERM_OP_DEF[$op]+x} ]]; then PERM_TIER=deny; PERM_RULE="(表に無い操作: deny)"; return 0; fi
   def=${PERM_OP_DEF[$op]}; floor=${PERM_OP_FLOOR[$op]}
-  PERM_TIER=$def; PERM_RULE="(既定 $def)"
+  PERM_TIER=$def; PERM_RULE="既定 $def"
   perm_judge @caller "$op" "$target"
   if [[ -n $PJ_ERR ]]; then PERM_TIER=deny; PERM_RULE="(設定 policy を読めない: $PJ_ERR)"; return 0; fi
   ((PJ_HUMAN)) && return 0   # 人の端末: 判定は perm_enforce が通す
@@ -175,7 +175,7 @@ perm_split_act() {
 perm_authorize() {
   local who=$1 op=$2 target=$3
   if [[ $who == human ]]; then PERM_TIER=allow; PERM_RULE="(人は常に通る)"; return 0; fi
-  PERM_TIER=$(perm_op_default "$op"); PERM_RULE="(既定 $PERM_TIER)"
+  PERM_TIER=$(perm_op_default "$op"); PERM_RULE="既定 $PERM_TIER"
   perm_judge "$who" "$op" "$target"
   if [[ -n $PJ_ERR ]]; then PERM_TIER=deny; PERM_RULE="(設定 policy を読めない: $PJ_ERR)"; return 0; fi
   if ((PJ_HUMAN)); then PERM_TIER=allow; PERM_RULE="(人は常に通る)"; return 0; fi

@@ -55,14 +55,14 @@ eq "org: --me json" "$(HERDR_PANE_ID=ww2:p1 $TB org --me --json | jq -c '[.manag
 cat >"$TB_POLICY_G" <<'G'
 @lead agent:read ~report = allow
 boss agent:stop ~subordinate = allow
-@worker send:info ~manager = allow
+@worker send:task ~manager = allow
 @worker agent:read ~peer = allow
 w1 agent:read ~superior = allow
 G
 ga() { $TB approval "$1" --by "$2" | head -1; }
 eq "org grants: ~report is the direct report only" "$(ga agent:read:w1 lead1) $(ga agent:read:kid lead1) $(ga agent:read:w3 lead1)" "allow ask ask"
 eq "org grants: ~subordinate reaches every level below" "$(ga agent:stop:kid boss) $(ga agent:stop:w3 boss) $(ga agent:stop:boss lead1)" "allow allow ask"
-eq "org grants: ~manager / ~superior / ~peer" "$(ga send:info:lead1 w1) $(ga send:info:boss w1) $(ga agent:read:boss w1) $(ga agent:read:w2 w1) $(ga agent:read:w3 w1)" "allow ask allow allow ask"
+eq "org grants: ~manager / ~superior / ~peer" "$(ga send:task:lead1 w1) $(ga send:task:boss w1) $(ga agent:read:boss w1) $(ga agent:read:w2 w1) $(ga agent:read:w3 w1)" "allow ask allow allow ask"
 eq "org grants: the rule names the relation" "$($TB approval agent:read:w1 --by lead1 | sed -n 2p)" "rule: policy: @lead agent:read ~report = allow"
 
 # delivery の宛先に関係: worker は自分の上司へだけ届く、ほかの指揮系統の lead へは止める
@@ -71,10 +71,10 @@ cat >"$TB_DELIVERY" <<'D'
 @worker -> @lead    : *=block
 @lead   -> ~report  : task=now info=hold
 D
-eq "org delivery: to one's own manager / to another lead" "$($TB can w1 send:task lead1 | head -1) $($TB can w1 send:task lead2 | head -1)" "ask deny"
+eq "org delivery: to one's own manager (granted) / to another lead" "$($TB can w1 send:task lead1 | head -1) $($TB can w1 send:task lead2 | head -1)" "allow deny"
 eq "org delivery: hold to a report (approvals still ask), a non-report falls to the default block" "$($TB can lead1 send:info w1 | head -1) $(rc $TB can lead1 send:task w3)" "ask 4"
-printf '* send:info w1 = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
-eq "org can: hold with approvals allow is hold (exit 21)" "$($TB can lead1 send:info w1 | head -1) $(rc $TB can lead1 send:info w1)" "hold 21"
+printf '* send:info w1 = allow\n* send:answer * = ask-any\n' >"$TB_POLICY_A"   # 厳しい方が勝つので、info の締める行は置かない
+eq "org can: hold with policy allow is hold (exit 21)" "$($TB can lead1 send:info w1 | head -1) $(rc $TB can lead1 send:info w1)" "hold 21"
 printf '* send:info w1 = ask-any\n* send:task * = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
 eq "org can: hold with approvals ask is ask" "$($TB can lead1 send:info w1 | head -1) $(rc $TB can lead1 send:info w1)" "ask 20"
 printf '* send:task * = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
@@ -95,7 +95,7 @@ eq "org can: role:change on an agent with its own role file is refused even with
 rm -f "$TB_ROLES/w2.md"
 eq "org can: usage" "$(rc $TB can w1)" "2"
 
-printf '* = allow\n' >"$TMP/org-allow.conf"
+printf '* send:* * = allow\n' >"$TMP/org-allow.conf"
 # 役割を確かめられなければ関係は当たらない(許可側に倒さない)。delivery は hold
 sqlite3 "$TB_DB" "ALTER TABLE agents RENAME COLUMN role TO role_x;"
 eq "org: an unreadable role grants nothing" "$($TB approval agent:read:w1 --by lead1 2>/dev/null | head -1)" "ask"

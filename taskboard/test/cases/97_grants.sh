@@ -14,7 +14,7 @@ sqlite3 "$TB_DB" "UPDATE agents SET spawned_by='mgr1' WHERE name IN ('w1','w3');
 printf '@manager agent:read ~descendant = allow\n@manager send:task ~child = allow\nw1 send:task ~parent = allow\nw1 agent:read ~sibling = allow\nother1 agent:stop @worker = allow\nbad line\n' >"$TB_POLICY_G"
 ga() { $TB approval "$1" --by "$2" | tr '\n' ' '; }
 eq "grants: ~descendant reaches a grandchild" "$(ga agent:read:w2 mgr1)" "allow rule: policy: @manager agent:read ~descendant = allow "
-eq "grants: ~descendant does not reach an unrelated agent" "$(ga agent:read:other1 mgr1)" "ask rule: (既定 ask-any) "
+eq "grants: ~descendant does not reach an unrelated agent" "$(ga agent:read:other1 mgr1)" "ask rule: 既定 ask-any "
 eq "grants: ~child is only the direct child" "$($TB approval send:task:w1 --by mgr1 | head -1) $($TB approval send:task:w2 --by mgr1 | head -1)" "allow ask"
 eq "grants: ~parent / ~sibling" "$($TB approval send:task:mgr1 --by w1 | head -1) $($TB approval agent:read:w3 --by w1 | head -1) $($TB approval agent:read:w2 --by w1 | head -1)" "allow allow ask"
 eq "grants: the subject must match (a worker is not a manager)" "$($TB approval agent:read:w2 --by w3 | head -1)" "ask"

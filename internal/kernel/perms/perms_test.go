@@ -269,3 +269,20 @@ func TestValidatePolicy(t *testing.T) {
 		}
 	}
 }
+
+func TestOpsOf(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"send:*", "send:*"},
+		{"agent:stop", "agent:stop"},
+		{"agent:*", "agent:new agent:stop agent:revive agent:spawn agent:compact agent:model agent:read agent:slash:*"},
+		{"*", strings.Join(perms.InnerOps, " ")},
+		{"*:task", "send:task"},
+		{"cmd:ticket:list", ""},
+		{"approve:send:task", ""},
+		{"agent:flag", ""},
+	} {
+		if got := strings.Join(perms.OpsOf(c.in), " "); got != c.want {
+			t.Errorf("OpsOf(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}

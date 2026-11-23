@@ -118,7 +118,7 @@ POST/PUT/DELETE/PATCH は 405。
 | `/jobs/<job>` | 「ジョブが行うこと」(型・宛先 agent と今の状態・送られる本文 / 実行されるコマンドの全文・次回の予定・直近の結果・副作用の注記・承認の扱い。読み取りのみ)と、スケジュールの変更フォーム(自動更新しない)。保存先は DB の `sched-settings:<job>`(このセッションの行。`tb job set --settings` を通す)、次の分から反映。残っている `scheduler/settings/<job>.settings` は消す。保存後に scheduler の読む値が変わったかを確かめる。「conf の値に戻す」で DB の行を消す |
 | `/ledger` | 送信履歴(tb の `messages` 表)。種別 × 結果の件数サマリと直近 100 件。failed は既定で畳む。`?kind=` `?result=`(sent / busy / failed / all) `?target=` `?from=` `?to=`(日付 `YYYY-MM-DD`、UTC)で絞り込み。send の `O-n` は `/outbox` にリンクし、本文は 1 行目だけ |
 | `/sessions` | セッション一覧(URL に書ける全セッションへのリンクと、それぞれの緊急通知・報告待ちの件数) |
-| `/perms` | 権限(設定 `approvals` の読み取り。tb と同じく DB のこのセッションの行 → 共通の行 → `taskboard/config/approvals.conf` → `.example`)。上から順に順位・パターン・ask/allow・最後の変更(行末の注記と `approval_changes`)・その行で決まる操作の例・警告(`* = ask`、広い allow、上の行に隠れる行(ワイルドカードを含まない行)、「この操作はどの行で決まるか」の検索(`?op=`、tb の `approval_of` と同じ規則をここで再現。tb は呼ばない)、操作ごとの現在の権限(権限カタログ `taskboard/config/approvals-catalog.conf` × approvals.conf: 現在の値・決まる行・規則の有無(明示 / 既定に落ちる)・リスク階層・副作用・allow 候補・状態、`?kind=` `?state=` `?fallback=1` `?allowed=1` で絞り込み、high / human-only の操作が allow なら警告、reserved(将来用)と unwired(承認判定に渡らない。`proxy:*`)は薄く表示し、unwired の操作に当たる規則には「何も効かない」と警告、カタログに無い規則は「未知の規則」の欄)、変更履歴、`tb allow` / `tb ask` のコマンド行の組み立て表示(`?pat=&val=`。表示だけで実行しない)。変更の操作・POST は無い |
+| `/perms` | 権限(設定 `policy` の読み取り。tb と同じく DB のこのセッションの行 → 共通の行 → `taskboard/config/policy.conf`。`.example` は既定値にしない)。policy の行(主体・操作・対象・効果・最後の変更)、警告(広い allow、ほかの行に締められて効かない allow など)、「この操作はどう決まるか」の検索(`?op=`、tb の判定と同じく当たる行のいちばん厳しい効果、無ければ既定の表 `perms/ops.tbl`。tb は呼ばない)、操作ごとの今の権限(権限カタログ `approvals-catalog.conf` と突き合わせ)、変えるためのコマンドと policy の行の組み立て(表示だけ。実行は人が端末で) |
 
 名前の無い agent は `pane_id`(例: `w2:p3`)が名前の代わりになる。未知の URL は 404。
 
@@ -227,7 +227,7 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.herdr-webui.plist
 | `WEBUI_TB_DB` | `TB_DB`、無ければ `~/.local/state/herdr/tasks.db` | tb と同じ DB(既定は `lib/herdr_env.py`) |
 | `WEBUI_SCHED_LOGS` / `WEBUI_SCHED_JOBS` / `WEBUI_SCHED_SETTINGS` / `WEBUI_RUN_DIR` | 兄弟ディレクトリ / `webui/run` | データ源・settings・`run/` の場所 |
 | (固定) | `taskboard/config/approvals-catalog.conf` | 権限カタログ。env では差し替えられない |
-| `WEBUI_APPROVALS` | `TB_APPROVALS`、無ければ設定 `approvals`(DB → ファイル) | `/perms` が読む承認ルールのファイルを明示する(テスト用。普段は指定せず、tb と同じく DB から引く) |
+| `WEBUI_POLICY` | `TB_POLICY`、無ければ設定 `policy`(DB → ファイル) | `/perms` が読む policy のファイルを明示する(テスト用。普段は指定せず、tb と同じく DB から引く) |
 
 ## コードの構成
 
@@ -277,7 +277,7 @@ herdr は `tests/fake/herdr`(疑似)、DB・ログ・ログイン情報の置き
   それ以外は「強制停止」で、確認のチェックを入れないと送れない。止めても台帳に会話(session)と cwd が残る
 - **復活**: 「停止中の agent」から「同じ会話で復活」(`claude --resume <session>`)か「新しい会話で復活」
 - **新規作成**: `/agent-new`。専用の workspace で claude を起動する。役割は `roles/` から選べ、起動時に SessionStart hook が渡す
-- **承認待ちの操作**: agent(指揮官など)が `tb agent-*` を使い、`approvals.conf` の `agent:<op>:<名前>` が `ask` だったものは
+- **承認待ちの操作**: agent(指揮官など)が `tb agent-*` を使い、policy の `agent:<op>`(対象は agent 名)が ask-any だったものは
   「承認待ちの操作」に出る(緊急通知にも出る)。「承認して実行」か「却下」
 - 結果は画面上部(実行した / 承認待ちに積んだ / 前提を満たさない / 失敗)と、「直近の操作」(`agent_ops`)に出る
 
@@ -286,7 +286,7 @@ herdr は `tests/fake/herdr`(疑似)、DB・ログ・ログイン情報の置き
 1 つのプロセスが全 herdr セッションの画面を `/s/<セッション名>/` で返す(セッションごとにプロセスを立てない)。
 
 - DB は全セッション共有で、画面はそのセッションの行だけを読む(同じ名前の一時ビュー)。herdr と tb はそのセッションとして呼ぶ(`HERDR_SESSION`)。
-  設定(`approvals` / `projects`)と役割も、そのセッションの DB の行 → 共通の行 → ファイルの順で引く。
+  設定(`policy` / `projects`)と役割も、そのセッションの DB の行 → 共通の行 → ファイルの順で引く。
 - ヘッダとタイトルにセッション名が出る(`default` 以外は色の帯)。ほかのセッションへは「セッション」(`/sessions`)のリンクで移る。
 - ログインは全セッションで共通(Cookie 1 つ、`Path=/`)。セッション名は herdr と同じく大文字小文字を区別する。
 - 全セッションが同じオリジン(`127.0.0.1:8800`)に並ぶ。通知の保存キーとタグはセッションごとに分ける。画面に出すのは自前のスクリプトだけで、外部由来の文字列はすべてエスケープしている。
@@ -299,4 +299,4 @@ herdr は `tests/fake/herdr`(疑似)、DB・ログ・ログイン情報の置き
 - `PROMPT_FILE` の中身は、絶対パスで、`scheduler/`(と jobs の置き場)の配下の通常ファイルで、認証情報の置き場(`/docs` と同じ判定)でないときだけ表示する。相対パス・範囲外は、パスだけ表示して中身は読まない。
 - 本文・コマンドのトークンらしい文字列(`ghp_…`・`xox…-`・`AKIA…`・`Bearer …`・`token=…` など)と秘密鍵のブロックは `[マスク]` に置き換える。完全ではない(機密を含みうる画面)。
 - 見るのはこの webui のプロセスの `scheduler/jobs`・`scheduler/logs`(別 checkout のジョブは見えない)。
-- scheduler からの送信(`tb system-send`)は `approvals.conf` を見ず、人の承認待ちにならない(宛先が idle / done のときだけ自動で送る)。画面にはその旨と、参考として通常の `tb message send` の判定(`send:task:<宛先>`)を出す。
+- scheduler からの送信(`tb system-send`)は policy を見ず、人の承認待ちにならない(宛先が idle / done のときだけ自動で送る)。画面にはその旨と、参考として通常の `tb message send` の判定(`send:task:<宛先>`)を出す。
