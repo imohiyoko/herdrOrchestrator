@@ -429,7 +429,7 @@ func text(v any) string {
 	return fmt.Sprint(v)
 }
 
-// Periodic は notify_periodic: 承認待ち(L-/O- の番号と件数だけ)と定期まとめ。
+// Periodic は notify_periodic: 承認待ち(Q- の番号と件数だけ)と定期まとめ。
 func (q *Q) Periodic() error {
 	active := q.ActiveSQL
 	if active == "" {
@@ -437,8 +437,7 @@ func (q *Q) Periodic() error {
 	}
 	var v [8]any
 	err := q.DB.QueryRow(`SELECT
-      trim(COALESCE((SELECT group_concat(x, ' ') FROM (SELECT 'O-'||id AS x FROM outbox WHERE status='pending' ORDER BY id)), '') || ' ' ||
-           COALESCE((SELECT group_concat(x, ' ') FROM (SELECT 'L-'||id AS x FROM agent_ops WHERE status='pending' ORDER BY id)), '')),
+      COALESCE((SELECT group_concat(x, ' ') FROM (SELECT 'Q-'||r.id AS x FROM requests r WHERE ((r.source='cmd' AND r.status='pending') OR (r.source='outbox' AND EXISTS (SELECT 1 FROM outbox o WHERE o.id=r.source_id AND o.status='pending')) OR (r.source='agent_ops' AND EXISTS (SELECT 1 FROM agent_ops a WHERE a.id=r.source_id AND a.status='pending'))) ORDER BY r.priority DESC, r.id)), ''),
       COALESCE((SELECT value FROM notify_seen WHERE key='approvals-last'), ''),
       COALESCE((SELECT CAST((julianday('now') - julianday(updated_at)) * 1440 AS INTEGER) FROM notify_seen WHERE key='summary-at'), ''),
       (SELECT COUNT(*) FROM agents WHERE state='running'),

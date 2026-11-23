@@ -260,7 +260,7 @@ func Compose(typ, ref, sev, a, b, c, d string) string {
 	case "incident_closed":
 		return "[障害] " + ref + " 終了" + plus(sev, " %") + ": " + a
 	case "approvals_pending":
-		return "[承認待ち] " + a + "(承認は人の端末)"
+		return "[承認待ち] " + a + "(tb approval list)"
 	case "summary", "digest":
 		return "[まとめ] " + a
 	case "test":

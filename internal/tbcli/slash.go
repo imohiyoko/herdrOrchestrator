@@ -435,7 +435,8 @@ func cmdSlash(args []string, w, stderr io.Writer) error {
 		if err != nil {
 			return die("agent_ops に書けません: %v", err)
 		}
-		fmt.Fprintf(w, "L-%d pending (/%s を --all で送る。人の承認待ち: tb agent-approve L-%d)\n", id, cmd, id)
+		q := pendingQ(db.DB, "agent_ops", id)
+		fmt.Fprintf(w, "L-%d pending %s (/%s を --all で送る。人の承認待ち: tb approval approve %s)\n", id, q, cmd, q)
 		return &exit{20, ""}
 	}
 	rc := 0
@@ -462,7 +463,8 @@ func cmdSlash(args []string, w, stderr io.Writer) error {
 				if err != nil {
 					return die("agent_ops に書けません: %v", err)
 				}
-				fmt.Fprintf(w, "%s pending L-%d (人の承認待ち: tb agent-approve L-%d)\n", t.name, id, id)
+				q := pendingQ(db.DB, "agent_ops", id)
+				fmt.Fprintf(w, "%s pending L-%d %s (承認待ち: tb approval approve %s)\n", t.name, id, q, q)
 				if rc == 0 || rc == 20 {
 					rc = 20
 				}

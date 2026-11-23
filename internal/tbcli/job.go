@@ -179,8 +179,12 @@ func stdinIsTTY() bool {
 	return err == nil && st.Mode()&os.ModeCharDevice != 0
 }
 
+// stdinData は読んだ標準入力(承認待ちに積むとき、読んだあとでも中身を残せるように)。
+var stdinData *[]byte
+
 func readStdin() (string, error) {
 	b, err := io.ReadAll(os.Stdin)
+	stdinData = &b
 	return strings.TrimRight(string(b), "\n"), err
 }
 

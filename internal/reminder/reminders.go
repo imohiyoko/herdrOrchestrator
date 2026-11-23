@@ -86,10 +86,9 @@ func (r *R) collectDB() ([]Item, error) {
       '人' AS who, '' AS due, 'C-'||c.id AS ref, c.created_at AS since
     FROM comments c LEFT JOIN tasks t ON t.id=c.task_id
     WHERE c.kind IN ('question','blocked') AND c.resolved_at IS NULL AND COALESCE(t.status, '') NOT IN (` + closed + `)`,
-		`SELECT 2, 'o:'||id, status, '送信の承認待ち: ' || from_name || ' → ' || target || ' (' || kind || ')', '人', '', 'O-'||id, created_at
-    FROM outbox WHERE status='pending'`,
-		`SELECT 2, 'l:'||id, status, 'agent 操作の承認待ち: ' || op || ' ' || target || ' (' || requested_by || ')', '人', '', 'L-'||id, created_at
-    FROM agent_ops WHERE status='pending'`,
+		`SELECT 2, CASE r.source WHEN 'outbox' THEN 'o:'||r.source_id WHEN 'agent_ops' THEN 'l:'||r.source_id ELSE 'r:'||r.id END, 'pending',
+      '承認待ち: ' || r.op || ' ' || r.target || ' (' || r.requester || ')', '人', '', 'Q-'||r.id, r.created_at
+    FROM requests r WHERE ((r.source='cmd' AND r.status='pending') OR (r.source='outbox' AND EXISTS (SELECT 1 FROM outbox o WHERE o.id=r.source_id AND o.status='pending')) OR (r.source='agent_ops' AND EXISTS (SELECT 1 FROM agent_ops a WHERE a.id=r.source_id AND a.status='pending')))`,
 		`SELECT 2, 'p:'||id, status, '代行依頼の判断待ち: ' || task_id || ' (' || effect || ')', '人', '', 'proxy '||id, updated_at
     FROM proxy_requests WHERE status='pending-human'`,
 		`SELECT 2, 'a:'||id, status, '解析役の起動待ち: ' || title, '人', '', 'A-'||id, last_seen

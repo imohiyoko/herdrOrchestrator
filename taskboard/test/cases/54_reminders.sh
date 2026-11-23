@@ -40,19 +40,19 @@ eq "reminders: check writes nothing" "$(rsql "SELECT COUNT(*) FROM notify_seen;"
 out=$($TB reminders --publish)
 eq "reminders: first publish is the full list" "$(head -1 <<<"$out" | sed 's/.*\/ //')" "全件]"
 eq "reminders: header row" "$(sed -n 2p <<<"$out")" "優先 | 何が | 誰の番 | 期限 | 参照 | 経過"
-eq "reminders: priority order" "$(sed -n '3,$p' <<<"$out" | cut -d'|' -f1,5 | tr -d ' ' | tr '\n' ' ')" "急ぎ|deadline2026-03-09 人の番|O-1 人の番|C-1 停滞|$r2 "
+eq "reminders: priority order" "$(sed -n '3,$p' <<<"$out" | cut -d'|' -f1,5 | tr -d ' ' | tr '\n' ' ')" "急ぎ|deadline2026-03-09 人の番|Q-1 人の番|C-1 停滞|$r2 "
 eq "reminders: question row" "$(grep 'C-1' <<<"$out")" "人の番 | 質問: $r1 release prep | 人 | - | C-1 | 0m"
 eq "reminders: stall owner and age" "$(grep '停滞' <<<"$out" | cut -d'|' -f3,6 | tr -d ' ')" "worker1|1d"
 eq "reminders: no bodies" "$(grep -c 'BODY\|body' <<<"$out")" "0"
 eq "reminders: resolved and far items left out" "$(grep -c 'C-2\|far away\|bad date' <<<"$out")" "0"
 eq "reminders: only its own seen rows" "$(rsql "SELECT group_concat(key, ' ') FROM (SELECT key FROM notify_seen ORDER BY key);")" "reminders:full-day reminders:last reminders:state"
-eq "reminders: last row for the Web UI" "$(rsql "SELECT value FROM notify_seen WHERE key='reminders:last';" | jq -r '[.items[].ref] | join(",")')" "deadline 2026-03-09,O-1,C-1,$r2"
+eq "reminders: last row for the Web UI" "$(rsql "SELECT value FROM notify_seen WHERE key='reminders:last';" | jq -r '[.items[].ref] | join(",")')" "deadline 2026-03-09,Q-1,C-1,$r2"
 eq "reminders: rows untouched" "$(rsql "SELECT COUNT(*) FROM comments WHERE resolved_at IS NULL;") $(rsql "SELECT status FROM outbox;")" "1 pending"
 
 # 何も変わらない → check は 3、publish は継続の 1 行
 eq "reminders: nothing new → check 3" "$(rc $TB reminders --check)" "3"
 out=$($TB reminders --publish)
-eq "reminders: unchanged collapsed" "$out" "$(printf '%s\n' "$(head -1 <<<"$out")" "継続: deadline 2026-03-09(1 日目), O-1(1 日目), C-1(1 日目), $r2(1 日目)")"
+eq "reminders: unchanged collapsed" "$out" "$(printf '%s\n' "$(head -1 <<<"$out")" "継続: deadline 2026-03-09(1 日目), Q-1(1 日目), C-1(1 日目), $r2(1 日目)")"
 [[ $(head -1 <<<"$out") == *"新規 0・変化 0・継続 4]" ]] && ok "reminders: counts in header" || { ng "reminders: counts in header"; echo "   $out"; }
 eq "reminders: same state, same summary" "$($TB reminders --publish | sed 1d)" "$(sed 1d <<<"$out")"
 

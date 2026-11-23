@@ -295,7 +295,8 @@ func cmdModelSet(args []string, w, stderr io.Writer) error {
 				return err
 			}
 			lid, _ := res.LastInsertId()
-			fmt.Fprintf(w, "%s pending L-%d (人の承認待ち: tb agent-approve L-%d)\n", n, lid, lid)
+			q := pendingQ(db.DB, "agent_ops", lid)
+			fmt.Fprintf(w, "%s pending L-%d %s (人の承認待ち: tb approval approve %s)\n", n, lid, q, q)
 			pending++
 			continue
 		}

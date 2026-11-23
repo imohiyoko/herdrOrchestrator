@@ -36,7 +36,7 @@ eq "block: a verified reply passes with reply=now" "$(BW send reviewer --kind an
 printf '* send:task reviewer = ask\n* * * = allow\n' >"$TB_POLICY_A"
 eq "block: blocked at send time without asking for approval" "$(BW send reviewer --text nope 2>/dev/null | tail -1) $(bsql "SELECT status FROM outbox WHERE id=8;")" "O-8 blocked by reviewer denied"
 _bl_rules=$(cat "$TB_DELIVERY"); printf '@worker -> reviewer : *=now\n' >"$TB_DELIVERY"
-eq "block: pending first" "$(BW send reviewer --text later 2>/dev/null | tail -1)" "O-9 pending-approval"
+eq "block: pending first" "$(BW send reviewer --text later 2>/dev/null | tail -1 | sed -E 's/Q-[0-9]+/Q-n/g')" "O-9 pending-approval Q-n"
 printf '%s\n' "$_bl_rules" >"$TB_DELIVERY"
 n=$(prompts)
 eq "block: approve → blocked, notice typed into the sender" "$($TB approve O-9) $(($(prompts) - n)) $(grep -c "^prompt worker1	\[tb: blocked / O-9\]" "$FAKE_LOG")" "O-9 approved but blocked by reviewer 1 1"

@@ -48,7 +48,7 @@ eq "reply: the original must have been delivered" "$(tail -1 <<<"$out") $(grep -
 # 返信が承認待ちで却下されたら、返信済みに数えない
 RA send coordinator --kind info --text 'q2' >/dev/null 2>&1   # O-10 sent(info は allow)
 printf '* send:answer assistant = ask\n* * * = allow\n' >"$TB_POLICY_A"
-eq "reply: a verified reply still waits for approval first" "$(RC send assistant --kind answer --reply-to O-10 --text r1 2>/dev/null | tail -1)" "O-11 pending-approval"
+eq "reply: a verified reply still waits for approval first" "$(RC send assistant --kind answer --reply-to O-10 --text r1 2>/dev/null | tail -1 | sed -E 's/Q-[0-9]+/Q-n/g')" "O-11 pending-approval Q-n"
 $TB reject O-11 >/dev/null
 printf '* * * = allow\n' >"$TB_POLICY_A"
 eq "reply: a rejected reply does not count as answered" "$(RC send assistant --kind answer --reply-to O-10 --text r2 2>/dev/null | tail -1) $(rsql "SELECT reply_check FROM outbox WHERE id=11;")" "O-12 sent to assistant 人が却下"

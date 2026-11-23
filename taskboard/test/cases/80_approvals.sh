@@ -10,7 +10,7 @@ eq "approval: info allowed" "$($TB approval send:info:worker1 | head -1)" "allow
 eq "approval: unknown → ask (catch-all)" "$($TB approval setup:hooks | head -1)" "ask"
 eq "approval: bad name" "$(rc $TB approval 'a b')" "2"
 out=$(HERDR_PANE_ID=wC:p1 $TB send worker1 --text 'do it'); r=$?
-eq "send: task needs approval → pending (exit 20)" "$r|$out|$(prompts)" "20|O-1 pending-approval|0"
+eq "send: task needs approval → pending (exit 20)" "$r|$out|$(prompts)" "20|O-1 pending-approval Q-1|0"
 eq "flush: pending is not delivered" "$($TB flush; prompts)" "0"
 eq "send: info goes straight" "$(HERDR_PANE_ID=wC:p1 rc $TB send worker1 --kind info --text fyi) $(prompts)" "0 1"
 eq "approve: refused from an agent pane" "$(HERDR_PANE_ID=wW:p1 rc $TB approve O-1) $(asql "SELECT status FROM outbox WHERE id=1;")" "1 pending"
@@ -37,6 +37,6 @@ eq "approval: config set approvals is refused" "$(echo 'x = allow' | HERDR_PANE_
 rm -f "$TB_POLICY"
 export TB_DB=$TMP/old.db
 sqlite3 "$TB_DB" "CREATE TABLE outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, from_name TEXT NOT NULL, from_pane TEXT NOT NULL, from_session TEXT NOT NULL, target TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('task','info','answer')), task_id TEXT, text TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('queued','sent','denied')), reason TEXT, sent_at TEXT, created_at TEXT NOT NULL); INSERT INTO outbox (from_name, from_pane, from_session, target, kind, text, status, created_at) VALUES ('c','p','s','worker1','info','old','sent','t');"
-eq "migrate: old outbox rows kept, pending allowed" "$(HERDR_PANE_ID=wC:p1 $TB send worker1 --text new; sqlite3 "$TB_DB" "SELECT COUNT(*) FROM outbox;")" "$(printf 'O-2 pending-approval\n2')"
+eq "migrate: old outbox rows kept, pending allowed" "$(HERDR_PANE_ID=wC:p1 $TB send worker1 --text new; sqlite3 "$TB_DB" "SELECT COUNT(*) FROM outbox;")" "$(printf 'O-2 pending-approval Q-1\n2')"
 eq "migrate: old DB reaches the latest schema version" "$(sqlite3 "$TB_DB" "PRAGMA user_version;")" "$(ls "$HERE/../schema"/[0-9][0-9][0-9]_*.sql | wc -l | tr -d ' ')"
 unset FAKE_AGENTS TB_POLICY
