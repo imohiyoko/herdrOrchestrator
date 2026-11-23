@@ -240,10 +240,10 @@ func TestPolicyStrictestWins(t *testing.T) {
 	for _, c := range []struct{ op, who, want string }{
 		{"cmd:x:a", "w1", "ask"}, // 広い allow と狭い ask → 厳しい方
 		{"cmd:x:a", "w3", "allow"},
-		{"cmd:x:b", "w2", "ask"}, // 狭い allow でも、広い ask が当たれば厳しい方
-		{"cmd:x:c", "w1", "deny"},    // @役割を確かめられない allow は緩める向きに使わない(既定 deny のまま)
-		{"cmd:x:d", "w1", "deny"},    // @役割を確かめられない deny は締める向きに効く
-		{"cmd:x:e", "w1", "deny"},    // 知らない効果の行は無視(既定)
+		{"cmd:x:b", "w2", "ask"},  // 狭い allow でも、広い ask が当たれば厳しい方
+		{"cmd:x:c", "w1", "deny"}, // @役割を確かめられない allow は緩める向きに使わない(既定 deny のまま)
+		{"cmd:x:d", "w1", "deny"}, // @役割を確かめられない deny は締める向きに効く
+		{"cmd:x:e", "w1", "deny"}, // 知らない効果の行は無視(既定)
 	} {
 		if got, rule := tier(tb, db, c.op, c.who); got != c.want {
 			t.Errorf("%s by %s = %s %s, want %s", c.op, c.who, got, rule, c.want)
