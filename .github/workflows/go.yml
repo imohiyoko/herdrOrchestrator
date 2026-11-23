@@ -83,7 +83,7 @@ jobs:
           go-version-file: go.mod
       - run: sudo apt-get update && sudo apt-get install -y sqlite3 jq
       - run: go build -o "$RUNNER_TEMP/herdrctl" ./cmd/herdrctl
-      - run: SCHED_IMPL=go SCHED_HERDRCTL="$RUNNER_TEMP/herdrctl" bash scheduler/tests/run.sh
+      - run: SCHED_IMPL=go SCHED_HERDRCTL="$RUNNER_TEMP/herdrctl" TB_HERDRCTL="$RUNNER_TEMP/herdrctl" bash scheduler/tests/run.sh   # scheduler のテストは tb も呼ぶ
   # ブランチ保護で必須にする 1 つのチェック
   go-all:
     if: always()
