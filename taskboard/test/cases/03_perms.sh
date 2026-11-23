@@ -146,6 +146,8 @@ mkdir -p "$TMP/perms-newhc"; printf '#!/bin/sh\ncase "$2" in --features) echo "p
 eq "impl: tb hands the command to TB_HERDRCTL" "$(TB_HERDRCTL=$TMP/perms-newhc/herdrctl $TB list -p pm 2>/dev/null)" "from-go"
 eq "impl: without herdrctl → error 1 naming it" "$(TB_HERDRCTL=$TMP/no-such-herdrctl $TB list -p pm 2>&1 | grep -c 'herdrctl が見つかりません')|$(TB_HERDRCTL=$TMP/no-such-herdrctl rc $TB list -p pm)" "1|1"
 eq "impl: hooks stay quiet without herdrctl (touch / role-context → 0, no output)" "$(TB_HERDRCTL=$TMP/no-such-herdrctl $TB touch --event x 2>&1; echo "rc=$?"; TB_HERDRCTL=$TMP/no-such-herdrctl $TB role-context 2>&1; echo "rc=$?")" "$(printf 'rc=0\nrc=0')"
+mkdir -p "$TMP/perms-failhc"; printf '#!/bin/sh\ncase "$2" in --features) echo "policy-ops auth";; *) echo out; exit 3;; esac\n' >"$TMP/perms-failhc/herdrctl"; chmod +x "$TMP/perms-failhc/herdrctl"
+eq "impl: hooks stay 0 when herdrctl fails (touch quiet, role-context keeps stdout)" "$(TB_HERDRCTL=$TMP/perms-failhc/herdrctl $TB touch --event x; echo "rc=$?"; TB_HERDRCTL=$TMP/perms-failhc/herdrctl $TB role-context; echo "rc=$?")" "$(printf 'rc=0\nout\nrc=0')"
 eq "impl: help works without herdrctl" "$(TB_HERDRCTL=$TMP/no-such-herdrctl $TB help | head -c 3 | wc -c | tr -d ' ')" "3"
 
 unset TB_DB TB_POLICY TB_POLICY_A HERDR_PANE_ID FAKE_AGENTS

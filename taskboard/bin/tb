@@ -45,7 +45,7 @@ fi
 case $cmd in
   # 読み取りだけ。DB を開かない(壊れた DB でも今の向き先を確かめられる)。セッションの環境変数を書き換えずに渡す
   whoami) TB_ROOT=$TB_ROOT HERDR_ROOT=$HERDR_ROOT exec "$HC" tb "$@";;
-  touch) ( go_exec "$@" ) >/dev/null 2>&1; exit 0;;            # hook 用。常に 0、何も出さない
-  role-context) ( go_exec "$@" ) 2>/dev/null; exit 0;;         # hook 用。常に 0
+  touch) ( go_exec "$@" ) >/dev/null 2>&1 || :; exit 0;;            # hook 用。常に 0、何も出さない
+  role-context) ( go_exec "$@" ) 2>/dev/null || :; exit 0;;         # hook 用。常に 0
 esac
 go_exec "$@"

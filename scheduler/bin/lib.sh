@@ -3,7 +3,11 @@
 # Go 版(SCHED_IMPL=go)の herdrctl: SCHED_HERDRCTL > TB_HERDRCTL > PATH。下で PATH を置き換える前に探す(dispatch.sh のサブシェルでは引き継ぐ)
 [ -n "${_SCHED_HC+x}" ] || { _SCHED_HC=${SCHED_HERDRCTL:-${TB_HERDRCTL:-}}; [ -n "$_SCHED_HC" ] || _SCHED_HC=$(command -v herdrctl 2>/dev/null) || _SCHED_HC=""; }
 # tb の中身(herdrctl)も同じく PATH を置き換える前に探して tb に渡す(TB_HERDRCTL > PATH。tick が呼ぶ tb が見つけられるように)
-[ -n "${TB_HERDRCTL:-}" ] || { _tbhc=$(command -v herdrctl 2>/dev/null) && export TB_HERDRCTL=$_tbhc; unset _tbhc; }
+# コマンド名だけの TB_HERDRCTL も、置き換える前の PATH で実行ファイルの場所にする。未設定なら scheduler の herdrctl(_SCHED_HC)> PATH
+_tbhc=${TB_HERDRCTL:-${_SCHED_HC:-herdrctl}}
+case $_tbhc in */*) ;; *) _tbhc=$(command -v "$_tbhc" 2>/dev/null) || _tbhc="";; esac
+[ -z "$_tbhc" ] || export TB_HERDRCTL=$_tbhc
+unset _tbhc
 # launchd から動くときは PATH が決まった値なので、go install(~/go/bin)や ~/.local/bin に入れた herdrctl も最後に探す
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin${HOME:+:$HOME/.local/bin:$HOME/go/bin}"
 
