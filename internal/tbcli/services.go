@@ -17,6 +17,7 @@ var agentVerbs = map[string]cmdFunc{
 
 var agentVerbs2 = map[string]map[string]cmdFunc{
 	"compact": {"check": cmdCompactCheck},
+	"model":   {"set": cmdModelSet},
 	"role": {"show": cmdRoleShow, "list": cmdRoleList, "write": cmdRoleWrite, "edit": cmdRoleEdit, "unset": cmdRoleUnset,
 		"set": cmdRoleSet, "log": cmdRoleLog, "broadcast": cmdRoleBroadcast, "status": cmdRoles},
 }
