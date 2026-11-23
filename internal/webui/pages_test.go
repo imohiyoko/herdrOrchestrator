@@ -410,7 +410,7 @@ func TestPagesGolden(t *testing.T) {
 		"/perms?allowed=1&kind=bogus", "/perms?state=unwired", "/perms?pat=send:task:*&val=allow", "/perms?pat=*&val=allow",
 		"/perms?pat=send:info&val=ask", "/perms?pat=bad%20x&val=allow", "/perms?val=deny", "/perms?pat=proxy:write&val=allow",
 		"/jobs", "/jobs/nightly", "/jobs/fine?saved=1", "/jobs/pfile", "/jobs/pin", "/jobs/dupjob", "/jobs/nobody", "/jobs/badjob",
-		"/jobs/shared1", "/jobs/missing",
+		"/jobs/shared1", "/jobs/missing", "/statuses", "/statuses?done=status-add", "/board?done=sprint-add", "/perms?done=policy",
 		"/tasks", "/tasks?view=all", "/tasks?view=closed&sort=due", "/tasks?status=legacy&status=todo&status=todo&status=nope",
 		"/tasks?q=%25_&project=q&owner=~&type=bug&priority=highest&label=ui&due=overdue&days=5&unreported=1&stale=1&sort=priority",
 		"/tasks?due=soon&days=3", "/tasks?due=soon&days=x&view=bad&type=no&priority=no&label=a%20b&owner=bad%20o&sort=nope",

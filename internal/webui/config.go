@@ -13,12 +13,14 @@ import (
 
 // 定数。
 const (
-	Host     = "127.0.0.1"
-	Cookie   = "herdr_webui_session"
-	MaxBody  = 8192
-	DefPort  = 8800
-	Shift    = 19
-	RefreshS = 30
+	Host    = "127.0.0.1"
+	Cookie  = "herdr_webui_session"
+	MaxBody = 8192
+	// MaxEditBody は本文を編集するフォーム(policy・ジョブの定義)の上限。本文は 256 KiB 文字までで、URL エンコードで 9 倍まで膨らむ
+	MaxEditBody = 4 << 20
+	DefPort     = 8800
+	Shift       = 19
+	RefreshS    = 30
 )
 
 var (

@@ -133,9 +133,9 @@ func (s *Server) pagePerms(q *rq, c pageCtx) (string, string) {
 	rules, err := v.loadRules()
 	p := &perms{v: v, rules: rules, ops: loadOps()}
 	op := c.one("op")
-	body := ""
+	body := doneNotice(c) + editErr(c)
 	if err != "" {
-		body = errHTML(err)
+		body += errHTML(err)
 	}
 	// 「この操作はどの行で決まるか」
 	form := `<form method=get action="/perms"><p><label>操作名 ` +
@@ -292,8 +292,8 @@ func (s *Server) pagePerms(q *rq, c pageCtx) (string, string) {
 		`<option value=ask` + sel(val == "ask", " selected") + `>ask(承認が要る)</option></select></label> ` +
 		`<button type=submit>コマンド行を組み立てる</button></p></form>`
 	body += "<h2>変更したいとき</h2>" + patForm + cmdHTML +
-		"<p class=note>権限の変更は、この画面ではできません(ボタンも POST もありません)。人が端末で <code>tb approval allow</code> / <code>tb approval ask</code> を実行します(設定 policy の行を書きます)。" +
-		"主体や対象(<code>~child</code> など)を絞った行・deny の行は、<code>tb config edit policy</code> で書きます。" +
+		"<p class=note>上のコマンド行は表示だけです(人が端末で <code>tb approval allow</code> / <code>tb approval ask</code> を実行します)。" +
+		"policy の行をまとめて書き換えるなら、下の「policy を編集する」か、手元の <code>tb config edit policy</code>。" +
 		"広い allow(例: <code>agent:*</code>)は、agent が自分の承認権限を広げる経路になりえます。</p>"
-	return "権限(policy)", body
+	return "権限(policy)", body + v.policyForm(c)
 }

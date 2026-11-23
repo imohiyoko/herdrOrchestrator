@@ -329,7 +329,10 @@ func sessionToken(r *http.Request) string {
 }
 
 // body は application/x-www-form-urlencoded の本文(8192 バイトまで)。大きすぎ・長さが不正なら nil。
-func body(r *http.Request) map[string]string {
+func body(r *http.Request) map[string]string { return bodyN(r, MaxBody) }
+
+// bodyN は上限 limit バイトでフォームを読む(本文を編集する画面は MaxEditBody)。
+func bodyN(r *http.Request, limit int64) map[string]string {
 	n := int64(0)
 	if v := r.Header.Get("Content-Length"); v != "" {
 		var err error
@@ -337,7 +340,7 @@ func body(r *http.Request) map[string]string {
 			n = -1
 		}
 	}
-	if n < 0 || n > MaxBody {
+	if n < 0 || n > limit {
 		return nil
 	}
 	raw, _ := io.ReadAll(io.LimitReader(r.Body, n))
@@ -401,7 +404,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 var (
-	postPaths = map[string]bool{"/login": true, "/setup": true, "/logout": true, "/reset": true, "/resolve": true, "/agent-op": true, "/agent-new": true}
+	postPaths = map[string]bool{"/login": true, "/setup": true, "/logout": true, "/reset": true, "/resolve": true, "/agent-op": true, "/agent-new": true,
+		"/task-status": true, "/statuses": true, "/sprint-op": true, "/policy": true}
 	reJobPost = regexp.MustCompile(`^/jobs/[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
 )
 
@@ -411,7 +415,7 @@ func (s *Server) dispatch(q *rq, path, query string) {
 		return
 	}
 	if q.r.Method != http.MethodGet && q.r.Method != http.MethodHead {
-		s.text(q, 405, "Method Not Allowed(定期実行の設定・報告の対応済み・agent の操作以外は読み取り専用です)", [2]string{"Allow", "GET, HEAD"})
+		s.text(q, 405, "Method Not Allowed(書き込みは決まった画面のフォームからだけです)", [2]string{"Allow", "GET, HEAD"})
 		return
 	}
 	s.get(q, path, query)
@@ -538,8 +542,12 @@ func (s *Server) route(q *rq, path, query, logout, csrf string) {
 			s.html(q, 404, s.page(q, "見つかりません", "<p>そのページはありません。</p>", "", logout, pageOpts{}))
 			return
 		}
-		saved := pyParseQS(query)["saved"]
-		title, body := s.pageJob(q, name, csrf, "", len(saved) == 1 && saved[0] == "1")
+		qs := pyParseQS(query)
+		saved, done := qs["saved"], ""
+		if d := qs["done"]; len(d) == 1 && d[0] == "conf" {
+			done = "conf"
+		}
+		title, body := s.pageJobDraft(q, name, csrf, "", len(saved) == 1 && saved[0] == "1", done, nil)
 		s.html(q, 200, s.page(q, title, body, "/jobs/"+name, logout, pageOpts{norefresh: true}))
 		return
 	}
@@ -596,14 +604,18 @@ func (s *Server) post(q *rq, path string) {
 		s.text(q, 403, "Forbidden: Origin/Referer が不正です")
 		return
 	}
-	form := body(q.r)
+	limit := int64(MaxBody)
+	if editPaths[path] || strings.HasPrefix(path, "/jobs/") { // 本文(policy・ジョブの定義)を送る画面
+		limit = MaxEditBody
+	}
+	form := bodyN(q.r, limit)
 	if form == nil {
 		s.text(q, 413, "Payload Too Large")
 		return
 	}
 	tok := sessionToken(q.r)
 	sh := a.SessionHash(tok)
-	authed := strings.HasPrefix(path, "/jobs/") || path == "/resolve" || path == "/agent-op" || path == "/agent-new"
+	authed := strings.HasPrefix(path, "/jobs/") || path == "/resolve" || path == "/agent-op" || path == "/agent-new" || editPaths[path]
 	if authed && sh == "" {
 		s.redirect(q, "/login")
 		return
@@ -634,6 +646,10 @@ func (s *Server) post(q *rq, path string) {
 	}
 	if path == "/agent-new" {
 		s.safe(q, func() { s.postAgentNew(q, form, a.FormToken("s:"+sh)) })
+		return
+	}
+	if editPaths[path] { // チケットの状態・状態の定義・スプリント・policy(書き込みは tb が行う。edits.go)
+		s.safe(q, func() { s.postEdit(q, path, form, a.FormToken("s:"+sh)) })
 		return
 	}
 	switch path {

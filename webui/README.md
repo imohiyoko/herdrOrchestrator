@@ -8,7 +8,8 @@ agent・タスク・報告・定期実行・送信履歴・権限を、ブラウ
 - まとめ送信(10 分おき)より急ぐものは「緊急通知」(`/notifications`)に集め、ナビにも件数バッジを出す。
   Web UI のタブが開いていれば、新しく出たものを Chrome のデスクトップ通知でも出す(下の「緊急通知」)。
 - **変更できるのは定期実行のスケジュール**(`/jobs/<job>`: 間隔・時間帯・曜日・一時停止)と、**question / blocked の報告を「対応済みにする」**(`/inbox` とタスク画面。書き込みは `tb resolve` が行い、tasks.db には直接書かない)、
-  **agent の停止・復活・新規作成**(`/agents` と `/agent-new`。書き込みと herdr の操作は `tb agent-stop` / `agent-revive` / `agent-new` / `agent-approve` / `agent-reject` が行う。下の「agent の操作」)**だけ**。
+  **agent の停止・復活・新規作成**(`/agents` と `/agent-new`。書き込みと herdr の操作は `tb agent-stop` / `agent-revive` / `agent-new` / `agent-approve` / `agent-reject` が行う。下の「agent の操作」)、
+  **チケットの状態・状態の定義・スプリント・policy・ジョブの定義(本文)の編集**(下の「Web UI からの編集」。書き込みはどれも tb が行う)**だけ**。
   それ以外は読み取り専用で、POST/PUT/DELETE/PATCH は 405。入力欄のある画面は自動更新しない。
   agent の承認ダイアログに答えるボタンはない(承認は人が手元の端末で行う)。
 
@@ -97,7 +98,7 @@ rm ~/.local/state/herdr-webui/auth.json ~/.local/state/herdr-webui/sessions.json
 - Cookie は 1 つ(`herdr_webui_session`)で `HttpOnly; SameSite=Strict; Path=/`。
 - checkout の `webui/run/` には、待ち受けたポートの `port` だけを置く。旧い `webui/run/auth.json` はもう読まない(setup の確認で warn)。
 
-POST を受け付けるのは `/login`・`/setup`・`/logout`・`/reset`・`/jobs/<job>`・`/resolve`・`/agent-op`・`/agent-new` だけ(`/jobs/<job>`・`/resolve`・`/agent-op`・`/agent-new` はログイン中のセッションに結びついたトークンが必要)。これらは `Origin`/`Referer` が自分のオリジン
+POST を受け付けるのは `/login`・`/setup`・`/logout`・`/reset`・`/jobs/<job>`・`/resolve`・`/agent-op`・`/agent-new`・`/task-status`・`/statuses`・`/sprint-op`・`/policy` だけ(`/logout`・`/setup`・`/login`・`/reset` 以外はログイン中のセッションに結びついたトークンが必要)。これらは `Origin`/`Referer` が自分のオリジン
 (`127.0.0.1:<ポート>` か `localhost:<ポート>`)であることと、フォームの隠しトークン(署名付き・30 分で失効)を確認する。それ以外の
 POST/PUT/DELETE/PATCH は 405。
 
@@ -118,18 +119,40 @@ POST/PUT/DELETE/PATCH は 405。
 | `/agent-new` | 新しい agent を作るフォーム(名前・作業ディレクトリ・モデル・役割・止めてよいか・最初の指示) |
 | `/agents/<名前>` | 状態、担当タスク、直近の出力(`herdr agent read`)、最終入力/停止、`session_id`、手元で開く `herdr agent attach`(`claude --resume` は会話が枝分かれするので出さない) |
 | `/tasks` | タスク一覧(読み取りのみ)。**既定は未完了だけ**(分類 done・cancelled を除く)。上の切り替えで「未完了 / 閉じたもの / すべて」(`?view=open\|closed\|all`)、状態ごとの件数を押すとその状態だけ。絞り込み: `?q=`(ID・題の部分一致) `?project=` `?owner=`(担当 agent。`~` は未割り当て) `?status=`(複数可。選ぶと表示の切り替えより優先) `?type=` `?priority=` `?label=` `?due=overdue\|soon&days=N` `?unreported=1`(未報告だけ) `?stale=1`(作業中のまま 24 時間超更新が無い「停滞」だけ。しきい値は `internal/webui/tasks.go` の `taskStaleHrs`)。今の条件はチップで並び、× で 1 つずつ外せる。選択欄は変えたらすぐ反映する(`/filter.js`。キーワードと日数は Enter か「絞り込む」)。`?sort=`(`project` / `oldest` / `created` / `id` / `due` / `priority`)で並び替え。既定の並びは優先順(未対応の報告があるもの → blocked → in_progress → review → todo → done・cancelled)で、最大 300 件。超えたときは「N 件のうち 300 件だけ表示」と明示する。親子(parent_id)、報告の種別ごとの件数(人が未対応の question / blocked を強調)、成果物の数、停滞の目印を出す。題は先頭 80 文字だけ。session_id は詳細画面に出す。表は狭い画面では横にスクロールする |
-| `/tasks/<id>` | タスクの詳細: 親へのリンク・子タスクの一覧・session・成果物のパス・報告(先頭 1000 文字、人が対応済みにしたか)・代行依頼。報告の「対応済みにする」(`/resolve`)は既存の操作で、このページで増えた書き込みは無い |
+| `/tasks/<id>` | タスクの詳細: 親へのリンク・子タスクの一覧・session・成果物のパス・報告(先頭 1000 文字、人が対応済みにしたか)・代行依頼。報告の「対応済みにする」(`/resolve`)と、「状態を変える」(`/task-status`。`tb ticket move`)。入力欄があるので自動更新しない |
+| `/statuses` | チケットの状態の定義(設定 `statuses`): 状態・分類・説明・チケットの件数と、状態を足す(`tb ticket status add`)・外す(`tb ticket status rm`。チケットが残っていれば移し先を選ぶ)フォーム |
+| `/board` | スプリントのボード(状態ごとの列)とスプリント一覧。スプリントを作る(`tb sprint-add`)・始める(`tb sprint-start`)・閉じる(`tb sprint-close`。残りは次の planned かバックログへ) |
 | `/inbox` | 要対応(question・blocked・pending-human・blocked の agent)を上に、直近の報告を下に。`tb reminder publish` の結果があれば一番上に「忘れているかも」(優先度順。項目は既存の画面へリンク)、保留した送信(`inbox` 表)があれば「保留した送信」(本文は出さず、「本文を見る」で 1 件ずつ `/inbox?held=<n>`)。どちらも読むだけ |
 | `/docs` | agent が成果物として報告したドキュメント(ローカルのファイル)の一覧。新しい順、`?q=` で絞り込み |
 | `/docs/view?ref=<参照>` | そのドキュメントを読む。Markdown は整形して表示(Mermaid は図に。「元のテキストを表示」で切り替え)、フォルダなら中のファイル一覧 |
 | `/docs/view?path=<絶対パス>` | パスを指定して読む(agent の作業ディレクトリ配下だけ。`/docs` の入力欄から) |
 | `/jobs` | 各 job の型・宛先(agent 名 / コマンド)・実際に効く設定(間隔・時間帯・曜日・有効/一時停止)、最終記録と最後の実行 |
-| `/jobs/<job>` | 「ジョブが行うこと」(型・宛先 agent と今の状態・送られる本文 / 実行されるコマンドの全文・次回の予定・直近の結果・副作用の注記・承認の扱い。読み取りのみ)と、スケジュールの変更フォーム(自動更新しない)。保存先は DB の `sched-settings:<job>`(このセッションの行。`tb job set --settings` を通す)、次の分から反映。残っている `scheduler/settings/<job>.settings` は消す。保存後に scheduler の読む値が変わったかを確かめる。「conf の値に戻す」で DB の行を消す |
+| `/jobs/<job>` | 「ジョブが行うこと」(型・宛先 agent と今の状態・送られる本文 / 実行されるコマンドの全文・次回の予定・直近の結果・副作用の注記・承認の扱い。読み取りのみ)と、スケジュールの変更フォーム(自動更新しない)。保存先は DB の `sched-settings:<job>`(このセッションの行。`tb job set --settings` を通す)、次の分から反映。残っている `scheduler/settings/<job>.settings` は消す。保存後に scheduler の読む値が変わったかを確かめる。「conf の値に戻す」で DB の行を消す。その下に定義(conf の本文: `TARGET`・`PROMPT`・`COMMAND` など)の編集欄(`tb job set <job>`) |
 | `/ledger` | 送信履歴(tb の `messages` 表)。種別 × 結果の件数サマリと直近 100 件。failed は既定で畳む。`?kind=` `?result=`(sent / busy / failed / all) `?target=` `?from=` `?to=`(日付 `YYYY-MM-DD`、UTC)で絞り込み。send の `O-n` は `/outbox` にリンクし、本文は 1 行目だけ |
 | `/sessions` | セッション一覧(URL に書ける全セッションへのリンクと、それぞれの緊急通知・報告待ちの件数) |
-| `/perms` | 権限(設定 `policy` の読み取り。tb と同じく DB のこのセッションの行 → 共通の行 → `taskboard/config/policy.conf`。`.example` は既定値にしない)。policy の行(主体・操作・対象・効果・最後の変更)、警告(広い allow、ほかの行に締められて効かない allow など)、「この操作はどう決まるか」の検索(`?op=`、tb の判定と同じく当たる行のいちばん厳しい効果、無ければ既定の表 `perms/ops.tbl`。tb は呼ばない)、操作ごとの今の権限(権限カタログ `approvals-catalog.conf` と突き合わせ)、変えるためのコマンドと policy の行の組み立て(表示だけ。実行は人が端末で) |
+| `/perms` | 権限(設定 `policy` の読み取り。tb と同じく DB のこのセッションの行 → 共通の行 → `taskboard/config/policy.conf`。`.example` は既定値にしない)。policy の行(主体・操作・対象・効果・最後の変更)、警告(広い allow、ほかの行に締められて効かない allow など)、「この操作はどう決まるか」の検索(`?op=`、tb の判定と同じく当たる行のいちばん厳しい効果、無ければ既定の表 `perms/ops.tbl`。tb は呼ばない)、操作ごとの今の権限(権限カタログ `approvals-catalog.conf` と突き合わせ)、変えるためのコマンドと policy の行の組み立て(表示だけ。実行は人が端末で)、policy の本文の編集欄(`/policy`。ログインのパスワードが要る) |
 
 名前の無い agent は `pane_id`(例: `w2:p3`)が名前の代わりになる。未知の URL は 404。
+
+## Web UI からの編集
+
+どれも書き込みは tb が行い(tasks.db・config 表には直接書かない)、検査と認可も tb のものを通る。tb が断ったときは、その画面を tb の出力つきで出し直す(入力は残す)。
+Web UI から呼ぶ tb は `HERDR_PANE_ID` を外して動かすので、人の操作として扱われ、記録にも `human` が残る。
+
+| 何を | どこで | 書くもの |
+| --- | --- | --- |
+| チケットの状態 | `/tasks/<id>` の「状態を変える」 | `tb ticket move <id> <状態> [-m メモ]`(どの状態へも。メモは閉じた分類なら要約) |
+| 状態の定義 | `/statuses` | `tb ticket status add <状態> <分類> [-m 説明] [--after 状態]` / `tb ticket status rm <状態> [--to 状態]`。名前を変えるには、足してから古い方を移して外す |
+| スプリント | `/board` | `tb sprint-add -p <PJ> -n <名前> [--start] [--end] [--goal]`、`tb sprint-start S-n`、`tb sprint-close S-n [--carry S-m]` |
+| ジョブの定義(本文) | `/jobs/<job>` の「定義(本文)を編集する」 | `tb job set <job>`(scheduler が読めることを確かめてから書く。共通の行から読んでいれば `--shared`) |
+| policy | `/perms` の「policy を編集する」 | `tb config set policy`(tb と同じ検査。共通の行から読んでいれば `--shared`) |
+
+- **policy は人だけが変える**: 保存のたびにログインのパスワードを求める(失敗はログインの失敗と同じく数え、続けばロック)。
+  agent からの `tb config set policy` は、変わる行ごとの `policy:<操作> <主体>` で止まる(tb 側)。Web UI はログインした人の操作なのでそれを通らない代わりに、パスワードを確かめる。
+- **本文を書き換える画面(ジョブの定義・policy)は、編集を始めたときの版を持つ**。保存の前にほかで変わっていれば書かず、開き直すよう伝える。
+- 本文にトークンらしい文字列があるジョブの定義は、本文を出さず編集もしない(手元の `tb job edit`)。定義がまだファイル(`jobs/<job>.conf`)だけのジョブは、先に `tb job import`。
+  制御文字を含む本文・大きすぎる本文(256 KiB 文字超)も Web UI からは書かない。`WEBUI_POLICY` で表示用の policy ファイルを指定しているときは、tb が読むものと違いうるので policy を書かない。
+- 変更の履歴は `tb job history <job>` / `tb config history policy` / `tb history <id>`(チケット)。
 
 ## データ源(すべて読み取りのみ)
 
