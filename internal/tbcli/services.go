@@ -23,7 +23,7 @@ var agentVerbs2 = map[string]map[string]cmdFunc{
 }
 
 var recipeVerbs = map[string]cmdFunc{
-	"set": cmdRecipeSet, "rm": cmdRecipeRm, "list": cmdRecipeList, "show": cmdRecipeShow, "history": cmdRecipeHistory,
+	"set": cmdRecipeSet, "rm": cmdRecipeRm, "list": cmdRecipeList, "show": cmdRecipeShow, "history": cmdRecipeHistory, "run": cmdRecipeRun, "runner": cmdRecipeRunner, "queue": cmdRecipeQueue, "cancel": cmdRecipeCancel,
 }
 
 var recipeVerbs2 = map[string]map[string]cmdFunc{
