@@ -106,6 +106,16 @@ nsql "DELETE FROM outbox WHERE target='w4';"; nsql "DELETE FROM messages WHERE t
 # 状態の名前で書いたもの(設定 statuses から外した名前は当たらないだけで、実行は止めない)
 printf 'wake in_progress no-longer-there\n' >"$TB_NUDGE"
 eq "nudge: wake に状態の名前" "$(out=$($TB nudge --dry-run); row w1) $($TB nudge --dry-run | grep -c '^w4')" "$t1 would 0"
+# --wake: その実行だけ設定 nudge の wake の代わりに使う(scheduler のジョブごとに分けられる)
+eq "nudge --wake: 設定の wake を置き換える" "$(out=$($TB nudge --wake todo --dry-run); row w4) $($TB nudge --wake todo --dry-run | grep -c '^w1')" "$t6 would 0"
+eq "nudge --wake: カンマ区切りと複数回を足し合わせる" "$(out=$($TB nudge --wake todo,active --dry-run); row w1) $(out=$($TB nudge --wake todo --wake in_progress --dry-run); row w1)" "$t1 would $t1 would"
+eq "nudge --wake: 渡さなければ設定のまま" "$($TB nudge --dry-run | grep -c '^w4')" "0"
+eq "nudge --wake: 閉じた分類は使い方の誤り" "$($TB nudge --wake done --dry-run 2>/dev/null; echo "rc=$?")" "rc=2"
+eq "nudge --wake: 知らない名前は使い方の誤り" "$($TB nudge --wake actve --dry-run 2>&1 >/dev/null | head -1)" "--wake: 分類にも状態(設定 statuses)にもない名前です: actve"
+eq "nudge --wake: 値が無い" "$(rc $TB nudge --dry-run --wake)" "2"
+eq "nudge --wake: 空の値" "$(rc $TB nudge --wake '' --dry-run)" "2"
+eq "nudge --wake: 空の値はほかの --wake があっても断る" "$(rc $TB nudge --wake '' --wake todo --dry-run) $(rc $TB nudge --wake ' ' --wake todo --dry-run)" "2 2"
+eq "nudge --wake: # を注釈として落とさない" "$(rc $TB nudge --wake 'todo #actve' --dry-run)" "2"
 : >"$TB_NUDGE"
 # 明示した宛先に当たる agent がいなければ、黙って終わらずに skip の行を出す
 eq "nudge: 当たらない宛先 → skip の行" "$($TB nudge no-such-agent --dry-run | cut -f1-3 | tr '\t' ' ')" "no-such-agent - skip"

@@ -42,6 +42,7 @@ type Nudge struct {
 	St      tickets.StatusSet
 	Stderr  io.Writer
 	Targets []string
+	Wake    []string // --wake(空でなければ設定 nudge の wake の代わりに使う。ignore と移行は設定のまま)
 	Pool    bool
 	Dry     bool
 	Idle    int
@@ -280,6 +281,9 @@ func (n *Nudge) Run() ([]NudgeRow, error) {
 			fmt.Fprint(n.Stderr, bad)
 			return nil, ErrConfig{}
 		}
+	}
+	if len(n.Wake) > 0 {
+		wake = n.Wake
 	}
 	wakeNames := n.wakeNames(wake)
 	wakeSQL := n.sqlList(wakeNames)
