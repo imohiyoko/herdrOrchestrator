@@ -48,7 +48,7 @@ func DefaultEnv() Env {
 // dbBody は sched_db_body: DB のこのセッションの行 > 共通の行(*)。DB が無い・読めない・本文が NULL なら無い。
 func (e Env) dbBody(key string) (string, bool) {
 	if b, ok := e.Bodies[key]; ok {
-		return strings.TrimRight(b, "\n"), b != ""
+		return strings.TrimRight(b, "\n"), true // 空でも渡された本文として読む(ファイルへ戻らない)
 	}
 	if st, err := os.Stat(e.DB); err != nil || !st.Mode().IsRegular() {
 		return "", false

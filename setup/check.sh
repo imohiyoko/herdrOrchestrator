@@ -257,12 +257,14 @@ if [ -f "$db" ] && have sqlite3; then
     | grep -E '^[A-Za-z0-9][A-Za-z0-9_-]*$')
 fi
 # Go 版の scheduler(herdrctl sched。既定で使われる)が読めるか。読めなければ理由を出す(SCHED_IMPL=bash なら見ない)
+# herdrctl は scheduler(scheduler/bin/lib.sh)と同じく SCHED_HERDRCTL > TB_HERDRCTL > PATH
+SCHED_HC="${SCHED_HERDRCTL:-$HERDRCTL}"
 SCHED_LINT=0
-if [ "${SCHED_IMPL:-}" != bash ] && have "$HERDRCTL" && [[ " $("$HERDRCTL" sched --features 2>/dev/null) " == *" lint "* ]]; then SCHED_LINT=1; fi
+if [ "${SCHED_IMPL:-}" != bash ] && have "$SCHED_HC" && [[ " $("$SCHED_HC" sched --features 2>/dev/null) " == *" lint "* ]]; then SCHED_LINT=1; fi
 job_go_err() {  # $1=job $2=本文
   [ "$SCHED_LINT" = 1 ] || return 0
   local out
-  out=$(printf '%s\n' "$2" | SCHED_ROOT="$ROOT/scheduler" TB_DB="$db" HERDR_SESSION="$SJ_SESS" "$HERDRCTL" sched lint "$1" 2>&1 >/dev/null) || printf '%s' "${out#error: }"
+  out=$(printf '%s\n' "$2" | SCHED_ROOT="$ROOT/scheduler" TB_DB="$db" HERDR_SESSION="$SJ_SESS" "$SCHED_HC" sched lint "$1" 2>&1 >/dev/null) || printf '%s' "${out#error: }"
 }
 # job_status <job> <必須なら 1>: 定義の有無と /path/to/ の残りを report する。DB に定義があれば 0
 job_status() {
@@ -273,7 +275,10 @@ job_status() {
       report missing "job:$job" "DB の定義に /path/to/ が残っている" "実際のパスに直す: taskboard/bin/tb job edit $job"
     else
       local gerr; gerr=$(job_go_err "$job" "$body")
-      if [ -n "$gerr" ]; then
+      if [[ "$gerr" == *": settings "* ]]; then   # 上書き設定(sched-settings:<job>)の誤り。本文を直しても消えない
+        report warn "job:$job" "上書き設定を Go 版の scheduler が読めない(このままでは動かない): $gerr" \
+          "上書き設定を直す: taskboard/bin/tb job edit $job --settings(Web UI のスケジュール画面でも直せる)"
+      elif [ -n "$gerr" ]; then
         report warn "job:$job" "DB の定義を Go 版の scheduler が読めない(このままでは動かない): $gerr" \
           "書き直す: taskboard/bin/tb job edit $job(KEY=値 だけ。\$ や \` の展開は使わない。scheduler/README.md の「Go 版」)。当面は SCHED_IMPL=bash で bash 版に戻せる"
       else report ok "job:$job" "DB に定義あり(sched-job:$job)"; fi

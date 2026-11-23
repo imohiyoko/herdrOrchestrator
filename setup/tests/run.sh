@@ -40,7 +40,7 @@ fresh() {
   for c in python3 claude plutil; do ln -s "$HERE/fake/stub" "$B/$c"; done
   ln -s "$SQLITE" "$B/sqlite3"
   ln -s "$HERE/fake/herdr" "$B/herdr"; ln -s "$HERE/fake/launchctl" "$B/launchctl"; ln -s "$HERE/fake/herdrctl" "$B/herdrctl"
-  unset FAKE_HERDRCTL_FEATURES FAKE_SCHED_FEATURES
+  unset FAKE_HERDRCTL_FEATURES FAKE_SCHED_FEATURES FAKE_LINT_MSG
   export FAKE_LOADED="local.herdr-sched-taskboard-digest local.herdr-webui" FAKE_HERDR_DOWN=0 FAKE_LOG="$W/calls.log"
   OSNAME=Darwin
 }
@@ -55,7 +55,7 @@ hook_json() {
 run() {
   OUT=$(env -i PATH="$B" HOME="$H" SETUP_ROOT="$R" LAUNCH_AGENTS_DIR="$LA" SETUP_UNAME="$OSNAME" \
     FAKE_LOADED="$FAKE_LOADED" FAKE_HERDR_DOWN="$FAKE_HERDR_DOWN" FAKE_LOG="$FAKE_LOG" \
-    ${FAKE_HERDRCTL_FEATURES+FAKE_HERDRCTL_FEATURES="$FAKE_HERDRCTL_FEATURES"} ${FAKE_SCHED_FEATURES+FAKE_SCHED_FEATURES="$FAKE_SCHED_FEATURES"} \
+    ${FAKE_HERDRCTL_FEATURES+FAKE_HERDRCTL_FEATURES="$FAKE_HERDRCTL_FEATURES"} ${FAKE_SCHED_FEATURES+FAKE_SCHED_FEATURES="$FAKE_SCHED_FEATURES"} ${FAKE_LINT_MSG+FAKE_LINT_MSG="$FAKE_LINT_MSG"} \
     "$B/bash" "$CHECK" "$@" 2>&1)
   RC=$?
 }
@@ -108,6 +108,8 @@ fresh; FAKE_HERDRCTL_FEATURES="perms policy"; run; has "古い herdrctl" warn cm
 fresh; FAKE_SCHED_FEATURES="show tick lint"; run; has "Go 版が読める定義は ok" ok job:taskboard-digest "DB に定義あり"
 fresh; FAKE_SCHED_FEATURES="show tick lint"; sjob taskboard-digest 'COMMAND=$(id)'; run
 has "Go 版が読めない定義は warn" warn job:taskboard-digest "Go 版の scheduler が読めない"; has "読めない理由を出す" warn job:taskboard-digest "展開は使えない"
+fresh; FAKE_SCHED_FEATURES="show tick lint"; FAKE_LINT_MSG="taskboard-digest: settings の ENABLED は 0 か 1"; run
+has "上書き設定の誤りは上書き設定の誤りとして出す" warn job:taskboard-digest "上書き設定を Go 版"
 fresh; sjob taskboard-digest 'COMMAND=$(id)'; run; has "sched lint の無い herdrctl なら見ない" ok job:taskboard-digest "DB に定義あり"
 fresh; rm "$B/plutil"; OSNAME=Linux; run; hasnt "macOS 以外は plutil を見ない" warn cmd:plutil
 

@@ -38,6 +38,9 @@ func TestSodLabelAndInterval(t *testing.T) {
 }
 
 func TestLoadFromBodies(t *testing.T) {
+	for _, k := range []string{"SCHED_WINDOW", "SCHED_START", "SCHED_END", "SCHED_INTERVAL_MIN", "SCHED_INTERVAL_SEC"} {
+		t.Setenv(k, "")
+	}
 	d := t.TempDir()
 	e := Env{Root: d, JobsDir: d, SettingsDir: d, DB: d + "/none.db", Session: "default"}
 	e.Bodies = map[string]string{"sched-job:x": "TARGET=a\nPROMPT=hi\nWINDOW=09:00-10:00\nINTERVAL_MIN=5\n"}

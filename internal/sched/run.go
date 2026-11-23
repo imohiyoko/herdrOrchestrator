@@ -74,7 +74,10 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		}
 		e := DefaultEnv()
 		e.Bodies = map[string]string{"sched-job:" + name: string(body)}
-		_, err = e.Load(name)
+		j, err := e.Load(name)
+		if err == nil {
+			_, err = DaysToNums(j.Name, j.Days) // show / tick と同じく DAYS も確かめる
+		}
 		return finish(err, stderr)
 	case "--features":
 		fmt.Fprintln(stdout, strings.Join(Features, " "))

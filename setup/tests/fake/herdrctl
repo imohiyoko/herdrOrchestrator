@@ -5,6 +5,7 @@ if [ "$1 $2" = "tb --features" ]; then echo "${FAKE_HERDRCTL_FEATURES-perms poli
 # sched: FAKE_SCHED_FEATURES があれば sched --features に答える(無ければ sched を知らない古い版)。sched lint は本文に $( があれば読めない
 if [ "$1 $2" = "sched --features" ]; then [ -n "${FAKE_SCHED_FEATURES:-}" ] && { echo "$FAKE_SCHED_FEATURES"; exit 0; }; exit 2; fi
 if [ "$1 $2" = "sched lint" ]; then
+  [ -n "${FAKE_LINT_MSG:-}" ] && { echo "error: $FAKE_LINT_MSG" >&2; exit 2; }
   if grep -q '\$(' ; then echo "error: $3: 展開は使えない" >&2; exit 2; fi
   exit 0
 fi
