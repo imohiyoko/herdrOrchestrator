@@ -463,6 +463,9 @@ var (
 )
 
 // buildHerdrctl は Python 版の定期実行の画面が呼ぶ herdrctl(scheduler/bin/show.sh が渡す先)を作る。
+// startEnv はテストが環境変数を変える前の環境。
+var startEnv = os.Environ()
+
 func buildHerdrctl(t *testing.T) string {
 	herdrctlOnce.Do(func() {
 		dir, err := os.MkdirTemp("", "herdrctl-")
@@ -471,7 +474,9 @@ func buildHerdrctl(t *testing.T) string {
 			return
 		}
 		herdrctlBin = filepath.Join(dir, "herdrctl")
-		out, err := exec.Command("go", "build", "-o", herdrctlBin, "../../cmd/herdrctl").CombinedOutput()
+		cmd := exec.Command("go", "build", "-o", herdrctlBin, "../../cmd/herdrctl")
+		cmd.Env = startEnv // テストが HOME を変えたあとでも、いつものモジュールキャッシュを使う(一時ディレクトリに落とすと読み取り専用で消せない)
+		out, err := cmd.CombinedOutput()
 		if err != nil {
 			herdrctlErr = fmt.Errorf("%v: %s", err, out)
 		}
