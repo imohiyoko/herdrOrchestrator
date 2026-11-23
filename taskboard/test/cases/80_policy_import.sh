@@ -15,6 +15,7 @@ eq "import: '* = allow' becomes the inner op families, not '* * *'" \
 eq "import: grants become allow rows" "$(grep -c '^  lead send:task ~child = allow' <<<"$out")" "1"
 eq "import: a grant under an ask row is flagged" "$(grep -c 'grants 1 行目 lead send:task ~child は' <<<"$out")" "1"
 eq "import: an approvals cmd: row is skipped" "$(printf 'cmd:ticket:list = allow\n' >"$TB_APPROVALS"; env -u HERDR_PANE_ID $TB policy import | grep -c 'cmd: の行は前から効いていない')" "1"
+eq "import: role:change is not given to a role name (a human writes who gets it)" "$(printf 'role:change = allow\n' >"$TB_APPROVALS"; env -u HERDR_PANE_ID $TB policy import 2>&1 | grep -c 'role:change は誰に許すかを決めて policy に直接書く') $(env -u HERDR_PANE_ID $TB policy import 2>&1 | grep -c '@hr')" "1 0"
 eq "import: not from an agent pane" "$(FAKE_AGENTS='[{"pane_id":"wX:p1","name":"x1","agent_session":{"value":"sx"}}]' HERDR_PANE_ID=wX:p1 rc $TB policy import)" "1"
 printf '* = allow\n' >"$TB_APPROVALS"
 out=$(env -u HERDR_PANE_ID $TB policy import --apply 2>&1)
@@ -26,8 +27,8 @@ eq "import: nothing to convert" "$(env -u HERDR_PANE_ID $TB policy import)" "古
 
 # tb allow / ask も同じ: 広い glob はコマンドの中の操作の族に分けて書く
 : >"$TB_POLICY"
-eq "allow '*': inner op families only" "$(env -u HERDR_PANE_ID $TB allow '*' | wc -l | tr -d ' ') $(grep -c '^\* \* \*' "$TB_POLICY") $(grep -cE '^\* (cmd|approve|agent:flag)' "$TB_POLICY")" "18 0 0"
-eq "allow '*' again: rows are replaced, not added" "$(env -u HERDR_PANE_ID $TB ask '*' >/dev/null; grep -c '= ask' "$TB_POLICY") $(grep -c '= allow' "$TB_POLICY")" "18 0"
+eq "allow '*': inner op families only" "$(env -u HERDR_PANE_ID $TB allow '*' | wc -l | tr -d ' ') $(grep -c '^\* \* \*' "$TB_POLICY") $(grep -cE '^\* (cmd|approve|agent:flag)' "$TB_POLICY")" "17 0 0"
+eq "allow '*' again: rows are replaced, not added" "$(env -u HERDR_PANE_ID $TB ask '*' >/dev/null; grep -c '= ask' "$TB_POLICY") $(grep -c '= allow' "$TB_POLICY")" "17 0"
 eq "allow: a cmd: pattern is refused" "$(env -u HERDR_PANE_ID $TB allow 'cmd:ticket:list' 2>&1 >/dev/null | grep -c 'コマンドの中の操作に当たりません'; env -u HERDR_PANE_ID $TB allow 'approve:send:task' >/dev/null 2>&1; echo $?)" "$(printf '1\n1')"
 eq "allow: a narrow pattern is one row" "$(: >"$TB_POLICY"; env -u HERDR_PANE_ID $TB allow 'agent:stop:w1')" "* agent:stop w1 = allow"
 

@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -21,20 +20,13 @@ import (
 
 func now() string { return time.Now().UTC().Format("2006-01-02T15:04:05Z") }
 
-// HRName は TB_HR_NAME(既定 hr)。
-func HRName() string {
-	if n := os.Getenv("TB_HR_NAME"); n != "" {
-		return n
-	}
-	return "hr"
-}
-
-// Target は proposal_target: 提案の宛先・担当。設定 projects の proposal=<名前> の行(最後の行が勝つ)。無ければ HRName。
+// Target は proposal_target: 提案の宛先・担当。設定 projects の proposal=<名前> の行(最後の行が勝つ)。
+// 無ければ既定の宛先(projects の * の行)。どちらも無ければ空(役割の名前をコードで決め打ちしない)。
 func Target(db *sql.DB, session string) string {
-	t := HRName()
+	t, star := "", ""
 	body, _, ok := config.Lookup(db, session, "projects")
 	if !ok {
-		return t
+		return ""
 	}
 	for _, line := range config.Lines(body) {
 		k, v := readKV(line)
@@ -42,6 +34,12 @@ func Target(db *sql.DB, session string) string {
 		if k == "proposal" && v != "" {
 			t = v
 		}
+		if k == "*" && v != "" {
+			star = v
+		}
+	}
+	if t == "" {
+		t = star
 	}
 	return t
 }

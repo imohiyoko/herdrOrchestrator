@@ -234,7 +234,7 @@ func cmdCompactCheck(args []string, w, stderr io.Writer) error {
 		fmt.Fprintln(w, "compact-check: disabled (config/compact.conf の enabled = 1 で有効)")
 		return nil
 	}
-	thrS, minS, ex := cfg("threshold_tokens", "150000"), cfg("min_interval_sec", "1800"), cfg("exclude", "conductor")
+	thrS, minS, ex := cfg("threshold_tokens", "150000"), cfg("min_interval_sec", "1800"), cfg("exclude", "")
 	if !reDigits.MatchString(thrS) || !reDigits.MatchString(minS) {
 		return die("compact.conf の threshold_tokens / min_interval_sec は 0 以上の整数")
 	}

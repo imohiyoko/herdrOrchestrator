@@ -729,14 +729,3 @@ func OpsOf(op string) []string {
 	}
 	return out
 }
-
-// SubjectOf は古い approvals の行を policy に書くときの主体。role:change は人事役(TB_ROLE_ADMIN、既定 hr)にだけ効いていた。
-func SubjectOf(op string) string {
-	if op == "role:change" {
-		if a := os.Getenv("TB_ROLE_ADMIN"); a != "" {
-			return "@" + a
-		}
-		return "@hr"
-	}
-	return "*"
-}

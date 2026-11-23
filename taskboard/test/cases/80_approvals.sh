@@ -2,6 +2,7 @@
 # run.sh から番号順に source される(前のファイルが作った状態を使うものがある)
 # --- approvals(人の承認)
 export TB_DB=$TMP/appr.db TB_CONFIG=$TMP/send.conf TB_POLICY=$TMP/policy.conf
+printf '*=conductor\n' >"$TB_CONFIG"
 export FAKE_AGENTS='[{"pane_id":"wC:p1","name":"conductor","agent_session":{"value":"sc"}},{"pane_id":"wW:p1","name":"worker1","agent_session":{"value":"s1"}}]'
 : >"$FAKE_LOG"
 asql() { sqlite3 "$TB_DB" "$@"; }
@@ -25,10 +26,9 @@ eq "approve --always: sends and allows from now on" "$(HERDR_PANE_ID= $TB approv
 eq "approve --always: policy row written" "$($TB approval send:task:worker1; echo "rc=$?")" "$(printf 'allow\nrule: policy: * send:task worker1 = allow\nrc=0')"
 eq "send: now goes without approval" "$(HERDR_PANE_ID=wC:p1 $TB send worker1 --text fourth)" "O-5 sent to worker1"
 eq "allow: refused from an agent pane" "$(HERDR_PANE_ID=wC:p1 rc $TB allow 'role:change')" "1"
-eq "allow: human (role:change is for the hr role, as approvals was)" "$(HERDR_PANE_ID= $TB allow 'role:change' 2>&1) $($TB approval role:change | head -1)" "@hr role:change * = allow ask"
-eq "allow: rewrites the same line (no duplicate)" "$(HERDR_PANE_ID= $TB allow 'role:change' >/dev/null; grep -c '^@hr role:change \* ' "$TB_POLICY")" "1"
+eq "allow: role:change is refused (no role name in the code; who gets it is written in policy)" "$(HERDR_PANE_ID= rc $TB allow 'role:change') $(grep -c 'role:change' "$TB_POLICY")" "1 0"
 eq "ask: back to ask" "$(HERDR_PANE_ID= $TB ask 'send:task:worker1' >/dev/null; $TB approval send:task:worker1 | head -1)" "ask"
-eq "approval changes recorded" "$(asql "SELECT pattern||'='||value FROM approval_changes ORDER BY id;" | tr '\n' ' ')" "send:task:worker1=allow role:change=allow role:change=allow send:task:worker1=ask "
+eq "approval changes recorded" "$(asql "SELECT pattern||'='||value FROM approval_changes ORDER BY id;" | tr '\n' ' ')" "send:task:worker1=allow send:task:worker1=ask "
 eq "ask: rewrites the row to ask" "$(grep -c '^\* send:task worker1 = ask' "$TB_POLICY")" "1"
 eq "approval: deny row → deny (exit 4)" "$(printf '* send:task worker1 = deny\n' >>"$TB_POLICY"; $TB approval send:task:worker1; echo "rc=$?")" "$(printf 'deny\nrule: policy: * send:task worker1 = deny\nrc=4')"
 eq "send: deny row → denied, not pending" "$(HERDR_PANE_ID=wC:p1 rc $TB send worker1 --text no) $(asql "SELECT status FROM outbox ORDER BY id DESC LIMIT 1;")" "4 denied"

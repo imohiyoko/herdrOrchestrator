@@ -9,6 +9,7 @@ printf '共通の心得\n' >"$TB_ROLES/_common.md"; printf 'worker の役割\n\n
 printf 'lead の役割\n' >"$TB_ROLES/lead.md"; printf 'x\n' >"$TB_ROLES/README.md"; printf 'x\n' >"$TB_ROLES/_private.md"; printf '   \n' >"$TB_ROLES/empty.md"
 printf 'w* = worker\nhr* = hr\nlead1 = lead, worker # 2 つ\nboss = nothing\n' >"$TB_ROLES/map.conf"
 printf '@hr role:change * = allow\n* send:info * = ask\n* send:answer * = ask\n' >"$TB_POLICY_A"
+printf '@lead role:change * = allow\n' >"$TMP/rc-lead.conf"
 rcag() { printf '{"pane_id":"w%s:p1","name":"%s","agent_status":"idle","agent_session":{"value":"s-%s"}}' "$1" "$1" "$1"; }
 export FAKE_AGENTS="[$(rcag w1),$(rcag w2),$(rcag hr1),$(rcag lead1),$(rcag boss),{\"pane_id\":\"wX:p1\",\"agent_session\":{\"value\":\"s-x\"}}]"
 $TB agents >/dev/null 2>&1
@@ -67,11 +68,13 @@ eq "role-write: shared" "$(printf 'analyst(共通)\n' | rcerr $TB role-write ana
 eq "role-write: map" "$(printf 'w* = worker\nhr* = hr\nlead1 = lead, worker\na* = analyst\n' | rcerr $TB role-write @map)" $'@map: db:default。動いている agent に配るには: tb role-broadcast\nrc=0'
 eq "role-write: stored" "$(sqlite3 "$TB_DB" "SELECT herdr_session, key, body, updated_by FROM config WHERE key LIKE 'role%' ORDER BY key;"; sqlite3 "$TB_DB" "SELECT key, changed_by, how FROM config_changes WHERE key LIKE 'role%' ORDER BY id;")" $'default|role-map|w* = worker\nhr* = hr\nlead1 = lead, worker\na* = analyst|human\n*|role:analyst|analyst(共通)|human\ndefault|role:worker|worker(DB)|human\nrole:worker|human|role-write\nrole:analyst|human|role-write\nrole-map|human|role-write'
 eq "role-list: after writes" "$(rcerr $TB role-list)" $'_common\tfile:<TMP>/rc-roles/_common.md\n@map\tdb:default\nanalyst\tdb:*\nempty\tfile:<TMP>/rc-roles/empty.md\nhr\tfile:<TMP>/rc-roles/hr.md\nlead\tfile:<TMP>/rc-roles/lead.md\nworker\tdb:default\nrc=0'
-eq "role-write: non-admin agent" "$(printf 'x\n' | HERDR_PANE_ID=ww1:p1 rcerr $TB role-write worker)" $'tb: ロールを変えられるのは人と人事役(@hr)だけです(w1)\nrc=1'
+eq "role-write: agent without a policy row" "$(printf 'x\n' | HERDR_PANE_ID=ww1:p1 rcerr $TB role-write lead)" $'tb: [role.change.needs-approval] role:change は人の承認が要ります(既定 ask)。人が自分の端末で実行してください: tb role-write lead < 本文\nrc=20'
+eq "role-write: own role" "$(printf 'x\n' | HERDR_PANE_ID=ww1:p1 rcerr $TB role-write worker)" $'tb: 自分の持つ役割(worker)を書き換えられるのは人だけです\nrc=1'
 eq "role-write: admin writes" "$(printf 'worker(hr)\n' | HERDR_PANE_ID=whr1:p1 rcerr $TB role-write worker --shared)" $'worker: db:default。動いている agent に配るには: tb role-broadcast\nrc=0'
-eq "role-write: admin role" "$(printf 'x\n' | HERDR_PANE_ID=whr1:p1 rcerr $TB role-write hr)" $'tb: 人事役の役割(hr)を書き換えられるのは人だけです\nrc=1'
-eq "role-write: admin map" "$(printf 'z* = worker, hr # c\n' | HERDR_PANE_ID=whr1:p1 rcerr $TB role-write @map; printf 'z* = hr=x\n' | HERDR_PANE_ID=whr1:p1 rcerr $TB role-write @map --shared)" $'tb: 人事役(hr)を付ける対応を書けるのは人だけです\nrc=1\n@map: db:default。動いている agent に配るには: tb role-broadcast\nrc=0'
-eq "role-write: custom admin" "$(printf 'x\n' | TB_ROLE_ADMIN=lead HERDR_PANE_ID=whr1:p1 rcerr $TB role-write worker)" $'tb: ロールを変えられるのは人と人事役(@lead)だけです(hr1)\nrc=1'
+eq "role-write: admin role" "$(printf 'x\n' | HERDR_PANE_ID=whr1:p1 rcerr $TB role-write hr)" $'tb: 自分の持つ役割(hr)を書き換えられるのは人だけです\nrc=1'
+eq "role-write: a role that policy lets change roles" "$(printf 'x\n' | TB_POLICY_G=$TMP/rc-lead.conf HERDR_PANE_ID=whr1:p1 rcerr $TB role-write lead)" $'tb: policy で role:change を許される役割(lead)を書き換えられるのは人だけです\nrc=1'
+eq "role-write: admin map" "$(printf 'z* = worker, hr # c\n' | HERDR_PANE_ID=whr1:p1 rcerr $TB role-write @map; printf 'z* = hr=x\n' | HERDR_PANE_ID=whr1:p1 rcerr $TB role-write @map --shared)" $'tb: policy で role:change を許される役割(worker,hr)を付ける対応を書けるのは人だけです\nrc=1\n@map: db:default。動いている agent に配るには: tb role-broadcast\nrc=0'
+eq "role-write: no role name is special (TB_ROLE_ADMIN is not read)" "$(printf 'worker(hr)\n' | TB_ROLE_ADMIN=lead HERDR_PANE_ID=whr1:p1 rcerr $TB role-write worker)" $'worker: db:default。動いている agent に配るには: tb role-broadcast\nrc=0'
 eq "role-write: ask" "$(printf '* send:info * = ask\n* send:answer * = ask\n' >"$TMP/rc-ask.conf"; printf 'x\n' | TB_POLICY_A=$TMP/rc-ask.conf HERDR_PANE_ID=whr1:p1 rcerr $TB role-write worker --shared)" $'tb: [role.change.needs-approval] role:change は人の承認が要ります(既定 ask)。人が自分の端末で実行してください: tb role-write worker --shared < 本文\nrc=20'
 eq "role-write: grant" "$(printf 'hr1 role:change worker = allow\n' >"$TB_POLICY_G"; printf 'worker(grant)\n' | TB_POLICY_A=$TMP/rc-ask.conf HERDR_PANE_ID=whr1:p1 rcerr $TB role-write worker; rm -f "$TB_POLICY_G")" $'worker: db:default。動いている agent に配るには: tb role-broadcast\nrc=0'
 eq "role-write: admin empty" "$(printf '\n' | HERDR_PANE_ID=whr1:p1 rcerr $TB role-write worker)" $'tb: 本文が空です(消すときは人が tb role-unset worker で行を消す)\nrc=1'
@@ -102,12 +105,12 @@ eq "role-set: trailing comma" "$(rcerr $TB role-set w2 lead, --reason $'まと�
 eq "role-set: spaced item" "$(rcerr $TB role-set w1 'worker, lead')" $'tb: ロールは定義のある役割名(tb role-list。カンマ区切りで複数可):  lead\n(tb help で使い方)\nrc=2'
 eq "role-set: README" "$(rcerr $TB role-set w1 README)" $'tb: ロールは定義のある役割名(tb role-list。カンマ区切りで複数可): README\n(tb help で使い方)\nrc=2'
 eq "role-set: not in ledger" "$(rcerr $TB role-set ghost worker)" $'tb: 台帳に無い agent です: ghost(tb agents で確かめる)\nrc=1'
-eq "role-set: name has a role" "$(printf 'w9 の役割\n' | $TB role-write w9 >/dev/null; sqlite3 "$TB_DB" "INSERT INTO agents (name, herdr_session, state, created_by, created_at, updated_at) VALUES ('w9', (SELECT herdr_session FROM agents LIMIT 1), 'stopped', 'human', 'x', 'x');"; rcerr $TB role-set w9 worker)" $'tb: 役割 w9(db:default)があるため、台帳のロールは効きません(その役割を人事役の手順で直す)\nrc=1'
+eq "role-set: name has a role" "$(printf 'w9 の役割\n' | $TB role-write w9 >/dev/null; sqlite3 "$TB_DB" "INSERT INTO agents (name, herdr_session, state, created_by, created_at, updated_at) VALUES ('w9', (SELECT herdr_session FROM agents LIMIT 1), 'stopped', 'human', 'x', 'x');"; rcerr $TB role-set w9 worker)" $'tb: 役割 w9(db:default)があるため、台帳のロールは効きません(その役割の定義を直す)\nrc=1'
 eq "role-set: other session" "$(sqlite3 "$TB_DB" "INSERT INTO agents (name, herdr_session, state, created_by, created_at, updated_at) VALUES ('far', 'other-sess', 'running', 'human', 'x', 'x');"; rcerr $TB role-set far worker)" $'tb: far は herdr セッション \'other-sess\' の agent です。HERDR_SESSION=other-sess を付けて実行してください(ロールはセッション固有)\nrc=1'
 eq "role-set: human" "$(rcerr $TB role-set w1 lead,worker --reason 'リード兼務')" $'w1 role worker -> lead,worker (by human)。本人に配るには: tb role-broadcast w1\nrc=0'
-eq "role-set: non-admin agent" "$(HERDR_PANE_ID=ww2:p1 rcerr $TB role-set w1 worker)" $'tb: ロールを変えられるのは人、人事役(@hr)、policy で role:change を許された agent だけです(w2)\nrc=1'
+eq "role-set: non-admin agent" "$(HERDR_PANE_ID=ww2:p1 rcerr $TB role-set w1 worker)" $'tb: [role.change.needs-approval] role:change は人の承認が要ります(既定 ask)。人が自分の端末で実行してください: tb role-set w1 worker\nrc=20'
 eq "role-set: self" "$(HERDR_PANE_ID=whr1:p1 rcerr $TB role-set hr1 worker)" $'tb: 自分のロールは変えられません\nrc=1'
-eq "role-set: give admin" "$(HERDR_PANE_ID=whr1:p1 rcerr $TB role-set w1 worker,hr)" $'tb: 人事役のロール(hr)を付けられるのは人だけです\nrc=1'
+eq "role-set: give admin" "$(HERDR_PANE_ID=whr1:p1 rcerr $TB role-set w1 worker,hr)" $'tb: policy で role:change を許される役割(worker,hr)を付けられるのは人だけです\nrc=1'
 eq "role-set: admin ok" "$(HERDR_PANE_ID=whr1:p1 rcerr $TB role-set w1 worker)" $'w1 role lead,worker -> worker (by hr1)。本人に配るには: tb role-broadcast w1\nrc=0'
 eq "role-set: admin ask" "$(TB_POLICY_A=$TMP/rc-ask.conf HERDR_PANE_ID=whr1:p1 rcerr $TB role-set w1 lead)" $'tb: [role.change.needs-approval] role:change は人の承認が要ります(既定 ask)。人が自分の端末で実行してください: tb role-set w1 lead\nrc=20'
 eq "role-set: grant only" "$(printf 'w2 role:change w1 = allow\n' >"$TB_POLICY_G"; TB_POLICY_A=$TMP/rc-ask.conf HERDR_PANE_ID=ww2:p1 rcerr $TB role-set w1 lead; rm -f "$TB_POLICY_G")" $'w1 role worker -> lead (by w2)。本人に配るには: tb role-broadcast w1\nrc=0'

@@ -133,7 +133,11 @@ func policyConvert(ab, gb string) (rows, skip, warn string) {
 			continue
 		}
 		for _, d := range ops {
-			fmt.Fprintf(&R, "%s %s %s = %s   # approvals %d 行目: %s = %s\n", perms.SubjectOf(d), d, e.t, v, e.n, e.k, e.v)
+			if d == "role:change" { // 前は人事役(TB_ROLE_ADMIN)にだけ効いていた。誰に許すかは人が決めて書く
+				fmt.Fprintf(&S, "approvals %d 行目: role:change は誰に許すかを決めて policy に直接書く(@<役割> role:change %s = %s): %s = %s\n", e.n, e.t, v, e.k, e.v)
+				continue
+			}
+			fmt.Fprintf(&R, "* %s %s = %s   # approvals %d 行目: %s = %s\n", d, e.t, v, e.n, e.k, e.v)
 		}
 		if e.v != "ask" {
 			continue

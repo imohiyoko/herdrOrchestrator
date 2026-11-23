@@ -4,7 +4,7 @@
 _saved_pane=${HERDR_PANE_ID-}; unset HERDR_PANE_ID
 _saved_conf=$TB_CONFIG; _saved_appr=${TB_POLICY_A-}; _saved_routes=${TB_ROUTES-}
 export TB_DB=$TMP/graph.db TB_CONFIG=$TMP/graph-projects.conf
-printf 'projb=b-conductor\n' >"$TB_CONFIG"
+printf '*=conductor\nprojb=b-conductor\n' >"$TB_CONFIG"
 grsql() { sqlite3 "$TB_DB" "$@"; }
 ag() { printf '{"pane_id":"w%s:p1","name":"%s","agent_status":"%s","agent_session":{"value":"s-%s"}}' "$1" "$1" "${2:-idle}" "$1"; }
 export FAKE_AGENTS="[$(ag conductor),$(ag b-conductor),$(ag worker1 working),$(ag worker2),$(ag worker3),$(ag watcher)]"
@@ -80,7 +80,7 @@ printf '* send:info * = ask\n* send:answer * = ask\n' >"$TB_POLICY_A"
 export FAKE_AGENTS="[$(ag conductor),$(ag worker1),$(ag worker2),$(ag hr1),$(ag watcher)]"
 $TB agents >/dev/null 2>&1
 eq "role-set: unknown role → 2" "$(rc $TB role-set worker1 nosuch)" "2"
-eq "role-set: not from a non-hr agent" "$(HERDR_PANE_ID=wworker1:p1 $TB role-set worker2 watcher 2>&1 | grep -c '人事役(@hr)、policy で role:change')" "1"
+eq "role-set: not from a non-hr agent" "$(HERDR_PANE_ID=wworker1:p1 $TB role-set worker2 watcher 2>&1 | grep -c 'role:change は人の承認が要ります')" "1"
 eq "role-set: hr needs role:change = allow (20)" "$(HERDR_PANE_ID=whr1:p1 rc $TB role-set worker2 watcher)" "20"
 printf '@hr role:change * = allow\n* send:info * = ask\n* send:answer * = ask\n' >"$TB_POLICY_A"
 eq "role-set: hr cannot change itself or grant hr" "$(HERDR_PANE_ID=whr1:p1 rc $TB role-set hr1 worker) $(HERDR_PANE_ID=whr1:p1 rc $TB role-set worker2 hr)" "1 1"

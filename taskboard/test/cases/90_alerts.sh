@@ -2,6 +2,7 @@
 # run.sh から番号順に source される(前のファイルが作った状態を使うものがある)
 # --- alerts(アラート → 解析役)
 export TB_DB=$TMP/alerts.db TB_CONFIG=$TMP/send.conf TB_POLICY_A=$TMP/appr-alert.conf TB_ANALYST_RETRY_SEC=0 TB_ANALYST_MAX=1 TB_ANALYST_CWD=$TMP
+printf '*=conductor\n' >"$TB_CONFIG"
 printf '* alert:analyze * = allow\n* send:info * = ask\n* send:answer * = ask\n' >"$TB_POLICY_A"
 export FAKE_AGENTS='[{"pane_id":"wC:p1","name":"conductor","agent_session":{"value":"sc"}},{"pane_id":"wX:p1","name":"watch1","agent_session":{"value":"sx"}},{"pane_id":"wA:p1","name":"analyst-A1","agent_session":{"value":"sa1"}}]'
 : >"$FAKE_LOG"

@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -196,6 +197,13 @@ func setApproval(db *store.DB, val, pat string, w io.Writer, stderr io.Writer) e
 		target = "*"
 	}
 	ops := perms.OpsOf(op)
+	if i := slices.Index(ops, "role:change"); i >= 0 { // 誰に許すかは人が決めて policy に書く(役割の名前をコードで決め打ちしない)
+		if len(ops) == 1 {
+			return die("tb %s: role:change は誰に許すかを決めて policy に直接書く(例: @<役割> role:change * = allow。tb config edit policy)", val)
+		}
+		ops = slices.Delete(slices.Clone(ops), i, i+1)
+		fmt.Fprintf(stderr, "tb: role:change は書きません(誰に許すかを決めて policy に直接書く: tb config edit policy)\n")
+	}
 	if len(ops) == 0 {
 		return die("tb %s: %s はコマンドの中の操作に当たりません(コマンド cmd:・承認の委任 approve:・権限の変更 policy: は policy に直接書く: tb config edit policy)", val, pat)
 	}
@@ -217,7 +225,7 @@ func setApproval(db *store.DB, val, pat string, w io.Writer, stderr io.Writer) e
 		hit := ""
 		if isRule && len(f) == 3 && f[2] == target {
 			for _, o := range ops {
-				if f[0] == perms.SubjectOf(o) && f[1] == o {
+				if f[0] == "*" && f[1] == o {
 					hit = o
 				}
 			}
@@ -229,7 +237,7 @@ func setApproval(db *store.DB, val, pat string, w io.Writer, stderr io.Writer) e
 		if done[hit] {
 			continue
 		}
-		b.WriteString(perms.SubjectOf(hit) + " " + hit + " " + target + " = " + eff + "   # " + ts + " に人が変更(tb approval " + val + ")\n")
+		b.WriteString("* " + hit + " " + target + " = " + eff + "   # " + ts + " に人が変更(tb approval " + val + ")\n")
 		done[hit] = true
 	}
 	body := strings.TrimSuffix(b.String(), "\n")
@@ -237,7 +245,7 @@ func setApproval(db *store.DB, val, pat string, w io.Writer, stderr io.Writer) e
 		if done[o] {
 			continue
 		}
-		row := perms.SubjectOf(o) + " " + o + " " + target + " = " + eff + "   # " + ts + " に人が追加(tb approval " + val + ")"
+		row := "* " + o + " " + target + " = " + eff + "   # " + ts + " に人が追加(tb approval " + val + ")"
 		if body == "" {
 			body = row
 		} else {
@@ -263,9 +271,9 @@ func setApproval(db *store.DB, val, pat string, w io.Writer, stderr io.Writer) e
 		return err
 	}
 	for _, o := range ops {
-		fmt.Fprintf(w, "%s %s %s = %s\n", perms.SubjectOf(o), o, target, eff)
+		fmt.Fprintf(w, "* %s %s = %s\n", o, target, eff)
 	}
-	if val == "allow" && !strings.ContainsAny(pat, "*?") && perms.SubjectOf(op) == "*" {
+	if val == "allow" && !strings.ContainsAny(pat, "*?") {
 		if tier, rule := approval.NewJudge(db.DB, db.Session).Authorize(pat, ""); tier != "allow" {
 			fmt.Fprintf(stderr, "tb: 注意: もっと厳しい行が当たるため、%s はまだ %s です(%s)\n", pat, tier, rule)
 		}

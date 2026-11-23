@@ -6,7 +6,7 @@ _ng_roles_set=${TB_ROLES+x}; _ng_roles=${TB_ROLES-}
 _ng_saved=("${TB_CONFIG-}" "${TB_ROUTES-}" "${TB_POLICY_A-}" "${TB_DELIVERY-}" "${TB_PROTECT-}" "${HERDR_PANE_ID-}")
 export TB_DB=$TMP/nudge.db TB_CONFIG=$TMP/nudge-projects.conf TB_PROTECT=$TMP/nudge-protect.conf
 unset TB_ROUTES TB_DELIVERY TB_POLICY_A HERDR_PANE_ID
-printf 'ng=coord\n' >"$TB_CONFIG"; : >"$TB_PROTECT"
+printf '*=conductor\nng=coord\n' >"$TB_CONFIG"; : >"$TB_PROTECT"
 export TB_NUDGE=$TMP/nudge-ignore.conf; : >"$TB_NUDGE"
 : >"$FAKE_LOG"
 TAB=$'\t'   # BSD grep has no -P, so the tab goes through a variable
@@ -127,11 +127,11 @@ tc=$(claim coord '指揮役の仕事'); rest sc 30
 eq "nudge: 指揮役も既定で対象(送り手が別なら would)" "$($TB nudge --dry-run | grep "^coord${TAB}" | cut -f3 | tr '\t' ' ')" "would"
 eq "nudge: 設定 nudge が無い → 指揮役は以前どおり skip" "$(TB_NUDGE=$TMP/no-such-nudge.conf $TB nudge --dry-run | grep "^coord${TAB}" | cut -f3 | tr '\t' ' ')" "skip"
 eq "nudge: 設定 nudge が無くても、空の設定を置けば指揮役も対象" "$(: >"$TMP/empty-nudge.conf"; TB_NUDGE=$TMP/empty-nudge.conf $TB nudge --dry-run | grep "^coord${TAB}" | cut -f3)" "would"
-printf 'ng=conductor\n' >"$TB_CONFIG"
+printf '*=conductor\nng=conductor\n' >"$TB_CONFIG"
 t7=$(claim conductor '既定の宛先自身の仕事'); rest sconductor 30
 export FAKE_AGENTS="${FAKE_AGENTS%]},$(ag wX:p1 conductor idle sconductor)]"
 eq "nudge: 送り手が本人と同じ → skip" "$($TB nudge --dry-run | grep "^conductor${TAB}" | cut -f3-4 | tr '\t' ' ')" "skip 送り手が本人と同じ"
-printf 'ng=coord\n' >"$TB_CONFIG"
+printf '*=conductor\nng=coord\n' >"$TB_CONFIG"
 eq "nudge: --json" "$($TB nudge --dry-run --json | jq -r 'select(.agent=="w2") | .result')" "skip"
 eq "nudge: tb list の列は変えない" "$($TB list | grep "^$t1${TAB}" | cut -f1-3 | tr '\t' ' ')" "$t1 in_progress w1"
 # --pool: 担当なし todo を優先度順に 1 件(team ラベルは領域の役割 → 無ければ名前の接尾辞を除く)。epic・未完了の子を持つ親は除く

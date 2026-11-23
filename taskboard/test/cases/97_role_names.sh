@@ -37,7 +37,7 @@ eq "proposal-resolve: hr is not the handler any more" "$(HERDR_PANE_ID=whr:p1 rc
 eq "proposal-resolve: the proposer cannot close it" "$(HERDR_PANE_ID=waud1:p1 rc $TB proposal-resolve P-1 --status applied)" "1"
 eq "proposal-resolve: the configured handler closes it" "$(HERDR_PANE_ID=wcfg1:p1 $TB proposal-resolve P-1 --status rejected)" "P-1 rejected"
 
-# 判定フラグ: sweeper* でなくても grants の agent:flag で付けられる(対象で絞れる)
+# 判定フラグ: policy の agent:flag の行だけで決まる(対象で絞れる)
 : >"$TB_POLICY_G"
 eq "agent-flag: refused without a grant" "$(HERDR_PANE_ID=wjudge1:p1 rc $TB agent-flag wk1 --killable yes --reason x)" "1"
 printf 'judge1 agent:flag wk* = allow\n' >"$TB_POLICY_G"
@@ -48,19 +48,30 @@ eq "agent-new --killable: without --role the @role grant does not match" "$(HERD
 printf 'judge1 agent:flag wk* = allow\n' >"$TB_POLICY_G"
 eq "agent-flag: the grant is limited to its target" "$(HERDR_PANE_ID=wjudge1:p1 rc $TB agent-flag aud1 --killable yes --reason x)" "1"
 
-# 役割の変更: 人事役でなくても grants の role:change で(grants に当たれば approvals の ask を待たない)
-eq "role-set: refused without a grant" "$(HERDR_PANE_ID=wjudge1:p1 rc $TB role-set wk1 worker)" "1"
+# 役割の変更: policy の role:change の行だけで決まる(当たれば ask を待たない)
+eq "role-set: without a grant it waits for a human (no role name is special)" "$(HERDR_PANE_ID=wjudge1:p1 rc $TB role-set wk1 worker)" "20"
 printf 'judge1 role:change wk* = allow\n' >"$TB_POLICY_G"
 eq "role-set: a role:change grant allows it" "$(HERDR_PANE_ID=wjudge1:p1 rc $TB role-set wk1 worker)" "0"
-eq "role-set: the grant is limited to its target" "$(HERDR_PANE_ID=wjudge1:p1 rc $TB role-set aud1 worker)" "1"
+eq "role-set: the grant is limited to its target" "$(HERDR_PANE_ID=wjudge1:p1 rc $TB role-set aud1 worker)" "20"
 printf 'judge1 role:change * = allow\n' >"$TB_POLICY_G"
-eq "role-write: a role:change grant does not make a non-admin able to write role texts" "$(echo x | HERDR_PANE_ID=wjudge1:p1 rc $TB role-write worker)" "1"
+eq "role-write: a role:change grant lets any agent write role texts (policy decides)" "$(echo x | HERDR_PANE_ID=wjudge1:p1 rc $TB role-write worker)" "0"
 eq "role-write: nor the map (no self-escalation through @map)" "$(echo 'judge1 = worker' | HERDR_PANE_ID=wjudge1:p1 rc $TB role-write @map)" "1"
 
-# 通知の規則: 届け先 lead は conductor の別名
+# 通知の規則: 届け先 lead(conductor の旧い別名)は読み替えない
 _saved_nr=${TB_NOTIFY_RULES-}; export TB_NOTIFY_RULES=$TMP/rnames-nrules.conf; rm -f "$TB_NOTIFY_RULES"
-eq "notify-rules: lead is accepted as a sink" "$(printf 'status new=blocked -> webui lead\n' | rc $TB config set notify-rules)" "0"
+eq "notify-rules: lead is not a sink" "$(printf 'status new=blocked -> webui lead\n' | rc $TB config set notify-rules)" "1"
 if [[ -n $_saved_nr ]]; then export TB_NOTIFY_RULES=$_saved_nr; else unset TB_NOTIFY_RULES; fi
+
+# 役割の名前はコードに無い: projects に * も proposal も無ければ、宛先・指揮官・提案の受け手は決まらない
+printf 'rnx=rnx-lead\n' >"$TB_CONFIG"; : >"$TB_POLICY_G"
+: >"$FAKE_LOG"; out=$(HERDR_PANE_ID=wwk1:p1 $TB comment "$t1" --kind question --text q2 2>&1)
+eq "no * line: a report has no destination, is not sent to conductor and says what to write" "$(grep -c '^prompt' "$FAKE_LOG") $(grep -c '設定 projects に \*=<名前>' <<<"$out")" "0 1"
+eq "no * line: the project's own line still works" "$(: >"$FAKE_LOG"; HERDR_PANE_ID=wwk1:p1 $TB comment "$t2" --kind question --text q3 >/dev/null 2>&1; lastp)" "prompt rnx-lead"
+eq "no * line: conductor is not a lead by its name" "$(HERDR_PANE_ID=wconductor:p1 rc $TB send wk1 --kind info --text hi)" "4"
+eq "no * line: hr is not the proposal handler by its name" "$(: >"$FAKE_LOG"; HERDR_PANE_ID=waud1:p1 $TB proposal --role - --title t2 --text x 2>/dev/null; grep -c '^prompt' "$FAKE_LOG")" "$(printf 'P-2 saved-undelivered\n0')"
+printf '*=lead1\n' >"$TB_CONFIG"
+eq "proposal: without a proposal= line it goes to the * line" "$(: >"$FAKE_LOG"; HERDR_PANE_ID=waud1:p1 $TB proposal --role - --title t3 --text x; lastp)" "$(printf 'P-3 delivered\nprompt lead1')"
+eq "agent-flag: a sweeper* name alone is not enough" "$(HERDR_PANE_ID=wjudge1:p1 TB_SWEEPER_PATTERN='judge*' rc $TB agent-flag wk1 --killable no --reason x)" "1"
 
 if [[ -n $_had_grants ]]; then export TB_POLICY_G=$_saved_grants; else unset TB_POLICY_G; fi
 if [[ -n $_had_fake ]]; then export FAKE_AGENTS=$_saved_fake; else unset FAKE_AGENTS; fi

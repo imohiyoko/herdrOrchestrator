@@ -7,7 +7,8 @@ for _v in $_ac_vars; do if [[ -v $_v ]]; then _ac_saved[$_v]=${!_v}; fi; done
 unset HERDR_PANE_ID FAKE_STATUS
 export TB_DB=$TMP/acontract.db TB_POLICY_A=$TMP/ac-appr.conf TB_ROLES=$TMP/ac-roles TB_POLICY_G=$TMP/ac-grants.conf TB_DELIVERY=$TMP/ac-delivery.conf
 export TB_ROUTES=$TMP/ac-routes.conf TB_ORG=$TMP/ac-org.conf TB_CONFIG=$TMP/ac-projects.conf
-rm -f "$TB_POLICY_A" "$TB_POLICY_G" "$TB_DELIVERY" "$TB_ROUTES" "$TB_ORG" "$TB_CONFIG"
+rm -f "$TB_POLICY_A" "$TB_POLICY_G" "$TB_DELIVERY" "$TB_ROUTES" "$TB_ORG"
+printf '*=conductor\n' >"$TB_CONFIG"
 mkdir -p "$TB_ROLES"; for r in lead worker reviewer; do echo "ROLE-$r" >"$TB_ROLES/$r.md"; done
 printf 'lead* = lead\nw* = worker, reviewer\nrev* = reviewer # 対応\n' >"$TB_ROLES/map.conf"
 ac_() { printf '{"pane_id":"w%s:p1","name":"%s","agent_status":"%s","agent_session":{"value":"s-%s"},"cwd":"%s"}' "$1" "$1" "${2:-idle}" "$1" "$TMP"; }
@@ -122,12 +123,13 @@ eq "allow: no conf yet → one line" "$($TB approval allow send:task:w1; acts <"
 : >"$TB_POLICY"
 eq "ask: empty conf → one line" "$($TB ask 'agent:stop:*'; acts <"$TB_POLICY")" $'* agent:stop * = ask\n* agent:stop * = ask   # TS に人が追加(tb approval ask)'
 printf '# コメントだけ\n\n# もう 1 つ\n\n\n' >"$TB_POLICY"
-eq "allow: comments only → appended" "$($TB allow role:change >/dev/null; acts <"$TB_POLICY")" $'# コメントだけ\n\n# もう 1 つ\n@hr role:change * = allow   # TS に人が追加(tb approval allow)'
+eq "allow: role:change is refused (who gets it is written in policy by a human)" "$($TB allow role:change 2>&1; echo "rc=$?"; acts <"$TB_POLICY")" $'tb: tb allow: role:change は誰に許すかを決めて policy に直接書く(例: @<役割> role:change * = allow。tb config edit policy)\nrc=1\n# コメントだけ\n\n# もう 1 つ'
+eq "allow: comments only → appended" "$($TB allow 'agent:stop:*' >/dev/null; acts <"$TB_POLICY")" $'# コメントだけ\n\n# もう 1 つ\n* agent:stop * = allow   # TS に人が追加(tb approval allow)'
 printf '# 説明\n\n  # 字下げのコメント\n* send:task * = ask\n#* send:info * = allow\n* send:info * = ask  # 後で\n* send:info * = ask\n*  send:info  * =ask\n\n' >"$TB_POLICY"
 eq "allow: appended after the rows" "$($TB allow 'agent:stop:*' >/dev/null; acts <"$TB_POLICY")" $'# 説明\n\n  # 字下げのコメント\n* send:task * = ask\n#* send:info * = allow\n* send:info * = ask  # 後で\n* send:info * = ask\n*  send:info  * =ask\n* agent:stop * = allow   # TS に人が追加(tb approval allow)'
 eq "allow: rewrites every same line once, keeps blank lines" "$($TB approval allow 'send:info:*' >/dev/null; acts <"$TB_POLICY")" $'# 説明\n\n  # 字下げのコメント\n* send:task * = ask\n#* send:info * = allow\n* send:info * = allow   # TS に人が変更(tb approval allow)\n* agent:stop * = allow   # TS に人が追加(tb approval allow)'
 eq "allow: a stricter row still applies → warned" "$(printf '* send:* w1 = deny\n' >"$TB_POLICY"; $TB allow send:task:w1 2>&1 >/dev/null)" "tb: 注意: もっと厳しい行が当たるため、send:task:w1 はまだ deny です(policy: * send:* w1 = deny)"
-eq "approval_changes" "$(acsql "SELECT pattern||'='||value FROM approval_changes ORDER BY id;")" $'send:task:w1=allow\nagent:stop:*=ask\nrole:change=allow\nagent:stop:*=allow\nsend:info:*=allow\nsend:task:w1=allow'
+eq "approval_changes" "$(acsql "SELECT pattern||'='||value FROM approval_changes ORDER BY id;")" $'send:task:w1=allow\nagent:stop:*=ask\nagent:stop:*=allow\nagent:stop:*=allow\nsend:info:*=allow\nsend:task:w1=allow'
 _ac_pol=$TB_POLICY; unset TB_POLICY
 eq "allow: no file named → DB row" "$($TB allow setup:hooks; acsql "SELECT how||'|'||changed_by FROM config_changes WHERE key='policy';"; acsql "SELECT body FROM config WHERE key='policy';" | acts)" $'* setup:hooks * = allow\nallow|human\n* setup:hooks * = allow   # TS に人が追加(tb approval allow)'
 export TB_POLICY=$_ac_pol

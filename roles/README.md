@@ -6,7 +6,7 @@ agent が起動したとき・compact の後に自動で読み込まれる(Claud
 **ここにあるのは既定値(git 管理)で、全 agent に共通の `_common.md` だけ。** 役職(指揮官・人事・見張りなど)は決めていない。
 役割を使うときは、`setup/examples/roles/` の利用例(または自分で書いた文面)を `tb role-write` で DB に入れる(入れ方は `setup/CLAUDE.md` の「役割の利用例」)。
 実際に渡す定義は DB(`config` 表の `role:<役割名>` / `role-map`)> このディレクトリの順で引く。
-セッションごと・環境ごとに変えるときも、ファイルではなく `tb role-write` / `tb role-edit` で DB に書く(人か、人事役 `@hr`(`TB_ROLE_ADMIN` で変えられる)の agent だけ。変更は人の承認を経てから)。
+セッションごと・環境ごとに変えるときも、ファイルではなく `tb role-write` / `tb role-edit` で DB に書く(人か、policy の `role:change` の行で許された agent だけ。変更は人の承認を経てから)。
 agent は役割を `tb role-show` で読む(ファイルを直接読まない。別のセッション向けの定義を読みかねないため)。
 
 ## ファイル

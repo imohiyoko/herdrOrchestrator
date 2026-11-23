@@ -16,7 +16,6 @@ import (
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/identity"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/jv"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
-	"github.com/imohiyoko/herdrorchestrator/internal/kernel/util"
 	"github.com/imohiyoko/herdrorchestrator/internal/message"
 )
 
@@ -152,28 +151,17 @@ func cmdCan(args []string, w, stderr io.Writer) error {
 		v, rule := j.Of(op+":"+target, who)
 		verdict = v
 		return out(rule)
-	case op == "agent:flag":
-		sw := envOr("TB_SWEEPER_PATTERN", "sweeper*")
-		if util.Glob(sw, who) {
-			return out("判定役(" + sw + ")")
-		}
-		if r, ok := j.GrantOf(who, "agent:flag", target); ok {
+	case op == "agent:flag" || op == "role:change":
+		if r, ok := j.GrantOf(who, op, target); ok {
 			return out(r)
 		}
-		verdict = "deny"
-		return out("判定役でなく、policy に agent:flag を許す行もない")
-	case op == "role:change":
-		if r, ok := j.GrantOf(who, "role:change", target); ok {
-			return out(r)
+		if op == "agent:flag" {
+			verdict = "deny"
+			return out("policy に agent:flag を許す行がない")
 		}
-		admin := envOr("TB_ROLE_ADMIN", "hr")
-		if j.Roles.Match(who, "@"+admin) == 0 {
-			v, rule := j.Of("role:change", who)
-			verdict = v
-			return out("人事役(@" + admin + ")/ 認可: " + rule)
-		}
-		verdict = "deny"
-		return out("人事役(@" + admin + ")でなく、policy に role:change を許す行もない")
+		v, rule := j.Of("role:change", who)
+		verdict = v
+		return out(rule)
 	case strings.HasPrefix(op, "approve:"):
 		if who == target {
 			verdict = "deny"

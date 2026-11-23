@@ -6,6 +6,7 @@ _saved_pane=${HERDR_PANE_ID-}; unset HERDR_PANE_ID
 _nt_vars="TB_DB TB_CONFIG TB_POLICY_A TB_ROUTES TB_ANALYST_RETRY_SEC TB_ANALYST_CWD FAKE_AGENTS"
 for _v in $_nt_vars; do if [[ -n ${!_v+x} ]]; then printf -v "_nt_old_$_v" '%s' "${!_v}"; else printf -v "_nt_unset_$_v" 1; fi; done
 export TB_DB=$TMP/notify.db TB_CONFIG=$TMP/nt-projects.conf TB_POLICY_A=$TMP/nt-appr.conf TB_ROUTES=$TMP/nt-routes.conf TB_ANALYST_RETRY_SEC=0 TB_ANALYST_CWD=$TMP
+printf '*=conductor\n' >"$TB_CONFIG"
 export TB_NOTIFY_CONF=$TMP/notify.conf TB_NOTIFY_DIR=$TMP/nout TB_REPOS_FILE=$TMP/repos.md TB_GH_BIN=$TMP/gh TB_CURL=$TMP/curl
 printf '* alert:analyze * = ask\n* send:info * = ask\n* send:answer * = ask\n' >"$TB_POLICY_A"
 unset TB_NOTIFY_ENABLED TB_NOTIFY_SLACK_TARGET TB_NOTIFY_RATE_PER_MIN TB_NOTIFY_ACK_TIMEOUT_MIN

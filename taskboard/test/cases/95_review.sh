@@ -2,6 +2,7 @@
 # run.sh から番号順に source される(前のファイルが作った状態を使うものがある)
 # --- 会計役(review-pack / proposal)
 export TB_DB=$TMP/audit.db TB_SCHED_LOGS=$TMP/schedlogs
+printf '*=conductor\nproposal=hr\n' >"$TB_CONFIG"   # 提案の受け手は設定で決める(コードに既定の名前は無い)
 mkdir -p "$TB_SCHED_LOGS"; printf '{"ts":"2099-01-01T00:00:00+0900","job":"watch","action":"sent"}\n{"ts":"2099-01-01T00:05:00+0900","job":"watch","action":"skipped_state"}\n' >"$TB_SCHED_LOGS/watch.log"
 export FAKE_AGENTS='[{"pane_id":"wU:p1","name":"auditor","agent_session":{"value":"su"}},{"pane_id":"wH:p1","name":"hr","agent_session":{"value":"sh"}},{"pane_id":"wC:p1","name":"conductor","agent_session":{"value":"sc"}}]'
 : >"$FAKE_LOG"

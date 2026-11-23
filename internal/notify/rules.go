@@ -28,7 +28,7 @@ type Rule struct {
 	Line  int
 	Kind  string   // イベントの種類か *
 	Conds []string // <キー>=<値> / priority>=<値>
-	Sinks []string // 届け先(lead は conductor に直してある)
+	Sinks []string // 届け先
 }
 
 // ValidateRules は nrule_parse の検査(tb config set notify-rules)。誤りの本文は「notify-rules: 」で始まる。
@@ -104,9 +104,6 @@ func ParseRules(body string) (rules []Rule, errs string) {
 		}
 		var sinks []string
 		for _, s := range strings.Fields(rhs) {
-			if s == "lead" {
-				s = "conductor"
-			}
 			if !slices.Contains(Sinks, s) {
 				fmt.Fprintf(&bad, "%d 行目: 使えない届け先 %s(%s)\n", n, s, strings.Join(Sinks, " "))
 				rowBad = true

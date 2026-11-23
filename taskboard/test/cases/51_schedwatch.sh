@@ -4,7 +4,7 @@
 # 現在時刻は TB_SCHEDWATCH_NOW で固定(1800000000 = 2027-01-15 17:00 JST、金曜)。
 unset TB_IMMEDIATE_KINDS
 export TB_DB=$TMP/schedwatch.db TB_CONFIG=$TMP/schedwatch.conf
-: >"$TB_CONFIG"
+printf '*=conductor\n' >"$TB_CONFIG"
 : >"$FAKE_LOG"
 ssql() { sqlite3 "$TB_DB" "$@"; }
 export TB_SCHED_DIR=$TMP/sched TB_SCHEDWATCH_NOW=1800000000 TB_LIMIT_WATCHERS="watchx watchy"

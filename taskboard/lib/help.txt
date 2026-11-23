@@ -105,13 +105,13 @@ tb agent role list                       役割名と出どころ(DB のこの�
   別名(古い名前): tb role-list
 tb agent role edit <役割名|@map> [--shared]   tb role-write と同じ(本文を $EDITOR で編集)
   別名(古い名前): tb role-edit
-tb agent role write <役割名|@map> [--shared] < 本文   役割の定義を DB のこのセッションの行(--shared なら共通の行)に書く。人と人事役(role:change が allow のとき)。人事役は人事役の役割・人事役を付ける対応は書けない
+tb agent role write <役割名|@map> [--shared] < 本文   役割の定義を DB のこのセッションの行(--shared なら共通の行)に書く。人と、policy で role:change を許された agent。agent は自分の持つ役割・それを付ける対応は書けない
   別名(古い名前): tb role-write
 tb agent role unset <役割名|@map> [--shared]   DB の役割の行を消す(人だけ)。消すと共通の行、無ければ roles/ のファイルに戻る
   別名(古い名前): tb role-unset
 tb agent role status [--json]                  agent ごとの役割ファイルと、渡した版が最新か(current|outdated|never|no-role)
   別名(古い名前): tb roles
-tb agent role set <agent 名> <ロール[,ロール...]> [--reason R]   ロールを変える(台帳。複数は 分野×立場 の組み合わせ、例 hr,manager)。人と人事役(@hr)だけ。人事役からは role:change が allow のときだけ。自分・人事役のロールは不可
+tb agent role set <agent 名> <ロール[,ロール...]> [--reason R]   ロールを変える(台帳。複数は 分野×立場 の組み合わせ、例 hr,manager)。人と、policy で role:change を許された agent。自分のロール・自分の持つ役割は不可
   別名(古い名前): tb role-set
 tb agent role log [--json]               ロール変更の記録(このセッションの分。誰がいつ誰を何から何に)
   別名(古い名前): tb role-log
@@ -194,7 +194,7 @@ tb job import [--dry-run] [--shared] [<job> ...]     jobs/*.conf と settings/*.
 tb job history <job> [--settings]                    変更の履歴
   別名(古い名前。同じに動く。サブコマンドが無ければ list): tb sched-job
 
-会計役(定期レビュー)→ 設定役(人事。TB_HR_NAME、既定 hr):
+会計役(定期レビュー)→ 設定役(projects の proposal=<名前>、無ければ * の名前):
 tb review pack [--since ISO] [--mark]      生ログではなく集計と上位だけのレビュー材料。省略時は前回 --mark 以降
   別名(古い名前): tb review-pack (tb review だけでサブコマンドの一覧)
 tb proposal add --role <roles のファイル|-> --title T (--text X|--text-file F)   改善提案を設定役へ送る
@@ -240,7 +240,7 @@ tb agent slash <コマンド> --all [--apply]   全 agent へ。--apply して�
   別名(古い名前): tb slash
 tb agent slash --list   許可リストを出す(deny の行は送らない)
   別名(古い名前): tb slash
-tb agent flag <名前> --killable yes|no|unknown [--reason R]   止めてよいかの判定。判定役(TB_SWEEPER_PATTERN、既定 sweeper*)か人だけ
+tb agent flag <名前> --killable yes|no|unknown [--reason R]   止めてよいかの判定。人か、policy で agent:flag を許された agent だけ
   別名(古い名前): tb agent-flag
          終了コード(new/stop/revive): 0 実行済み 1 拒否・前提違い 11 herdr の失敗 20 承認待ち(Q-<n>)
 tb agent ops [--status pending|done|failed|rejected] [--json]   操作の記録と承認待ち

@@ -87,7 +87,7 @@ eq "org can: protect wins over a grant" "$($TB can boss agent:stop w3 | tr '\n' 
 eq "org can: a grant on stop" "$($TB can boss agent:stop w1 | head -1) $($TB can lead1 agent:stop w2 | head -1)" "allow ask"
 eq "org can: the human does not use tb send / an agent reads itself" "$($TB can human send:task w1 | head -1) $($TB can w1 agent:read w1 | head -1)" "deny allow"
 eq "org can: the human" "$($TB can human agent:stop w1 | head -1) $($TB can human agent:stop w3 | head -1)" "allow deny"
-eq "org can: role:change by the HR role needs approval, others are refused" "$($TB can hr1 role:change w1 | head -1) $($TB can w1 role:change w2 | head -1) $($TB can hr1 role:change hr1 | head -1)" "ask deny deny"
+eq "org can: role:change without a policy row needs approval for anyone; self is refused" "$($TB can hr1 role:change w1 | head -1) $($TB can w1 role:change w2 | head -1) $($TB can hr1 role:change hr1 | head -1)" "ask ask deny"
 printf 'boss role:change ~subordinate = allow\n' >>"$TB_POLICY_G"
 eq "org can: role:change through an org grant" "$($TB can boss role:change w2 | head -1) $($TB can boss role:change loner | head -1)" "allow allow"
 eq "org can: without a subject it is the calling agent" "$(HERDR_PANE_ID=wboss:p1 $TB can agent:stop w1 | head -1) $(HERDR_PANE_ID=wlead1:p1 $TB can agent:stop w2 | head -1) $($TB can agent:stop w1 | head -1)" "allow ask allow"
