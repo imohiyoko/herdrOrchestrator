@@ -21,8 +21,8 @@ import (
 	"unicode/utf8"
 )
 
-// server は webui/app/handler.py と httpbase.py の Go 版。今はログインまわり(初回設定・ログイン・再設定・ログアウト)と
-// 同梱のスクリプトだけ。ほかの画面はまだ Python 版にしかなく、501 の案内を返す(移し終えたものから足す)。
+// server は webui/app/handler.py と httpbase.py の Go 版。今はログインまわり(初回設定・ログイン・再設定・ログアウト)、
+// 同梱のスクリプトと、pages.go の ported の画面。ほかの画面はまだ Python 版にしかなく、501 の案内を返す(移し終えたものから足す)。
 
 const CSP = "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'unsafe-inline'; " +
 	"base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
@@ -46,6 +46,16 @@ type rq struct {
 	r      *http.Request
 	name   string
 	status int
+	v      *sv // このリクエストのセッションの DB(開くのは初めて使うとき)
+}
+
+// data はこのリクエストのセッションの読み取り(data.py の request_db の中の q)。
+func (q *rq) data() *sv {
+	if q.v == nil || q.v.sess != q.name {
+		q.v.close()
+		q.v = newSV(q.name)
+	}
+	return q.v
 }
 
 func (q *rq) base() string { return "/s/" + q.name }
@@ -349,6 +359,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	query, _, _ = strings.Cut(query, "#")
 	raw, _, _ = strings.Cut(raw, "#")
 	q := &rq{w: w, r: r, name: SessionName()}
+	defer func() { q.v.close() }() // q.v は途中で作られるので、閉じるときの値を見る
 	defer func() {
 		if q.status == 0 {
 			q.status = 200
@@ -456,7 +467,11 @@ func (s *Server) get(q *rq, path, query string) {
 			s.send(q, 401, []byte(`{"error":"login required"}`), "application/json; charset=utf-8")
 			return
 		}
-		s.notPorted(q, "")
+		var data string
+		if !s.safe(q, func() { data = notificationsJSON(q.data().urgentItems()) }) {
+			return
+		}
+		s.send(q, 200, []byte(data), "application/json; charset=utf-8")
 		return
 	}
 	if !a.Configured() {
@@ -491,8 +506,52 @@ func (s *Server) get(q *rq, path, query string) {
 	case "/static/mermaid.min.js":
 		s.staticFile(q, "mermaid.min.js", js)
 	default:
-		s.notPorted(q, logout)
+		s.safe(q, func() { s.route(q, path, logout, a.FormToken("s:"+sh)) })
 	}
+}
+
+// safe は fn の panic を 500 にする(1 画面の失敗でサーバーを落とさない。中身は出さない)。fn が最後まで動けば true。
+func (s *Server) safe(q *rq, fn func()) (ok bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.logf("internal error: %T\n", r)
+			if q.status == 0 {
+				s.text(q, 500, "Internal Server Error")
+			}
+			ok = false
+		}
+	}()
+	fn()
+	return true
+}
+
+// pythonPaths は Python 版にある画面(Go にまだ移していないものは notPorted)。
+var (
+	pythonPaths = map[string]bool{"/": true, "/inbox": true, "/sessions": true, "/agents": true, "/agent-graph": true, "/agent-new": true,
+		"/ledger": true, "/perms": true, "/docs": true, "/docs/view": true, "/tasks": true, "/board": true, "/notifications": true,
+		"/outbox": true, "/jobs": true}
+	rePyDetail = regexp.MustCompile(`^/(agents|tasks|jobs)/[^/]+$`)
+)
+
+// route は views.route(と handler.py の /jobs/<job>)。
+func (s *Server) route(q *rq, path, logout, csrf string) {
+	if p, err := url.PathUnescape(path); err == nil {
+		path = p
+	}
+	if path != "/" && strings.HasSuffix(path, "/") {
+		path = strings.TrimRight(path, "/")
+	}
+	opts := &pageOpts{}
+	if fn, ok := ported[path]; ok {
+		title, body := fn(s, q, pageCtx{csrf: csrf, opts: opts})
+		s.html(q, 200, s.page(q, title, body, path, logout, *opts))
+		return
+	}
+	if pythonPaths[path] || rePyDetail.MatchString(path) {
+		s.notPorted(q, logout)
+		return
+	}
+	s.html(q, 404, s.page(q, "見つかりません", "<p>そのページはありません。</p>", "", logout, pageOpts{}))
 }
 
 func (s *Server) staticFile(q *rq, name, ctype string) {
