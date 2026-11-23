@@ -2,6 +2,7 @@ package webui
 
 import (
 	"encoding/json"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -28,6 +29,7 @@ func TestFnmatchMatchesPython(t *testing.T) {
 	in, _ := json.Marshal(cases)
 	c := exec.Command(py, "-c", "import json,sys\nfrom fnmatch import fnmatchcase\nprint(json.dumps([fnmatchcase(n,p) for n,p in json.load(sys.stdin)]))")
 	c.Stdin = strings.NewReader(string(in))
+	c.Env = append(os.Environ(), "PYTHONUTF8=1", "PYTHONIOENCODING=utf-8") // Windows でも標準入出力を UTF-8 に
 	out, err := c.Output()
 	if err != nil {
 		t.Fatal(err)
