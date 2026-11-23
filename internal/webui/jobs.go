@@ -171,19 +171,23 @@ func runTBInput(sess string, args []string, text string) (int, string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	c := exec.CommandContext(ctx, "bash", append([]string{tbPath()}, args...)...)
+	// tb job が見る jobs/・settings/ を、Web UI が見ているものに揃える
+	jobs, _ := filepath.Abs(schedJobs())
+	sets, _ := filepath.Abs(schedSettings())
+	schedDir := ""
+	if filepath.Base(jobs) == "jobs" && filepath.Base(sets) == "settings" && filepath.Dir(jobs) == filepath.Dir(sets) {
+		schedDir = filepath.Dir(jobs)
+	}
 	var env []string
 	for _, kv := range childEnv(sess) {
-		if k, _, _ := strings.Cut(kv, "="); k == "HERDR_PANE_ID" || k == "TB_DB" || k == "TB_SCHED_DIR" {
+		if k, _, _ := strings.Cut(kv, "="); k == "HERDR_PANE_ID" || k == "TB_DB" || (k == "TB_SCHED_DIR" && schedDir != "") {
 			continue
 		}
 		env = append(env, kv)
 	}
 	env = append(env, "TB_DB="+TBDB())
-	// tb job が見る jobs/・settings/ を、Web UI が見ているものに揃える
-	jobs, _ := filepath.Abs(schedJobs())
-	sets, _ := filepath.Abs(schedSettings())
-	if filepath.Base(jobs) == "jobs" && filepath.Base(sets) == "settings" && filepath.Dir(jobs) == filepath.Dir(sets) {
-		env = append(env, "TB_SCHED_DIR="+filepath.Dir(jobs))
+	if schedDir != "" {
+		env = append(env, "TB_SCHED_DIR="+schedDir)
 	}
 	c.Env = env
 	c.Stdin = strings.NewReader(text)
