@@ -199,7 +199,7 @@ func (v *sv) heldDetailHTML(pc pageCtx) string {
 		`<pre>` + E(text) + `</pre><p><a href="/inbox#held">閉じる</a></p>`
 }
 
-var approvalKinds = map[string]bool{"send_pending": true, "agent_op_pending": true, "alert_approval": true, "proxy_pending": true, "agent_blocked": true}
+var approvalKinds = map[string]bool{"approval_pending": true, "alert_approval": true, "proxy_pending": true, "agent_blocked": true}
 
 func (s *Server) pageInbox(q *rq, pc pageCtx) (string, string) {
 	v := q.data()
@@ -208,7 +208,7 @@ func (s *Server) pageInbox(q *rq, pc pageCtx) (string, string) {
 	for _, c := range h.comments {
 		ids[pyStr(c["id"])] = true
 	}
-	body := resolveNotice(pc) + v.heldDetailHTML(pc) + v.remindersHTML() + "<h2>承認待ち(どこで・どう承認するか)</h2>"
+	body := resolveNotice(pc) + v.heldDetailHTML(pc) + v.remindersHTML() + `<h2 id="approvals">承認待ち(どこで・どう承認するか)</h2>`
 	var appr [][]string
 	how := map[string]string{}
 	for _, it := range v.urgentItems() {
@@ -221,7 +221,8 @@ func (s *Server) pageInbox(q *rq, pc pageCtx) (string, string) {
 	}
 	body += table([]string{"種別", "何が・中身・どう対応するか", "時刻"}, appr)
 	body += "<p class=note>「手元で tb …」は、人の端末(agent の pane ではない)で実行するコマンドです。" +
-		"agent 操作の承認だけは Web UI の agent 一覧からもできます。</p>"
+		"承認待ち(Q-&lt;n&gt;。送信・agent の操作・ask で止まったコマンド)の一覧は、手元の <code>tb approval list</code> でも見られます。" +
+		"agent の操作の承認だけは Web UI の agent 一覧からもできます。</p>"
 	body += "<h2>要対応の報告 (needs-human)</h2>"
 	var rows [][]string
 	for _, c := range h.comments {

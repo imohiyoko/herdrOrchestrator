@@ -34,6 +34,7 @@ func TestQueriesExplain(t *testing.T) {
 	files, _ := filepath.Glob("*.go")
 	found := 0
 	fs := token.NewFileSet()
+	var parsed []*ast.File
 	for _, f := range files {
 		if strings.HasSuffix(f, "_test.go") {
 			continue
@@ -42,12 +43,40 @@ func TestQueriesExplain(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		parsed = append(parsed, file)
+	}
+	// パッケージの文字列の定数(SQL の部品を定数にして + でつなぐものがある)
+	consts := map[string]string{}
+	for range 3 { // 定数が別の定数を使うときのために数回
+		for _, file := range parsed {
+			for _, d := range file.Decls {
+				g, ok := d.(*ast.GenDecl)
+				if !ok || g.Tok != token.CONST {
+					continue
+				}
+				for _, sp := range g.Specs {
+					vs := sp.(*ast.ValueSpec)
+					for i, n := range vs.Names {
+						if i < len(vs.Values) {
+							if v, ok := foldString(vs.Values[i], consts); ok {
+								consts[n.Name] = v
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	for _, file := range parsed {
 		ast.Inspect(file, func(n ast.Node) bool {
 			e, ok := n.(ast.Expr)
 			if !ok {
 				return true
 			}
-			s, ok := foldString(e)
+			if _, isConst := e.(*ast.Ident); isConst {
+				return true // 定数そのものは、使われる所(つないだ文)で確かめる
+			}
+			s, ok := foldString(e, consts)
 			if !ok {
 				return true
 			}
@@ -82,9 +111,12 @@ func TestQueriesExplain(t *testing.T) {
 	t.Logf("%d 件", found)
 }
 
-// foldString は文字列の定数(+ でつないだものも)をつないだ値。
-func foldString(e ast.Expr) (string, bool) {
+// foldString は文字列の定数(+ でつないだもの・パッケージの定数の名前も)をつないだ値。
+func foldString(e ast.Expr, consts map[string]string) (string, bool) {
 	switch x := e.(type) {
+	case *ast.Ident:
+		v, ok := consts[x.Name]
+		return v, ok
 	case *ast.BasicLit:
 		if x.Kind != token.STRING {
 			return "", false
@@ -92,13 +124,13 @@ func foldString(e ast.Expr) (string, bool) {
 		s, err := strconv.Unquote(x.Value)
 		return s, err == nil
 	case *ast.ParenExpr:
-		return foldString(x.X)
+		return foldString(x.X, consts)
 	case *ast.BinaryExpr:
 		if x.Op != token.ADD {
 			return "", false
 		}
-		a, ok1 := foldString(x.X)
-		b, ok2 := foldString(x.Y)
+		a, ok1 := foldString(x.X, consts)
+		b, ok2 := foldString(x.Y, consts)
 		return a + b, ok1 && ok2
 	}
 	return "", false

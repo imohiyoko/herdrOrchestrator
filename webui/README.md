@@ -4,7 +4,7 @@ agent・タスク・報告・定期実行・送信履歴・権限を、ブラウ
 中身は Go の `herdrctl webui serve`(`internal/webui/`)で、`webui/bin/serve.sh` から動かす。Mermaid の図を描くための `mermaid.min.js` だけは `webui/static/` に同梱している(CDN は使わない)。
 
 - サーバー側で HTML を組み立てる複数ページ構成(SPA ではない)。自動更新は `/refresh.js`(30 秒。見ていないタブでは止め、見えたときに期限を過ぎていればすぐ読み直す。スクリプトが動かないときだけ `<noscript>` の meta refresh)。DB の接続はリクエストごとに 1 本を使い回す。
-- 全ページに共通ナビと、承認待ち件数のバッジ(報告の question/blocked + `pending-human` の代行依頼 + blocked の agent)。
+- 全ページに共通ナビと、承認待ち件数のバッジ(報告の question/blocked + `pending-human` の代行依頼 + blocked の agent + 承認待ち `Q-<n>`)。
 - まとめ送信(10 分おき)より急ぐものは「緊急通知」(`/notifications`)に集め、ナビにも件数バッジを出す。
   Web UI のタブが開いていれば、新しく出たものを Chrome のデスクトップ通知でも出す(下の「緊急通知」)。
 - **変更できるのは定期実行のスケジュール**(`/jobs/<job>`: 間隔・時間帯・曜日・一時停止)と、**question / blocked の報告を「対応済みにする」**(`/inbox` とタスク画面。書き込みは `tb resolve` が行い、tasks.db には直接書かない)、
@@ -167,6 +167,7 @@ agent が「ここにまとめました」と報告したファイルを、VS Co
 - 未完了タスクの `question` / `blocked` の報告
 - `pending-human` の代行依頼
 - `blocked` の agent(承認待ち)
+- 承認待ち `Q-<n>`(policy で ask になった送信・agent の操作・コマンド。`tb approval list` と同じもの・同じ順。対応は手元で `tb approval approve Q-<n>` / `tb approval reject Q-<n>`)
 - 滞留している agent
 - 最後の実行(`ran`/`failed`/`sent`)が `failed` の定期実行(次に成功すると消える)
 
