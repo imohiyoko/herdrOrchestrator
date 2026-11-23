@@ -616,3 +616,50 @@ func failedJobs() []failedJob {
 	}
 	return out
 }
+
+// pyParseQS は urllib.parse.parse_qs(空の値は落とす。+ は空白)。
+func pyParseQS(query string) map[string][]string {
+	out := map[string][]string{}
+	for _, kv := range strings.Split(query, "&") {
+		if kv == "" {
+			continue
+		}
+		k, v, _ := strings.Cut(kv, "=")
+		k, v = pyUnquotePlus(k), pyUnquotePlus(v)
+		if v == "" {
+			continue
+		}
+		out[k] = append(out[k], v)
+	}
+	return out
+}
+
+// pyUnquotePlus は urllib.parse.unquote_plus(壊れた %xx はそのまま。UTF-8 でないバイトは U+FFFD)。
+func pyUnquotePlus(s string) string {
+	s = strings.ReplaceAll(s, "+", " ")
+	if !strings.Contains(s, "%") {
+		return s
+	}
+	var b []byte
+	for i := 0; i < len(s); i++ {
+		if s[i] == '%' && i+2 < len(s) && isHex(s[i+1]) && isHex(s[i+2]) {
+			v, _ := strconv.ParseUint(s[i+1:i+3], 16, 8)
+			b = append(b, byte(v))
+			i += 2
+			continue
+		}
+		b = append(b, s[i])
+	}
+	return strings.ToValidUTF8(string(b), "�")
+}
+
+func isHex(c byte) bool { return c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F' }
+
+// pyURLEncode は urllib.parse.urlencode(並びは渡した順。quote_plus で、空白は +)。
+func pyURLEncode(kv [][2]string) string {
+	var parts []string
+	for _, p := range kv {
+		parts = append(parts, strings.ReplaceAll(pyQuote(p[0], " "), " ", "+")+"="+strings.ReplaceAll(pyQuote(p[1], " "), " ", "+"))
+	}
+	return strings.Join(parts, "&")
+}

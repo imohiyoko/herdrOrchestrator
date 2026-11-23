@@ -224,6 +224,15 @@ func (s *Server) pageSessions(q *rq, _ pageCtx) (string, string) {
 type pageCtx struct {
 	csrf string
 	opts *pageOpts
+	qs   map[string][]string // クエリ(parse_qs: 空の値は落とす)
+}
+
+// one は views._one: その名前の最初の値の前後の空白を落としたもの(無ければ "")。
+func (c pageCtx) one(name string) string {
+	if v := c.qs[name]; len(v) > 0 {
+		return strings.TrimFunc(v[0], pyIsSpace)
+	}
+	return ""
 }
 
 type pageFn func(s *Server, q *rq, c pageCtx) (string, string)
@@ -233,4 +242,5 @@ var ported = map[string]pageFn{
 	"/notifications": (*Server).pageNotifications,
 	"/outbox":        (*Server).pageOutbox,
 	"/sessions":      (*Server).pageSessions,
+	"/ledger":        (*Server).pageLedger,
 }
