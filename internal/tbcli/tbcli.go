@@ -20,7 +20,7 @@ import (
 )
 
 // Commands は Go に移し終えたコマンド。bin/tb はこの一覧(herdrctl tb --commands)を見て渡すかを決める。
-var Commands = []string{"activity", "add", "allow", "approval", "approve", "ask", "block", "board", "can", "cancel", "claim", "comment", "comments", "compact-check", "config", "conv", "conv-candidate-add", "conv-candidate-adopt", "conv-candidate-reject", "conv-draft", "conv-gate", "conv-incident", "conv-kinds", "conv-learn-purge", "conv-ledger", "conv-length", "conv-lint", "conv-pair-add", "conv-pair-show", "conv-pairs", "conv-patterns", "conv-route", "conv-routes-set", "conv-scan", "conv-stage", "conv-stage-log", "conv-stage-reset", "conv-stage-set", "conv-voice", "conv-voice-check", "deadlines-import", "done", "due-scan", "events", "flush", "gate", "handoff", "history", "inbox", "inbox-read", "job", "labels", "limits", "link", "list", "message", "notify", "nudge", "org", "outbox", "part-check", "part-risk", "parts", "peek", "pending", "pr", "pr-queue", "pr-watch", "proposal", "proposal-resolve", "proposals", "proxy", "proxy-check", "proxy-list", "proxy-request", "proxy-resolve", "recipe-history", "recipe-list", "recipe-rm", "recipe-set", "recipe-show", "reject", "reminder", "reminders", "reopen", "report", "resolve", "review", "review-pack", "review-submit", "role-broadcast", "role-context", "role-edit", "role-list", "role-log", "role-set", "role-show", "role-unset", "role-write", "roles", "sched-job", "send", "show", "slash", "sprint-add", "sprint-close", "sprint-start", "sprints", "ticket", "touch", "tree", "unlink", "update"}
+var Commands = []string{"activity", "add", "agent-flag", "agent-kinds", "agent-ops", "allow", "approval", "approve", "ask", "block", "board", "can", "cancel", "claim", "comment", "comments", "compact-check", "config", "conv", "conv-candidate-add", "conv-candidate-adopt", "conv-candidate-reject", "conv-draft", "conv-gate", "conv-incident", "conv-kinds", "conv-learn-purge", "conv-ledger", "conv-length", "conv-lint", "conv-pair-add", "conv-pair-show", "conv-pairs", "conv-patterns", "conv-route", "conv-routes-set", "conv-scan", "conv-stage", "conv-stage-log", "conv-stage-reset", "conv-stage-set", "conv-voice", "conv-voice-check", "deadlines-import", "done", "due-scan", "events", "flush", "gate", "handoff", "history", "inbox", "inbox-read", "job", "labels", "limits", "link", "list", "message", "notify", "nudge", "org", "outbox", "part-check", "part-risk", "parts", "peek", "pending", "pr", "pr-queue", "pr-watch", "proposal", "proposal-resolve", "proposals", "proxy", "proxy-check", "proxy-list", "proxy-request", "proxy-resolve", "recipe-history", "recipe-list", "recipe-rm", "recipe-set", "recipe-show", "reject", "reminder", "reminders", "reopen", "report", "resolve", "review", "review-pack", "review-submit", "role-broadcast", "role-context", "role-edit", "role-list", "role-log", "role-set", "role-show", "role-unset", "role-write", "roles", "sched-job", "send", "show", "slash", "spawn-freeze", "spawn-unfreeze", "sprint-add", "sprint-close", "sprint-start", "sprints", "ticket", "touch", "tree", "unlink", "update"}
 
 // Features は bin/tb が渡す前に確かめる機能(perms = 権限段階の門。ADR 0006)。
 var Features = []string{"perms"}
@@ -146,6 +146,16 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		err = cmdCan(args[1:], w, stderr)
 	case "org":
 		err = cmdOrg(args[1:], w, stderr)
+	case "agent-kinds":
+		err = cmdAgentKinds(args[1:], w, stderr)
+	case "agent-ops":
+		err = cmdAgentOps(args[1:], w, stderr)
+	case "agent-flag":
+		err = cmdAgentFlag(args[1:], w, stderr)
+	case "spawn-freeze":
+		err = cmdSpawnFreeze(args[1:], w, stderr)
+	case "spawn-unfreeze":
+		err = cmdSpawnUnfreeze(args[1:], w, stderr)
 	case "recipe-set":
 		err = cmdRecipeSet(args[1:], w, stderr)
 	case "recipe-rm":
