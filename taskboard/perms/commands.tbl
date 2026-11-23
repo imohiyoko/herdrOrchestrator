@@ -63,6 +63,37 @@ role-edit                cmd:agent:role-edit          allow       allow       en
 role-set                 cmd:agent:role-set           allow       allow       entry
 role-unset               cmd:agent:role-unset         deny        allow       inner
 role-log                 cmd:agent:role-log           allow       allow       entry
+# --- agent <動詞>(サービスの名前。古い名前の行と同じ操作名)
+agent                    cmd:agent:help               allow       allow       entry
+agent.list               cmd:agent:list               allow       allow       entry
+agent.open               cmd:agent:new                allow       allow       entry
+agent.stop               cmd:agent:stop               allow       allow       entry
+agent.revive             cmd:agent:revive             allow       allow       entry
+agent.restart            cmd:agent:restart            allow       allow       entry
+agent.flag               cmd:agent:flag               allow       allow       entry
+agent.ops                cmd:agent:ops                allow       allow       entry
+agent.approve            cmd:agent:approve            allow       allow       entry
+agent.reject             cmd:agent:reject             allow       allow       entry
+agent.kinds              cmd:agent:kinds              allow       allow       entry
+agent.shed               cmd:agent:shed               allow       allow       entry
+agent.spawn              cmd:agent:spawn              allow       allow       entry
+agent.freeze             cmd:agent:spawn-freeze       deny        allow       inner
+agent.unfreeze           cmd:agent:spawn-unfreeze     deny        allow       inner
+agent.can                cmd:agent:can                allow       allow       entry
+agent.org                cmd:agent:org                allow       allow       entry
+agent.peek               cmd:agent:peek               allow       allow       entry
+agent.slash              cmd:agent:slash              allow       allow       entry
+agent.model.set          cmd:agent:model-set          allow       allow       entry
+agent.compact.check      cmd:agent:compact-check      allow       allow       entry
+agent.role.show          cmd:agent:role-show          allow       allow       entry
+agent.role.list          cmd:agent:role-list          allow       allow       entry
+agent.role.write         cmd:agent:role-write         allow       allow       entry
+agent.role.edit          cmd:agent:role-edit          allow       allow       entry
+agent.role.unset         cmd:agent:role-unset         deny        allow       inner
+agent.role.set           cmd:agent:role-set           allow       allow       entry
+agent.role.log           cmd:agent:role-log           allow       allow       entry
+agent.role.broadcast     cmd:agent:role-broadcast     allow       allow       entry
+agent.role.status        cmd:agent:role-list          allow       allow       entry
 
 # --- alert
 alert                    cmd:alert:add                allow       allow       entry
@@ -272,6 +303,20 @@ recipe-run               cmd:recipe:run               allow       allow       en
 recipe-runner            cmd:recipe:runner            deny        allow       inner
 recipe-queue             cmd:recipe:queue             allow       allow       entry
 recipe-cancel            cmd:recipe:cancel            allow       allow       entry
+# --- recipe <動詞>(サービスの名前。古い名前の行と同じ操作名)
+recipe                   cmd:recipe:help              allow       allow       entry
+recipe.set               cmd:recipe:set               deny        allow       inner
+recipe.rm                cmd:recipe:rm                deny        allow       inner
+recipe.list              cmd:recipe:list              allow       allow       entry
+recipe.show              cmd:recipe:show              allow       allow       entry
+recipe.history           cmd:recipe:history           allow       allow       entry
+recipe.run               cmd:recipe:run               allow       allow       entry
+recipe.runner            cmd:recipe:runner            deny        allow       inner
+recipe.queue             cmd:recipe:queue             allow       allow       entry
+recipe.cancel            cmd:recipe:cancel            allow       allow       entry
+recipe.part.list         cmd:recipe:parts             allow       allow       entry
+recipe.part.check        cmd:recipe:part-check        allow       allow       entry
+recipe.part.risk         cmd:recipe:part-risk         allow       allow       entry
 
 # --- reminder
 reminder                 cmd:reminder:help            allow       allow       entry
