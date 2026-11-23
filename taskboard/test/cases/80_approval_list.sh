@@ -41,15 +41,20 @@ eq "cmd queue: the requester cannot approve its own request" "$(HERDR_PANE_ID=wW
 eq "cmd queue: an agent without approve: cannot approve" "$(HERDR_PANE_ID=wW:p2 $TB approval approve "$cq" 2>&1 >/dev/null | grep -c '承認する許可がありません')" "1"
 eq "cmd queue: a person approves → the command runs with the saved stdin" "$($TB approval approve "$cq" >/dev/null 2>&1; echo $?) $(grep -c '^worker2 send:task' "$TB_POLICY") $(alsql "SELECT status FROM requests WHERE id=${cq#Q-};")" "0 1 done"
 eq "cmd queue: an approved request runs once" "$($TB approval approve "$cq" 2>&1 >/dev/null | grep -c '承認待ちではありません')" "1"
+eq "cmd queue: the run key is not stored in the clear" "$(alsql "SELECT count(*) FROM requests WHERE run_key IS NOT NULL;")" "0"
 eq "cmd queue: the token cannot be reused by hand" "$(TB_APPROVED_REQUEST=$cq HERDR_PANE_ID=wW:p1 rc $TB config set policy </dev/null 2>/dev/null)" "1"
 # agent の承認者: approve:<操作>:<対象> <依頼者> の行で決まる
-cp "$TMP/al.base" "$TB_POLICY"; printf 'lead1 approve:policy:send:task:* worker1 = allow\nlead1 cmd:config:set * = allow\nlead1 policy:send:* * = allow\n' >>"$TB_POLICY"
+# 承認者は承認の権限だけを持つ(config set も policy: も持たない)。実行は依頼者 worker1 の権限で機械的に行う
+cp "$TMP/al.base" "$TB_POLICY"; printf 'lead1 approve:policy:send:task:* worker1 = allow\n' >>"$TB_POLICY"
 printf '%s\n' "$(cat "$TB_POLICY")" 'worker3 send:task * = allow' | HERDR_PANE_ID=wW:p1 $TB config set policy >/dev/null 2>"$TMP/al.err"
 cq2=$(grep -o 'Q-[0-9]*' "$TMP/al.err" | head -1)
-eq "cmd queue: an agent with approve:<op>:<target> <requester> approves and runs it" "$(HERDR_PANE_ID=wW:p2 $TB approval approve "$cq2" >/dev/null 2>&1; echo $?) $(grep -c '^worker3 send:task' "$TB_POLICY") $(alsql "SELECT decided_by FROM requests WHERE id=${cq2#Q-};")" "0 1 lead1"
+eq "cmd queue: an agent with only approve:<op>:<target> <requester> approves; it runs as the requester" "$(HERDR_PANE_ID=wW:p2 $TB approval approve "$cq2" >/dev/null 2>&1; echo $?) $(grep -c '^worker3 send:task' "$TB_POLICY") $(alsql "SELECT decided_by FROM requests WHERE id=${cq2#Q-};")" "0 1 lead1"
 cp "$TMP/al.base" "$TB_POLICY"
 printf '%s\n' "$(cat "$TB_POLICY")" 'worker4 send:task * = allow' | HERDR_PANE_ID=wW:p1 $TB config set policy >/dev/null 2>"$TMP/al.err"
 cq3=$(grep -o 'Q-[0-9]*' "$TMP/al.err" | head -1)
 eq "cmd queue: reject → not run" "$($TB approval reject "$cq3") $(grep -c '^worker4' "$TB_POLICY") $(alsql "SELECT status FROM requests WHERE id=${cq3#Q-};")" "$cq3 rejected 0 rejected"
+printf '%s\n' "$(cat "$TB_POLICY")" 'worker5 send:task * = allow' | HERDR_PANE_ID=wW:p1 $TB config set policy >/dev/null 2>"$TMP/al.err"
+cq4=$(grep -o 'Q-[0-9]*' "$TMP/al.err" | head -1)
+eq "cmd queue: the requester is gone → not run, failed" "$(FAKE_AGENTS='[{"pane_id":"wW:p2","name":"lead1","agent_session":{"value":"s2"}}]' $TB approval approve "$cq4" 2>&1 >/dev/null | grep -c 'もういない') $(grep -c '^worker5' "$TB_POLICY") $(alsql "SELECT status FROM requests WHERE id=${cq4#Q-};")" "1 0 failed"
 eq "cmd queue: deny still stops without a Q-" "$(printf '%s\n' "$(cat "$TB_POLICY")" 'worker1 send:task * = allow' | HERDR_PANE_ID=wW:p1 $TB config set policy >/dev/null 2>"$TMP/al.err"; echo $?) $(grep -c 'Q-' "$TMP/al.err")" "1 0"
-unset -f alsql; unset oq lq cq cq2 cq3 TB_DB TB_POLICY HERDR_PANE_ID FAKE_AGENTS; eval "$_al_saved"; unset _al_saved
+unset -f alsql; unset oq lq cq cq2 cq3 cq4 TB_DB TB_POLICY HERDR_PANE_ID FAKE_AGENTS; eval "$_al_saved"; unset _al_saved

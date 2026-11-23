@@ -461,7 +461,7 @@ func EnforceTarget(op, target, tier, rule, what string) error {
 			if err != nil {
 				return &Denied{20, msg + "。承認待ちに積めませんでした(" + err.Error() + ")。人が自分の端末で実行してください(agent '" + n + "')"}
 			}
-			return &Denied{20, msg + "。承認待ち " + id + " に積みました(承認されると承認した側が実行します。tb approval list)(agent '" + n + "')"}
+			return &Denied{20, msg + "。承認待ち " + id + " に積みました(承認されると、依頼者の権限で実行されます。tb approval list)(agent '" + n + "')"}
 		}
 		return &Denied{20, msg + "。承認待ちに積めないため実行しません。人が自分の端末で実行してください(agent '" + n + "')"}
 	}
