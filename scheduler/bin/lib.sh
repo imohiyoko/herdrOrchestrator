@@ -17,11 +17,17 @@ export HERDR_BIN_PATH="${HERDR_BIN_PATH:-$HERDR}"
 
 die() { echo "error: $*" >&2; exit 2; }
 
-# SCHED_IMPL=go なら herdrctl sched <サブコマンド> に置き換わって戻らない。既定(bash)なら何もしない。
+# Go 版(herdrctl sched <サブコマンド>)に置き換わって戻らない。どちらで動かすかは SCHED_IMPL:
+#   go → Go(herdrctl が無ければエラー)/ bash → bash / 未設定(既定)→ 使える herdrctl(sched --features にそのサブコマンドがある)があれば Go、無ければ bash
 # Go 版は conf を bash として実行せず、決まった書き方(KEY=値)だけを読む(README の「Go 版」)
 sched_go() {
-  [ "${SCHED_IMPL:-bash}" = go ] || return 0
-  [ -n "$_SCHED_HC" ] && command -v "$_SCHED_HC" >/dev/null 2>&1 || die "SCHED_IMPL=go ですが herdrctl が見つかりません"
+  case ${SCHED_IMPL:-} in
+    go) [ -n "$_SCHED_HC" ] && command -v "$_SCHED_HC" >/dev/null 2>&1 || die "SCHED_IMPL=go ですが herdrctl が見つかりません" ;;
+    "") local f
+        [ -n "$_SCHED_HC" ] && command -v "$_SCHED_HC" >/dev/null 2>&1 && f=$("$_SCHED_HC" sched --features 2>/dev/null) \
+          && [[ " $f " == *" $1 "* ]] || return 0 ;;
+    *) return 0 ;;
+  esac
   SCHED_ROOT=$SCHED_ROOT JOBS_DIR=$JOBS_DIR SCHED_SETTINGS_DIR=$SETTINGS_DIR TB_DB=$SCHED_DB LOG_DIR=$LOG_DIR HERDR_BIN=$HERDR \
     TB_BIN="${TB_BIN:-$SCHED_ROOT/../taskboard/bin/tb}" exec "$_SCHED_HC" sched "$@"
 }

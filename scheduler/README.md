@@ -216,9 +216,12 @@ SCHED_FILE_FALLBACK=1 DRY_RUN=1 bash bin/tick.sh <job>       # DB に取り込�
 
 ## Go 版(移行中)
 
-`SCHED_IMPL=go` なら `bin/show.sh` は `herdrctl sched show` に、`bin/tick.sh` は `herdrctl sched tick` に渡す(herdrctl は `SCHED_HERDRCTL` > `TB_HERDRCTL` > PATH)。
+Go 版なら `bin/show.sh` は `herdrctl sched show` に、`bin/tick.sh` は `herdrctl sched tick` に渡す(herdrctl は `SCHED_HERDRCTL` > `TB_HERDRCTL` > PATH)。
 `jobs.sh` / `dispatch.sh` / `gen-plist.sh` / `install.sh` も同じく `herdrctl sched jobs` / `dispatch` / `gen-plist` / `install` に渡す(どれも `lib.sh` の `sched_go`)。
 判定・記録の形、plist の中身は bash 版と同じ。plist が起動するのは今までどおり `bin/tick.sh` / `bin/dispatch.sh` なので、作り直さなくても `SCHED_IMPL` で切り替わる。
 Go 版はジョブ定義を bash として実行しない。書けるのは `KEY=値` だけで、値は `'…'`(そのまま)/ `"…"`(`\"` などの逃がしだけ)/ 引用なし。
 `$VAR`・`$(…)`・`` `…` ``・`~` の展開、`;` などのコマンド、知らないキーは読み込みでエラーになる(`$` を文字として書くなら `'…'` で囲む)。
-既定はまだ bash(tick.sh などが移ったら既定を Go にする)。移す順は [docs/go-migration.md](../docs/go-migration.md)。
+既定(`SCHED_IMPL` 未設定)は、使える herdrctl(`herdrctl sched --features` にそのサブコマンドがある)があれば Go、無ければ bash。
+`SCHED_IMPL=bash` なら bash、`SCHED_IMPL=go` なら Go(herdrctl が無ければエラー)。conf に展開を書いているジョブは Go では読み込みでエラーになるので、書き直すか `SCHED_IMPL=bash` で戻す(launchd から動かすなら plist の EnvironmentVariables に足す)。
+launchd から動くときに探す PATH は plist の PATH(`/opt/homebrew/bin` / `/usr/local/bin` など)なので、herdrctl がそこに無ければ launchd のジョブは bash のまま動く。
+Go 版が読めない定義は `setup/check.sh` が `job:<job>` の warn で知らせる(`herdrctl sched lint`)。移す順は [docs/go-migration.md](../docs/go-migration.md)。

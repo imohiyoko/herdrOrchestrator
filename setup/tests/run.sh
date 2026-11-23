@@ -40,7 +40,7 @@ fresh() {
   for c in python3 claude plutil; do ln -s "$HERE/fake/stub" "$B/$c"; done
   ln -s "$SQLITE" "$B/sqlite3"
   ln -s "$HERE/fake/herdr" "$B/herdr"; ln -s "$HERE/fake/launchctl" "$B/launchctl"; ln -s "$HERE/fake/herdrctl" "$B/herdrctl"
-  unset FAKE_HERDRCTL_FEATURES
+  unset FAKE_HERDRCTL_FEATURES FAKE_SCHED_FEATURES
   export FAKE_LOADED="local.herdr-sched-taskboard-digest local.herdr-webui" FAKE_HERDR_DOWN=0 FAKE_LOG="$W/calls.log"
   OSNAME=Darwin
 }
@@ -55,7 +55,7 @@ hook_json() {
 run() {
   OUT=$(env -i PATH="$B" HOME="$H" SETUP_ROOT="$R" LAUNCH_AGENTS_DIR="$LA" SETUP_UNAME="$OSNAME" \
     FAKE_LOADED="$FAKE_LOADED" FAKE_HERDR_DOWN="$FAKE_HERDR_DOWN" FAKE_LOG="$FAKE_LOG" \
-    ${FAKE_HERDRCTL_FEATURES+FAKE_HERDRCTL_FEATURES="$FAKE_HERDRCTL_FEATURES"} \
+    ${FAKE_HERDRCTL_FEATURES+FAKE_HERDRCTL_FEATURES="$FAKE_HERDRCTL_FEATURES"} ${FAKE_SCHED_FEATURES+FAKE_SCHED_FEATURES="$FAKE_SCHED_FEATURES"} \
     "$B/bash" "$CHECK" "$@" 2>&1)
   RC=$?
 }
@@ -104,6 +104,11 @@ fresh; rm "$B/plutil"; run; has "macOS で plutil がない" warn cmd:plutil
 fresh; run; has "herdrctl があれば tb は Go" ok cmd:herdrctl "Go で動く"
 fresh; rm "$B/herdrctl"; run; has "herdrctl がない" warn cmd:herdrctl "PATH にない"; rc_is "herdrctl がなければ終了コード 1" 1
 fresh; FAKE_HERDRCTL_FEATURES="perms policy"; run; has "古い herdrctl" warn cmd:herdrctl "古い版"
+# Go 版の scheduler(既定)が DB の定義を読めるか(herdrctl sched lint)
+fresh; FAKE_SCHED_FEATURES="show tick lint"; run; has "Go 版が読める定義は ok" ok job:taskboard-digest "DB に定義あり"
+fresh; FAKE_SCHED_FEATURES="show tick lint"; sjob taskboard-digest 'COMMAND=$(id)'; run
+has "Go 版が読めない定義は warn" warn job:taskboard-digest "Go 版の scheduler が読めない"; has "読めない理由を出す" warn job:taskboard-digest "展開は使えない"
+fresh; sjob taskboard-digest 'COMMAND=$(id)'; run; has "sched lint の無い herdrctl なら見ない" ok job:taskboard-digest "DB に定義あり"
 fresh; rm "$B/plutil"; OSNAME=Linux; run; hasnt "macOS 以外は plutil を見ない" warn cmd:plutil
 
 # --- tb-hook ---
