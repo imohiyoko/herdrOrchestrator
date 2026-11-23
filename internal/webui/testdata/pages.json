@@ -311,7 +311,7 @@
  ],
  "/docs/view?ref=C-9/8": [
   "link-out",
-  "<p><a href=\"/docs\">← ドキュメント一覧</a></p><table><tr><th>登録された値</th><td>link-out</td></tr><tr><th>場所</th><td>/etc/hostname</td></tr><tr><th>タスク</th><td><a href=\"/tasks/T-p-1\">T-p-1</a></td></tr><tr><th>from</th><td>beta</td></tr><tr><th>時刻</th><td>2026-01-05T00:00:00Z</td></tr><tr><th>参照</th><td>C-9/8</td></tr></table><pre>vm\n</pre>",
+  "<p><a href=\"/docs\">← ドキュメント一覧</a></p><table><tr><th>登録された値</th><td>link-out</td></tr><tr><th>場所</th><td>/etc/hostname</td></tr><tr><th>タスク</th><td><a href=\"/tasks/T-p-1\">T-p-1</a></td></tr><tr><th>from</th><td>beta</td></tr><tr><th>時刻</th><td>2026-01-05T00:00:00Z</td></tr><tr><th>参照</th><td>C-9/8</td></tr></table><pre>@HOSTNAME@</pre>",
   "<!doctype html><html lang=ja><head><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\"><meta name=referrer content=same-origin><title>link-out - herdr [default]</title><style>@CSS@</style><script src=\"/notify.js\" defer></script></head><body><nav><span class=\"inst\" title=\"herdr セッション\">default</span><a href=\"/\">概要</a><a href=\"/notifications\">緊急通知<span id=nbadge class=\"badge\">19</span></a><a href=\"/agents\">agent</a><a href=\"/tasks\">タスク</a><a href=\"/board\">ボード</a><a href=\"/inbox\">報告・承認待ち<span class=\"badge\">6</span></a><a href=\"/outbox\">送信</a><a href=\"/docs\" class=on>ドキュメント</a><a href=\"/jobs\">定期実行</a><a href=\"/ledger\">送信履歴</a><a href=\"/perms\">権限</a><a href=\"/sessions\">セッション</a><LOGOUT></nav><main><h1>link-out</h1>@BODY@<p class=note>入力欄があるので自動更新なし(再読み込みで更新) / 変更できるのは定期実行の設定・報告の「対応済み」・agent の停止 / 復活 / 作成だけ(権限と送信履歴は読み取りのみ) / 機密を含みうる画面です / Chrome 通知は「緊急通知」で設定</p></main></body></html>"
  ],
  "/docs/view?ref=C-9/9": [

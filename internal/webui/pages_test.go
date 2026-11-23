@@ -373,7 +373,7 @@ not json
 	webui, _ := filepath.Abs("../../webui")
 	for k, v := range map[string]string{
 		"WEBUI_TB_DB": dbp, "HERDR_BIN": herdr, "WEBUI_SCHED_LOGS": logs, "HERDR_SESSION": "default",
-		"HERDR_SESSION_FILE": filepath.Join(dir, "none"), "HERDR_SOCKET_PATH": "", "HERDR_SESSION_FROM_FILE": "",
+		"HERDR_SESSION_FILE": filepath.Join(dir, "none"), "XDG_CONFIG_HOME": "", "HERDR_SOCKET_PATH": "", "HERDR_SESSION_FROM_FILE": "",
 		"TB_STATUSES": "", "TB_CONFIG_DIR": filepath.Join(dir, "config"), "WEBUI_ROOT": webui,
 		"XDG_STATE_HOME": filepath.Join(dir, "state"), "WEBUI_POLICY": "", "TB_POLICY": "", "TB_ROLES": filepath.Join(dir, "roles"),
 		"WEBUI_SCHED_JOBS": filepath.Join(dir, "jobs"), "WEBUI_SCHED_SETTINGS": filepath.Join(dir, "settings"), "SCHED_FILE_FALLBACK": "",
@@ -391,6 +391,9 @@ not json
 
 // 画面ごとの HTML を期待値(testdata/pages.json。Python 版と同じ出力だったもの)と比べる。
 func TestPagesGolden(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("fixture が /etc/hostname への symlink を使う(期待値は Linux で作った)")
+	}
 	webui := pagesFixture(t)
 	paths := []string{"/notifications", "/outbox", "/sessions", "/ledger",
 		"/ledger?result=all", "/ledger?result=failed&kind=send", "/ledger?kind=report&target=beta&from=2026-01-02",
@@ -434,6 +437,8 @@ func TestPagesGolden(t *testing.T) {
 	nowFn = func() time.Time { return time.Date(2026, 3, 4, 12, 34, 56, 0, time.UTC) }
 	defer func() { nowFn = time.Now }()
 	t.Setenv("SCHED_HERDRCTL", buildHerdrctl(t))
+	hb, _ := os.ReadFile("/etc/hostname")
+	hostname := pyDecodeUTF8(hb)
 	s := &Server{Log: os.Stderr}
 	q := &rq{name: "default"}
 	defer func() { q.v.close() }() // q.v は途中で作られるので、閉じるときの値を見る
@@ -458,6 +463,8 @@ func TestPagesGolden(t *testing.T) {
 		// 枠(ナビ・CSS)は毎回同じなので、本文と CSS を置き換えて持つ
 		full := s.page(q, title, body, p, "<LOGOUT>", *opts)
 		full = strings.Replace(strings.Replace(full, body, "@BODY@", 1), s.css(), "@CSS@", 1)
+		// fixture の symlink の先(/etc/hostname)の中身は機械ごとに違う
+		body = strings.ReplaceAll(body, "<pre>"+E(hostname)+"</pre>", "<pre>@HOSTNAME@</pre>")
 		out[u] = []string{title, body, full}
 	}
 	out["api"] = notificationsJSON(q.data().urgentItems())
