@@ -77,8 +77,8 @@ agent.reject             cmd:agent:reject             allow       allow       en
 agent.kinds              cmd:agent:kinds              allow       allow       entry
 agent.shed               cmd:agent:shed               allow       allow       entry
 agent.spawn              cmd:agent:spawn              allow       allow       entry
-agent.spawn.freeze       cmd:agent:spawn-freeze       deny        allow       inner
-agent.spawn.unfreeze     cmd:agent:spawn-unfreeze     deny        allow       inner
+agent.freeze             cmd:agent:spawn-freeze       deny        allow       inner
+agent.unfreeze           cmd:agent:spawn-unfreeze     deny        allow       inner
 agent.can                cmd:agent:can                allow       allow       entry
 agent.org                cmd:agent:org                allow       allow       entry
 agent.peek               cmd:agent:peek               allow       allow       entry

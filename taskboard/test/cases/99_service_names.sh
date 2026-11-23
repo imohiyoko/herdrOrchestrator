@@ -18,7 +18,7 @@ eq "svc: agent can = can" "$($TB agent can sn1 agent:stop sn2; echo "rc=$?")" "$
 eq "svc: agent slash --list = slash --list" "$($TB agent slash --list)" "$($TB slash --list)"
 eq "svc: agent compact check = compact-check" "$($TB agent compact check)" "$($TB compact-check)"
 eq "svc: agent list = agents" "$($TB agent list --json)" "$($TB agents --json)"
-eq "svc: agent spawn freeze / unfreeze" "$($TB agent spawn freeze >/dev/null; sqlite3 "$TB_DB" "SELECT value FROM tb_flags WHERE key='spawn_frozen'"; $TB agent spawn unfreeze >/dev/null; sqlite3 "$TB_DB" "SELECT value FROM tb_flags WHERE key='spawn_frozen'")" "1
+eq "svc: agent freeze / unfreeze" "$($TB agent freeze >/dev/null; sqlite3 "$TB_DB" "SELECT value FROM tb_flags WHERE key='spawn_frozen'"; $TB agent unfreeze >/dev/null; sqlite3 "$TB_DB" "SELECT value FROM tb_flags WHERE key='spawn_frozen'")" "1
 0"
 eq "svc: agent flag" "$($TB agent flag sn1 --killable unknown)" "sn1 killable=unknown"
 eq "svc: recipe part list = parts" "$($TB recipe part list --json)" "$($TB parts --json)"
@@ -35,7 +35,7 @@ sv1 removed
 eq "svc: recipe queue (still bash) = recipe-queue" "$($TB recipe queue --all --json)" "$($TB recipe-queue --all --json)"
 
 # ---- 使い方の誤り(2)と一覧
-eq "svc: tb agent alone lists subcommands (2)" "$($TB agent 2>/dev/null | grep -c '^tb agent '; rc $TB agent)" "12
+eq "svc: tb agent alone lists subcommands (2)" "$($TB agent 2>/dev/null | grep -c '^tb agent '; rc $TB agent)" "13
 2"
 eq "svc: tb recipe alone lists subcommands (2)" "$($TB recipe 2>/dev/null | grep -c '^tb recipe '; rc $TB recipe)" "5
 2"
@@ -47,9 +47,9 @@ printf 'sn1 cmd:agent:ops * = deny\nsn1 cmd:recipe:parts * = deny\n' >"$TB_POLIC
 eq "svc: policy on cmd:agent:ops stops both names" "$(rc $TB agent-ops) $(rc $TB agent ops) $($TB agent ops 2>&1 | grep -c cmd:agent:ops)" "1 1 1"
 eq "svc: policy on cmd:recipe:parts stops both names" "$(rc $TB parts) $(rc $TB recipe part list) $($TB recipe part list 2>&1 | grep -c cmd:recipe:parts)" "1 1 1"
 eq "svc: other verbs still pass" "$(rc $TB agent kinds)" "0"
-eq "svc: human-only verbs stay human-only under the new name" "$(rc $TB agent spawn freeze) $(rc $TB recipe set sv2 <<<'step agent-status target=$target')" "1 1"
+eq "svc: human-only verbs stay human-only under the new name" "$(rc $TB agent freeze) $(rc $TB recipe set sv2 <<<'step agent-status target=$target')" "1 1"
 : >"$TB_POLICY"
 unset HERDR_PANE_ID
 
+unset TB_DB TB_POLICY HERDR_PANE_ID FAKE_AGENTS
 eval "$_saved_env"
-[[ -n ${HERDR_PANE_ID:-} ]] || unset HERDR_PANE_ID

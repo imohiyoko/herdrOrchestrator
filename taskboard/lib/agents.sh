@@ -903,11 +903,8 @@ cmd_agent() {
     list) cmd_agents "$@";;
     open) cmd_agent-new "$@";;
     stop|revive|restart|flag|ops|approve|reject|kinds|shed) "cmd_agent-$sub" "$@";;
-    spawn)
-      case ${1:-} in
-        freeze|unfreeze) local v=$1; shift; "cmd_spawn-$v" "$@";;
-        *) cmd_agent-spawn "$@";;
-      esac;;
+    spawn) cmd_agent-spawn "$@";;   # 1 語目は役割名(freeze なども役割として扱う。止める・解除は tb agent freeze / unfreeze)
+    freeze|unfreeze) "cmd_spawn-$sub" "$@";;
     can|org|peek|slash) "cmd_$sub" "$@";;
     model)
       [[ ${1:-} == set ]] || usage "agent model: サブコマンドは set だけです(tb agent model set ...)"
@@ -934,7 +931,8 @@ tb agent open <名前> [--cwd D] [--kind K] [--model M] [--role R] [--prompt P] 
 tb agent stop|revive|restart <名前> ...   止める / 同じ会話で戻す / 止めて戻す(古い名前 tb agent-stop など)
 tb agent flag <名前> --killable yes|no|unknown [--reason R]   止めてよいかの判定
 tb agent ops [--status S] [--json] / tb agent approve|reject L-<n>   操作の記録と承認待ち
-tb agent spawn <役割|-> --task T --brief B / tb agent spawn freeze|unfreeze   規則つきの子 agent(古い名前 tb agent-spawn / tb spawn-freeze)
+tb agent spawn <役割|-> --task T --brief B   規則つきの子 agent(古い名前 tb agent-spawn)
+tb agent freeze|unfreeze   子 agent の自動承認を止める / 戻す(人だけ。古い名前 tb spawn-freeze / tb spawn-unfreeze)
 tb agent shed / tb agent kinds   絞る候補 / kind の対応表
 tb agent can|org|peek ...   できるか / 組織図 / 直近の出力
 tb agent model set <名前|@役割|--all> <モデル>|--reset [--dry-run]   モデルを変える(古い名前 tb model-set)
