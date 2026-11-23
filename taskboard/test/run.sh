@@ -23,6 +23,7 @@ SWEEP=99_zzz_session_sweep.sh
 if [[ ${1-} == --unit ]]; then
   shift
   TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+  export TB_IMPL=${TB_IMPL:-bash}   # 既定(未設定なら使える herdrctl があれば Go)に左右されない。Go は CI の tb contract が TB_IMPL=go で流す
   export HERDR_SESSION_FILE=$TMP/no-herdr-session   # 手元の checkout の herdr-session に左右されない
   export TB_DB=$TMP/tasks.db TB_CONFIG=$TMP/projects.conf TB_LIMITS=$TMP/limits-default.conf
   unset HERDR_SOCKET_PATH   # 実行する pane の socket に左右されない(HSESS は HERDR_SOCKET_PATH を HERDR_SESSION より優先する)
