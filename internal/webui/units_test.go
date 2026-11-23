@@ -758,7 +758,8 @@ func TestReqPendingSameAsTB(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(b), "const reqPending = `"+reqPendingSQL+"`") {
+	src := strings.ReplaceAll(string(b), "\r\n", "\n") // Windows の checkout は CRLF
+	if !strings.Contains(src, "const reqPending = `"+reqPendingSQL+"`") {
 		t.Error("internal/tbcli/request.go の reqPending と reqPendingSQL が違う")
 	}
 }
