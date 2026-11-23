@@ -202,6 +202,15 @@ func recordOp(db *store.DB, op, target, args, by string, rc int, result string) 
 		db.Session, op, target, args, by, st, result, ts, ts)
 }
 
+// recordOpID は record_op の既存の行(承認待ちの L-<id>)を結果で閉じる。
+func recordOpID(db *store.DB, id int64, rc int, result string) {
+	st := "done"
+	if rc != 0 {
+		st = "failed"
+	}
+	_, _ = db.Exec(`UPDATE main.agent_ops SET status=?, result=?, decided_at=? WHERE herdr_session=? AND id=?`, st, result, nowTS(), db.Session, id)
+}
+
 func cmdCompactCheck(args []string, w, stderr io.Writer) error {
 	apply := false
 	for _, a := range args {

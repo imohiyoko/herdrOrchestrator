@@ -276,13 +276,27 @@ func screenCheck(pane, okRE string) string {
 	return ""
 }
 
-// sendOne は slash_send_one(承認待ちの id なし): 1 行の結果と 0=送った 1=失敗 10=使用中で送らず。
-func (c *slashCtx) sendOne(name, by string) (string, int) {
+// sendOne は slash_send_one: 1 行の結果と 0=送った 1=失敗 10=使用中で送らず。
+// lid > 0 なら承認待ちの行(L-<lid>)に結果を書き、承認者の label を添える。
+func (c *slashCtx) sendOne(name, by string, lid int64, label string) (string, int) {
 	text := "/" + c.cmd
 	if c.e.args != "" {
 		text += " " + c.e.args
 	}
 	args := jsonC("command", c.cmd, "args", c.e.args)
+	suffix := ""
+	if lid > 0 {
+		// 承認待ちの行は、承認時の許可リストで実際に送る引数に書き換える(承認待ちの間に固定の引数が変わりうる)
+		_, _ = c.db.Exec(`UPDATE main.agent_ops SET args=? WHERE herdr_session=? AND id=?`, args, c.db.Session, lid)
+		suffix = " / " + label + "が承認"
+	}
+	rec := func(rc int, result string) {
+		if lid > 0 {
+			recordOpID(c.db, lid, rc, result)
+		} else {
+			recordOp(c.db, "slash", name, args, by, rc, result)
+		}
+	}
 	pane := name
 	if a, ok := c.liveOf(name); ok && a.PaneID != "" {
 		pane = a.PaneID
@@ -303,12 +317,12 @@ func (c *slashCtx) sendOne(name, by string) (string, int) {
 	case 1:
 		msg = "failed(処理の開始を確認できない。pane を見てください)"
 	case 10:
-		recordOp(c.db, "slash", name, args, by, 1, util.Oneline(text+": 送らず(送る直前に宛先が使用中)", 200))
+		rec(1, util.Oneline(text+": 送らず(送る直前に宛先が使用中)", 200)+suffix)
 		return name + " skip(busy)", 10
 	default:
 		msg, r = "failed(送信に失敗)", 1
 	}
-	recordOp(c.db, "slash", name, args, by, r, util.Oneline(text+": "+msg, 200))
+	rec(r, util.Oneline(text+": "+msg, 200)+suffix)
 	return name + " " + msg, r
 }
 
@@ -454,7 +468,7 @@ func cmdSlash(args []string, w, stderr io.Writer) error {
 			fmt.Fprintf(w, "%s would-send(dry-run)\n", t.name)
 			continue
 		}
-		line, r := c.sendOne(t.name, by)
+		line, r := c.sendOne(t.name, by, 0, "")
 		fmt.Fprintln(w, line)
 		if r == 1 {
 			rc = 11
