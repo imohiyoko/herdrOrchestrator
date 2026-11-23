@@ -9,7 +9,7 @@ description: このリポジトリでテストを設計・追加・修正・実�
 
 ## まず決めること
 
-1. **どの部品の振る舞いか** を決め、下の表のテストに足す。tb(`taskboard/bin/tb` や herdrctl の `internal/tbcli` など)を変えたら tb のケース、`webui/app/*.py` なら test_webui.py、という対応にする
+1. **どの部品の振る舞いか** を決め、下の表のテストに足す。tb(`taskboard/bin/tb` や herdrctl の `internal/tbcli` など)を変えたら tb のケース、Web UI(`internal/webui`)なら画面・HTTP の振る舞いは test_webui.py、部品は `internal/webui/*_test.go`、という対応にする
 2. **何を確かめるか**: 正常系だけでなく、境界(0 件・上限ちょうど・期日の当日)、失敗の終了コード(使い方の誤り=2、対象なし=1 など、そのコマンドの約束)、もう一度流しても変わらないこと(冪等)、秘密が DB・ログ・送信本文に出ないことを考える
 3. **バグ修正では先に再現テストを書く**。直す前に FAIL し、直した後に ok になるのを確かめてからコミットする
 4. **時刻・日付に頼らない**。`TB_TODAY`(tb の「今日」)、scheduler の `NOW`、固定の ISO 時刻を使う。`sleep` で待たない(待つ処理は `*_SEC` / `*_POLL_SEC` の環境変数で短くする)
@@ -19,12 +19,12 @@ description: このリポジトリでテストを設計・追加・修正・実�
 | 部品 | テスト | 1 つだけ流す |
 | --- | --- | --- |
 | tb(`taskboard/`) | `taskboard/test/cases/NN_*.sh` | `TB_HERDRCTL=/tmp/herdrctl bash taskboard/test/run.sh 93_prqueue.sh`(herdrctl を先に作る。下の「tb の中身は herdrctl」) |
-| Web UI(`webui/`) | `webui/tests/test_webui.py`(1 本のスクリプト) | `bash webui/tests/run.sh` |
+| Web UI(`webui/`・`internal/webui`) | 境界(サーバを起動して HTTP で確かめる)は `webui/tests/test_webui.py`(1 本のスクリプト)、部品と画面の HTML は `internal/webui/*_test.go`(期待値は `internal/webui/testdata`) | `bash webui/tests/run.sh`、`go test ./internal/webui` |
 | scheduler | `scheduler/tests/run.sh` | 同左 |
 | setup | `setup/tests/run.sh`(疑似の repo・HOME・LaunchAgents、`setup/tests/fake/`) | 同左 |
 | 任意の部品(core から呼ばない部品) | その部品の `tests/run.sh`(組の一覧は `bash tests/run-all.sh --list`) | 同左 |
 | herdrctl(Go) | `internal/**/*_test.go`、`cmd/herdrctl/main_test.go` | `go test ./internal/kernel/store/` |
-| 全体の小物(misc) | `tests/test_env.sh`(bash と Python の既定値の突き合わせ)、`tests/test_instance.sh`(複数 herdr セッションの切り分け)、`tests/test_webui_queries.py`(webui の SQL を本物のスキーマで EXPLAIN) | `bash tests/run-all.sh misc` |
+| 全体の小物(misc) | `tests/test_env.sh`(bash と Python の既定値の突き合わせ)、`tests/test_instance.sh`(複数 herdr セッションの切り分け) | `bash tests/run-all.sh misc` |
 
 すべて流すのは `bash tests/run-all.sh`(`-j N` で組を並列に)。必要なもの: bash 4.3 以上、sqlite3、jq、python3、go。
 
@@ -100,7 +100,9 @@ herdrctl が無いと run.sh は流さずに止まる。コードを直したら
 - 環境は `make_env("<名前>", ...)` で節ごとに作る(DB・run・state・認証の置き場がすべて一時ディレクトリ)。サーバは `start(env)`、ポートは `wait_port`
 - **ポートは決め打ちしない**。`free_range(n)` が高位の空きポートを選ぶ(並列に流しても衝突しない)
 - DB の fixture は本物のスキーマ(`taskboard/schema/*.sql`)を流して作り、`herdr_session` を入れる
-- webui が投げる SELECT は `tests/test_webui_queries.py` が本物のスキーマで確かめる。webui の SQL を変えたら misc も流す
+- サーバは `webui/bin/serve.sh`(中身は herdrctl webui serve)。herdrctl は WEBUI_HERDRCTL > TB_HERDRCTL > PATH
+- webui が投げる SELECT は `internal/webui` の `TestQueriesExplain` が本物のスキーマで確かめる
+- 画面の HTML は `TestPagesGolden` が期待値(`internal/webui/testdata/pages.json`)と比べる。表示を意図して変えたら `go test ./internal/webui -run TestPagesGolden -update` で書き直し、差分を見て確かめる
 
 ## scheduler / setup / 任意の部品
 

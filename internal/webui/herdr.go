@@ -15,7 +15,7 @@ import (
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/herdr"
 )
 
-// herdr.go は webui/app/herdr.py の Go 版(herdr CLI の呼び出し。読むだけ)と短いキャッシュ。
+// herdr.go は herdr CLI の呼び出し(読むだけ)と短いキャッシュ。
 
 const cacheTTL = 3 * time.Second
 

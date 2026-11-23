@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// roles.go は webui/app/graph.py のロールの解決(tb の role_files_for / name_matches と同じ)。
+// roles.go はロールの解決(tb の role_files_for / name_matches と同じ)。
 
 var (
 	reName    = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)

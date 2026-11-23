@@ -17,7 +17,7 @@ import (
 	"github.com/imohiyoko/herdrorchestrator/internal/sched"
 )
 
-// jobs.go は webui/app/jobs.py: scheduler のジョブ定義と、Web UI から書く上書き設定(DB の sched-settings:<job>)。
+// jobs.go は scheduler のジョブ定義と、Web UI から書く上書き設定(DB の sched-settings:<job>)。
 
 var (
 	reHM         = regexp.MustCompile(`^(?:[01][0-9]|2[0-3]):[0-5][0-9](?::[0-5][0-9])?$`)

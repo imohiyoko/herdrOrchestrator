@@ -21,7 +21,7 @@
 ### 今の認証
 
 - `taskboard/lib/identity.sh` の `requester` と `pane_owner_name`、Go の `internal/kernel/identity`。`HERDR_PANE_ID` が無い・pane に agent がいない → 人。
-- Web UI は別に ID・パスワードとセッションで人を認証している(`webui/auth.py`)。そのあと tb を人として呼ぶ。
+- Web UI は別に ID・パスワードとセッションで人を認証している(`internal/webui/auth.go`。当時は `webui/auth.py`)。そのあと tb を人として呼ぶ。
 - scheduler・hook など、人でも agent でもない呼び出し元は、今は人として扱われる(`HERDR_PANE_ID` が無いため)。
 
 ### 今の認可(PR 197 の時点)

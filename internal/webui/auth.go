@@ -20,8 +20,8 @@ import (
 	"golang.org/x/crypto/scrypt"
 )
 
-// webui/auth.py と同じ。ファイル(auth.json・sessions.json・lockout.json・auth.lock・allow-reset)の形も同じなので、
-// Python 版と Go 版を入れ替えてもログインは続く。
+// ファイル(auth.json・sessions.json・lockout.json・auth.lock・allow-reset)の形は以前の Python 版(webui/auth.py)と同じなので、
+// Python 版で作ったログインのまま使える(TestAuthFileFromPython)。
 
 const (
 	MinPassword   = 12
@@ -151,7 +151,7 @@ func SafeNext(n string) string {
 	return n
 }
 
-// Auth は auth.py の Auth。
+// Auth はログイン情報の置き場 1 つ分。
 type Auth struct {
 	Dir, AllowPath, authPath, sessPath, lockoutPath, lockPath string
 	mu                                                        sync.Mutex

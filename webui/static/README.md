@@ -2,7 +2,7 @@
 
 | ファイル | 出所 | 用途 |
 |---|---|---|
-| `page.css` | このリポジトリ | 画面の CSS(`<style>` に埋める。Python 版は app/views.py、Go 版は internal/webui が同じファイルを読む) |
+| `page.css` | このリポジトリ | 画面の CSS(`<style>` に埋める。internal/webui が読む) |
 | `docs.js` / `filter.js` / `refresh.js` / `notify.js.tmpl` | このリポジトリ | 画面に配るスクリプト(Python 版は app/scripts.py、Go 版は internal/webui が同じファイルを読む。`notify.js.tmpl` は `__BASE__` と `__POLL__` を埋めて配る) |
 | `mermaid.min.js` | npm `mermaid@11.4.1` の `dist/mermaid.min.js`(MIT、`mermaid.LICENSE`) | `/docs/view` で ```` ```mermaid ```` を図にする |
 

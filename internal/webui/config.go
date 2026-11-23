@@ -1,5 +1,6 @@
-// Package webui は webui(Python の webui/server.py と webui/app/)の Go 版。
-// 振る舞い・画面・ファイルの形は Python 版と同じにする(webui/tests/test_webui.py が両方を確かめる)。移し終えたものから順に増やす。
+// Package webui は Web UI(herdrctl webui serve。webui/bin/serve.sh から動かす)。
+// 以前の Python 版(webui/server.py と webui/app/)から移したもので、画面・ファイルの形は Python 版と同じ。
+// 境界は webui/tests/test_webui.py、部品と画面の HTML はこのパッケージのテストが確かめる。
 package webui
 
 import (
@@ -10,7 +11,7 @@ import (
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/env"
 )
 
-// 定数は webui/app/config.py と同じ。
+// 定数。
 const (
 	Host     = "127.0.0.1"
 	Cookie   = "herdr_webui_session"
@@ -32,7 +33,7 @@ func cfg(name, def string) string {
 	return def
 }
 
-// Root は webui/ のディレクトリ(static/ を読む)。WEBUI_ROOT(webui/server.py が Go 版に渡す)> 実行時のカレントの webui。
+// Root は webui/ のディレクトリ(static/ を読む)。WEBUI_ROOT(webui/bin/serve.sh が渡す)> 実行時のカレントの webui。
 func Root() string { return cfg("WEBUI_ROOT", "webui") }
 
 // HerdrRoot は checkout の直下。

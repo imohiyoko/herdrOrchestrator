@@ -11,7 +11,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// sessions は webui/app/sessions.py と同じ: URL の /s/<名前>/ に書ける herdr セッションの一覧。
+// sessions は URL の /s/<名前>/ に書ける herdr セッションの一覧。
 // DB に行のあるセッション(agents / tasks / config)・herdr のセッションのディレクトリ・default・このプロセスのセッション。
 
 const (

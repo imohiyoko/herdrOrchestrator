@@ -10,7 +10,7 @@ import (
 	"unicode/utf8"
 )
 
-// perms.go は webui/app/perms.py: 設定 policy の読み取りと照合(読み取り専用。tb の perm_authorize と同じ考え。ADR 0007)。
+// perms.go は設定 policy の読み取りと照合(読み取り専用。tb の perm_authorize と同じ考え。ADR 0007)。
 
 var (
 	reAction  = regexp.MustCompile(`^[A-Za-z0-9._:*?@][A-Za-z0-9._:*?@-]{0,127}$`)
@@ -342,9 +342,12 @@ func (v *sv) confPathLabel() string {
 
 type catEntry struct{ pattern, kind, side, risk, allowOK, state, desc string }
 
+// catalogPath は権限カタログの場所(固定。環境変数で差し替える口は作らない。テストだけが差し替える)。
+var catalogPath = func() string { return filepath.Join(HerdrRoot(), "taskboard", "config", "approvals-catalog.conf") }
+
 // loadCatalog は (項目, エラー文, 不正な行の数)。
 func loadCatalog() ([]catEntry, string, int) {
-	text, ok := readUpTo(filepath.Join(HerdrRoot(), "taskboard", "config", "approvals-catalog.conf"), permsMaxBytes+1)
+	text, ok := readUpTo(catalogPath(), permsMaxBytes+1)
 	if !ok {
 		return nil, "権限カタログ(approvals-catalog.conf)を読めません", 0
 	}

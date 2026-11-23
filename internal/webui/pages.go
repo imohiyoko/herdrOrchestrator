@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// pages.go は webui/app/views.py の Go 版(画面の枠と、移し終えた画面)。
+// pages.go は画面の枠と、いくつかの画面。
 
 const refreshSec = 30 // 自動更新の間隔(見ていないタブでは止まる。static/refresh.js)
 

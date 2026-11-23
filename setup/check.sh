@@ -314,7 +314,7 @@ for job in $db_jobs $(for conf in "$JOBS"/*.conf; do [ -f "$conf" ] && basename 
 done
 
 # --- 6. Web UI --------------------------------------------------------------------
-# ログイン情報と待ち受けたポートは checkout をまたいでホームの 1 か所(webui/app/config.py の STATE_DIR と同じ)
+# ログイン情報と待ち受けたポートは checkout をまたいでホームの 1 か所(internal/webui の StateDir と同じ)
 WSTATE="${XDG_STATE_HOME:-$HOME/.local/state}/herdr-webui"
 if [ -f "$WSTATE/auth.json" ]; then
   mode=$(perm_of "$WSTATE/auth.json")

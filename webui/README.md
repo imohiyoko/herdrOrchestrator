@@ -1,7 +1,7 @@
 # webui — herdr 進捗の Web UI
 
 agent・タスク・報告・定期実行・送信履歴・権限を、ブラウザで見るための小さなサーバー。
-Python 3 の標準ライブラリだけで動く(依存なし)。Mermaid の図を描くための `mermaid.min.js` だけは `webui/static/` に同梱している(CDN は使わない)。
+中身は Go の `herdrctl webui serve`(`internal/webui/`)で、`webui/bin/serve.sh` から動かす。Mermaid の図を描くための `mermaid.min.js` だけは `webui/static/` に同梱している(CDN は使わない)。
 
 - サーバー側で HTML を組み立てる複数ページ構成(SPA ではない)。自動更新は `/refresh.js`(30 秒。見ていないタブでは止め、見えたときに期限を過ぎていればすぐ読み直す。スクリプトが動かないときだけ `<noscript>` の meta refresh)。DB の接続はリクエストごとに 1 本を使い回す。
 - 全ページに共通ナビと、承認待ち件数のバッジ(報告の question/blocked + `pending-human` の代行依頼 + blocked の agent)。
@@ -15,10 +15,10 @@ Python 3 の標準ライブラリだけで動く(依存なし)。Mermaid の図�
 ## 起動
 
 Web UI は**1 つのプロセスで全 herdr セッションの画面を返す**。ブラウザで開くのはその 1 つのポートだけ(既定 `http://127.0.0.1:8800/`)で、
-各セッションの画面は `/s/<セッション名>/` に並ぶ。セッションはリクエストごとに URL から決まる(`app/reqctx.py`。DB の行の絞り込み・herdr と tb の呼び出しがそのセッションになる)。
+各セッションの画面は `/s/<セッション名>/` に並ぶ。セッションはリクエストごとに URL から決まる(DB の行の絞り込み・herdr と tb の呼び出しがそのセッションになる)。
 
 ```bash
-python3 webui/server.py      # 1 つだけ(checkout・セッションをまたいで 1 つ)
+bash webui/bin/serve.sh      # 1 つだけ(checkout・セッションをまたいで 1 つ)
 # → http://127.0.0.1:8800/ はこのプロセスの herdr セッション(HERDR_SESSION > checkout の herdr-session > default)の画面へ移る
 ```
 
@@ -28,16 +28,16 @@ herdr-webui: 開く http://127.0.0.1:8800/s/default/(ログインは全セッシ
 ```
 
 URL に書けるセッション名は、DB に行のあるセッション(agents / tasks / config)、herdr のセッションのディレクトリ
-(`~/.config/herdr/sessions/<名前>/`。`XDG_CONFIG_HOME` で変わる)、`default`、このプロセスのセッションだけ(`app/sessions.py`)。それ以外は 404。
+(`~/.config/herdr/sessions/<名前>/`。`XDG_CONFIG_HOME` で変わる)、`default`、このプロセスのセッションだけ。それ以外は 404。
 
-### Go 版(既定)
+### herdrctl
 
-`python3 webui/server.py` は、既定で Go 版(`herdrctl webui serve`。場所は `WEBUI_HERDRCTL` > `TB_HERDRCTL` > PATH)に替わる。
-Go 版には Python 版のすべての画面と操作がある(概要・緊急通知・agent・タスク・ボード・報告・承認待ち・送信・ドキュメント・定期実行・送信履歴・権限・セッション一覧と、ログインまわり・`/api/notifications`・`POST /resolve`・`POST /jobs/<job>`・`POST /agent-op`・`POST /agent-new`)。知らないパスは 404。
-`WEBUI_IMPL=python` なら Python 版(`app/`)のまま動く。`WEBUI_IMPL` を書かず、Web UI を持つ herdrctl が見つからない(無い・古い)ときも Python 版で動き、標準エラーに知らせる。
-`WEBUI_IMPL=go` は herdrctl を確かめずに Go 版にする(見つからなければ止まる)。
-画面の CSS とスクリプト(`static/`)と、ログイン情報のファイル(`auth.json` など)は両方で同じものを使うので、入れ替えてもログインは続く。
-Python 版は次の段で消す。
+`webui/bin/serve.sh` は herdrctl(場所は `WEBUI_HERDRCTL` > `TB_HERDRCTL` > PATH、最後に `~/.local/bin` と `~/go/bin`)を探し、
+この checkout の `webui/` を `WEBUI_ROOT` に渡して `herdrctl webui serve` に置き換わる。herdrctl が無い・古い(`webui serve` が無い)ときは起動せずに理由を出す(終了コード 2)。
+herdrctl は `go install ./cmd/herdrctl` などで入れる(tb・scheduler と同じもの)。
+
+以前の Python 版(`webui/server.py` と `app/`)は消した。ログイン情報のファイル(`auth.json` など)の形は同じなので、Python 版で作ったログインのまま使える。
+常駐(plist)を Python 版のときに登録していたら、`bash webui/bin/gen-plist.sh` で作り直して登録し直す(下の「常駐」)。
 
 ## ログイン(ID/パスワード)
 
@@ -117,7 +117,7 @@ POST/PUT/DELETE/PATCH は 405。
 | `/agent-graph` | agent の関係グラフ(誰が誰に何をしたか。ロールごとの枠にまとめた mermaid の図と表。`tb agents --graph` と同じ SQL) |
 | `/agent-new` | 新しい agent を作るフォーム(名前・作業ディレクトリ・モデル・役割・止めてよいか・最初の指示) |
 | `/agents/<名前>` | 状態、担当タスク、直近の出力(`herdr agent read`)、最終入力/停止、`session_id`、手元で開く `herdr agent attach`(`claude --resume` は会話が枝分かれするので出さない) |
-| `/tasks` | タスク一覧(読み取りのみ)。**既定は未完了だけ**(分類 done・cancelled を除く)。上の切り替えで「未完了 / 閉じたもの / すべて」(`?view=open\|closed\|all`)、状態ごとの件数を押すとその状態だけ。絞り込み: `?q=`(ID・題の部分一致) `?project=` `?owner=`(担当 agent。`~` は未割り当て) `?status=`(複数可。選ぶと表示の切り替えより優先) `?type=` `?priority=` `?label=` `?due=overdue\|soon&days=N` `?unreported=1`(未報告だけ) `?stale=1`(作業中のまま 24 時間超更新が無い「停滞」だけ。しきい値は `app/config.py` の `TASK_STALE_HOURS`)。今の条件はチップで並び、× で 1 つずつ外せる。選択欄は変えたらすぐ反映する(`/filter.js`。キーワードと日数は Enter か「絞り込む」)。`?sort=`(`project` / `oldest` / `created` / `id` / `due` / `priority`)で並び替え。既定の並びは優先順(未対応の報告があるもの → blocked → in_progress → review → todo → done・cancelled)で、最大 300 件。超えたときは「N 件のうち 300 件だけ表示」と明示する。親子(parent_id)、報告の種別ごとの件数(人が未対応の question / blocked を強調)、成果物の数、停滞の目印を出す。題は先頭 80 文字だけ。session_id は詳細画面に出す。表は狭い画面では横にスクロールする |
+| `/tasks` | タスク一覧(読み取りのみ)。**既定は未完了だけ**(分類 done・cancelled を除く)。上の切り替えで「未完了 / 閉じたもの / すべて」(`?view=open\|closed\|all`)、状態ごとの件数を押すとその状態だけ。絞り込み: `?q=`(ID・題の部分一致) `?project=` `?owner=`(担当 agent。`~` は未割り当て) `?status=`(複数可。選ぶと表示の切り替えより優先) `?type=` `?priority=` `?label=` `?due=overdue\|soon&days=N` `?unreported=1`(未報告だけ) `?stale=1`(作業中のまま 24 時間超更新が無い「停滞」だけ。しきい値は `internal/webui/tasks.go` の `taskStaleHrs`)。今の条件はチップで並び、× で 1 つずつ外せる。選択欄は変えたらすぐ反映する(`/filter.js`。キーワードと日数は Enter か「絞り込む」)。`?sort=`(`project` / `oldest` / `created` / `id` / `due` / `priority`)で並び替え。既定の並びは優先順(未対応の報告があるもの → blocked → in_progress → review → todo → done・cancelled)で、最大 300 件。超えたときは「N 件のうち 300 件だけ表示」と明示する。親子(parent_id)、報告の種別ごとの件数(人が未対応の question / blocked を強調)、成果物の数、停滞の目印を出す。題は先頭 80 文字だけ。session_id は詳細画面に出す。表は狭い画面では横にスクロールする |
 | `/tasks/<id>` | タスクの詳細: 親へのリンク・子タスクの一覧・session・成果物のパス・報告(先頭 1000 文字、人が対応済みにしたか)・代行依頼。報告の「対応済みにする」(`/resolve`)は既存の操作で、このページで増えた書き込みは無い |
 | `/inbox` | 要対応(question・blocked・pending-human・blocked の agent)を上に、直近の報告を下に。`tb reminder publish` の結果があれば一番上に「忘れているかも」(優先度順。項目は既存の画面へリンク)、保留した送信(`inbox` 表)があれば「保留した送信」(本文は出さず、「本文を見る」で 1 件ずつ `/inbox?held=<n>`)。どちらも読むだけ |
 | `/docs` | agent が成果物として報告したドキュメント(ローカルのファイル)の一覧。新しい順、`?q=` で絞り込み |
@@ -233,48 +233,43 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.herdr-webui.plist
 | `WEBUI_FAIL_DELAY` | `1` | ログイン・再設定の失敗時の遅延(秒) |
 | `WEBUI_DOC_ROOTS` | (なし) | パス指定で開いてよいディレクトリを足す(`:` 区切り)。agent の作業ディレクトリは自動で入る |
 | `HERDR_BIN` | `herdr` | herdr の実行ファイル(テストで疑似に差し替え) |
-| `WEBUI_TB_DB` | `TB_DB`、無ければ `~/.local/state/herdr/tasks.db` | tb と同じ DB(既定は `lib/herdr_env.py`) |
+| `WEBUI_TB_DB` | `TB_DB`、無ければ `~/.local/state/herdr/tasks.db` | tb と同じ DB(既定は `lib/herdr-env.sh` と同じ) |
 | `WEBUI_SCHED_LOGS` / `WEBUI_SCHED_JOBS` / `WEBUI_SCHED_SETTINGS` / `WEBUI_RUN_DIR` | 兄弟ディレクトリ / `webui/run` | データ源・settings・`run/` の場所 |
 | (固定) | `taskboard/config/approvals-catalog.conf` | 権限カタログ。env では差し替えられない |
 | `WEBUI_POLICY` | `TB_POLICY`、無ければ設定 `policy`(DB → ファイル) | `/perms` が読む policy のファイルを明示する(テスト用。普段は指定せず、tb と同じく DB から引く) |
 
 ## コードの構成
 
-`server.py` は起動するだけで、中身は `app/` にある。依存は上から下への一方向(逆向きの import はしない)。
+中身は `internal/webui/`(Go)。`webui/` に残るのは起動(`bin/serve.sh`・`bin/gen-plist.sh`)、画面の CSS とスクリプト(`static/`)、境界のテスト(`tests/`)。
 
-| ファイル | 中身 |
+| ファイル(`internal/webui/`) | 中身 |
 |---|---|
-| `app/config.py` | 定数と、環境変数で上書きできるパス(DB と herdr の既定は `lib/herdr_env.py`) |
-| `app/sanitize.py` | 外部由来の文字列の無害化(`e()` を通してから HTML に出す) |
-| `app/herdr.py` | herdr CLI の呼び出し(読むだけ)と短いキャッシュ |
-| `app/data.py` | tasks.db とログの読み取り(読み取り専用の接続)、緊急通知の集計 |
-| `app/docs.py` | 成果物(ドキュメント)の参照の解決と、安全な読み取り |
-| `app/markdown.py` | 最小限の Markdown → HTML(エスケープしてから整形) |
-| `app/actions.py` | 画面からの変更。tasks.db には書かず `tb` を呼ぶ(今は `tb resolve` だけ) |
-| `app/jobs.py` | scheduler のジョブ定義と、Web UI から書く上書き設定 |
-| `app/jobview.py` | `/jobs/<job>` の読み取り表示(conf を実行せず PROMPT / COMMAND をそのまま読む、本文のマスク、次回の予定、宛先の状態) |
-| `app/views.py` | HTML の組み立てと各ページ |
-| `app/scripts.py` | 画面に配るスクリプト(緊急通知・mermaid・件数の取得)。CSP でインラインのスクリプトは使えないので、すべて別ファイルとして配る |
-| `app/httpbase.py` | HTTP 応答の共通部分(安全のためのヘッダ、中身を残さないアクセスログ、Host の検査) |
-| `app/registry.py` | 待ち受けたポートの記録(`gateway.json`。二重起動の検出) |
-| `app/reqctx.py` | リクエストごとの herdr セッション(URL の `/s/<名前>/`) |
-| `app/sessions.py` | URL に書けるセッションの一覧(DB の行・herdr のディレクトリ・default・プロセスのセッション) |
-| `app/handler.py` | HTTP ハンドラ・ログイン・起動 |
-| `auth.py` | パスワードとセッション |
-| `static/page.css` ・ `static/*.js` | 画面の CSS とスクリプト(Go 版も同じファイルを読む) |
-| `../internal/webui/` | Go 版(`herdrctl webui serve`。既定) |
+| `config.go` | 定数と、環境変数で上書きできるパス |
+| `sanitize.go` | 外部由来の文字列の無害化(`E()` を通してから HTML に出す) |
+| `herdr.go` | herdr CLI の呼び出し(読むだけ)と短いキャッシュ |
+| `data.go` ・ `notify.go` | tasks.db とログの読み取り(読み取り専用の接続。このセッションの行だけの一時ビュー)、緊急通知の集計 |
+| `docs.go` ・ `docspage.go` | 成果物(ドキュメント)の参照の解決と安全な読み取り、`/docs`・`/docs/view`・`/tasks/<id>` |
+| `markdown.go` | 最小限の Markdown → HTML(エスケープしてから整形) |
+| `jobs.go` ・ `jobview.go` ・ `jobspage.go` | scheduler のジョブ定義と Web UI から書く上書き設定、`/jobs/<job>` の読み取り表示(conf を実行せず PROMPT / COMMAND をそのまま読む、本文のマスク、次回の予定、宛先の状態) |
+| `perms.go` ・ `permspage.go` | 設定 policy と権限カタログの読み取りと照合、`/perms` |
+| `roles.go` ・ `agents.go` ・ `agentspage.go` | 役割の解決、関係グラフ、台帳、`/agents`・`/agent-graph`・`/agent-new` と agent の操作(書き込みは `tb` が行う) |
+| `pages.go` ・ `overview.go` ・ `tasks.go` ・ `inbox.go` ・ `ledger.go` | 画面の枠と各ページ |
+| `server.go` | HTTP ハンドラ(安全のためのヘッダ、中身を残さないアクセスログ、Host の検査、`/s/<名前>/` の付け外し)・ログイン・起動 |
+| `registry.go` | 待ち受けたポートの記録(`gateway.json`。二重起動の検出) |
+| `sessions.go` | URL に書けるセッションの一覧(DB の行・herdr のディレクトリ・default・プロセスのセッション) |
+| `auth.go` | パスワードとセッション |
 
 ## テスト
 
 ```bash
 bash webui/tests/run.sh
-go test ./internal/webui/    # Go 版(Python 版とログイン情報のファイルを入れ替えられること、全画面が Python 版と同じ HTML を返すことも確かめる)
+go test ./internal/webui/    # 部品と、全画面の HTML(期待値は internal/webui/testdata。Python 版と同じ出力だったもの)
 ```
 
 herdr は `tests/fake/herdr`(疑似)、DB・ログ・ログイン情報の置き場は一時ディレクトリ。ポートは 30000〜60000 の空き範囲を使い、
 終了時に必ず片付ける。確認する境界: ポートの使用中は +1・二重起動しない、`/s/<名>/` の付け外しとセッションの切り替え(行・herdr の呼び出し・知らない名前は 404)、ログインの共通化(Cookie 1 つ・失敗回数の共有)、
 未ログインは /login へ、初回設定は 1 回だけ、パスワード 12 文字未満の拒否、ハッシュに平文を含まない、0600、ロックアウト、
-パスワード再設定(許可なし・期限切れ・シンボリックリンクの拒否、成功後の許可削除とセッション失効、時刻の注入)、期限切れ・再起動後・ログアウトのセッション、`next` の外部 URL 無視、Origin 不一致・CSRF トークン無しの POST の拒否、他の POST 等は 405、不正な Host 403、XSS・ANSI のエスケープ、DB 不在・破損・herdr 失敗でも落ちない、未知の URL は 404。
+パスワード再設定(許可なし・期限切れ・シンボリックリンクの拒否、成功後の許可削除とセッション失効)、期限切れ・再起動後・ログアウトのセッション、`next` の外部 URL 無視、Origin 不一致・CSRF トークン無しの POST の拒否、他の POST 等は 405、不正な Host 403、XSS・ANSI のエスケープ、DB 不在・破損・herdr 失敗でも落ちない、未知の URL は 404。
 
 ## まだできていないこと
 
@@ -307,7 +302,7 @@ herdr は `tests/fake/herdr`(疑似)、DB・ログ・ログイン情報の置き
 ## 定期実行ジョブの表示(`/jobs/<job>`)の読み取り範囲
 
 - 引用符なしの値は行末まで(` #` の前まで)を記述として出す。`$`・`` ` ``・`;`・`(`・引用符の連結など、bash が展開・解釈する記述を含む値は「シェルで展開・解釈される記述です(表示は不完全)」と明示し、`PROMPT_FILE` はファイルを確定できないので中身を読まない。conf が 64 KiB を超えるときも注意を出す。
-- 読み取り処理(`app/jobview.py`)は `scheduler/jobs/<job>.conf` を**実行しない**(bash として source しない)。スケジュール等の情報を得る経路(`job_info` → `show.sh` → `herdrctl sched show`)も conf を実行せず、`KEY=値` だけを読む(展開を含む conf は読めず、詳細ページはその理由を出す)。webui から conf を書き換える機能はスケジュールの保存だけ。`PROMPT` / `PROMPT_FILE` / `COMMAND` / `SKIP_IF` / `COMMAND_TIMEOUT` の記述を、`$変数` なども展開せずそのまま表示する。
+- 読み取り処理(`internal/webui/jobview.go`)は `scheduler/jobs/<job>.conf` を**実行しない**(bash として source しない)。スケジュール等の情報を得る経路(`job_info` → `show.sh` → `herdrctl sched show`)も conf を実行せず、`KEY=値` だけを読む(展開を含む conf は読めず、詳細ページはその理由を出す)。webui から conf を書き換える機能はスケジュールの保存だけ。`PROMPT` / `PROMPT_FILE` / `COMMAND` / `SKIP_IF` / `COMMAND_TIMEOUT` の記述を、`$変数` なども展開せずそのまま表示する。
 - `PROMPT_FILE` の中身は、絶対パスで、`scheduler/`(と jobs の置き場)の配下の通常ファイルで、認証情報の置き場(`/docs` と同じ判定)でないときだけ表示する。相対パス・範囲外は、パスだけ表示して中身は読まない。
 - 本文・コマンドのトークンらしい文字列(`ghp_…`・`xox…-`・`AKIA…`・`Bearer …`・`token=…` など)と秘密鍵のブロックは `[マスク]` に置き換える。完全ではない(機密を含みうる画面)。
 - 見るのはこの webui のプロセスの `scheduler/jobs`・`scheduler/logs`(別 checkout のジョブは見えない)。

@@ -7,7 +7,7 @@ import (
 	"syscall"
 )
 
-// flockFile は auth.lock を flock で排他する(auth.py の fcntl.flock と同じ)。
+// flockFile は auth.lock を flock で排他する(以前の Python 版の fcntl.flock と同じ)。
 func flockFile(path string) (func(), error) {
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
