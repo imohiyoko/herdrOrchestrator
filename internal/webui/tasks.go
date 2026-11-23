@@ -646,7 +646,7 @@ func (s *Server) pageTasks(q *rq, c pageCtx) (string, string) {
 			E(x) + ` ` + strconv.FormatInt(summ[x], 10) + `</a>`)
 	}
 	body += `<div class=tabs>` + tabs.String() + `<span class=sep></span>` + cells.String() + `</div>` +
-		`<p class=note>件数はキーワード・PJ・担当などの絞り込みを反映し、状態・表示と「停滞だけ」は反映しません。</p>`
+		`<p class=note>件数はキーワード・PJ・担当などの絞り込みを反映し、状態・表示と「停滞だけ」は反映しません。状態を足す・外すのは <a href="/statuses">状態の定義</a>。</p>`
 	var ropts strings.Builder
 	for _, so := range taskSorts {
 		if (tf || so.key != "priority") && (hd || so.key != "due") {
@@ -800,7 +800,8 @@ func (s *Server) pageBoard(q *rq, c pageCtx) (string, string) {
 	c.opts.norefresh = true // 入力欄があるので自動更新しない
 	v := q.data()
 	if !v.hasSprints() {
-		return "ボード", `<p class=note>スプリントの表がまだありません。手元で <code>tb sprints</code> を一度実行すると作られます。</p>`
+		return "ボード", doneNotice(c) + editErr(c) + `<p class=note>スプリントの表がまだありません。下のフォームで作るか、手元で <code>tb sprints</code> を一度実行すると作られます。</p>` +
+			v.sprintForm(c)
 	}
 	proj, sid, label := runesN(c.one("project"), 100), c.one("sprint"), c.one("label")
 	var errs []string
@@ -844,9 +845,9 @@ func (s *Server) pageBoard(q *rq, c pageCtx) (string, string) {
 			}
 		}
 	}
-	body := ""
+	body := doneNotice(c) + editErr(c)
 	if len(errs) > 0 {
-		body = errHTML(strings.Join(errs, "。"))
+		body += errHTML(strings.Join(errs, "。"))
 	}
 	var projects []string
 	for _, r := range v.q("SELECT DISTINCT project FROM sprints ORDER BY project") {
@@ -924,16 +925,16 @@ func (s *Server) pageBoard(q *rq, c pageCtx) (string, string) {
 			cells = append(cells, orStr(strings.Join(cs, ""), "-"))
 		}
 		body += table(heads, [][]string{cells})
-		body += "<p class=note>読み取りのみ。カードの移動・スプリントへの出し入れは手元で <code>tb update &lt;id&gt; --status …</code> / " +
-			"<code>--sprint S-n</code>、閉じるのは <code>tb sprint-close S-n [--carry S-m]</code>。</p>"
+		body += "<p class=note>カードの状態はタスク画面の「状態を変える」で変えられます。スプリントへの出し入れは手元で " +
+			"<code>tb update &lt;id&gt; --sprint S-n</code>。</p>"
 	}
 	var srows [][]string
 	for _, x := range sprints {
 		id := strconv.FormatInt(intOf(x["id"]), 10)
 		srows = append(srows, []string{`<a href="/board?sprint=S-` + id + `">S-` + id + `</a>`, ev(x["project"]), ev(x["name"]), ev(x["state"]),
 			dash(x["start_date"]) + ` 〜 ` + dash(x["end_date"]), fmt.Sprintf("%d / %d", intOf(x["done_n"]), intOf(x["n"])),
-			fmt.Sprintf("%d / %d", intOf(x["done_pts"]), intOf(x["pts"]))})
+			fmt.Sprintf("%d / %d", intOf(x["done_pts"]), intOf(x["pts"])), sprintOps(x, sprints, c.csrf)})
 	}
-	body += "<h2>スプリント一覧</h2>" + table([]string{"スプリント", "PJ", "名前", "状態", "期間", "完了 / 件数", "ポイント"}, srows)
-	return "ボード", body
+	body += "<h2>スプリント一覧</h2>" + table([]string{"スプリント", "PJ", "名前", "状態", "期間", "完了 / 件数", "ポイント", "操作"}, srows)
+	return "ボード", body + v.sprintForm(c)
 }

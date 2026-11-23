@@ -943,6 +943,7 @@ check("権限: シェルの特殊文字を含むパターンは出さない", "<
 check("権限: policy は GET の前後で変わらない(mtime)", os.stat(_AP).st_mtime_ns == _m0)
 check("権限: 先頭が - の操作名・パターンは不正", "使えない文字" in cl.get("/perms?op=-x")[2] and "<pre>tb" not in cl.get("/perms?pat=-x&val=allow")[2])
 check("権限: POST は 405", cl.raw("POST", "/perms", {"a": "b"})[0] == 405)
+check("権限: WEBUI_POLICY で表示用のファイルを指定していれば policy は編集しない", "WEBUI_POLICY で表示用" in cl.get("/perms")[2] and 'action="/policy"' not in cl.get("/perms")[2])
 check("権限: 自動更新しない", 'http-equiv="refresh"' not in P[2])
 _un = Client(port)
 for _pth in ["/ledger", "/perms", "/perms?op=send:task:x", "/ledger?result=all"]:
@@ -1549,6 +1550,151 @@ check("ログに送信履歴の本文・権限の検索語(URL のクエリ)を�
 _src = "".join(open(os.path.join(REPO, "internal", "webui", f), encoding="utf-8").read() for f in ("perms.go", "permspage.go"))
 check("権限の画面は tb も他のコマンドも呼ばない(agent の pane から効く経路を作らない)",
       "os/exec" not in _src and "WriteFile" not in _src and "OpenFile" not in _src and 'configText("policy")' in _src)
+
+# ================= Web UI からの編集(チケットの状態・状態の定義・スプリント・policy・ジョブの定義。書き込みは tb が行う)
+base = free_range(1)
+env, d = make_env("edits", HERDR_WEBUI_RANGE=f"{base}-{base}")
+env.pop("WEBUI_POLICY")   # 表示用の policy ファイルを指定しない(tb と同じものを読み書きする)
+env.pop("TB_POLICY", None)
+make_db(env["WEBUI_TB_DB"])
+_c = sqlite3.connect(env["WEBUI_TB_DB"])   # tb の形の ID(T-<project>-NNN)のタスク
+_c.execute("INSERT INTO tasks (id, project, title, status, created_at, updated_at, herdr_session) VALUES "
+           "('T-pj-001', 'pj', '編集する', 'in_progress', '2026-11-06T00:00:00Z', '2026-11-06T00:00:00Z', 'default')")
+_c.commit(); _c.close()
+os.makedirs(env["WEBUI_SCHED_JOBS"])
+os.makedirs(env["WEBUI_SCHED_LOGS"])
+p = start(env)
+port = wait_port(env, p)
+check("edits: 起動できる", port is not None)
+ec = Client(port)
+ec.raw("POST", "/setup", {"csrf": ec.csrf("/setup"), "username": USER, "password": PW, "confirm": PW})
+ec.cookie = None
+ec.login()
+
+
+def edb(sql, args=()):
+    c = sqlite3.connect(env["WEBUI_TB_DB"])
+    try:
+        r = c.execute(sql, args).fetchall()
+        c.commit()
+        return r
+    finally:
+        c.close()
+
+
+# ---- 状態の定義(/statuses。tb ticket status add / rm)
+sp = ec.get("/statuses")
+check("状態の定義: 一覧と足すフォーム(自動更新なし)", sp[0] == 200 and 'action="/statuses"' in sp[2] and ">in_progress</a>" in sp[2]
+      and 'http-equiv="refresh"' not in sp[2])
+check("状態の定義: CSRF 無しは拒否", ec.raw("POST", "/statuses", {"action": "add", "name": "qa", "cat": "review"})[0] == 403)
+check("状態の定義: 未ログインは /login へ", Client(port).raw("POST", "/statuses", {"action": "add", "name": "qa", "cat": "review"})[0] == 302)
+r = ec.raw("POST", "/statuses", {"action": "add", "name": "q a", "cat": "review", "csrf": ec.csrf("/statuses")})
+check("状態の定義: 空白を含む名前は 400(書かない)", r[0] == 400 and "30 文字まで" in r[2] and not edb("SELECT 1 FROM config WHERE key='statuses'"))
+r = ec.raw("POST", "/statuses", {"action": "add", "name": "qa", "cat": "review", "desc": "検証 <b>中</b>", "after": "review",
+                                 "csrf": ec.csrf("/statuses")})
+_st = edb("SELECT body FROM config WHERE key='statuses'")   # tb は今の出どころに合わせて書く(ファイルや共通の行から読んでいれば共通の行)
+check("状態の定義: 足すと設定 statuses に書く(tb ticket status add)", r[0] == 302 and r[1].get("Location") == "/statuses?done=status-add"
+      and _st and "qa review" in _st[0][0], str((r[:2], _st)))
+check("状態の定義: 足した状態が一覧に出る(説明はエスケープ)", "検証 &lt;b&gt;中&lt;/b&gt;" in ec.get("/statuses?done=status-add")[2]
+      and "状態を足しました" in ec.get("/statuses?done=status-add")[2])
+r = ec.raw("POST", "/statuses", {"action": "add", "name": "qa", "cat": "review", "csrf": ec.csrf("/statuses")})
+check("状態の定義: 同じ名前は tb が断り、理由を見せる", r[0] == 400 and "tb が断りました" in r[2], r[2][-300:])
+
+# ---- チケットの状態(/task-status。tb ticket move)
+tp = ec.get("/tasks/T-pj-001")
+check("タスク画面に状態の変更フォーム(足した状態も選べる。自動更新なし)", 'action="/task-status"' in tp[2] and '<option value="qa">' in tp[2]
+      and 'http-equiv="refresh"' not in tp[2])
+check("チケットの状態: CSRF 無しは拒否", ec.raw("POST", "/task-status", {"id": "T-pj-001", "status": "qa"})[0] == 403)
+r = ec.raw("POST", "/task-status", {"id": "T-1", "status": "review", "csrf": ec.csrf("/tasks/T-1")})
+check("チケットの状態: tb が断れば理由を見せる(tb の形でない ID)", r[0] == 400 and "T-&lt;project&gt;-NNN" in r[2], r[2][-300:])
+check("チケットの状態: 無いタスクは 404", ec.raw("POST", "/task-status", {"id": "T-404", "status": "qa", "csrf": ec.csrf("/tasks/T-pj-001")})[0] == 404)
+r = ec.raw("POST", "/task-status", {"id": "T-pj-001", "status": "nope", "csrf": ec.csrf("/tasks/T-pj-001")})
+check("チケットの状態: 定義に無い状態は 400", r[0] == 400 and "設定 statuses" in r[2] and edb("SELECT status FROM tasks WHERE id='T-pj-001'") == [("in_progress",)])
+r = ec.raw("POST", "/task-status", {"id": "T-pj-001", "status": "qa", "memo": "見てもらう", "csrf": ec.csrf("/tasks/T-pj-001")})
+check("チケットの状態: tb ticket move で変える(人の操作として記録)", r[0] == 302 and r[1].get("Location") == "/tasks/T-pj-001?done=status"
+      and edb("SELECT status FROM tasks WHERE id='T-pj-001'") == [("qa",)]
+      and edb("SELECT actor FROM task_events WHERE task_id='T-pj-001' AND kind='status' ORDER BY id DESC LIMIT 1") == [("human",)],
+      str((r[0], re.findall(r"<p class=err>(.*?)</p>", r[2], re.S), edb("SELECT kind, actor FROM task_events WHERE task_id='T-pj-001'"))))
+check("チケットの状態: 変えたと知らせる", "状態を変えました" in ec.get("/tasks/T-pj-001?done=status")[2])
+r = ec.raw("POST", "/statuses", {"action": "rm", "name": "qa", "csrf": ec.csrf("/statuses")})
+check("状態の定義: チケットが残る状態は、移し先なしでは外せない", r[0] == 400 and "--to" in r[2] and "qa review" in edb("SELECT body FROM config WHERE key='statuses'")[0][0])
+r = ec.raw("POST", "/statuses", {"action": "rm", "name": "qa", "to": "in_progress", "csrf": ec.csrf("/statuses")})
+check("状態の定義: 移し先を選ぶと移してから外す", r[0] == 302 and edb("SELECT status FROM tasks WHERE id='T-pj-001'") == [("in_progress",)]
+      and "qa" not in edb("SELECT body FROM config WHERE key='statuses'")[0][0], str((r[0], re.findall(r"<p class=err>(.*?)</p>", r[2], re.S))))
+
+# ---- スプリント(/sprint-op。tb sprint-add / sprint-start / sprint-close)
+bp = ec.get("/board")
+check("ボードにスプリントを作るフォーム(PJ の候補)", 'action="/sprint-op"' in bp[2] and '<option value="pj">' in bp[2])
+r = ec.raw("POST", "/sprint-op", {"op": "add", "project": "p j", "name": "x", "csrf": ec.csrf("/board")})
+check("スプリント: PJ が不正なら 400", r[0] == 400 and "英数字" in r[2] and not edb("SELECT 1 FROM sprints"))
+r = ec.raw("POST", "/sprint-op", {"op": "add", "project": "pj", "name": "S1", "start": "2026-12-01", "end": "2026-11-01", "csrf": ec.csrf("/board")})
+check("スプリント: 終了が開始より前なら tb が断る", r[0] == 400 and "tb が断りました" in r[2] and not edb("SELECT 1 FROM sprints"), r[2][-300:])
+r = ec.raw("POST", "/sprint-op", {"op": "add", "project": "pj", "name": "第 1 <b>", "start": "2026-12-01", "end": "2026-12-14", "goal": "出す",
+                                  "csrf": ec.csrf("/board")})
+_sp = edb("SELECT id, project, name, state, goal, herdr_session FROM sprints")
+check("スプリント: 作る(planned)", r[0] == 302 and len(_sp) == 1 and _sp[0][1:] == ("pj", "第 1 <b>", "planned", "出す", "default")
+      and r[1].get("Location") == f"/board?sprint=S-{_sp[0][0]}&done=sprint-add", str((r[:2], _sp)))
+_sid = f"S-{_sp[0][0]}"
+bp = ec.get(f"/board?sprint={_sid}")[2]
+check("スプリント: 一覧に始めるボタン(名前はエスケープ)", "value=start" in bp and "第 1 &lt;b&gt;" in bp)
+r = ec.raw("POST", "/sprint-op", {"op": "start", "sprint": _sid, "csrf": ec.csrf("/board")})
+check("スプリント: 始める(active)", r[0] == 302 and edb("SELECT state FROM sprints") == [("active",)], str(r[:2]))
+r = ec.raw("POST", "/sprint-op", {"op": "start", "sprint": _sid, "csrf": ec.csrf("/board")})
+check("スプリント: active をもう一度始めるのは tb が断る", r[0] == 400 and "planned" in r[2])
+r = ec.raw("POST", "/sprint-op", {"op": "close", "sprint": _sid, "carry": "", "csrf": ec.csrf("/board")})
+check("スプリント: 閉じる", r[0] == 302 and edb("SELECT state FROM sprints") == [("closed",)], str(r[:2]))
+check("スプリント: 不正な ID は 400", ec.raw("POST", "/sprint-op", {"op": "start", "sprint": "S-x", "csrf": ec.csrf("/board")})[0] == 400)
+
+# ---- policy(/policy。tb config set policy。ログインのパスワードが要る)
+pp = ec.get("/perms")[2]
+_pb = re.search(r'name=base value="([^"]+)"', pp)
+check("権限画面に policy の編集フォーム(パスワード欄)", 'action="/policy"' in pp and "type=password name=password" in pp and _pb)
+_good_pol = "# Web UI から\nworker1 send:task:* worker2 = allow\n"
+_pol = {"body": _good_pol, "base": _pb.group(1) if _pb else ""}
+check("policy: CSRF 無しは拒否", ec.raw("POST", "/policy", {**_pol, "password": PW})[0] == 403)
+check("policy: 未ログインは /login へ", Client(port).raw("POST", "/policy", {**_pol, "password": PW})[0] == 302)
+r = ec.raw("POST", "/policy", {**_pol, "password": WRONG, "csrf": ec.csrf("/perms")})
+check("policy: パスワードが違えば書かない(入力は残す)", r[0] == 400 and "パスワードが違います" in r[2] and "send:task:* worker2" in r[2]
+      and not edb("SELECT 1 FROM config WHERE key='policy'"))
+r = ec.raw("POST", "/policy", {**_pol, "body": "worker1 send:task:* = maybe\n", "password": PW, "csrf": ec.csrf("/perms")})
+check("policy: tb の検査に通らない本文は書かない", r[0] == 400 and "tb が断りました" in r[2] and not edb("SELECT 1 FROM config WHERE key='policy'"), r[2][-400:])
+r = ec.raw("POST", "/policy", {**_pol, "password": PW, "csrf": ec.csrf("/perms")})
+_pr = edb("SELECT body FROM config WHERE key='policy' AND herdr_session='default'")
+check("policy: 保存すると設定 policy のこのセッションの行に書く(履歴つき)", r[0] == 302 and r[1].get("Location") == "/perms?done=policy"
+      and _pr == [(_good_pol.rstrip("\n"),)] and edb("SELECT how FROM config_changes WHERE key='policy'") == [("set",)], str((r[:2], _pr)))
+check("policy: 書いた行が一覧に出る", "send:task:*" in ec.get("/perms?done=policy")[2] and "policy を保存しました" in ec.get("/perms?done=policy")[2])
+r = ec.raw("POST", "/policy", {**_pol, "body": "* send:task:* * = allow\n", "password": PW, "csrf": ec.csrf("/perms")})
+check("policy: 編集を始めたあとで変わっていれば書かない", r[0] == 400 and "開き直して" in r[2] and edb("SELECT body FROM config WHERE key='policy'") == [(_good_pol.rstrip("\n"),)],
+      str((r[0], re.findall(r"<p class=err>(.*?)</p>", r[2], re.S))))
+
+# ---- ジョブの定義(/jobs/<job> の action=conf。tb job set)
+_conf = "TARGET=alpha\nPROMPT='朝のまとめを出してください'\nWINDOW=09:00-21:00\nINTERVAL_MIN=30\nTZ=Asia/Tokyo\n"
+edb("INSERT INTO config (herdr_session, key, body, updated_by, updated_at) VALUES ('default', 'sched-job:ej', ?, 'human', 'x')", (_conf,))
+jp = ec.get("/jobs/ej")[2]
+_jb = re.search(r'name=action value=conf><input type=hidden name=base value="([^"]+)"', jp)
+check("ジョブの定義: 本文の編集欄(今の本文)", _jb and "<textarea name=conf" in jp and "朝のまとめを出してください" in jp)
+_jf = {"action": "conf", "base": _jb.group(1) if _jb else ""}
+r = ec.raw("POST", "/jobs/ej", {**_jf, "conf": "echo hi\n", "csrf": ec.csrf("/jobs/ej")})
+check("ジョブの定義: scheduler が読めない本文は書かない(理由を見せる)", r[0] == 400 and "tb が断りました" in r[2]
+      and edb("SELECT body FROM config WHERE key='sched-job:ej'") == [(_conf,)], r[2][-400:])
+_new = _conf.replace("朝のまとめ", "夕方のまとめ")
+r = ec.raw("POST", "/jobs/ej", {**_jf, "conf": _new.replace("\n", "\r\n"), "csrf": ec.csrf("/jobs/ej")})
+check("ジョブの定義: 保存すると tb job set で書く(改行は LF、履歴つき)", r[0] == 302 and r[1].get("Location") == "/jobs/ej?saved=1&done=conf"
+      and edb("SELECT body FROM config WHERE key='sched-job:ej'") == [(_new.rstrip("\n"),)]
+      and edb("SELECT how FROM config_changes WHERE key='sched-job:ej'") == [("set",)], str(r[:2]))
+check("ジョブの定義: 送られる本文に反映", "夕方のまとめ" in ec.get("/jobs/ej?saved=1&done=conf")[2] and "ジョブの定義を保存しました" in ec.get("/jobs/ej?saved=1&done=conf")[2])
+r = ec.raw("POST", "/jobs/ej", {**_jf, "conf": _conf, "csrf": ec.csrf("/jobs/ej")})
+check("ジョブの定義: 編集を始めたあとで変わっていれば書かない", r[0] == 400 and "開き直して" in r[2]
+      and edb("SELECT body FROM config WHERE key='sched-job:ej'") == [(_new.rstrip("\n"),)], str((r[0], re.findall(r"<p class=err>(.*?)</p>", r[2], re.S))))
+_tok = "gh" + "p_" + "y" * 24
+edb("INSERT INTO config (herdr_session, key, body, updated_by, updated_at) VALUES ('default', 'sched-job:tj', ?, 'human', 'x')",
+    ("COMMAND='curl -H " + _tok + "'\nWINDOW=09:00-21:00\nINTERVAL_MIN=30\nTZ=Asia/Tokyo\n",))
+tj = ec.get("/jobs/tj")[2]
+check("ジョブの定義: トークンらしい文字列があれば本文を出さず編集もしない", "<textarea" not in tj and _tok not in tj and "tb job edit tj" in tj)
+open(os.path.join(env["WEBUI_SCHED_JOBS"], "fj.conf"), "w").write("COMMAND='echo f'\nWINDOW=09:00-21:00\nINTERVAL_MIN=30\nTZ=Asia/Tokyo\n")
+check("ジョブの定義: ファイルだけの定義は取り込みを案内する", "tb job import fj" in ec.get("/jobs/fj")[2] and "<textarea" not in ec.get("/jobs/fj")[2])
+check("edits: サーバー生存", p.poll() is None)
+stop(p)
 
 # ================= DB 不在・ログ不在・壊れた DB
 for name, prep in (("nodb", None), ("baddb", lambda e_: open(e_["WEBUI_TB_DB"], "w").write("not a sqlite file"))):

@@ -393,11 +393,17 @@ func (s *Server) pageTask(q *rq, tid string, c pageCtx) (string, string, bool) {
 	}
 	info = append(info, kv{"成果物", orStr(docLinks(taskRefs(t["id"], t["deliverables"])), "-")})
 	var b strings.Builder
-	b.WriteString(resolveNotice(c) + "<table>")
+	b.WriteString(doneNotice(c) + editErr(c) + resolveNotice(c) + "<table>")
 	for _, x := range info {
 		b.WriteString("<tr><th>" + x.k + "</th><td>" + x.v + "</td></tr>")
 	}
 	b.WriteString("</table>")
+	if f := v.taskStatusForm(pyStr(t["id"]), pyStr(t["status"]), c); f != "" {
+		if c.opts != nil {
+			c.opts.norefresh = true // 入力欄があるので自動更新しない
+		}
+		b.WriteString(f)
+	}
 	if kids := v.q("SELECT id, title, status, owner_agent, updated_at FROM tasks WHERE parent_id=? ORDER BY id", tid); len(kids) > 0 {
 		var rs [][]string
 		for _, k := range kids {

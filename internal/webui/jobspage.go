@@ -307,6 +307,11 @@ func (v *sv) jobOverview(name string, info *jobInfo) string {
 
 // pageJob は 1 ジョブの設定フォーム(自動更新しない)。
 func (s *Server) pageJob(q *rq, name, csrf, errMsg string, saved bool) (string, string) {
+	return s.pageJobDraft(q, name, csrf, errMsg, saved, "", nil)
+}
+
+// pageJobDraft は pageJob に、保存の知らせ(done)と、断られたときのフォーム(draft)を足したもの。
+func (s *Server) pageJobDraft(q *rq, name, csrf, errMsg string, saved bool, done string, draft form) (string, string) {
 	v := q.data()
 	info, err := v.jobInfo(name)
 	if info == nil {
@@ -358,10 +363,11 @@ func (s *Server) pageJob(q *rq, name, csrf, errMsg string, saved bool) (string, 
 	if info.kind == "prompt" {
 		what = `agent <code>` + E(info.target) + `</code> にプロンプトを送る`
 	}
-	return "定期実行: " + name, errHTML(errMsg) + ifs(saved, `<p class=note>保存しました。次の分から反映されます。</p>`) +
+	return "定期実行: " + name, errHTML(errMsg) + ifs(saved && done == "", `<p class=note>保存しました。次の分から反映されます。</p>`) +
+		ifs(done == "conf", `<p class=note>`+E(doneMsg["conf"])+`</p>`) +
 		"<p>" + what + "ジョブ。" + ifs(info.overridden, "Web UI で変更済み。") + "</p>" + v.jobOverview(name, info) + "<h2>スケジュールの変更</h2>" + form +
-		"<p class=note>変更できるのはスケジュールだけです(宛先・本文・コマンドは人が tb job edit で編集)。" +
-		`保存先: DB の <code>sched-settings:` + E(name) + `</code>(セッション <code>` + E(v.sess) + `</code>)</p><p><a href="/jobs">一覧へ</a></p>`
+		"<p class=note>スケジュールの保存先: DB の <code>sched-settings:" + E(name) + `</code>(セッション <code>` + E(v.sess) + `</code>)</p>` +
+		v.jobConfForm(name, csrf, draft) + `<p><a href="/jobs">一覧へ</a></p>`
 }
 
 // postJob は POST /jobs/<job>: スケジュールの上書き設定を保存する・conf の値に戻す。
@@ -369,6 +375,18 @@ func (s *Server) postJob(q *rq, path, name string, f map[string]string, csrf str
 	v := q.data()
 	if !JobRE.MatchString(name) || !contains(v.jobNames(), name) {
 		s.text(q, 404, "Not Found")
+		return
+	}
+	if f["action"] == "conf" { // 定義(本文)の保存
+		if err := v.saveJobConf(name, f); err != "" {
+			q.v.close()
+			q.v = nil
+			title, body := s.pageJobDraft(q, name, csrf, err, false, "", f)
+			s.html(q, 400, s.page(q, title, body, path, "", pageOpts{norefresh: true}))
+			return
+		}
+		s.logf("jobs: conf saved %s\n", name)
+		s.redirect(q, "/jobs/"+name+"?saved=1&done=conf")
 		return
 	}
 	if err := v.saveJobSettings(name, f); err != "" {

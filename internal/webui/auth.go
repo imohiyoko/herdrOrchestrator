@@ -269,6 +269,15 @@ func (a *Auth) LockedFor() int {
 	return 0
 }
 
+// Username は設定したユーザー名(無ければ "")。
+func (a *Auth) Username() string {
+	if rec := a.load(); rec != nil {
+		u, _ := rec["username"].(string)
+		return u
+	}
+	return ""
+}
+
 // Attempt は true/false。失敗の理由は区別しない(常に両方を検証する)。
 func (a *Auth) Attempt(user, pw string) bool {
 	rec := a.load()
