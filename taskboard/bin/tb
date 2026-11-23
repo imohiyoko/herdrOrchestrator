@@ -37,7 +37,7 @@ tb_go() {
   # 1 語目(サービスごと移したもの)か、<サービス>.<動詞>(.<動詞>)(サービスの一部の動詞だけ移したもの。tb agent ops など)で決める
   [[ " $have " == *" $1 "* || ( $# -ge 2 && " $have " == *" $1.$2 "* ) || ( $# -ge 3 && " $have " == *" $1.$2.$3 "* ) ]] || return 0
   # 権限段階の門(ADR 0006)を持たない古い herdrctl には渡さない(渡すと approvals の cmd: の行が効かない)
-  [[ " $("$hc" tb --features 2>/dev/null) " == *" policy-ops "* ]] || die "herdrctl が古く、認可(ADR 0007)を確かめられないため渡しません: $hc(herdrctl を入れ直すか TB_IMPL=bash)"
+  [[ " $("$hc" tb --features 2>/dev/null) " == *" policy-ops "* && " $("$hc" tb --features 2>/dev/null) " == *" auth "* ]] || die "herdrctl が古く、認可と呼び出し元(ADR 0007)を確かめられないため渡しません: $hc(herdrctl を入れ直すか TB_IMPL=bash)"
   tb_go_exec "$hc" "$@"
 }
 tb_go_exec() {  # $1=herdrctl, 残り=tb のコマンドと引数
@@ -73,6 +73,7 @@ main() {
   # コマンド = lib/*.sh で定義された cmd_<名前>。一覧を別に持たない
   [[ $cmd =~ ^[a-z][a-z-]*$ ]] && declare -F "cmd_$cmd" >/dev/null || usage "不明なコマンド: $cmd"
   need_tools
+  auth_or_die   # 呼び出し元の確かめ(HERDR_PANE_ID を信じず、pane の中かを herdr とプロセスの親子で確かめる。lib/identity.sh。ADR 0007 段 1a)
   init_db || die "DB を開けないか、スキーマの移行に失敗しました: $DB"
   session_setup_load   # sql() のビューと見張り(lib/db.sh)
   statuses_load        # チケットの状態と分類(設定 statuses。lib/core.sh)
