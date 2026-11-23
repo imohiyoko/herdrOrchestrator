@@ -49,7 +49,7 @@ worker のプロジェクトが presets に書かれていないときは `bash 
 
 ### 2b. 役割の利用例(任意)
 tb は役職を前提にしない。既定で agent に渡るのは `roles/_common.md`(全員に共通の決まり)だけで、誰が何をするかは
-agent の名前・プロンプト・権限(approvals / grants / routes / delivery)・返す文面(messages)で決める。
+agent の名前・プロンプト・権限(設定 `policy`。届け方は `delivery`)・返す文面(messages)で決める。
 役割の文面を渡したいときだけ、利用者に `setup/examples/` を見せて、使うものを選んでもらう(全部入れなくてよい。自分で書いてもよい)。
 
 - 役割の文面: `setup/examples/roles/<役割>.md`(conductor / hr / worker / watcher / analyst / sweeper / auditor / drafter)。
@@ -60,14 +60,17 @@ agent の名前・プロンプト・権限(approvals / grants / routes / deliver
 - 役割に合わせた設定(どれも `tb config edit <キー>` か `tb config set <キー> < 本文`。書く前に差分を見せる):
   - `projects`: 報告の宛先。`*=<指揮役の agent 名>`(既定の宛先)、`<project>=<名前>`、提案の受け手は `proposal=<名前>`。
     `*` の行が無いと、宛先は `conductor` という名前の agent になる。
-  - `grants`: 役割の名前に頼らず、特定の agent に操作を許す。例 `sweeper agent:flag *`(止めてよいかの印)、
-    `hr role:change *`(ロールの付け替え)。承認待ちの承認を任せるなら `<承認者> approve:<元の操作> <依頼者>`
-    (例 `@conductor approve:send:task:* ~report` = 直属の部下からの依頼の送信を指揮役が承認できる。`--always` と `--all` 系は人だけ)。
+  - `policy`: 誰に何を許すか(1 行 `<主体> <操作> <対象> = allow|ask-any|ask-human|deny`。当たる行のうちいちばん厳しい効果で決まる)。
+    例 `sweeper agent:flag * = allow`(止めてよいかの印)、`@hr role:change * = allow`(ロールの付け替え)。
+    承認待ちの承認を任せるなら `<承認者> approve:<元の操作> <依頼者> = allow`
+    (例 `@conductor approve:send:task:* ~report = allow` = 直属の部下からの依頼の送信を指揮役が承認できる。`--always` と `--all` 系は人だけ)。
+    scheduler からの呼び出しは主体 `system:scheduler` で、`system:scheduler <操作> <対象> = deny` などで締められる。
   - `org`: 組織図(誰の上司は誰か)。例は `setup/examples/org.conf`(指揮役の名前を実際の名前に直す)。承認後に
-    `bash taskboard/bin/tb config set org --shared < <本文>`。組織図は全員が `tb org` で見られるが、線を引くだけでは何も許さない。
-    できることは grants の対象・delivery の宛先に `~report`(直属の部下)/ `~subordinate`(配下)/ `~manager`(上司)/
+    `bash taskboard/bin/tb config set org --shared < <本文>`。組織図は全員が `tb agent org` で見られるが、線を引くだけでは何も許さない。
+    できることは policy の対象・delivery の宛先に `~report`(直属の部下)/ `~subordinate`(配下)/ `~manager`(上司)/
     `~superior`(上の全員)/ `~peer`(同じ上司)と書いて決める(例は `setup/examples/org-rules.conf`)。入れた後は
     `bash taskboard/bin/tb can <主体> <操作> <対象>` で、誰が誰に何をできるかを利用者と一緒に確かめる。
+    承認待ちは `bash taskboard/bin/tb approval list` で 1 か所に並ぶ(送信 `O-<n>` と agent の操作 `L-<n>`)。
   - `spawn-policy`: 子 agent に使わせる役割。既定は役割なしの子だけ(`allowed_roles = -`)。worker を入れたら `allowed_roles = -, worker`。
   - `role-models`: 役割ごとの既定モデル(`<役割> = haiku`、名前で決めるなら `name:<glob> = haiku`)。
   - `messages`: agent に返す文面の差し替え(例は `taskboard/config/messages.conf.example`)。役割の名前を出したいときはここで書く。
@@ -123,7 +126,7 @@ DB は全セッションで 1 つ(`~/.local/state/herdr/tasks.db`)になった�
 - 旧 DB を消すのは利用者の判断。
 
 ### 5c. 設定を DB へ(`taskboard:config`)
-運用の設定(projects / approvals / routes / limits / notify など)は DB の `config` 表に置き、セッションごとに変えられる。checkout の `taskboard/config/*.conf` が残っていて DB に取り込んでいないと warn が出る。
+運用の設定(projects / policy / delivery / limits / notify など)は DB の `config` 表に置き、セッションごとに変えられる。checkout の `taskboard/config/*.conf` が残っていて DB に取り込んでいないと warn が出る。
 - `bash taskboard/bin/tb config import --dry-run` の結果(取り込むキー)を見せ、承認後に `--dry-run` を外して実行する。ファイルは消さない(取り込んだ後は DB の行が使われる)。
 - 取り込んだ後の確認は `bash taskboard/bin/tb config`(キーごとの出どころ)。セッションごとに変えたいときは `HERDR_SESSION=<名前> tb config edit <キー>`。
 
