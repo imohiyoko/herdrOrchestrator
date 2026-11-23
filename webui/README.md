@@ -30,12 +30,14 @@ herdr-webui: 開く http://127.0.0.1:8800/s/default/(ログインは全セッシ
 URL に書けるセッション名は、DB に行のあるセッション(agents / tasks / config)、herdr のセッションのディレクトリ
 (`~/.config/herdr/sessions/<名前>/`。`XDG_CONFIG_HOME` で変わる)、`default`、このプロセスのセッションだけ(`app/sessions.py`)。それ以外は 404。
 
-### Go 版(移行中)
+### Go 版(既定)
 
-`WEBUI_IMPL=go python3 webui/server.py` で、Go 版(`herdrctl webui serve`。場所は `WEBUI_HERDRCTL` > `TB_HERDRCTL` > PATH)に替わる。
+`python3 webui/server.py` は、既定で Go 版(`herdrctl webui serve`。場所は `WEBUI_HERDRCTL` > `TB_HERDRCTL` > PATH)に替わる。
 Go 版には Python 版のすべての画面と操作がある(概要・緊急通知・agent・タスク・ボード・報告・承認待ち・送信・ドキュメント・定期実行・送信履歴・権限・セッション一覧と、ログインまわり・`/api/notifications`・`POST /resolve`・`POST /jobs/<job>`・`POST /agent-op`・`POST /agent-new`)。知らないパスは 404。
-画面の CSS とスクリプト(`static/`)と、ログイン情報のファイル(`auth.json` など)は Python 版と同じものを使うので、入れ替えてもログインは続く。
-既定はまだ Python 版。次の段で既定を Go にし、Python 版を消す。
+`WEBUI_IMPL=python` なら Python 版(`app/`)のまま動く。`WEBUI_IMPL` を書かず、Web UI を持つ herdrctl が見つからない(無い・古い)ときも Python 版で動き、標準エラーに知らせる。
+`WEBUI_IMPL=go` は herdrctl を確かめずに Go 版にする(見つからなければ止まる)。
+画面の CSS とスクリプト(`static/`)と、ログイン情報のファイル(`auth.json` など)は両方で同じものを使うので、入れ替えてもログインは続く。
+Python 版は次の段で消す。
 
 ## ログイン(ID/パスワード)
 
@@ -260,13 +262,13 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.herdr-webui.plist
 | `app/handler.py` | HTTP ハンドラ・ログイン・起動 |
 | `auth.py` | パスワードとセッション |
 | `static/page.css` ・ `static/*.js` | 画面の CSS とスクリプト(Go 版も同じファイルを読む) |
-| `../internal/webui/` | Go 版(`herdrctl webui serve`。移したものから増やす) |
+| `../internal/webui/` | Go 版(`herdrctl webui serve`。既定) |
 
 ## テスト
 
 ```bash
 bash webui/tests/run.sh
-go test ./internal/webui/    # Go 版(Python 版とログイン情報のファイルを入れ替えられること、移した画面が Python 版と同じ HTML を返すことも確かめる)
+go test ./internal/webui/    # Go 版(Python 版とログイン情報のファイルを入れ替えられること、全画面が Python 版と同じ HTML を返すことも確かめる)
 ```
 
 herdr は `tests/fake/herdr`(疑似)、DB・ログ・ログイン情報の置き場は一時ディレクトリ。ポートは 30000〜60000 の空き範囲を使い、
