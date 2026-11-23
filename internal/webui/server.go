@@ -22,7 +22,7 @@ import (
 )
 
 // server は webui/app/handler.py と httpbase.py の Go 版。今はログインまわり(初回設定・ログイン・再設定・ログアウト)、
-// 同梱のスクリプトと、pages.go の ported の画面。ほかの画面はまだ Python 版にしかなく、501 の案内を返す(移し終えたものから足す)。
+// 同梱のスクリプトと、pages.go の pages の画面(Python 版の全画面)。知らないパスは 404。
 
 const CSP = "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'unsafe-inline'; " +
 	"base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
@@ -525,14 +525,6 @@ func (s *Server) safe(q *rq, fn func()) (ok bool) {
 	return true
 }
 
-// pythonPaths は Python 版にある画面(Go にまだ移していないものは notPorted)。
-var (
-	pythonPaths = map[string]bool{"/": true, "/inbox": true, "/sessions": true, "/agents": true, "/agent-graph": true, "/agent-new": true,
-		"/ledger": true, "/perms": true, "/docs": true, "/docs/view": true, "/tasks": true, "/board": true, "/notifications": true,
-		"/outbox": true, "/jobs": true}
-	rePyDetail = regexp.MustCompile(`^/(agents|tasks|jobs)/[^/]+$`)
-)
-
 // route は views.route(と handler.py の /jobs/<job>)。
 func (s *Server) route(q *rq, path, query, logout, csrf string) {
 	if p, err := url.PathUnescape(path); err == nil {
@@ -560,13 +552,9 @@ func (s *Server) route(q *rq, path, query, logout, csrf string) {
 		s.html(q, 200, s.page(q, title, body, path, logout, *opts))
 		return
 	}
-	if fn, ok := ported[path]; ok {
+	if fn, ok := pages[path]; ok {
 		title, body := fn(s, q, pageCtx{csrf: csrf, opts: opts, qs: pyParseQS(query)})
 		s.html(q, 200, s.page(q, title, body, path, logout, *opts))
-		return
-	}
-	if pythonPaths[path] || rePyDetail.MatchString(path) {
-		s.notPorted(q, logout)
 		return
 	}
 	s.html(q, 404, s.page(q, "見つかりません", "<p>そのページはありません。</p>", "", logout, pageOpts{}))
@@ -600,12 +588,6 @@ func (s *Server) routeDetail(q *rq, path, query, csrf string, opts *pageOpts) (t
 		return title, body, ok, true
 	}
 	return "", "", false, false
-}
-
-// notPorted は Go 版にまだ無い画面。
-func (s *Server) notPorted(q *rq, logout string) {
-	s.html(q, 501, s.plainPage(q, "まだありません",
-		"<p>この画面は Go 版の Web UI にまだありません(移行中)。WEBUI_IMPL を外して(Python 版で)起動すると使えます。</p>"+logout))
 }
 
 func (s *Server) post(q *rq, path string) {
@@ -652,10 +634,6 @@ func (s *Server) post(q *rq, path string) {
 	}
 	if path == "/agent-new" {
 		s.safe(q, func() { s.postAgentNew(q, form, a.FormToken("s:"+sh)) })
-		return
-	}
-	if authed {
-		s.text(q, 501, "Not Implemented(この操作は Go 版の Web UI にまだありません)")
 		return
 	}
 	switch path {

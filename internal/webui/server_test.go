@@ -159,8 +159,8 @@ func TestLoginFlow(t *testing.T) {
 	if r := do(t, ts, "GET", B+"/notify.js", ck, nil); !strings.Contains(r.body, `var BASE = "/s/default"`) || !strings.Contains(r.body, "15000") {
 		t.Fatalf("notify.js: %.300s", r.body)
 	}
-	if r := do(t, ts, "GET", B+"/", ck, nil); r.code != 501 || !strings.Contains(r.body, `action="`+B+`/logout"`) {
-		t.Fatalf("未移行の画面 %d", r.code)
+	if r := do(t, ts, "GET", B+"/", ck, nil); r.code != 200 || !strings.Contains(r.body, `action="`+B+`/logout"`) || !strings.Contains(r.body, "<h1>概要</h1>") {
+		t.Fatalf("概要 %d", r.code)
 	}
 	if r := do(t, ts, "GET", B+"/api/notifications", "", nil); r.code != 401 {
 		t.Fatalf("api 未ログイン %d", r.code)

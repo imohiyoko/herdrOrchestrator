@@ -445,7 +445,7 @@ func TestPagesMatchPython(t *testing.T) {
 		"/docs/view?ref=task:T-q-1/1&sub=nested/c.md&raw=1", "/docs/view?ref=task:T-q-1/0&sub=x", "/docs/view?ref=task:T-q-1/2",
 		"/docs/view?ref=task:T-q-1/3", "/docs/view?ref=task:nope/0", "/docs/view?ref=C-12/1", "/docs/view?ref=C-12/0", "/docs/view?ref=C-11/0",
 		"/agents", "/agents?op=done", "/agents?op=bogus", "/agent-graph", "/agent-new", "/agents/alpha", "/agents/beta", "/agents/gamma",
-		"/agents/p4", "/agents/p%2F3%20x", "/agents/dup", "/agents/nope", "/agents/delta"}
+		"/agents/p4", "/agents/p%2F3%20x", "/agents/dup", "/agents/nope", "/agents/delta", "/"}
 	for i := range 10 {
 		paths = append(paths, fmt.Sprintf("/docs/view?ref=C-9/%d", i))
 	}
@@ -491,7 +491,7 @@ func TestPagesMatchPython(t *testing.T) {
 			}
 			title, body = tt, bb
 		} else {
-			title, body = ported[p](s, q, pageCtx{csrf: "X", opts: opts, qs: pyParseQS(query)})
+			title, body = pages[p](s, q, pageCtx{csrf: "X", opts: opts, qs: pyParseQS(query)})
 		}
 		w, ok := want[u].([]any)
 		if !ok {
