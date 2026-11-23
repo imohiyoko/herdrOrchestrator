@@ -167,10 +167,11 @@ tb approval allow <パターン>   今後は承認なしにする(人の端末�
   別名(古い名前): tb allow <パターン>
 tb approval ask <パターン>     承認制に戻す(人の端末からだけ。設定 policy に * <操作> <対象> = ask-any を書く)
   別名(古い名前): tb ask <パターン>
-tb approval approve O-<n> [--always]   承認待ちの送信を届ける。--always なら send:<kind>:<宛先> を allow にする(人だけ)。
+tb approval list [--json]      承認待ちの一覧(送信 O-<n> と agent の操作 L-<n>。古い順。ID・操作・依頼者・対象・作った時刻)
+tb approval approve O-<n>|L-<n> [--always]   承認する。L-<n> は tb agent-approve と同じ。O-<n> は承認待ちの送信を届ける。--always なら send:<kind>:<宛先> を allow にする(人だけ)。
                               policy の <agent> approve:send:<kind>:<宛先> <依頼者> = allow に当たる agent も承認できる(自分の依頼・ask-human の依頼は不可)
   別名(古い名前): tb approve O-<n> [--always]
-tb approval reject O-<n>       承認待ちの送信を却下する(承認と同じく、人か approve: の許可がある agent)
+tb approval reject O-<n>|L-<n>   却下する(L-<n> は tb agent-reject と同じ)。O-<n> は承認待ちの送信を却下する(承認と同じく、人か approve: の許可がある agent)
   別名(古い名前): tb reject O-<n>
 tb approval                    approval のサブコマンドの一覧
 tb policy import [--apply]     古い設定 approvals / grants を設定 policy の行に変換する(人だけ。--apply で書いて古い設定を消す。ADR 0007)

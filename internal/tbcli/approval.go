@@ -2,6 +2,7 @@ package tbcli
 
 import (
 	"fmt"
+	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
 	"io"
 	"os"
 	"regexp"
@@ -23,8 +24,9 @@ import (
 const approvalUsage = `tb approval check <操作> [--by A] [--to 宛先 --text 本文 [--kind K]]   1 行目 allow|ask|deny、2 行目 rule:(終了コード 0=allow 20=ask 4=deny)
 tb approval allow <操作のパターン>    今後は許可する(人だけ。設定 policy に * <操作> <対象> = allow の行を書く)
 tb approval ask <操作のパターン>      承認制に戻す(人だけ。設定 policy に * <操作> <対象> = ask-any の行を書く)
-tb approval approve O-<n> [--always]  承認待ちの送信を届ける
-tb approval reject O-<n>              承認待ちの送信を却下する
+tb approval list [--json]             承認待ちの一覧(送信 O-<n> と agent の操作 L-<n>。古い順)
+tb approval approve O-<n>|L-<n> [--always]  承認する(O- は送信を届ける。L- は tb agent-approve と同じ)
+tb approval reject O-<n>|L-<n>        却下する(L- は tb agent-reject と同じ)
 (古い名前 tb approval <操作> / tb allow / tb ask / tb approve / tb reject も同じに使える)
 `
 
@@ -57,7 +59,7 @@ func cmdApproval(args []string, w, stderr io.Writer, legacy string) error {
 			return &exit{exitUsage, ""}
 		}
 		switch args[0] {
-		case "check", "allow", "ask", "approve", "reject":
+		case "check", "list", "allow", "ask", "approve", "reject":
 			sub, args = args[0], args[1:]
 		case "help", "-h", "--help":
 			fmt.Fprint(w, approvalUsage)
@@ -66,12 +68,26 @@ func cmdApproval(args []string, w, stderr io.Writer, legacy string) error {
 			sub = "check" // 古い形: tb approval <操作>
 		}
 	}
+	// 承認待ちは 1 か所で見て決める(ADR 0007 の段 4)。L-<n> は tb agent-approve / agent-reject に渡す
+	// (その入口の門も通す。policy で cmd:agent:approve だけを締めた行を、こちらから迂回させない)
+	if (sub == "approve" || sub == "reject") && len(args) > 0 && strings.HasPrefix(args[0], "L-") {
+		name := "agent-" + sub
+		if err := permErr(perms.Gate(append([]string{name}, args...), permDB)); err != nil {
+			return err
+		}
+		if sub == "approve" {
+			return cmdAgentApprove(args, w, stderr)
+		}
+		return cmdAgentReject(args, w, stderr)
+	}
 	db, _, err := openCmd(stderr)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
 	switch sub {
+	case "list":
+		return approvalList(db, args, w)
 	case "check":
 		return approvalCheck(db, args, w, stderr)
 	case "allow", "ask":
@@ -423,4 +439,38 @@ func flush(w io.Writer) {
 	if f, ok := w.(interface{ Flush() error }); ok {
 		_ = f.Flush()
 	}
+}
+
+// approvalList は tb approval list(承認待ち: 送信 O-<n> と agent の操作 L-<n>。古い順)。
+func approvalList(db *store.DB, args []string, w io.Writer) error {
+	json := false
+	for _, a := range args {
+		if a != "--json" {
+			return usage("approval list: 不明な引数 %s", a)
+		}
+		json = true
+	}
+	q := `SELECT 'O-'||id AS id, 'send:'||kind AS op, from_name AS requested_by, target, created_at, text AS detail FROM outbox WHERE status='pending'
+    UNION ALL SELECT 'L-'||id, 'agent:'||op, requested_by, target, created_at, args FROM agent_ops WHERE status='pending'
+    ORDER BY created_at, id`
+	if json {
+		rows, err := sqlObjs(db.DB, nil, q)
+		if err != nil {
+			return err
+		}
+		compactRows(w, rows)
+		return nil
+	}
+	return qrows(db.DB, `SELECT id, op, requested_by, target, created_at FROM (`+q+`)`, nil, func(_ []string, vals []any) error {
+		s := make([]string, len(vals))
+		for i, v := range vals {
+			if v == nil {
+				s[i] = "-"
+			} else {
+				s[i] = tickets.Text(v)
+			}
+		}
+		_, err := fmt.Fprintln(w, strings.Join(s, "\t"))
+		return err
+	})
 }

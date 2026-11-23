@@ -136,6 +136,12 @@ lead1        approve:agent:stop  ~report      = allow       # 旧 grants の app
 
 - **段 3b(これから)**: `routes` / `delivery` の許可・拒否、`protect`、spawn の方針の自動承認、proxy check を policy に移し、古い仕組みを消す
 
+### 段 4 の進み具合(2026-11-23)
+
+- **済み(最低限)**: 承認待ちを 1 か所で見て決める。`tb approval list [--json]` が、送信の承認待ち(`O-<n>`)と agent の操作の承認待ち(`L-<n>`)を古い順に並べる。`tb approval approve|reject` は `O-<n>` も `L-<n>` も受ける(`L-<n>` は `tb agent-approve` / `agent-reject` に渡し、その入口の門も通す)
+- **作らないもの**: コマンドの承認待ち(ADR 0006 の `P-<n>`。依頼者の打ち直しで 1 回だけ通す)。今の表(`perms/commands.tbl`)にはコマンドの既定が `ask-*` のものが無く、人が policy に `cmd:` の `ask-*` の行を書いたときだけ要る。そのときは今までどおり終了コード 20 で止まり、人が自分の端末で実行する
+- `O-<n>` と `L-<n>` の表(`outbox` / `agent_ops`)は分けたまま。承認したときの実行の仕方(送信を届ける、agent を操作する)が違うため
+
 ## 人が決めたこと(2026-11-22。すべて推奨どおり)
 
 1. **決め方**: 当たる行のうち「いちばん厳しい効果」を採る。
