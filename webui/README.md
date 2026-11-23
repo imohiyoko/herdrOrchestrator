@@ -33,7 +33,7 @@ URL に書けるセッション名は、DB に行のあるセッション(agents
 ### Go 版(移行中)
 
 `WEBUI_IMPL=go python3 webui/server.py` で、Go 版(`herdrctl webui serve`。場所は `WEBUI_HERDRCTL` > `TB_HERDRCTL` > PATH)に替わる。
-今の Go 版にあるのは、ログインまわり(初回設定・ログイン・再設定・ログアウト)と同梱のスクリプト、画面の枠(ナビとバッジ)、緊急通知(`/notifications` と `/api/notifications`)・送信(`/outbox`)・セッション一覧(`/sessions`)・送信履歴(`/ledger`)・報告・承認待ち(`/inbox` と、報告を対応済みにする `POST /resolve`)。ほかの画面は 501 の案内を返す(知らないパスは 404)。
+今の Go 版にあるのは、ログインまわり(初回設定・ログイン・再設定・ログアウト)と同梱のスクリプト、画面の枠(ナビとバッジ)、緊急通知(`/notifications` と `/api/notifications`)・送信(`/outbox`)・セッション一覧(`/sessions`)・送信履歴(`/ledger`)・報告・承認待ち(`/inbox` と、報告を対応済みにする `POST /resolve`)・権限(`/perms`。読み取りのみ)。ほかの画面は 501 の案内を返す(知らないパスは 404)。
 画面の CSS とスクリプト(`static/`)と、ログイン情報のファイル(`auth.json` など)は Python 版と同じものを使うので、入れ替えてもログインは続く。
 既定は Python 版のまま。画面を移し終えてから既定を Go にする。
 
