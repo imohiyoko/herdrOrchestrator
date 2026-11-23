@@ -581,17 +581,22 @@ func (s *Server) staticFile(q *rq, name, ctype string) {
 	s.send(q, 200, b, ctype)
 }
 
-var reTaskDetail = regexp.MustCompile(`^/tasks/([^/]+)$`)
+var reDetail = regexp.MustCompile(`^/(agents|tasks)/([^/]+)$`)
 
-// routeDetail は、対象が無ければ 404 を返す画面(/docs/view と /tasks/<id>)。handled=false ならここでは扱わない。
+// routeDetail は、対象が無ければ 404 を返す画面(/docs/view、/tasks/<id>、/agents/<key>)。handled=false ならここでは扱わない。
 func (s *Server) routeDetail(q *rq, path, query, csrf string, opts *pageOpts) (title, body string, ok, handled bool) {
 	c := pageCtx{csrf: csrf, opts: opts, qs: pyParseQS(query)}
 	if path == "/docs/view" {
 		title, body, ok = s.pageDoc(q, c)
 		return title, body, ok, true
 	}
-	if m := reTaskDetail.FindStringSubmatch(path); m != nil {
-		title, body, ok = s.pageTask(q, pyUnquote(m[1]), c) // views.route と同じく、もう一度 unquote する
+	if m := reDetail.FindStringSubmatch(path); m != nil {
+		key := pyUnquote(m[2]) // views.route と同じく、もう一度 unquote する
+		if m[1] == "agents" {
+			title, body, ok = s.pageAgent(q, key)
+		} else {
+			title, body, ok = s.pageTask(q, key, c)
+		}
 		return title, body, ok, true
 	}
 	return "", "", false, false
@@ -639,6 +644,14 @@ func (s *Server) post(q *rq, path string) {
 	}
 	if name, ok := strings.CutPrefix(path, "/jobs/"); ok { // 定期実行のスケジュール(書き込みは tb job)
 		s.safe(q, func() { s.postJob(q, path, name, form, a.FormToken("s:"+sh)) })
+		return
+	}
+	if path == "/agent-op" { // agent の停止・復活と、承認待ちの操作の承認・却下(書き込みは tb が行う。Web UI からは人の操作)
+		s.safe(q, func() { s.postAgentOp(q, form) })
+		return
+	}
+	if path == "/agent-new" {
+		s.safe(q, func() { s.postAgentNew(q, form, a.FormToken("s:"+sh)) })
 		return
 	}
 	if authed {

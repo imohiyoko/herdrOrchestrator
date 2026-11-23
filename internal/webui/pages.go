@@ -249,4 +249,7 @@ var ported = map[string]pageFn{
 	"/tasks":         (*Server).pageTasks,
 	"/board":         (*Server).pageBoard,
 	"/docs":          (*Server).pageDocs,
+	"/agents":        (*Server).pageAgents,
+	"/agent-graph":   (*Server).pageAgentGraph,
+	"/agent-new":     (*Server).pageAgentNewRoute,
 }
