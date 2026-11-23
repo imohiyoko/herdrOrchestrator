@@ -10,6 +10,7 @@ import (
 
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/util"
+	"github.com/imohiyoko/herdrorchestrator/internal/message"
 	"github.com/imohiyoko/herdrorchestrator/internal/notify"
 	"github.com/imohiyoko/herdrorchestrator/internal/reminder"
 	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
@@ -19,7 +20,7 @@ const reminderUsage = `tb reminder list [--json]          人が忘れている�
 tb reminder check                  出すものがあれば 0、無ければ 3(何も出さず、何も書かない)
 tb reminder publish [--json]       まとめを出し、前回の記録を更新する(同じ項目は「継続(N 日目)」の 1 行。1 日 1 回は全件)
 tb reminder scan [-p project] [--within N]   期限切れ・期限間近のタスクに履歴のイベントを 1 日 1 回ずつ残す
-tb reminder nudge [<宛先> ...] [--pool] [--dry-run] [--idle-min N] [--max N] [--json]   チケットを握ったまま休んでいる agent に催促する
+tb reminder nudge [<宛先> ...] [--pool] [--dry-run] [--wake <分類|状態>[,...]] [--idle-min N] [--max N] [--json]   チケットを握ったまま休んでいる agent に催促する
 (古い名前 tb reminders [--check | --publish] / tb due-scan / tb nudge も同じに使える。期限ファイルの取り込みは tb deadlines-import のまま)
 `
 
@@ -208,10 +209,17 @@ func nudge(args []string, w, stderr io.Writer) error {
 	n := &reminder.Nudge{Stderr: stderr}
 	idle, mx := reminder.NudgeIdleMin(), reminder.NudgeMax()
 	js := false
+	var wake []string
 	for i := 0; i < len(args); i++ {
 		switch a := args[i]; {
 		case a == "--dry-run":
 			n.Dry = true
+		case a == "--wake":
+			if i+1 >= len(args) {
+				return usage("%s に値が必要です", a)
+			}
+			wake = append(wake, args[i+1])
+			i++
 		case a == "--json":
 			js = true
 		case a == "--pool":
@@ -227,7 +235,7 @@ func nudge(args []string, w, stderr io.Writer) error {
 			}
 			i++
 		case strings.HasPrefix(a, "-"):
-			return usage("nudge [<宛先> ...] [--pool] [--dry-run] [--idle-min N] [--max N] [--json]")
+			return usage("nudge [<宛先> ...] [--pool] [--dry-run] [--wake <分類|状態>[,...]] [--idle-min N] [--max N] [--json]")
 		default: // 宛先(agent 名の glob か @役割の glob)。明示したら ignore は適用しない
 			n.Targets = append(n.Targets, a)
 		}
@@ -247,6 +255,13 @@ func nudge(args []string, w, stderr io.Writer) error {
 	}
 	defer db.Close()
 	n.DB, n.Session, n.St = db.DB, db.Session, st
+	if wake != nil {
+		var bad string
+		if n.Wake, bad = message.ParseWakeArg(st, wake); bad != "" {
+			fmt.Fprint(stderr, bad)
+			return usage("nudge: --wake の値が正しくありません")
+		}
+	}
 	rows, err := n.Run()
 	if err != nil {
 		var le reminder.ErrLive

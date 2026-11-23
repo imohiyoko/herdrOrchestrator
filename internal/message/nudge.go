@@ -57,3 +57,26 @@ func ValidateNudge(st tickets.StatusSet) config.Validator {
 		return b.String()
 	}
 }
+
+// ParseWakeArg は tb reminder nudge --wake の値(分類か状態の名前。カンマか空白で区切る。複数回は足し合わせる)。
+// 設定 nudge の wake と同じ形の検査に加えて、今の分類にも状態にも無い名前も断る(打ち間違いで誰も催促しないのを防ぐ)。
+func ParseWakeArg(st tickets.StatusSet, vals []string) (wake []string, bad string) {
+	var names []string
+	for _, v := range vals {
+		names = append(names, strings.FieldsFunc(v, func(r rune) bool { return r == ',' || config.IsSpace(r) })...)
+	}
+	if len(names) == 0 {
+		return nil, "--wake に分類か状態の名前が必要です\n"
+	}
+	_, wake, bad = ParseNudge(st, "wake "+strings.Join(names, " "))
+	bad = strings.ReplaceAll(bad, "1 行目: wake の", "--wake の")
+	bad = strings.ReplaceAll(bad, "1 行目: ", "--wake: ")
+	var b strings.Builder
+	b.WriteString(bad)
+	for _, w := range wake {
+		if !slices.Contains(tickets.Categories, w) && st.Cat(w) == "" {
+			fmt.Fprintf(&b, "--wake: 分類にも状態(設定 statuses)にもない名前です: %s\n", w)
+		}
+	}
+	return wake, b.String()
+}

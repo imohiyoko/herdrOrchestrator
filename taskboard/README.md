@@ -321,12 +321,12 @@ tb message outbox [--status queued|sent|denied] [--json]
 
 ```bash
 tb reminder nudge --dry-run            # 誰に送るか・なぜ飛ばすかを見るだけ(agent の pane からも読める)
-tb reminder nudge [--idle-min 15] [--max 3] [--json]   # 送る(人の端末か scheduler から。例は scheduler/jobs/nudge.conf.example)
+tb reminder nudge [--wake <分類|状態>[,...]] [--idle-min 15] [--max 3] [--json]   # 送る(人の端末か scheduler から。例は scheduler/jobs/nudge.conf.example)
 ```
 
 - **対象**: 既定は全員(固定の除外は無い)。除外は設定 `nudge` に 1 行 1 つ `ignore <@役割の glob | agent 名の glob>` と書く(人だけが `tb config edit nudge`。例は `config/nudge.conf.example`)。**宛先を明示した場合(`tb reminder nudge <agent 名の glob | @役割の glob> ...`)は ignore も適用しない**(指定が意思表示)。ほかの除外条件(下)は常に効く
 - **移行**: 設定 `nudge` が無い(ファイルも DB の行も無い)あいだは、以前の既定の除外(指揮役 = 既定の宛先と `projects` の値、保護 `protect`)をそのまま保つ。設定 `nudge` を置けば(空でも)全員が対象になり、除外は `ignore` の行だけで決まる。指揮役や保護された agent も除きたいときは、それらを `ignore` に書いてから置く(`--dry-run` で対象を確かめる)
-- **催促する状態(`wake`)**: 設定 `nudge` に `wake <分類 | 状態> ...` と書くと、その状態のチケットを握っている agent も催促する(複数行は足し合わせる)。分類の名前(`todo` / `active` / `review` / `blocked`)ならその分類の状態すべて、ほかは状態の名前(設定 `statuses`)。`wake` を書かなければ `active` だけ(今までどおり)。`wake` を書くなら `active` も書かないと作業中は催促しない。閉じた分類(`done` / `cancelled`)は書けない。例: `wake active todo review blocked`。着手前(todo の分類)のチケットには「止まっています・続きを」ではなく、`tb claim` で着手するよう促す文面(設定 `messages` の `nudge.start`)を送る
+- **催促する状態(`wake`)**: 設定 `nudge` に `wake <分類 | 状態> ...` と書くと、その状態のチケットを握っている agent も催促する(複数行は足し合わせる)。分類の名前(`todo` / `active` / `review` / `blocked`)ならその分類の状態すべて、ほかは状態の名前(設定 `statuses`)。`wake` を書かなければ `active` だけ(今までどおり)。`wake` を書くなら `active` も書かないと作業中は催促しない。閉じた分類(`done` / `cancelled`)は書けない。例: `wake active todo review blocked`。実行ごとに変えたいとき(scheduler のジョブを agent や状態ごとに分けて、それぞれ `--idle-min` を変えるなど)は `tb reminder nudge --wake todo,review` のように渡すと、その実行だけ設定の `wake` の代わりに使う(カンマ区切り・複数回は足し合わせる。ignore と移行は設定のまま。閉じた分類や、今の分類にも状態にも無い名前は使い方の誤り(終了コード 2))。着手前(todo の分類)のチケットには「止まっています・続きを」ではなく、`tb claim` で着手するよう促す文面(設定 `messages` の `nudge.start`)を送る
 - **設定の検査**: `tb config set nudge` / `edit nudge` は、`ignore <パターン>` / `wake <名前> ...` の形でない行、閉じた状態、今の分類にも状態にも無い名前があれば書かない(あとで設定 `statuses` から外した名前は、実行時に当たらないだけで止めない)。`@役割` の ignore で役割を確かめられない agent は、送らずに skip する
 - **`--pool`**: チケットを握っていない agent に、自分の team ラベル(`team:<x>`。領域の役割 `domain-<x>` から決め、無ければ名前の接尾辞 `-lead` を除いたもの。本人から決まらなければ組織図(設定 `org`)で上司をたどり、最初に team が決まる上司のもの)の担当なし `todo` を、優先度順(highest→lowest、同順位は古い順)の先頭 1 件取りに行かせる。文面には `tb claim <ID> --owner <本人> --session <本人の session>` を入れる。同じ回で同じ候補を案内するのは 1 人だけ。自分が担当の `todo`・`review`・`blocked`(と、`wake` に無くても active)がある agent、アラート・提案のチケット、先行チケット待ちの todo は対象にしない
 - **親は選ばない**: epic と、完了していない子を持つチケットは、催促にも `--pool` の候補にもしない
