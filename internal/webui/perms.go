@@ -13,8 +13,9 @@ import (
 // perms.go は webui/app/perms.py: 設定 policy の読み取りと照合(読み取り専用。tb の perm_authorize と同じ考え。ADR 0007)。
 
 var (
-	reAction = regexp.MustCompile(`^[A-Za-z0-9._:*?@][A-Za-z0-9._:*?@-]{0,127}$`)
-	effects  = []string{"allow", "ask-any", "ask-human", "deny"} // 緩い順
+	reAction  = regexp.MustCompile(`^[A-Za-z0-9._:*?@][A-Za-z0-9._:*?@-]{0,127}$`)
+	effects   = []string{"allow", "ask", "deny"} // 緩い順
+	legacyAsk = []string{"ask-any", "ask-human"} // 前の効果。読むときは ask と同じ
 	// 一致の例に使う、tb が実際に出す操作名(宛先は仮の名前)
 	sampleOps = []string{"send:task:worker1", "send:info:worker1", "send:answer:worker1", "role:change", "proxy:read-only",
 		"proxy:write", "proxy:external", "alert:analyze", "setup:hooks", "setup:scheduler", "setup:webui",
@@ -29,6 +30,9 @@ var (
 const permsMaxBytes = 262144
 
 func rank(eff string) int {
+	if contains(legacyAsk, eff) {
+		eff = "ask"
+	}
 	for i, x := range effects {
 		if x == eff {
 			return i
@@ -126,7 +130,7 @@ func (v *sv) loadRules() ([]*rule, string) {
 			continue
 		}
 		f, val := pyFields(lhs), pyStrip(val)
-		if len(f) != 3 || !contains(effects, val) {
+		if len(f) != 3 || (!contains(effects, val) && !contains(legacyAsk, val)) {
 			continue
 		}
 		raw := strings.Join(f, " ")
@@ -301,7 +305,7 @@ func policyRow(val, pat string) string {
 	if target == "" {
 		target = "*"
 	}
-	eff := "ask-any"
+	eff := "ask"
 	if val == "allow" {
 		eff = "allow"
 	}

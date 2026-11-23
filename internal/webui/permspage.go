@@ -264,7 +264,7 @@ func (s *Server) pagePerms(q *rq, c pageCtx) (string, string) {
 			row := policyRow(val, pat)
 			op_, rest, _ := strings.Cut(row[2:], " ")
 			tgt, _, _ := strings.Cut(rest, " = ")
-			eff := "ask-any"
+			eff := "ask"
 			if val == "allow" {
 				eff = "allow"
 			}
@@ -289,7 +289,7 @@ func (s *Server) pagePerms(q *rq, c pageCtx) (string, string) {
 	patForm := `<form method=get action="/perms"><p>` +
 		`<label>パターン <input type=text name=pat value="` + E(pat) + `" size=30 placeholder="send:task:worker1"></label> ` +
 		`<label>値 <select name=val><option value=allow` + sel(val == "allow", " selected") + `>allow(承認なしで進めてよい)</option>` +
-		`<option value=ask` + sel(val == "ask", " selected") + `>ask(承認が要る。ask-any)</option></select></label> ` +
+		`<option value=ask` + sel(val == "ask", " selected") + `>ask(承認が要る)</option></select></label> ` +
 		`<button type=submit>コマンド行を組み立てる</button></p></form>`
 	body += "<h2>変更したいとき</h2>" + patForm + cmdHTML +
 		"<p class=note>権限の変更は、この画面ではできません(ボタンも POST もありません)。人が端末で <code>tb approval allow</code> / <code>tb approval ask</code> を実行します(設定 policy の行を書きます)。" +
