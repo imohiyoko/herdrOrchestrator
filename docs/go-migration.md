@@ -41,7 +41,7 @@
 | 6 | scheduler の判定・実行 | `herdrctl sched tick`(scheduler/bin/tick.sh が渡す)。曜日・時間帯・間隔・一時停止の判定、GATE・COMMAND(ロック・時間切れ)・PROMPT_CMD / PROMPT_RULES / PROMPT_VARS、herdr の状態の確かめと tb system-send での送信、ログの 1 行の形と理由の文言は tick.sh と同じ。時間切れはプロセスグループごと止める | 済み |
 | 6 | scheduler の起動器 | `herdrctl sched jobs` / `dispatch` / `gen-plist` / `install`(jobs.sh・dispatch.sh・gen-plist.sh・install.sh が lib.sh の `sched_go` から渡す)。dispatch はジョブごとに `herdrctl sched tick` を別のプロセスで並べる。plist の中身・ラベル・メッセージは元の bash 版と同じ | 済み |
 | 6 | scheduler の bash 版を消す | `scheduler/bin/*.sh` は環境をそろえて `herdrctl sched <サブコマンド>` に置き換わるだけ。herdrctl が無い・古いとエラー(exit 2)。展開($ や `)を含む定義のジョブは動かない(`setup/check.sh` の `job:<job>` が warn で知らせる) | 済み |
-| 6 | webui | webui | 移行中: ログインまわりとサーバーの土台、画面の枠・緊急通知・送信・セッション一覧・送信履歴・報告・承認待ち(対応済みにする操作も)・権限(読み取りのみ)は Go(`herdrctl webui serve`、`WEBUI_IMPL=go`)。`go test ./internal/webui` が同じ DB で Python 版と HTML を突き合わせる。ほかの画面は順に移す |
+| 6 | webui | webui | 移行中: ログインまわりとサーバーの土台、画面の枠・緊急通知・送信・セッション一覧・送信履歴・報告・承認待ち(対応済みにする操作も)・権限(読み取りのみ)・定期実行(スケジュールの変更も)は Go(`herdrctl webui serve`、`WEBUI_IMPL=go`)。`go test ./internal/webui` が同じ DB で Python 版と HTML を突き合わせる。ほかの画面は順に移す |
 
 サービスのコマンドより先に、ほかのサービスが使う部品だけを移すことがある(例: approval の PR で `internal/agents` の役割の引き方と `internal/message` の届け方)。そのサービスのコマンドはまだ bash のままで、移す PR でこの部品を使う。
 

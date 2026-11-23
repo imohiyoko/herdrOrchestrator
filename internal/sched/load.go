@@ -25,6 +25,7 @@ func die(format string, a ...any) error { return &Die{fmt.Sprintf(format, a...)}
 type Env struct {
 	Root, JobsDir, SettingsDir, DB, Session string
 	FilesOK                                 bool
+	NoEnvOverride                           bool              // SCHED_WINDOW などの環境変数の上書きを見ない(Web UI が設定そのものを見せるとき)
 	Bodies                                  map[string]string // DB より先に引く本文(キー → 本文)。sched lint が標準入力の定義を読ませる
 }
 
@@ -364,15 +365,19 @@ func (e Env) Load(name string) (*Job, error) {
 			return nil, die("%s: OWNER は agent 名(英小文字で始まる 32 字以内。human は不可): %s", name, j.Owner)
 		}
 	}
-	if w := os.Getenv("SCHED_WINDOW"); w != "" {
+	getenv := os.Getenv
+	if e.NoEnvOverride {
+		getenv = func(string) string { return "" }
+	}
+	if w := getenv("SCHED_WINDOW"); w != "" {
 		m := reWindow.FindStringSubmatch(w)
 		if m == nil {
 			return nil, die("SCHED_WINDOW は HH:MM-HH:MM")
 		}
 		start, end = m[1], m[2]
 	}
-	start, end = firstNonEmpty(os.Getenv("SCHED_START"), start), firstNonEmpty(os.Getenv("SCHED_END"), end)
-	if v, err := intervalOf(name, "SCHED_*", os.Getenv("SCHED_INTERVAL_MIN"), os.Getenv("SCHED_INTERVAL_SEC")); err != nil {
+	start, end = firstNonEmpty(getenv("SCHED_START"), start), firstNonEmpty(getenv("SCHED_END"), end)
+	if v, err := intervalOf(name, "SCHED_*", getenv("SCHED_INTERVAL_MIN"), getenv("SCHED_INTERVAL_SEC")); err != nil {
 		return nil, err
 	} else if v >= 0 {
 		iv = v

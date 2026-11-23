@@ -245,4 +245,5 @@ var ported = map[string]pageFn{
 	"/ledger":        (*Server).pageLedger,
 	"/inbox":         (*Server).pageInbox,
 	"/perms":         (*Server).pagePerms,
+	"/jobs":          (*Server).pageJobs,
 }
