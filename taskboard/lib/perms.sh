@@ -2,7 +2,8 @@
 # 土台(ADR 0004 / ADR 0006 / ADR 0007): tb の認可。主体 × 操作 × 対象 → 効果(allow / ask-any / ask-human / deny)。bin/tb から source される。単体では実行しない。
 # 既定は表 taskboard/perms/commands.tbl(コマンド)と ops.tbl(コマンドの中の操作)。コードの一部で、場所は固定(環境変数では差し替えない)。人が変えるのは設定 policy の行だけ:
 #   <主体> <操作> <対象> = <効果>    当たる行のうち、いちばん厳しい効果を採る(行の順番は関係ない)。当たる行が無ければ表の既定
-# 人(human)は今は常に通る(人の行は効かない)。system:<名前> の主体は ADR 0007 の段 1(認証)で入る。
+# 人(human)は今は常に通る(人の行は効かない)。system:<名前>(scheduler など。lib/identity.sh の AUTH_SYSTEM)は、
+# 主体が system: の行だけを見る(当たる行が無ければ人と同じく通る。主体 * の行は agent 向けなので当てない)。
 # 使うのは core・config・identity だけ。役割(@<役割>)の照合は、機能の層が PERM_NAME_MATCH に関数名を入れる(lib/roles.sh)。
 # 入口(bin/tb の main → perm_gate)と、コマンドの中の require_human が呼ぶ。
 
@@ -100,10 +101,11 @@ PJ_BEST=-1; PJ_BRULE=""; PJ_UNK=-1; PJ_URULE=""; PJ_HUMAN=0; PJ_ERR=""
 perm_judge() {
   local who=$1 op=$2 target=$3 line l v s o t rest r m
   PJ_BEST=-1; PJ_BRULE=""; PJ_UNK=-1; PJ_URULE=""; PJ_HUMAN=0; PJ_ERR=""
+  [[ $who != human || -z ${AUTH_SYSTEM:-} ]] || who=$AUTH_SYSTEM   # 人の端末の外から scheduler などが呼んだ
   if [[ $who == human ]]; then PJ_HUMAN=1; return 0; fi
   local found=0; config_lookup policy || found=$?
   if [[ -n $CFG_ERR ]]; then PJ_ERR=$CFG_ERR; return 0; fi
-  ((found == 0)) || return 0
+  if ((found != 0)); then _pj_system_default "$who"; return 0; fi
   while IFS= read -r line || [[ -n $line ]]; do
     l=$(trim "${line%%#*}"); [[ $l == *=* ]] || continue
     v=$(trim "${l#*=}"); read -r s o t rest <<<"${l%%=*}"
@@ -111,11 +113,20 @@ perm_judge() {
     case $v in allow|ask-any|ask-human|deny) ;; *) continue;; esac   # 効果の名前と完全に一致する値だけ
     # shellcheck disable=SC2053  # glob として比べる
     [[ $op == $o ]] || continue
-    [[ $s != human && $s != system:* ]] || continue   # 人は常に通る。system は段 1 から
+    [[ $s != human ]] || continue   # 人は常に通る
     if [[ $who == @caller ]]; then
       perm_who || die "herdr agent list に失敗したため、呼び出し元を確かめられません"
       who=$PERM_WHO
+      [[ $who != human || -z ${AUTH_SYSTEM:-} ]] || who=$AUTH_SYSTEM
       if [[ $who == human ]]; then PJ_HUMAN=1; return 0; fi   # 人の端末: 判定は呼ぶ側が通す
+    fi
+    if [[ $who == system:* || $s == system:* ]]; then   # system の主体には system: の行だけ。関係(~ / self)は持たない
+      # shellcheck disable=SC2053  # glob として比べる
+      [[ $who == system:* && $s == system:* && $who == $s ]] || continue
+      [[ $t != '~'* && $t != self ]] || continue
+      if [[ $target != '*' ]]; then r=0; perm_target_match "" "$target" "$t" || r=$?; ((r == 0)) || continue; fi
+      r=$(perm_rank "$v"); ((r > PJ_BEST)) && { PJ_BEST=$r; PJ_BRULE="policy: $s $o $t = $v"; }
+      continue
     fi
     if [[ -z $who ]]; then [[ $s == '*' ]] || continue; m=0
     else m=0; perm_name_match "$who" "$s" || m=$?; ((m != 1)) || continue; fi
@@ -124,6 +135,13 @@ perm_judge() {
     if ((m == 0)); then ((r > PJ_BEST)) && { PJ_BEST=$r; PJ_BRULE="policy: $s $o $t = $v"; }
     else ((r > PJ_UNK)) && { PJ_UNK=$r; PJ_URULE="policy: $s $o $t = $v(役割・関係を確かめられない)"; }; fi
   done <<<"$CFG_BODY"
+  _pj_system_default "$who"
+  return 0
+}
+# system: の行が当たらなかった system の主体は、人と同じく通す(AUTH_SYSTEM は herdr の外だけなので、@caller なら system)
+_pj_system_default() {
+  ((PJ_BEST < 0)) || return 0
+  [[ $1 == system:* || ( $1 == @caller && -n ${AUTH_SYSTEM:-} ) ]] && PJ_HUMAN=1
   return 0
 }
 # perm_resolve [<下限>]: PERM_TIER / PERM_RULE(既定)に perm_judge の結果を重ねる
@@ -146,7 +164,10 @@ perm_tier() {
   PERM_TIER=$def; PERM_RULE="既定 $def"
   perm_judge @caller "$op" "$target"
   if [[ -n $PJ_ERR ]]; then PERM_TIER=deny; PERM_RULE="(設定 policy を読めない: $PJ_ERR)"; return 0; fi
-  ((PJ_HUMAN)) && return 0   # 人の端末: 判定は perm_enforce が通す
+  if ((PJ_HUMAN)); then   # 人の端末: 判定は perm_enforce が通す
+    [[ -z ${AUTH_SYSTEM:-} ]] || { PERM_TIER=allow; PERM_RULE="($AUTH_SYSTEM に当たる system: の行が無いので、人と同じく通る)"; }
+    return 0
+  fi
   perm_resolve "$floor"
 }
 
@@ -174,7 +195,7 @@ perm_split_act() {
 # perm_authorize <主体> <操作名> <対象>: コマンドの中の操作の効果を PERM_TIER / PERM_RULE に。主体の書き方は perm_judge と同じ(人なら allow)
 perm_authorize() {
   local who=$1 op=$2 target=$3
-  if [[ $who == human ]]; then PERM_TIER=allow; PERM_RULE="(人は常に通る)"; return 0; fi
+  if [[ $who == human && -z ${AUTH_SYSTEM:-} ]]; then PERM_TIER=allow; PERM_RULE="(人は常に通る)"; return 0; fi
   PERM_TIER=$(perm_op_default "$op"); PERM_RULE="既定 $PERM_TIER"
   perm_judge "$who" "$op" "$target"
   if [[ -n $PJ_ERR ]]; then PERM_TIER=deny; PERM_RULE="(設定 policy を読めない: $PJ_ERR)"; return 0; fi
@@ -185,8 +206,9 @@ perm_authorize() {
 # perm_enforce <操作名> <文面の名前>: PERM_TIER(perm_tier の結果)で止めるか決める。人の端末(pane なし・pane に agent がいない)なら常に通す
 perm_enforce() {
   local op=$1 what=$2
-  [[ $PERM_TIER != allow && -n ${HERDR_PANE_ID:-} ]] || return 0
+  [[ $PERM_TIER != allow && ( -n ${HERDR_PANE_ID:-} || -n ${AUTH_SYSTEM:-} ) ]] || return 0
   perm_who || die "$what: herdr agent list に失敗したため、人の端末からの実行か確かめられません"
+  [[ $PERM_WHO != human || -z ${AUTH_SYSTEM:-} ]] || PERM_WHO=$AUTH_SYSTEM   # scheduler など(system: の行で締められた)
   [[ $PERM_WHO != human ]] || return 0
   case $PERM_TIER in
     ask-any|ask-human)
@@ -200,7 +222,7 @@ perm_enforce() {
 
 # 入口(bin/tb の main): tb <コマンド> <引数...> の道を引き、場所が entry の行だけ確かめる。表に無いコマンドは deny
 perm_gate() {
-  [[ -n ${HERDR_PANE_ID:-} ]] || return 0   # 人の端末は常に通る(設定も読まない)
+  [[ -n ${HERDR_PANE_ID:-} || -n ${AUTH_SYSTEM:-} ]] || return 0   # 人の端末は常に通る(設定も読まない)。system: は policy の行を見る
   perm_path_of "$@" || { PERM_TIER=deny; PERM_RULE="(表に無いコマンド)"; perm_enforce "cmd:?:$1" "tb $1"; return 0; }
   [[ ${PERM_WHERE[$PERM_PATH]} == entry ]] || return 0
   local op=${PERM_OP[$PERM_PATH]}
@@ -212,7 +234,7 @@ perm_gate() {
 # どの効果にするかは表の行(文面の語の道)と設定 policy の行で決まる。表に無い文面は deny(従来と同じ)
 require_human() {
   local what=$1 words op
-  [[ -n ${HERDR_PANE_ID:-} ]] || return 0
+  [[ -n ${HERDR_PANE_ID:-} || -n ${AUTH_SYSTEM:-} ]] || return 0
   read -ra words <<<"${what#tb }"
   if perm_path_of "${words[@]}"; then op=${PERM_OP[$PERM_PATH]}; perm_tier "$op"
   else op="cmd:?:${what#tb }"; PERM_TIER=deny; PERM_RULE="(表に無い文面)"; fi
@@ -228,7 +250,10 @@ config_validate_policy() {  # $1=本文
     v=$(trim "${l#*=}"); read -r s o t rest <<<"${l%%=*}"
     if [[ -z $t || -n $rest ]]; then bad+="${n} 行目: 主体・操作・対象の 3 つを空白で区切って書きます: $l"$'\n'; continue; fi
     case $v in allow|ask-any|ask-human|deny) ;; *) bad+="${n} 行目: 効果は allow / ask-any / ask-human / deny のどれかです: $v"$'\n'; continue;; esac
-    case $s in human|system:*) bad+="${n} 行目: 主体 $s の行はまだ効きません(人は常に通る。system は ADR 0007 の段 1 から)"$'\n';; esac
+    case $s in
+      human) bad+="${n} 行目: 主体 human の行は効きません(人は常に通る)"$'\n';;
+      system:*) [[ $s =~ ^system:[a-z*][a-z0-9*-]*$ ]] || bad+="${n} 行目: system の主体は system:<名前>(英小文字・数字・-、glob の *)です: $s"$'\n';;
+    esac
     [[ $o != cmd:* || $t == '*' ]] || bad+="${n} 行目: コマンドの操作($o)の対象は * と書きます: $t"$'\n'
     case $t in
       '~'*) case $t in '~child'|'~descendant'|'~parent'|'~sibling'|'~report'|'~subordinate'|'~manager'|'~superior'|'~peer') ;;
