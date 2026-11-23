@@ -111,7 +111,11 @@ func (r *Roles) Forget(name string) {
 
 // Hint は ROLE_HINT_NAME / ROLE_HINT: まだ台帳に無い agent(作成の承認判定)は、名前から推定せず要求された役割(カンマ区切り)で判定する。
 func (r *Roles) Hint(name, roles string) {
-	r.names[name] = roleNames{strings.Split(roles, ","), true}
+	var ns []string
+	if roles != "" {
+		ns = strings.Split(roles, ",")
+	}
+	r.names[name] = roleNames{ns, true}
 }
 
 // KeyOf は role_key_of: 役割名(か @map)の DB のキー。使えない名前なら ok=false。

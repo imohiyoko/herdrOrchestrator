@@ -10,7 +10,7 @@ type cmdFunc func(args []string, w, stderr io.Writer) error
 
 // agentVerbs は Go に移し終えた tb agent の動詞(2 語目。3 語目で分けるものは agentVerbs2)。
 var agentVerbs = map[string]cmdFunc{
-	"flag": cmdAgentFlag, "stop": cmdAgentStop, "revive": cmdAgentRevive, "restart": cmdAgentRestart, "open": cmdAgentNew, "ops": cmdAgentOps, "kinds": cmdAgentKinds,
+	"flag": cmdAgentFlag, "stop": cmdAgentStop, "revive": cmdAgentRevive, "restart": cmdAgentRestart, "open": cmdAgentNew, "spawn": cmdAgentSpawn, "ops": cmdAgentOps, "kinds": cmdAgentKinds,
 	"freeze": cmdSpawnFreeze, "unfreeze": cmdSpawnUnfreeze,
 	"can": cmdCan, "org": cmdOrg, "peek": cmdPeek, "slash": cmdSlash,
 }
