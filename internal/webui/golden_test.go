@@ -34,6 +34,7 @@ func golden(t *testing.T, name string, got any) {
 	if err != nil {
 		t.Fatalf("%v(-update で作る)", err)
 	}
+	want = bytes.ReplaceAll(want, []byte("\r\n"), []byte("\n")) // Windows の checkout が改行を変えていても比べられるように
 	if bytes.Equal(b.Bytes(), want) {
 		return
 	}
