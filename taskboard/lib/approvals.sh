@@ -168,7 +168,7 @@ approval_of() {
 cmd_approval() {
   if [[ $# -eq 0 ]]; then approval_usage; exit 2; fi   # 空の操作名(tb approval '')は引数なしと分け、check で誤りにする
   case $1 in
-    check|allow|ask|approve|reject) local sub=$1; shift; "cmd_approval_$sub" "$@";;
+    check|list|allow|ask|approve|reject) local sub=$1; shift; "cmd_approval_$sub" "$@";;
     help|-h|--help) approval_usage;;
     *) cmd_approval_check "$@";;   # 古い形: tb approval <操作>
   esac
@@ -178,15 +178,37 @@ approval_usage() {
 tb approval check <操作> [--by A] [--to 宛先 --text 本文 [--kind K]]   1 行目 allow|ask|deny、2 行目 rule:(終了コード 0=allow 20=ask 4=deny)
 tb approval allow <操作のパターン>    今後は許可する(人だけ。設定 policy に * <操作> <対象> = allow の行を書く)
 tb approval ask <操作のパターン>      承認制に戻す(人だけ。設定 policy に * <操作> <対象> = ask-any の行を書く)
-tb approval approve O-<n> [--always]  承認待ちの送信を届ける
-tb approval reject O-<n>              承認待ちの送信を却下する
+tb approval list [--json]             承認待ちの一覧(送信 O-<n> と agent の操作 L-<n>。古い順)
+tb approval approve O-<n>|L-<n> [--always]  承認する(O- は送信を届ける。L- は tb agent-approve と同じ)
+tb approval reject O-<n>|L-<n>        却下する(L- は tb agent-reject と同じ)
 (古い名前 tb approval <操作> / tb allow / tb ask / tb approve / tb reject も同じに使える)
 USAGE
 }
 cmd_approval_allow() { cmd_allow "$@"; }
 cmd_approval_ask() { cmd_ask "$@"; }
-cmd_approval_approve() { cmd_approve "$@"; }
-cmd_approval_reject() { cmd_reject "$@"; }
+# 承認待ちは 1 か所で見て決める(ADR 0007 の段 4)。L-<n> は agent の操作の承認待ちで、tb agent-approve / agent-reject に渡す
+# (tb をもう一度起動して入口から通す。認証と、policy で cmd:agent:approve だけを締めた行を迂回させない。機能どうしを直接呼ばない)
+cmd_approval_approve() {
+  if [[ ${1:-} == L-* ]]; then exec bash "$TB_ROOT/bin/tb" agent-approve "$@"; else cmd_approve "$@"; fi
+}
+cmd_approval_reject() {
+  if [[ ${1:-} == L-* ]]; then exec bash "$TB_ROOT/bin/tb" agent-reject "$@"; else cmd_reject "$@"; fi
+}
+# tb approval list [--json]: 承認待ち(送信 O-<n> と agent の操作 L-<n>)を古い順に。ID・操作・依頼者・対象・作った時刻
+cmd_approval_list() {
+  local json=0
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --json) json=1; shift;;
+      *) usage "approval list: 不明な引数 $1";;
+    esac
+  done
+  local q="SELECT 'O-'||id AS id, 'send:'||kind AS op, from_name AS requested_by, target, created_at, text AS detail FROM outbox WHERE status='pending'
+    UNION ALL SELECT 'L-'||id, 'agent:'||op, requested_by, target, created_at, args FROM agent_ops WHERE status='pending'
+    ORDER BY created_at, id"
+  if ((json)); then sql -json "$q;" | jq -c '(. // [])[]'
+  else sql -nullvalue - -separator $'\t' "SELECT id, op, requested_by, target, created_at FROM ($q);"; fi
+}
 
 # tb approval check <操作> [--to 宛先 --text 本文 [--kind K] [--task T-..]]: 1 行目 allow|ask|deny、2 行目 rule:。終了コード 0=allow / 20=ask / 4=deny
 # --to と --text があるときだけ、続けて risk: 行(リスク評価。第 1 段は参考値で、1 行目と終了コードには影響しない)を出す
