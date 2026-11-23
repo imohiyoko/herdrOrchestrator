@@ -541,6 +541,16 @@ func (s *Server) route(q *rq, path, query, logout, csrf string) {
 	if path != "/" && strings.HasSuffix(path, "/") {
 		path = strings.TrimRight(path, "/")
 	}
+	if name, ok := strings.CutPrefix(path, "/jobs/"); ok && name != "" && !strings.Contains(name, "/") { // 設定フォーム(自動更新しない)
+		if !JobRE.MatchString(name) || !contains(q.data().jobNames(), name) {
+			s.html(q, 404, s.page(q, "見つかりません", "<p>そのページはありません。</p>", "", logout, pageOpts{}))
+			return
+		}
+		saved := pyParseQS(query)["saved"]
+		title, body := s.pageJob(q, name, csrf, "", len(saved) == 1 && saved[0] == "1")
+		s.html(q, 200, s.page(q, title, body, "/jobs/"+name, logout, pageOpts{norefresh: true}))
+		return
+	}
 	opts := &pageOpts{}
 	if fn, ok := ported[path]; ok {
 		title, body := fn(s, q, pageCtx{csrf: csrf, opts: opts, qs: pyParseQS(query)})
@@ -601,6 +611,10 @@ func (s *Server) post(q *rq, path string) {
 	}
 	if path == "/resolve" { // 報告を対応済みにする(書き込みは tb resolve)
 		s.safe(q, func() { s.postResolve(q, form) })
+		return
+	}
+	if name, ok := strings.CutPrefix(path, "/jobs/"); ok { // 定期実行のスケジュール(書き込みは tb job)
+		s.safe(q, func() { s.postJob(q, path, name, form, a.FormToken("s:"+sh)) })
 		return
 	}
 	if authed {

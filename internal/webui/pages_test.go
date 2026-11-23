@@ -2,13 +2,16 @@ package webui
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 )
@@ -103,6 +106,78 @@ bad line
 qa? = hr,lead
 bad', 'human', '2026-01-01T00:00:00Z'),
  ('*', 'role:lead', '# lead', 'human', '2026-01-01T00:00:00Z');
+INSERT INTO config (herdr_session, key, body, updated_by, updated_at) VALUES
+ ('default', 'sched-job:nightly', '# 夜のまとめを gamma に送る <b>。
+#   token=supersecret123 を含む説明
+# 注意: COMMAND は bash -c で動く
+
+# ここは説明ではない
+TARGET=gamma
+PROMPT=''まとめてください ghp_abcdefghijklmnopqrstuvwxyz
+Bearer abcdefghijklmnop x''
+PROMPT_RULES=''hour=9 | 朝の本文
+* | 既定''
+SKIP_IF="working blocked"   # 注釈
+INTERVAL_MIN=1440
+START=03:00
+END=03:00
+DAYS=daily
+TZ=Asia/Tokyo', 'human', '2026-01-01T00:00:00Z'),
+ ('default', 'sched-job:fine', 'COMMAND=''tb notify flush && tb digest; echo password: hunter22222''
+COMMAND_TIMEOUT=30
+INTERVAL_SEC=90
+START=00:00
+END=23:59
+DAYS="Mon,Wed"
+TZ=UTC
+ENABLED=0', 'human', '2026-01-01T00:00:00Z'),
+ ('default', 'sched-settings:fine', 'INTERVAL_SEC=150', 'human', '2026-01-01T00:00:00Z'),
+ ('default', 'sched-job:pfile', 'TARGET=alpha
+PROMPT_FILE=/etc/hostname
+INTERVAL_MIN=30
+WINDOW=09:00-18:00
+DAYS=weekdays
+TZ=Asia/Tokyo', 'human', '2026-01-01T00:00:00Z'),
+ ('default', 'sched-job:pin', 'TARGET=delta
+PROMPT_FILE=@SCHED@/jobs/auditor.conf.example
+INTERVAL_MIN=60
+START=09:00
+END=18:00
+DAYS="sat sun"
+TZ=Asia/Tokyo', 'human', '2026-01-01T00:00:00Z'),
+ ('default', 'sched-job:dupjob', 'TARGET=dup
+PROMPT_FILE=x.md
+INTERVAL_MIN=5
+START=09:00
+END=10:00
+DAYS=weekends
+TZ=Nowhere/Zone', 'human', '2026-01-01T00:00:00Z'),
+ ('default', 'sched-job:nobody', 'TARGET=nobody
+PROMPT_CMD=''echo hi''
+INTERVAL_MIN=10
+START=09:00
+END=10:00
+DAYS=daily
+TZ=UTC', 'human', '2026-01-01T00:00:00Z'),
+ ('default', 'sched-job:badjob', 'TARGET=gamma
+PROMPT=x
+INTERVAL_MIN=10
+START=09:00
+END=10:00
+DAYS=funday
+TZ=UTC', 'human', '2026-01-01T00:00:00Z'),
+ ('*', 'sched-job:shared1', 'COMMAND=''tb pr-watch''
+INTERVAL_MIN=60
+START=09:00
+END=18:00
+DAYS=daily
+TZ=UTC', 'human', '2026-01-01T00:00:00Z'),
+ ('other', 'sched-job:otherjob', 'COMMAND=x
+INTERVAL_MIN=60
+START=09:00
+END=18:00
+DAYS=daily
+TZ=UTC', 'human', '2026-01-01T00:00:00Z');
 INSERT INTO approval_changes (pattern, value, created_at, herdr_session) VALUES
  ('send:task:worker1', 'allow', '2026-01-01T00:00:00Z', 'default'), ('send:info:*', 'ask', '2026-01-02T00:00:00Z', 'default'),
  ('send:task:worker1', 'ask', '2026-01-03T00:00:00Z', 'default'), ('agent:*', 'allow', '2026-01-04T00:00:00Z', 'default'),
@@ -119,8 +194,15 @@ cat <<'J'
  {"name": "beta", "pane_id": "p2", "agent_status": "working", "agent_session": {"value": "sess-b"}},
  {"pane_id": "p/3 x", "agent_status": "blocked", "terminal_title_stripped": "", "terminal_title": ""},
  {"name": "", "pane_id": "p4", "agent_status": "idle"},
+ {"name": "gamma", "pane_id": "p5", "agent_status": "idle", "workspace_id": "w1"},
+ {"name": "delta", "pane_id": "p6", "agent_status": "done", "workspace_id": "w9"},
+ {"name": "dup", "pane_id": "p7", "agent_status": "idle"}, {"name": "dup", "pane_id": "p8", "agent_status": "idle"},
  5]}}
 J
+exit 0
+fi
+if [ "$1 $2" = "workspace list" ]; then
+echo '{"result": {"workspaces": [{"workspace_id": "w1", "label": "<WS1>"}, {"workspace_id": "w9"}]}}'
 exit 0
 fi
 echo "unknown" >&2; exit 3
@@ -136,7 +218,8 @@ func pagesFixture(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(fixtureSQL); err != nil {
+	schedDir, _ := filepath.Abs("../../scheduler")
+	if _, err := db.Exec(strings.ReplaceAll(fixtureSQL, "@SCHED@", schedDir)); err != nil {
 		t.Fatal(err)
 	}
 	db.Close()
@@ -154,6 +237,9 @@ not json
 	os.WriteFile(filepath.Join(logs, "fine.log"), []byte(`{"action":"failed"}`+"\n"+`{"action":"sent"}`+"\n"), 0o644)
 	os.WriteFile(filepath.Join(logs, "noreason.log"), []byte(`{"action":"failed","ts":null}`+"\n"), 0o644)
 	os.WriteFile(filepath.Join(logs, "bad name.log"), []byte(`{"action":"failed"}`+"\n"), 0o644)
+	os.MkdirAll(filepath.Join(dir, "jobs"), 0o755)
+	os.WriteFile(filepath.Join(dir, "jobs", "unimported.conf"), []byte("COMMAND=x\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "jobs", "nightly.conf"), []byte("COMMAND=x\n"), 0o644)
 	os.MkdirAll(filepath.Join(dir, "roles"), 0o755)
 	os.WriteFile(filepath.Join(dir, "roles", "hr.md"), []byte("# hr\n"), 0o644)
 	webui, _ := filepath.Abs("../../webui")
@@ -161,7 +247,9 @@ not json
 		"WEBUI_TB_DB": dbp, "HERDR_BIN": herdr, "WEBUI_SCHED_LOGS": logs, "HERDR_SESSION": "default",
 		"HERDR_SESSION_FILE": filepath.Join(dir, "none"), "HERDR_SOCKET_PATH": "", "HERDR_SESSION_FROM_FILE": "",
 		"TB_STATUSES": "", "TB_CONFIG_DIR": filepath.Join(dir, "config"), "WEBUI_ROOT": webui,
-		"XDG_STATE_HOME": filepath.Join(dir, "state"), "WEBUI_POLICY": "", "TB_POLICY": "", "TB_ROLES": filepath.Join(dir, "roles"), "HOME": dir, "WEBUI_STATE_DIR": filepath.Join(dir, "state"),
+		"XDG_STATE_HOME": filepath.Join(dir, "state"), "WEBUI_POLICY": "", "TB_POLICY": "", "TB_ROLES": filepath.Join(dir, "roles"),
+		"WEBUI_SCHED_JOBS": filepath.Join(dir, "jobs"), "WEBUI_SCHED_SETTINGS": filepath.Join(dir, "settings"), "SCHED_FILE_FALLBACK": "",
+		"SCHED_START": "", "SCHED_END": "", "SCHED_WINDOW": "", "SCHED_INTERVAL_MIN": "", "SCHED_INTERVAL_SEC": "", "HOME": dir, "WEBUI_STATE_DIR": filepath.Join(dir, "state"),
 	} {
 		t.Setenv(k, v)
 	}
@@ -176,13 +264,19 @@ const pyRender = `
 import json, sys
 sys.path.insert(0, sys.argv[1])
 from urllib.parse import parse_qs
-from app import views, reqctx, data
+from datetime import datetime, timezone
+from app import views, reqctx, data, jobview
+views.next_runs = lambda info: jobview.next_runs(info, now=datetime(2026, 3, 4, 12, 34, 56, tzinfo=timezone.utc))
 out = {}
 with reqctx.use("default", "default"), data.request_db():
     for u in json.loads(sys.argv[2]):
         p, _, query = u.partition("?")
         ctx = {"csrf": "X"}
-        title, body = views.route(p, parse_qs(query), ctx)
+        if p.startswith("/jobs/"):
+            ctx["norefresh"] = True
+            title, body = views.page_job(p[6:], "X", saved=parse_qs(query).get("saved") == ["1"])
+        else:
+            title, body = views.route(p, parse_qs(query), ctx)
         out[u] = [title, body, views.page(title, body, p, data.badge_count(), "<LOGOUT>", refresh=not ctx.get("norefresh"))]
     out["api"] = json.dumps({"items": data.urgent_items(), "poll_sec": data.NOTIFY_POLL_SEC}, ensure_ascii=False)
 print(json.dumps(out))
@@ -203,7 +297,12 @@ func TestPagesMatchPython(t *testing.T) {
 		"/perms", "/perms?op=send:task:worker1", "/perms?op=send:task:worker9", "/perms?op=send:task:qa1", "/perms?op=agent:new:x",
 		"/perms?op=bad%20op", "/perms?op=setup:webui", "/perms?op=agent:slash:compact:w1", "/perms?kind=send&state=active&fallback=1",
 		"/perms?allowed=1&kind=bogus", "/perms?state=unwired", "/perms?pat=send:task:*&val=allow", "/perms?pat=*&val=allow",
-		"/perms?pat=send:info&val=ask", "/perms?pat=bad%20x&val=allow", "/perms?val=deny", "/perms?pat=proxy:write&val=allow"}
+		"/perms?pat=send:info&val=ask", "/perms?pat=bad%20x&val=allow", "/perms?val=deny", "/perms?pat=proxy:write&val=allow",
+		"/jobs", "/jobs/nightly", "/jobs/fine?saved=1", "/jobs/pfile", "/jobs/pin", "/jobs/dupjob", "/jobs/nobody", "/jobs/badjob",
+		"/jobs/shared1", "/jobs/missing"}
+	nowFn = func() time.Time { return time.Date(2026, 3, 4, 12, 34, 56, 0, time.UTC) }
+	defer func() { nowFn = time.Now }()
+	t.Setenv("SCHED_HERDRCTL", buildHerdrctl(t))
 	pj, _ := json.Marshal(paths)
 	c := exec.Command(py, "-c", pyRender, webui, string(pj))
 	raw, err := c.Output()
@@ -220,16 +319,23 @@ func TestPagesMatchPython(t *testing.T) {
 	for _, u := range paths {
 		p, query, _ := strings.Cut(u, "?")
 		opts := &pageOpts{}
-		title, body := ported[p](s, q, pageCtx{csrf: "X", opts: opts, qs: pyParseQS(query)})
+		var title, body string
+		if name, ok := strings.CutPrefix(p, "/jobs/"); ok {
+			opts.norefresh = true
+			saved := pyParseQS(query)["saved"]
+			title, body = s.pageJob(q, name, "X", "", len(saved) == 1 && saved[0] == "1")
+		} else {
+			title, body = ported[p](s, q, pageCtx{csrf: "X", opts: opts, qs: pyParseQS(query)})
+		}
 		w := want[u].([]any)
 		if title != w[0] {
 			t.Errorf("%s title: %q != %q", p, title, w[0])
 		}
 		if body != w[1] {
-			t.Errorf("%s body differs:\n go: %s\n py: %s", p, body, w[1])
+			t.Errorf("%s body differs:\n%s", u, firstDiff(body, w[1].(string)))
 		}
 		if full := s.page(q, title, body, p, "<LOGOUT>", *opts); full != w[2] {
-			t.Errorf("%s page differs:\n go: %s\n py: %s", p, full, w[2])
+			t.Errorf("%s page differs:\n%s", u, firstDiff(full, w[2].(string)))
 		}
 	}
 	if got := notificationsJSON(q.data().urgentItems()); got != want["api"] {
@@ -287,7 +393,8 @@ func TestPagesHTTP(t *testing.T) {
 		"/s/default/ledger?kind=send":  {200, `<option value="send" selected>send</option>`},
 		"/s/default/nope":              {404, "<h1>見つかりません</h1>"},
 		"/s/default/tasks":             {501, "Go 版の Web UI にまだありません"},
-		"/s/default/jobs/x":            {501, "Go 版の Web UI にまだありません"},
+		"/s/default/jobs/x":            {404, "<h1>見つかりません</h1>"},
+		"/s/default/agents/x":          {501, "Go 版の Web UI にまだありません"},
 		"/s/default/api/notifications": {200, `"poll_sec": 15}`},
 	} {
 		r := do(t, ts, "GET", path, ck, nil)
@@ -345,6 +452,88 @@ exit 0
 		t.Errorf("tb に渡したもの:\n%s\nwant:\n%s", got, want)
 	}
 	if r := do(t, ts, "POST", "/s/default/resolve", "", url.Values{"csrf": {tok}, "id": {"1"}}); r.code != 302 || r.loc != "/s/default/login" {
+		t.Errorf("未ログイン: %d %s", r.code, r.loc)
+	}
+}
+
+var (
+	herdrctlOnce sync.Once
+	herdrctlBin  string
+	herdrctlErr  error
+)
+
+// buildHerdrctl は Python 版の定期実行の画面が呼ぶ herdrctl(scheduler/bin/show.sh が渡す先)を作る。
+func buildHerdrctl(t *testing.T) string {
+	herdrctlOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "herdrctl-")
+		if err != nil {
+			herdrctlErr = err
+			return
+		}
+		herdrctlBin = filepath.Join(dir, "herdrctl")
+		out, err := exec.Command("go", "build", "-o", herdrctlBin, "../../cmd/herdrctl").CombinedOutput()
+		if err != nil {
+			herdrctlErr = fmt.Errorf("%v: %s", err, out)
+		}
+	})
+	if herdrctlErr != nil {
+		t.Skipf("herdrctl を作れない: %v", herdrctlErr)
+	}
+	return herdrctlBin
+}
+
+// firstDiff は最初に違う箇所の前後だけを見せる。
+func firstDiff(got, want string) string {
+	i := 0
+	for i < len(got) && i < len(want) && got[i] == want[i] {
+		i++
+	}
+	a := max(0, i-200)
+	return " go: …" + got[a:min(len(got), i+300)] + "\n py: …" + want[a:min(len(want), i+300)]
+}
+
+// 定期実行のスケジュールの保存・戻す(書き込みは本物の tb job。herdrctl を作って使う)。
+func TestJobPost(t *testing.T) {
+	pagesFixture(t)
+	t.Setenv("TB_HERDRCTL", buildHerdrctl(t))
+	ts, srv := testServer(t)
+	srv.Auth.Setup("alice", "correcthorse12")
+	ck, _ := srv.Auth.CreateSession()
+	r := do(t, ts, "GET", "/s/default/jobs/nightly", ck, nil)
+	if r.code != 200 || !strings.Contains(r.body, `action="/s/default/jobs/nightly"`) || strings.Contains(r.body, "herdr-refresh") ||
+		!strings.Contains(r.body, "1440 分おき") {
+		t.Fatalf("job: %d %s", r.code, r.body)
+	}
+	tok := csrf(t, r.body)
+	post := func(job string, f url.Values) resp {
+		f.Set("csrf", tok)
+		return do(t, ts, "POST", "/s/default/jobs/"+job, ck, f)
+	}
+	save := url.Values{"action": {"save"}, "interval": {"2"}, "interval_unit": {"min"}, "start": {"08:00"}, "end": {"09:30"},
+		"days": {"custom"}, "day_mon": {"1"}, "day_fri": {"1"}, "enabled": {"1"}}
+	if r := post("nightly", save); r.code != 302 || r.loc != "/s/default/jobs/nightly?saved=1" {
+		t.Fatalf("save: %d %s %s", r.code, r.loc, r.body)
+	}
+	r = do(t, ts, "GET", "/s/default/jobs/nightly?saved=1", ck, nil)
+	for _, w := range []string{"保存しました", "2 分おき / 08:00-09:30 / Mon Fri", "Web UI で変更済み"} {
+		if !strings.Contains(r.body, w) {
+			t.Errorf("保存のあと %q が無い", w)
+		}
+	}
+	bad := url.Values{"action": {"save"}, "interval": {"0"}, "interval_unit": {"min"}, "start": {"08:00"}, "end": {"09:30"}, "days": {"daily"}}
+	if r := post("nightly", bad); r.code != 400 || !strings.Contains(r.body, "間隔は 1〜1440 分の整数で入力してください") || strings.Contains(r.body, "/logout") {
+		t.Errorf("bad: %d %s", r.code, r.body)
+	}
+	if r := post("nightly", url.Values{"action": {"reset"}}); r.code != 302 {
+		t.Errorf("reset: %d %s", r.code, r.body)
+	}
+	if r := do(t, ts, "GET", "/s/default/jobs/nightly", ck, nil); !strings.Contains(r.body, "1440 分おき") || strings.Contains(r.body, "Web UI で変更済み") {
+		t.Errorf("reset のあと: %s", r.body)
+	}
+	if r := post("missing", url.Values{"action": {"reset"}}); r.code != 404 {
+		t.Errorf("missing: %d", r.code)
+	}
+	if r := do(t, ts, "POST", "/s/default/jobs/nightly", "", url.Values{"csrf": {tok}, "action": {"reset"}}); r.code != 302 || r.loc != "/s/default/login" {
 		t.Errorf("未ログイン: %d %s", r.code, r.loc)
 	}
 }
