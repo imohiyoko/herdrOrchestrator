@@ -27,6 +27,7 @@ if [[ ${1-} == --unit ]]; then
   export TB_DB=$TMP/tasks.db TB_CONFIG=$TMP/projects.conf TB_LIMITS=$TMP/limits-default.conf
   unset HERDR_SOCKET_PATH   # 実行する pane の socket に左右されない(HSESS は HERDR_SOCKET_PATH を HERDR_SESSION より優先する)
   export HERDR_BIN=$HERE/fake-herdr FAKE_LOG=$TMP/herdr.log
+  export TB_TEST_SHELL_PID=$$   # 疑似 herdr が「pane の最初のプロセス」として返す(テストの tb はこの子孫。ADR 0007 段 1a)
   # 役割の既定(roles/)は _common.md だけ。テストは setup の利用例(setup/examples/roles)を入れた状態で流す
   mkdir -p "$TMP/roles"; cp "$HERE/../../roles/_common.md" "$HERE/../../setup/examples/roles/"* "$TMP/roles/"
   export TB_ROLES=$TMP/roles

@@ -73,6 +73,7 @@ main() {
   # コマンド = lib/*.sh で定義された cmd_<名前>。一覧を別に持たない
   [[ $cmd =~ ^[a-z][a-z-]*$ ]] && declare -F "cmd_$cmd" >/dev/null || usage "不明なコマンド: $cmd"
   need_tools
+  auth_or_die   # 呼び出し元の確かめ(HERDR_PANE_ID を信じず、pane の中かを herdr とプロセスの親子で確かめる。lib/identity.sh。ADR 0007 段 1a)
   init_db || die "DB を開けないか、スキーマの移行に失敗しました: $DB"
   session_setup_load   # sql() のビューと見張り(lib/db.sh)
   statuses_load        # チケットの状態と分類(設定 statuses。lib/core.sh)
