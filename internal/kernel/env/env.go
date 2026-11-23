@@ -3,6 +3,7 @@
 package env
 
 import (
+	"bufio"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -55,22 +56,28 @@ func SessionName() string {
 		return s
 	}
 	if f := os.Getenv("HERDR_SESSION_FILE"); f != "" {
-		if v, ok := sessionFileValue(f); ok {
+		if v, ok := SessionFileValue(f); ok {
 			return v
 		}
 	}
 	return "default"
 }
 
-// 1 行目の名前だけを読む(# 以降と前後の空白は無視)。使えない文字があれば無いものとする
-func sessionFileValue(path string) (string, bool) {
-	b, err := os.ReadFile(path)
+// SessionFileValue は herdr-session ファイルの 1 行目の名前(bash の herdr_session_file_value)。# 以降と前後の空白
+// (bash の [[:space:]] と同じ ASCII の空白だけ)は無視する。使えない文字があれば無いものとする。読むのは 1 行目だけ
+func SessionFileValue(path string) (string, bool) {
+	f, err := os.Open(path)
 	if err != nil {
 		return "", false
 	}
-	line, _, _ := strings.Cut(string(b), "\n")
+	defer f.Close()
+	line, err := bufio.NewReader(f).ReadString('\n')
+	if err != nil && line == "" {
+		return "", false
+	}
+	line = strings.TrimSuffix(line, "\n")
 	line, _, _ = strings.Cut(line, "#")
-	line = strings.TrimSpace(line)
+	line = strings.Trim(line, " \t\n\v\f\r")
 	if !reName.MatchString(line) {
 		return "", false
 	}

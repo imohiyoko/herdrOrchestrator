@@ -39,3 +39,25 @@ func TestTBDB(t *testing.T) {
 		t.Errorf("got %q want %q", got, want)
 	}
 }
+
+// bash の herdr_session_file_value と同じく、落とすのは ASCII の空白だけ(U+00A0 などは名前の一部になり、使えない名前になる)
+func TestSessionFileValueSpaces(t *testing.T) {
+	dir := t.TempDir()
+	cases := []struct {
+		body, want string
+		ok         bool
+	}{
+		{" \tblue\r\n", "blue", true},
+		{" blue \n", "", false},
+		{"\nblue\n", "", false},
+		{"blue", "blue", true},
+		{"", "", false},
+	}
+	for i, c := range cases {
+		f := filepath.Join(dir, "s"+string(rune('a'+i)))
+		os.WriteFile(f, []byte(c.body), 0o600)
+		if got, ok := SessionFileValue(f); got != c.want || ok != c.ok {
+			t.Errorf("%q: got %q %v", c.body, got, ok)
+		}
+	}
+}

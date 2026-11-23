@@ -34,30 +34,23 @@ func whoamiRoot() string {
 	return wd
 }
 
+// whoamiSessionPath は bash の herdr_session_file(HERDR_SESSION_FILE、無ければ checkout 直下の herdr-session)
+func whoamiSessionPath(root string) string {
+	if p := os.Getenv("HERDR_SESSION_FILE"); p != "" {
+		return p
+	}
+	return filepath.Join(root, "herdr-session")
+}
+
 // whoamiSessionFile は bash の herdr_session_file_value(ファイルの 1 行目の名前。使えない文字なら無い)
 func whoamiSessionFile(root string) (path, name string, ok bool) {
-	path = os.Getenv("HERDR_SESSION_FILE")
-	if path == "" {
-		path = filepath.Join(root, "herdr-session")
-	}
+	path = whoamiSessionPath(root)
 	st, err := os.Stat(path)
 	if err != nil || !st.Mode().IsRegular() {
 		return path, "", false
 	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return path, "", false
-	}
-	line, _, _ := strings.Cut(string(b), "\n")
-	if line == "" {
-		return path, "", false
-	}
-	line, _, _ = strings.Cut(line, "#")
-	line = strings.TrimSpace(line)
-	if !reWhoName.MatchString(line) {
-		return path, "", false
-	}
-	return path, line, true
+	name, ok = env.SessionFileValue(path)
+	return path, name, ok
 }
 
 // whoamiSession は bash の herdr_session_name と herdr_session_source(socket / env / file / default)
@@ -145,8 +138,7 @@ func cmdWhoami(args []string, w, stderr io.Writer) error {
 	case "env":
 		ssrc = "env HERDR_SESSION"
 	case "file":
-		f, _, _ := whoamiSessionFile(root)
-		ssrc = "ファイル " + f
+		ssrc = "ファイル " + whoamiSessionPath(root)
 	default:
 		ssrc = "既定"
 	}
