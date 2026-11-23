@@ -634,6 +634,11 @@ func pyParseQS(query string) map[string][]string {
 	return out
 }
 
+// pyUnquote は urllib.parse.unquote(+ はそのまま)。
+func pyUnquote(s string) string {
+	return pyUnquotePlus(strings.ReplaceAll(s, "+", "%2B"))
+}
+
 // pyUnquotePlus は urllib.parse.unquote_plus(壊れた %xx はそのまま。UTF-8 でないバイトは U+FFFD)。
 func pyUnquotePlus(s string) string {
 	s = strings.ReplaceAll(s, "+", " ")
@@ -650,7 +655,7 @@ func pyUnquotePlus(s string) string {
 		}
 		b = append(b, s[i])
 	}
-	return strings.ToValidUTF8(string(b), "�")
+	return pyDecodeUTF8(b)
 }
 
 func isHex(c byte) bool { return c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F' }
