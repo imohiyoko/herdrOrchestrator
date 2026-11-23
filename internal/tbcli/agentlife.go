@@ -1,19 +1,32 @@
 package tbcli
 
 import (
+	"database/sql"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strconv"
 	"strings"
+	"time"
+	"unicode/utf8"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/agents"
 	"github.com/imohiyoko/herdrorchestrator/internal/approval"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/config"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/env"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/herdr"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/transport"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/util"
+	"github.com/imohiyoko/herdrorchestrator/internal/limits"
 	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
 )
 
 // agent の止める・戻す(taskboard/lib/agents.sh の authorize_op / op_entry / do_agent_stop / cmd_agent-stop)。
-// 作る・戻す・再起動・承認(agent-new / agent-revive / agent-restart / agent-approve)はまだ bash。
+// 戻す(agent-revive)も。作る・再起動・承認(agent-new / agent-restart / agent-approve)はまだ bash。
 // 承認待ち(L-<n>)の行は bash と同じ形で積むので、承認は bash の tb agent-approve がそのまま実行できる。
 
 // opResult は do_agent_* の結果(OP_OUT と終了コード)。
@@ -168,4 +181,354 @@ func cmdAgentStop(args []string, w, stderr io.Writer) error {
 		f = 1
 	}
 	return opEntry(db, "stop", name, fmt.Sprintf(`{"force":%d}`, f), by, w, func() opResult { return doAgentStop(db, st, name, force, by) })
+}
+
+// ---------- 戻す(revive) ----------
+
+var modelRE = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,64}$`)
+
+const kindDefault = "claude"
+
+func kindValid(k string) bool { return slices.Contains(kindAll, k) }
+
+// kindRequire は kind_require: 対応していなければ理由(KIND_ERR)。
+func kindRequire(kind, item, note string) (string, bool) {
+	if !kindValid(kind) {
+		return "kind=" + kind + " は未知の kind です(使えるのは: " + strings.Join(kindAll, " ") + ") item=kind", false
+	}
+	if kindSupports(kind, item) {
+		return "", true
+	}
+	if note != "" {
+		note = " (" + note + ")"
+	}
+	return "kind=" + kind + " は " + item + " に対応していません item=" + item + note + "。claude の引数を代わりに渡すことはしません(docs/agent-kinds.md)", false
+}
+
+// kindCheckLaunch は kind_check_launch: 要求された起動(モデル指定・会話の再開)に対応していなければ 12。
+func kindCheckLaunch(kind, model, sess string) *opResult {
+	if m, ok := kindRequire(kind, "launch", ""); !ok {
+		return &opResult{12, m}
+	}
+	if model != "" {
+		if m, ok := kindRequire(kind, "model", "--model "+model); !ok {
+			return &opResult{12, m}
+		}
+		if kind != "claude" || !modelRE.MatchString(model) {
+			return &opResult{12, "kind=" + kind + " のモデル名として使えません item=model: " + model}
+		}
+	}
+	if sess != "" {
+		if m, ok := kindRequire(kind, "resume", "session "+sess+" で再開できない。新しい会話にするなら --fresh"); !ok {
+			return &opResult{12, m}
+		}
+	}
+	return nil
+}
+
+// kindLaunchArgs は kind_launch_args: herdr agent start の -- 以降。
+func kindLaunchArgs(kind, sess, model string) []string {
+	var a []string
+	if kind == "claude" {
+		if sess != "" {
+			a = append(a, "--resume", sess)
+		}
+		if model != "" {
+			a = append(a, "--model", model)
+		}
+	}
+	return a
+}
+
+// roleModelFor は role_model_for: 設定 role-models で、名前(name:<glob>)か役割の glob に当たるモデル。
+// reg が空でなければ台帳の role の代わりに使う(role_name_of の第 2 引数)。
+func roleModelFor(db *store.DB, name, reg string) string {
+	body, _, ok := config.Lookup(db.DB, db.Session, "role-models")
+	if !ok {
+		return ""
+	}
+	r := agents.NewRoles(db.DB, db.Session)
+	var have []string
+	if reg != "" {
+		have = r.FilesForReg(name, reg)
+	} else if s, _ := r.NameOf(name); s != "" {
+		have = strings.Split(s, ",")
+	}
+	for _, line := range config.Lines(body) {
+		line = config.Trim(config.StripComment(line))
+		k, v, has := strings.Cut(line, "=")
+		if !has {
+			continue
+		}
+		k, v = config.Trim(k), config.Trim(v)
+		if !modelRE.MatchString(v) {
+			continue
+		}
+		if p, ok := strings.CutPrefix(k, "name:"); ok {
+			if util.Glob(p, name) {
+				return v
+			}
+			continue
+		}
+		for _, x := range have {
+			if util.Glob(k, x) {
+				return v
+			}
+		}
+	}
+	return ""
+}
+
+// modelWithRoleDefault は model_with_role_default: 明示が無ければ役割の既定モデル(kind がモデル指定に対応するときだけ)。
+func modelWithRoleDefault(db *store.DB, model, kind, name, role string) string {
+	if model != "" {
+		return model
+	}
+	if !kindSupports(kind, "model") {
+		return ""
+	}
+	return roleModelFor(db, name, role)
+}
+
+// agentRegister は agent_register: 台帳に登録する(新しい命のたびに判定フラグは付け直し)。
+func agentRegister(db *store.DB, name, cwd, model, role, by, kill, why, kind string) error {
+	ts := nowTS()
+	var kby, kat any
+	if kill != "unknown" {
+		kby, kat = by, ts
+	}
+	_, err := db.Exec(`INSERT INTO main.agents (name, kind, herdr_session, cwd, model, role, state, killable, killable_reason, killable_by, killable_at, created_by, created_at, updated_at)
+    VALUES (?, ?, ?, NULLIF(?,''), NULLIF(?,''), NULLIF(?,''), 'running', ?, NULLIF(?,''), ?, ?, ?, ?, ?)
+    ON CONFLICT(herdr_session, name) DO UPDATE SET state='running', stopped_at=NULL, pane_id=NULL, kind=excluded.kind,
+      cwd=COALESCE(excluded.cwd, cwd), model=COALESCE(excluded.model, model), role=COALESCE(excluded.role, role),
+      killable=excluded.killable, killable_reason=excluded.killable_reason, killable_by=excluded.killable_by,
+      killable_at=excluded.killable_at, killable_session=NULL, updated_at=excluded.updated_at`,
+		name, kind, db.Session, cwd, model, role, kill, why, kby, kat, by, ts, ts)
+	return err
+}
+
+// firstPrompt は first_prompt: 起動直後の agent に最初の指示を送る。送れない・確かめられないときは理由(FP_NOTE)。
+func firstPrompt(db *store.DB, name, prompt, by string, stderr io.Writer) string {
+	if !transport.WaitReady(name) {
+		fmt.Fprintf(stderr, "tb: %s が入力待ちにならないため最初の指示を送っていません\n", name)
+		return "最初の指示は未送信(" + envOr("TB_SPAWN_READY_SEC", "60") + " 秒待っても入力待ちになりません。tb send で送り直す)"
+	}
+	sent := false
+	for i := 0; i < 5; i++ {
+		if transport.Send(db.DB, db.Session, name, "[from: tb / agent / "+by+"] "+util.Oneline(prompt, 4000), "agent:"+name, "agent", io.Discard) == transport.Sent {
+			sent = true
+			break
+		}
+		time.Sleep(time.Duration(secEnv("TB_SPAWN_RETRY_SEC", 3) * float64(time.Second)))
+	}
+	if !sent {
+		return "最初の指示は未送信(tb send などで送り直す)"
+	}
+	if !transport.VerifyPrompt(name) {
+		fmt.Fprintf(stderr, "tb: %s に送ったが処理を確認できません。pane で Enter を押してください\n", name)
+		return "最初の指示は送ったが処理が始まったか確認できません(二重になるので再送せず、" + name + " の pane で Enter を押してください)"
+	}
+	return ""
+}
+
+func secEnv(k string, def float64) float64 {
+	if f, err := strconv.ParseFloat(envOr(k, strconv.FormatFloat(def, 'f', -1, 64)), 64); err == nil {
+		return f
+	}
+	return 0
+}
+
+// limitsRefuseRunning は limits_refuse_running 1: 動作中の agent が上限なら理由を stderr に出して 4。
+func limitsRefuseRunning(db *store.DB, stderr io.Writer) error {
+	running, _, ok := limitsCounts(db)
+	if !ok {
+		return nil
+	}
+	max := atoi(limits.Load(db.DB, db.Session).Get("max_running_agents"))
+	if running+1 > max {
+		fmt.Fprintf(stderr, "tb: 動作中の agent が上限です(動作中 %d、上限 max_running_agents=%d)。何も作りません。 止める候補は tb agent-shed、上限を変えるのは人(tb limits set max_running_agents <数>)\n", running, max)
+		return &exit{4, ""}
+	}
+	return nil
+}
+
+// agentCwd は AGENT_CWD(TB_AGENT_CWD、既定は TB_ROOT/..)。
+func agentCwd() string {
+	if d := os.Getenv("TB_AGENT_CWD"); d != "" {
+		return d
+	}
+	return filepath.Join(os.Getenv("TB_ROOT"), "..")
+}
+
+func isDir(d string) bool {
+	st, err := os.Stat(d)
+	return err == nil && st.IsDir()
+}
+
+type regRow struct {
+	ok                     bool
+	cwd, model, sess, kind string
+}
+
+func agentRegRow(db *store.DB, name string) regRow {
+	var r regRow
+	var cwd, model, sess, kind sql.NullString
+	if db.QueryRow(`SELECT cwd, model, session_id, kind FROM agents WHERE name=?`, name).Scan(&cwd, &model, &sess, &kind) == nil {
+		r = regRow{true, cwd.String, model.String, sess.String, kind.String}
+		if r.kind == "" {
+			r.kind = kindDefault
+		}
+	}
+	return r
+}
+
+// doAgentRevive は do_agent_revive。
+func doAgentRevive(db *store.DB, name string, fresh bool, model, prompt, by string, stderr io.Writer) opResult {
+	live, err := agents.SyncLive(db.DB, db.Session)
+	if err != nil {
+		return opResult{11, "herdr agent list に失敗しました"}
+	}
+	if _, ok := liveOf(live, name); ok {
+		return opResult{1, name + " はすでに動いています"}
+	}
+	row := agentRegRow(db, name)
+	if !row.ok {
+		if msg, other := otherSession(db, name); other {
+			return opResult{1, msg}
+		}
+		return opResult{1, name + " は台帳にありません(新しく作るなら tb agent-new)"}
+	}
+	cwd := row.cwd
+	if model == "" {
+		model = row.model
+	}
+	lmodel := model // 台帳に書くのは明示か台帳の値だけ(役割の既定は書かない)
+	sess := ""
+	if !fresh {
+		sess = row.sess
+	}
+	model = modelWithRoleDefault(db, model, row.kind, name, "")
+	if r := kindCheckLaunch(row.kind, model, sess); r != nil {
+		return *r
+	}
+	if cwd == "" || !isDir(cwd) {
+		if sess != "" {
+			c := cwd
+			if c == "" {
+				c = "未記録"
+			}
+			return opResult{1, name + " の作業ディレクトリがありません(" + c + ")。--fresh なら " + agentCwd() + " で新しい会話として起動します"}
+		}
+		cwd = physDir(agentCwd())
+	}
+	if err := agentRegister(db, name, cwd, lmodel, "", by, "unknown", "", row.kind); err != nil {
+		return opResult{1, err.Error()}
+	}
+	sp, ok := transport.Spawn(env.TBDB(), row.kind, name, cwd, kindLaunchArgs(row.kind, sess, model))
+	if !ok {
+		if sp.Kept {
+			_, _ = db.Exec(`UPDATE main.agents SET pane_id=? WHERE herdr_session=? AND name=?`, sp.Pane, db.Session, name)
+			out := name + ": " + sp.Err
+			if prompt != "" {
+				out += "。最初の指示は未送信(答えたあと tb send などで送る)"
+			}
+			return opResult{11, out}
+		}
+		_, _ = db.Exec(`UPDATE main.agents SET state='stopped', stopped_at=? WHERE herdr_session=? AND name=?`, nowTS(), db.Session, name)
+		return opResult{11, name + " を起動できません: " + sp.Err}
+	}
+	_, _ = db.Exec(`UPDATE main.agents SET pane_id=? WHERE herdr_session=? AND name=?`, sp.Pane, db.Session, name)
+	how := "新しい会話"
+	if sess != "" {
+		how = "resume " + sess
+	}
+	out := name + " revived (" + how + ", pane " + sp.Pane + ", cwd " + cwd + ")"
+	if prompt != "" {
+		if note := firstPrompt(db, name, prompt, by, stderr); note != "" {
+			out += " / " + note
+		}
+	}
+	return opResult{0, out}
+}
+
+// physDir は $(cd D && pwd): 絶対パス(シンボリックリンクは解かない。bash の pwd と同じ論理パス)。
+func physDir(d string) string {
+	if filepath.IsAbs(d) {
+		return filepath.Clean(d)
+	}
+	wd := os.Getenv("PWD")
+	if wd == "" {
+		wd, _ = os.Getwd()
+	}
+	return filepath.Join(wd, d)
+}
+
+func cmdAgentRevive(args []string, w, stderr io.Writer) error {
+	if len(args) < 1 || strings.HasPrefix(args[0], "-") {
+		return usage("agent-revive <名前> [--fresh] [--model M] [--prompt P]")
+	}
+	name, fresh, model, prompt := args[0], false, "", ""
+	if err := validAgentName(name); err != nil {
+		return err
+	}
+	for i := 1; i < len(args); i++ {
+		switch a := args[i]; a {
+		case "--fresh":
+			fresh = true
+		case "--model", "--prompt":
+			if i+1 >= len(args) {
+				return usage("%s に値が必要です", a)
+			}
+			if a == "--model" {
+				model = args[i+1]
+			} else {
+				prompt = args[i+1]
+			}
+			i++
+		default:
+			return usage("agent-revive: 不明な引数 %s", a)
+		}
+	}
+	if model != "" && !modelRE.MatchString(model) {
+		return usage("agent-revive: --model に使えない文字があります: %s", model)
+	}
+	if utf8.RuneCountInString(prompt) > 4000 {
+		return usage("agent-revive: --prompt は 4000 字まで")
+	}
+	db, _, err := openCmd(stderr)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if row := agentRegRow(db, name); row.ok { // 台帳にあれば、その kind でできない依頼は承認待ちに積む前に止める
+		m, sess := model, ""
+		if m == "" {
+			m = row.model
+		}
+		if !fresh {
+			sess = row.sess
+		}
+		if r := kindCheckLaunch(row.kind, m, sess); r != nil {
+			return &exit{12, r.out}
+		}
+	}
+	if err := limitsRefuseRunning(db, stderr); err != nil {
+		return err
+	}
+	by, err := requester()
+	if err != nil {
+		return err
+	}
+	f := 0
+	if fresh {
+		f = 1
+	}
+	kv := []any{"fresh", f}
+	if model != "" {
+		kv = append(kv, "model", model)
+	}
+	if prompt != "" {
+		kv = append(kv, "prompt", prompt)
+	}
+	return opEntry(db, "revive", name, jsonC(kv...), by, w, func() opResult { return doAgentRevive(db, name, fresh, model, prompt, by, stderr) })
 }
