@@ -232,6 +232,39 @@ UPDATE alert_details SET result_path = '@DOCS@/proj/report.md', result_report = 
 UPDATE alert_details SET result_report = 'DB だけ **太字**' WHERE alert_no = 10;
 `
 
+// agentsFixtureSQL は agent の画面(/agents ほか)のための行。
+const agentsFixtureSQL = `
+INSERT INTO agents (herdr_session, name, kind, cwd, model, role, session_id, pane_id, state, killable, killable_reason, killable_by,
+  killable_at, killable_session, created_by, created_at, updated_at, stopped_at, spawned_by) VALUES
+ ('default', 'alpha', 'claude', '/w/a', 'haiku', NULL, 'sess-a', 'p1', 'running', 'yes', '使い捨て <x>', 'judge', '2026-01-01T00:00:00Z', NULL, 'human', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', NULL, 'conductor'),
+ ('default', 'beta', 'claude', '/w/b', NULL, 'lead', 'sess-b', 'p2', 'running', 'yes', NULL, NULL, '2025-12-31T00:00:00Z', NULL, 'human', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', NULL, 'alpha'),
+ ('default', 'gamma', 'claude', NULL, NULL, NULL, NULL, 'p5', 'running', 'no', '常駐', 'human', NULL, NULL, 'human', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', NULL, NULL),
+ ('default', 'old1', 'claude', '/w/o <1>', 'sonnet', 'hr', 'sess-o1', NULL, 'stopped', 'unknown', NULL, NULL, NULL, NULL, 'human', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z', 'beta'),
+ ('default', 'old2', 'claude', NULL, NULL, NULL, NULL, NULL, 'stopped', 'yes', NULL, NULL, '2026-01-01T00:00:00Z', 'x', 'human', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', '2026-01-03T00:00:00Z', NULL),
+ ('default', 'keeper', 'claude', NULL, NULL, NULL, NULL, NULL, 'stopped', 'yes', NULL, NULL, NULL, NULL, 'human', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', '2026-01-04T00:00:00Z', NULL);
+INSERT INTO config (herdr_session, key, body, updated_by, updated_at) VALUES
+ ('default', 'protect', 'keep* = 大事 <b>
+role:hr
+# コメント
+delta', 'human', '2026-01-01T00:00:00Z'),
+ ('default', 'projects', 'p = beta
+* = gamma
+# x = y', 'human', '2026-01-01T00:00:00Z');
+INSERT INTO agent_ops (op, target, args, requested_by, status, result, created_at, decided_at, herdr_session) VALUES
+ ('revive', 'old1', '{"fresh": true}', 'beta', 'pending', NULL, '2026-01-02T00:00:00Z', NULL, 'default'),
+ ('stop', 'gamma', '{}', 'alpha', 'failed', '保護中 <p>', '2026-01-02T00:00:00Z', '2026-01-02T01:00:00Z', 'default');
+INSERT INTO comments (task_id, kind, text, from_name, from_pane, from_session, created_at, herdr_session) VALUES
+ ('T-p-1', 'progress', 'recent', 'alpha', 'p1', 's', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), 'default'),
+ ('T-q-1', 'progress', 'recent q', 'gamma', 'p5', 's', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), 'default');
+INSERT INTO role_changes (agent, old_role, new_role, changed_by, reason, created_at, herdr_session) VALUES
+ ('beta', NULL, 'lead', 'hrbot', 'x', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), 'default'),
+ ('beta', NULL, 'lead', 'human', 'x', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), 'default');
+INSERT INTO read_log (reader, target, lines, status, rule, created_at, herdr_session) VALUES
+ ('alpha', 'beta', 10, 'ok', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), 'default'),
+ ('alpha', 'beta', 10, 'denied', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), 'default'),
+ ('cli', 'ghost <g>', 10, 'ok', NULL, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), 'default');
+`
+
 // docsFiles は成果物のファイル(@DOCS@ からの相対パス → 中身)。
 var docsFiles = map[string]string{
 	"proj/notes.md": "# ノート <x>\n\n本文 **太字** と [リンク](https://example.com)。\n\n- a\n  - b\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n" +
@@ -268,6 +301,10 @@ cat <<'J'
 J
 exit 0
 fi
+if [ "$1 $2" = "agent read" ]; then
+printf 'out <%s>\n%s %s\n' "$3" "$5" "$7"
+exit 0
+fi
 if [ "$1 $2" = "workspace list" ]; then
 echo '{"result": {"workspaces": [{"workspace_id": "w1", "label": "<WS1>"}, {"workspace_id": "w9"}]}}'
 exit 0
@@ -290,6 +327,9 @@ func pagesFixture(t *testing.T) string {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(strings.ReplaceAll(docsFixtureSQL, "@DOCS@", dir)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(agentsFixtureSQL); err != nil {
 		t.Fatal(err)
 	}
 	for name, body := range docsFiles {
@@ -403,7 +443,9 @@ func TestPagesMatchPython(t *testing.T) {
 		"/docs/view?ref=task:T-q-1/1", "/docs/view?ref=task:T-q-1/1&sub=nested", "/docs/view?ref=task:T-q-1/1&sub=a.md",
 		"/docs/view?ref=task:T-q-1/1&sub=../notes.md", "/docs/view?ref=task:T-q-1/1&sub=in-link.md", "/docs/view?ref=task:T-q-1/1&sub=out-link",
 		"/docs/view?ref=task:T-q-1/1&sub=nested/c.md&raw=1", "/docs/view?ref=task:T-q-1/0&sub=x", "/docs/view?ref=task:T-q-1/2",
-		"/docs/view?ref=task:T-q-1/3", "/docs/view?ref=task:nope/0", "/docs/view?ref=C-12/1", "/docs/view?ref=C-12/0", "/docs/view?ref=C-11/0"}
+		"/docs/view?ref=task:T-q-1/3", "/docs/view?ref=task:nope/0", "/docs/view?ref=C-12/1", "/docs/view?ref=C-12/0", "/docs/view?ref=C-11/0",
+		"/agents", "/agents?op=done", "/agents?op=bogus", "/agent-graph", "/agent-new", "/agents/alpha", "/agents/beta", "/agents/gamma",
+		"/agents/p4", "/agents/p%2F3%20x", "/agents/dup", "/agents/nope", "/agents/delta"}
 	for i := range 10 {
 		paths = append(paths, fmt.Sprintf("/docs/view?ref=C-9/%d", i))
 	}
@@ -476,7 +518,7 @@ func TestPagesMatchPython(t *testing.T) {
 		kinds[it.Kind]++
 	}
 	wantKinds := map[string]int{"comment_question": 2, "comment_blocked": 1, "proxy_pending": 1, "alert_result": 1, "alert_approval": 1,
-		"send_pending": 1, "agent_op_pending": 1, "agent_blocked": 2, "agent_stalled": 1, "ticket_rule": 2, "reminder_due": 3, "job_failed": 2}
+		"send_pending": 1, "agent_op_pending": 2, "agent_blocked": 2, "agent_stalled": 1, "ticket_rule": 2, "reminder_due": 3, "job_failed": 2}
 	for k, n := range wantKinds {
 		if kinds[k] != n {
 			t.Errorf("%s: %d 件(want %d)", k, kinds[k], n)
@@ -527,7 +569,10 @@ func TestPagesHTTP(t *testing.T) {
 		"/s/default/docs/view?ref=C-9%2F0": {200, `<script src="/s/default/static/mermaid.min.js"`},
 		"/s/default/docs/view?ref=x":       {404, "<h1>見つかりません</h1>"},
 		"/s/default/jobs/x":                {404, "<h1>見つかりません</h1>"},
-		"/s/default/agents/x":              {501, "Go 版の Web UI にまだありません"},
+		"/s/default/agents/x":              {404, "<h1>見つかりません</h1>"},
+		"/s/default/agents/alpha":          {200, "<h1>agent: alpha</h1>"},
+		"/s/default/agents":                {200, `action="/s/default/agent-op"`},
+		"/s/default/agent-new":             {200, `action="/s/default/agent-new"`},
 		"/s/default/api/notifications":     {200, `"poll_sec": 15}`},
 	} {
 		r := do(t, ts, "GET", path, ck, nil)
@@ -673,5 +718,51 @@ func TestJobPost(t *testing.T) {
 	}
 	if r := do(t, ts, "POST", "/s/default/jobs/nightly", "", url.Values{"csrf": {tok}, "action": {"reset"}}); r.code != 302 || r.loc != "/s/default/login" {
 		t.Errorf("未ログイン: %d %s", r.code, r.loc)
+	}
+}
+
+// agent の操作(POST /agent-op、/agent-new)。承認待ちの操作の却下は本物の tb で、入力の検査は tb を呼ぶ前に断る。
+func TestAgentPost(t *testing.T) {
+	pagesFixture(t)
+	t.Setenv("TB_HERDRCTL", buildHerdrctl(t))
+	ts, srv := testServer(t)
+	srv.Auth.Setup("alice", "correcthorse12")
+	ck, _ := srv.Auth.CreateSession()
+	r := do(t, ts, "GET", "/s/default/agents", ck, nil)
+	if r.code != 200 || !strings.Contains(r.body, `action="/s/default/agent-op"`) {
+		t.Fatalf("agents: %d %.300s", r.code, r.body)
+	}
+	tok := csrf(t, r.body)
+	post := func(path string, f url.Values) resp {
+		f.Set("csrf", tok)
+		return do(t, ts, "POST", "/s/default"+path, ck, f)
+	}
+	for _, c := range []struct {
+		f    url.Values
+		code int
+		loc  string
+	}{
+		{url.Values{"op": {"reject"}, "id": {"1"}}, 302, "/s/default/agents?op=done"},
+		{url.Values{"op": {"reject"}, "id": {"1"}}, 302, "/s/default/agents?op=refused"}, // もう決まっている
+		{url.Values{"op": {"approve"}, "id": {"x"}}, 400, ""},
+		{url.Values{"op": {"stop"}, "name": {"Bad"}}, 400, ""},
+		{url.Values{"op": {"force-stop"}, "name": {"beta"}}, 302, "/s/default/agents?op=refused"}, // 確認のチェックが無い
+		{url.Values{"op": {"nuke"}, "name": {"beta"}}, 400, ""},
+	} {
+		if r := post("/agent-op", c.f); r.code != c.code || r.loc != c.loc {
+			t.Errorf("%v: %d %s %.200s", c.f, r.code, r.loc, r.body)
+		}
+	}
+	r = post("/agent-new", url.Values{"name": {"Bad Name"}, "cwd": {"/w"}, "prompt": {"<hi>"}, "killable": {"no"}})
+	if r.code != 400 || !strings.Contains(r.body, "名前は英小文字で始まり") || !strings.Contains(r.body, "&lt;hi&gt;</textarea>") ||
+		!strings.Contains(r.body, `<option value="no" selected>`) || strings.Contains(r.body, "herdr-refresh") {
+		t.Errorf("agent-new: %d %s", r.code, r.body)
+	}
+	for f, want := range map[string]string{"cwd=rel": "作業ディレクトリは絶対パス", "model=a b": "モデル名に使えない", "role=-x": "役割名に使えない",
+		"killable=maybe": "止めてよいかの指定が不正"} {
+		k, v, _ := strings.Cut(f, "=")
+		if r := post("/agent-new", url.Values{"name": {"newbie"}, k: {v}}); r.code != 400 || !strings.Contains(r.body, want) {
+			t.Errorf("%s: %d %.300s", f, r.code, r.body)
+		}
 	}
 }
