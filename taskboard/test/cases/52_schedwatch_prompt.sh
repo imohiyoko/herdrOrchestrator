@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# run.sh から番号順に source される。lib/schedwatch.sh の「見張り系の判定」と「実行として数えるもの」。
+# run.sh から番号順に source される。tb digest の scheduler 見張りの「見張り系の判定」と「実行として数えるもの」。
 # 51 とは別の fake scheduler ディレクトリ・DB を使う(51 の件数の検査に影響させない)。
 #   - PROMPT 型のジョブは成功すると ran ではなく sent を記録する。sent は実行として数える(failed は数えない)
 #   - 見張り系かどうかは、conf の WATCHER=1/0 の明示 > TARGET が watchers に一致 > COMMAND の値が watchers の語を含む。

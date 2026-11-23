@@ -14,7 +14,8 @@ eq "legacy db" "$(sh_val HERDR_LEGACY_TB_DB)"  "$(py_val herdr_env.LEGACY_TB_DB)
 eq "tb db: XDG_STATE_HOME" "$(XDG_STATE_HOME=/xs sh_val HERDR_DEFAULT_TB_DB)" "$(XDG_STATE_HOME=/xs py_val 'herdr_env.tb_db()')"
 eq "tb db: XDG_STATE_HOME is the base" "$(XDG_STATE_HOME=/xs sh_val HERDR_DEFAULT_TB_DB)" "/xs/herdr/tasks.db"
 eq "tb db: the default is outside the checkout" "$(env -u XDG_STATE_HOME HOME=/hh bash -c "source '$HERE/../lib/herdr-env.sh'; echo \$HERDR_DEFAULT_TB_DB")" "/hh/.local/state/herdr/tasks.db"
-eq "schema version" "$(env -u TB_DB bash -c "source '$HERE/../lib/herdr-env.sh'; source '$HERE/../taskboard/lib/db.sh'; schema_latest")" "$(py_val 'herdr_env.schema_version()')"
+# スキーマの最新の版 = taskboard/schema/NNN_*.sql の最大の番号(herdrctl の store も同じファイルを埋め込む)
+eq "schema version" "$(cd "$HERE/../taskboard/schema" && ls [0-9][0-9][0-9]_*.sql | sed 's/_.*//' | sort -n | tail -1 | sed 's/^0*//')" "$(py_val 'herdr_env.schema_version()')"
 eq "TB_DB override (python)" "$(TB_DB=/x/y.db python3 -c "import sys; sys.path.insert(0, '$HERE/../lib'); import herdr_env; print(herdr_env.tb_db())")" "/x/y.db"
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 sess() { env -u HERDR_SESSION -u HERDR_SOCKET_PATH HERDR_SESSION_FILE=$T/s "$@"; }

@@ -101,9 +101,9 @@ has "herdr がない" missing cmd:herdr; has "herdr がないと server は skip
 fresh; FAKE_HERDR_DOWN=1; run
 has "server が止まっている" warn herdr:server; rc_is "warn だけでも終了コード 1" 1
 fresh; rm "$B/plutil"; run; has "macOS で plutil がない" warn cmd:plutil
-fresh; run; has "herdrctl があれば tb は Go" ok cmd:herdrctl "Go で動く"
-fresh; rm "$B/herdrctl"; run; has "herdrctl がない" warn cmd:herdrctl "PATH にない"; rc_is "herdrctl がなければ終了コード 1" 1
-fresh; FAKE_HERDRCTL_FEATURES="perms policy"; run; has "古い herdrctl" warn cmd:herdrctl "古い版"
+fresh; run; has "herdrctl があれば ok" ok cmd:herdrctl "$B/herdrctl"
+fresh; rm "$B/herdrctl"; run; has "herdrctl がない" missing cmd:herdrctl "PATH にない"; rc_is "herdrctl がなければ終了コード 1" 1
+fresh; FAKE_HERDRCTL_FEATURES="perms policy"; run; has "古い herdrctl" missing cmd:herdrctl "古い版"
 # Go 版の scheduler(既定)が DB の定義を読めるか(herdrctl sched lint)
 fresh; FAKE_SCHED_FEATURES="show tick lint"; run; has "Go 版が読める定義は ok" ok job:taskboard-digest "DB に定義あり"
 fresh; FAKE_SCHED_FEATURES="show tick lint"; sjob taskboard-digest 'COMMAND=$(id)'; run

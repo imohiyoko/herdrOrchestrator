@@ -1,6 +1,6 @@
 ---
 name: testing
-description: このリポジトリでテストを設計・追加・修正・実行するときに使う。tb(taskboard/test/cases)、Web UI、scheduler、setup、任意の部品、Go(herdrctl)と TB_IMPL=go の契約テストの置き場所・書き方・並列化の決まり・CI の組を扱う。
+description: このリポジトリでテストを設計・追加・修正・実行するときに使う。tb(taskboard/test/cases)、Web UI、scheduler、setup、任意の部品、Go(herdrctl)のテストの置き場所・書き方・並列化の決まり・CI の組を扱う。
 ---
 
 # テストの設計と実装
@@ -18,13 +18,13 @@ description: このリポジトリでテストを設計・追加・修正・実�
 
 | 部品 | テスト | 1 つだけ流す |
 | --- | --- | --- |
-| tb(`taskboard/`) | `taskboard/test/cases/NN_*.sh` | `bash taskboard/test/run.sh 93_prqueue.sh` |
+| tb(`taskboard/`) | `taskboard/test/cases/NN_*.sh` | `TB_HERDRCTL=/tmp/herdrctl bash taskboard/test/run.sh 93_prqueue.sh`(herdrctl を先に作る。下の「tb の中身は herdrctl」) |
 | Web UI(`webui/`) | `webui/tests/test_webui.py`(1 本のスクリプト) | `bash webui/tests/run.sh` |
 | scheduler | `scheduler/tests/run.sh` | 同左 |
 | setup | `setup/tests/run.sh`(疑似の repo・HOME・LaunchAgents、`setup/tests/fake/`) | 同左 |
 | 任意の部品(core から呼ばない部品) | その部品の `tests/run.sh`(組の一覧は `bash tests/run-all.sh --list`) | 同左 |
 | herdrctl(Go) | `internal/**/*_test.go`、`cmd/herdrctl/main_test.go` | `go test ./internal/kernel/store/` |
-| 全体の小物(misc) | `tests/test_env.sh`(bash と Python の既定値の突き合わせ)、`tests/test_instance.sh`(複数 herdr セッションの切り分け)、`tests/test_webui_queries.py`(webui の SQL を本物のスキーマで EXPLAIN)、`taskboard/tools/deps.py --check`(lib の層の向き) | `bash tests/run-all.sh misc` |
+| 全体の小物(misc) | `tests/test_env.sh`(bash と Python の既定値の突き合わせ)、`tests/test_instance.sh`(複数 herdr セッションの切り分け)、`tests/test_webui_queries.py`(webui の SQL を本物のスキーマで EXPLAIN) | `bash tests/run-all.sh misc` |
 
 すべて流すのは `bash tests/run-all.sh`(`-j N` で組を並列に)。必要なもの: bash 4.3 以上、sqlite3、jq、python3、go。
 
@@ -34,7 +34,7 @@ description: このリポジトリでテストを設計・追加・修正・実�
 
 ### 新しいケースを足す
 
-- 名前は `NN_<機能>.sh`。`NN` は `taskboard/lib/` の対応するファイルのおおむねの順。先頭は `# shellcheck shell=bash` と、何を確かめるかの 1 行
+- 名前は `NN_<機能>.sh`。`NN` はおおむねサービスの順。先頭は `# shellcheck shell=bash` と、何を確かめるかの 1 行
 - `run.sh` が用意するもの: `$TB`(bin/tb)、`$TMP`、`$TB_DB` / `$TB_CONFIG` / `$TB_LIMITS`(`$TMP` の下)、`HERDR_BIN`=疑似 herdr、`$FAKE_LOG`(疑似 herdr が呼ばれた記録)、`$HERE`(test/)
 - 判定の部品: `eq "<名前>" "<実際>" "<期待>"`、`rc <コマンド>`(終了コードを出す)、`ok` / `ng`、`prompts`(送信の数)。名前はケースの中で一意に、何が成り立つべきかを書く(例: `"claim twice fails"`)
 - **前のケースの状態を使わない**。自分のケースで使う project 名(例: `-p tk`)、DB(`export TB_DB=$TMP/<名前>.db`)、設定ファイル(`$TMP/<名前>.conf`)を自分で用意する。先頭のコメントに「project は tk / tk2 だけを使う」のように書く
@@ -71,30 +71,28 @@ bash taskboard/test/run.sh --units               # ユニットの一覧(groups 
 足したテストが、直す前のコードで FAIL することを確かめる。直したファイルだけを一時的に戻して流し、元に戻す:
 
 ```bash
-cp taskboard/lib/recipes.sh /tmp/fixed.sh
-git show HEAD:taskboard/lib/recipes.sh > taskboard/lib/recipes.sh
-bash taskboard/test/run.sh 84_recipe_runner.sh   # 足したテストだけが FAIL する
-cp /tmp/fixed.sh taskboard/lib/recipes.sh
+cp internal/tbcli/reciperun.go /tmp/fixed.go
+git show HEAD:internal/tbcli/reciperun.go > internal/tbcli/reciperun.go
+go build -o /tmp/herdrctl ./cmd/herdrctl && TB_HERDRCTL=/tmp/herdrctl bash taskboard/test/run.sh 84_recipe_runner.sh   # 足したテストだけが FAIL する
+cp /tmp/fixed.go internal/tbcli/reciperun.go
 ```
 
 ### CI の組と weights
 
 CI は `--shard 1of4` … `4of4` を別のジョブで流す。組は `taskboard/test/weights`(ケースごとの秒数)で自動で分ける。weights に無いケースは 10 秒とみなすので、**重いケースを足したら `bash taskboard/test/run.sh --timings` で weights を書き直してコミットする**(bash 5 以上)。1 ケースが 1 分を超えるなら、独立した節ごとにファイルを分けると CI が縮む。
 
-### TB_IMPL=go の契約テスト
+### tb の中身は herdrctl
 
-tb のケースは Go 版(herdrctl)の仕様書でもある。CI の `tb contract` ジョブは同じケースを `TB_IMPL=go` で流し、Go に移したコマンド(`herdrctl tb --commands`)は herdrctl が答える。
+`taskboard/bin/tb` は `herdrctl tb` に置き換わるだけ(bash の実装は消した)。ケースを流す前に herdrctl を作り、`TB_HERDRCTL` で渡す(無ければ PATH の herdrctl)。CI の `tb` ジョブ(go.yml)も同じに流す。
 
 ```bash
 go build -o /tmp/herdrctl ./cmd/herdrctl
-TB_IMPL=go TB_HERDRCTL=/tmp/herdrctl bash taskboard/test/run.sh
+TB_HERDRCTL=/tmp/herdrctl bash taskboard/test/run.sh
 ```
 
-herdrctl を作らずに `TB_IMPL=go` で流すと、ほとんどのケースが「herdrctl が見つかりません」で落ちる(コードの問題ではない)。
+herdrctl が無いと run.sh は流さずに止まる。コードを直したら herdrctl を作り直してから流す。
 
-`TB_IMPL` を付けずに流すと bash で流れる(run.sh が `TB_IMPL=bash` にする。手元の PATH に herdrctl があっても変わらない)。tb 自体は、未設定なら使える herdrctl があれば Go を使う。
-
-コマンドを Go に移すときは、ケースを書き換えずにこれが通ること。bash 側の出力(列の順・空白・終了コード)を変えたら、Go 側も合わせる。
+評価の部品だけを細かく確かめるもの(リスク評価・DB の見張りなど)は、ケースではなく Go のユニットテスト(`internal/**/*_test.go`)に書く。
 
 ## Web UI(`webui/tests/test_webui.py`)
 

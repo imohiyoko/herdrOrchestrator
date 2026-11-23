@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# 通知の規則(notify-rules。lib/notifyrules.sh。ADR 0003 の段 2)。別の DB で流し、触った変数は最後に戻す
+# 通知の規則(notify-rules。ADR 0003 の段 2)。別の DB で流し、触った変数は最後に戻す
 _saved_pane=${HERDR_PANE_ID-}; unset HERDR_PANE_ID
 _nr_old_db=$TB_DB
 export TB_DB=$TMP/nrules.db TB_NOTIFY_CONF=$TMP/nr-notify.conf TB_NOTIFY_DIR=$TMP/nr-out TB_NOTIFY_RULES=$TMP/nr-rules.conf

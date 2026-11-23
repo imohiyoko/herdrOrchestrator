@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
-# --- agent の kind アダプタ(lib/kinds.sh): claude は従来どおり、codex / gemini は対応していない項目をはっきり止める
+# --- agent の kind アダプタ: claude は従来どおり、codex / gemini は対応していない項目をはっきり止める
 _saved_pane=${HERDR_PANE_ID-}; unset HERDR_PANE_ID
 export TB_DB=$TMP/kinds.db TB_POLICY_A=$TMP/appr-kinds.conf TB_SPAWN_RETRY_SEC=0 TB_AGENT_CWD=$TMP TB_LIMITS=$TMP/kd-lim.conf
 printf '* * * = allow\n' >"$TB_POLICY_A"

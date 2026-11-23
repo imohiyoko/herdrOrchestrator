@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# run.sh から番号順に source される。tb digest の scheduler 見張り(lib/schedwatch.sh)。
+# run.sh から番号順に source される。tb digest の scheduler 見張り。
 # fake な scheduler ディレクトリ(jobs / logs / settings)だけを読む。本物の scheduler・launchd には触れない。
 # 現在時刻は TB_SCHEDWATCH_NOW で固定(1800000000 = 2027-01-15 17:00 JST、金曜)。
 unset TB_IMMEDIATE_KINDS

@@ -19,5 +19,5 @@ scheduler/**
 **/repos.md
 **/ghtkn*.yaml
 # 認証のラッパー、公開前検査の規則や同期の仕組みなど、環境固有のパスは人が足す
-**/lib/approvals.sh
-**/lib/risk.sh
+**/internal/approval/**
+**/internal/kernel/perms/**

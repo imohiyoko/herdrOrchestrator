@@ -454,7 +454,7 @@ tb の全コマンドは表 `perms/commands.tbl` に行を持ち、呼び出し�
 ## 部品とレシピ(ADR 0005)
 
 新しい使い道を、専用のコマンドを足す代わりに「部品の並び(レシピ)」で作れるようにする(段階的に実装中)。部品の一覧・引数の型・リスク階層は
-`lib/recipes.sh` にコードで固定し、設定・DB では増やせず緩められない。人だけの部品はリスク階層 `human-only` で、承認の設定で緩まない。
+`internal/recipe/parts.go` にコードで固定し、設定・DB では増やせず緩められない。人だけの部品はリスク階層 `human-only` で、承認の設定で緩まない。
 
 ```bash
 tb parts [--json]                        # 部品の一覧
@@ -519,7 +519,7 @@ tb agent-ops [--status pending|done|failed|rejected] [--json]
 tb agent-approve L-<n> [--always] / tb agent-reject L-<n>      # 人だけ
 ```
 
-- **新規作成**: 専用の workspace(label = 名前)を作り、その pane で `herdr agent start <名前> --kind <kind> [-- ...]`(`--kind` 省略時は claude。claude は従来どおり `-- --model M`)。kind ごとの違いは `lib/kinds.sh` のアダプタだけが持ち、対応していない指定は終了コード 12 で止まる。表と設計は [docs/agent-kinds.md](docs/agent-kinds.md)(`tb agent-kinds` でも見える)。
+- **新規作成**: 専用の workspace(label = 名前)を作り、その pane で `herdr agent start <名前> --kind <kind> [-- ...]`(`--kind` 省略時は claude。claude は従来どおり `-- --model M`)。kind ごとの違いは `internal/tbcli/agentmisc.go` のアダプタだけが持ち、対応していない指定は終了コード 12 で止まる。表と設計は [docs/agent-kinds.md](docs/agent-kinds.md)(`tb agent-kinds` でも見える)。
   `--cwd` の既定は `TB_AGENT_CWD`(既定このリポジトリ)。`--role R` は `roles/R.md` を台帳に残し、SessionStart hook がそれを渡す(復活後も同じ)。
   `--prompt` は起動後に最初の指示として送る。
   起動に失敗したときは、最後の `herdr agent start` のエラーコードと短いメッセージ(`TB_SPAWN_ERR_MAX`、既定 200 文字まで)を出す。
@@ -562,7 +562,7 @@ tb model-set <名前 | @役割 | --all> --reset [--dry-run]
   切り替えると、その会話のプロンプトキャッシュは使えなくなる(切り替えた直後の 1 回は費用が大きい)。そのことを 1 行で出す
 - **1 体ごとに 1 行**: `changed (…)` / `skipped (理由)` / `not supported (…)` / `pending L-<n>`。working・blocked は飛ばす。実行した本人と指揮官は対象から外す。
   止まっている agent は台帳のモデルだけを変える(次の `tb agent-revive` から効く)
-- **kind ごとの方法**: `lib/kinds.sh` の `kind_model_switch`(kind → 方法の表)。いまは claude だけ(revive)。方法の無い kind は何も変えず `not supported`(終了コード 12)
+- **kind ごとの方法**: `internal/tbcli/modelset.go` の kind ごとの方法。いまは claude だけ(revive)。方法の無い kind は何も変えず `not supported`(終了コード 12)
 - **承認**: 操作名は `agent:model:<名前>`(既定 ask。`agent:model:@worker = allow` のように役割でも書ける)。agent の pane からは allow のときだけ実行し、ask なら `L-<n>` で人の承認待ち。
   `--all` は人が実行しても常に承認待ちに積む(自動では実行しない)。記録は `agent_ops` の op=revive、`args` に `model_set:1` とモデル(スキーマは変えていない)
 - **モデルの決まり方**(起動・復活のとき。上が勝つ): 明示の `--model` > 台帳の値(明示の指定で書いた値) > 役割の既定(`tb config` の `role-models`) > agent の CLI の既定。
@@ -771,7 +771,7 @@ tb limits watcher-enabled <名前>          # watchers にあれば終了コー�
 tb agent-shed [--count N] [--json]        # 絞る候補の一覧。何も止めない
 ```
 
-- **モード**の値は `lib/limits.sh` の先頭の表で変える。`lean`: `max_working_agents=10`、`incident_max_open=1`、`incident_roles=investigator fixer verifier`、`analyst_max=1`、`spawn_max_total=2`。
+- **モード**の値は `internal/limits` の表で変える。`lean`: `max_working_agents=10`、`incident_max_open=1`、`incident_roles=investigator fixer verifier`、`analyst_max=1`、`spawn_max_total=2`。
   `minimal`: `max_working_agents=5`、`incident_max_open=1`、`incident_roles=investigator`、`analyst_max=1`、`spawn_max_total=0`、`watchers` を空に。`normal` は表のキーを `limits.conf` から消して既定に戻す
   (`max_running_agents` と `human_handoff` はモードでは変えない)。モードを選んだ後に `set` / `unset` すると、記録されるモード名は `custom` になる
 - **絞る**: `tb agent-shed` が、止めてよい候補を ①完了報告済み(done のタスクがあり未完了が無い)で待機中の役 ②判定役が `killable=yes` とし、その後に新しい入力が無い(`stale` でない)もの
@@ -976,20 +976,22 @@ tb config history policy           # 変更の履歴(config_changes)
 
 ## ファイルの構成
 
-`bin/tb` は入口だけで、中身は `lib/` に機能ごとに分かれている。コマンド `tb <名前>` は `lib/*.sh` の `cmd_<名前>` で、一覧を別には持たない(新しいコマンドは関数を足し、`lib/help.txt` に 1 行書く。テストが突き合わせる)。
+`bin/tb` は入口だけで、中身は Go の `herdrctl tb`(リポジトリ直下の `cmd/herdrctl` と `internal/`)。bin/tb は checkout の場所・DB・セッションを渡して herdrctl に置き換わる(`tb help` だけは `lib/help.txt` を自分で出す)。
+herdrctl は `TB_HERDRCTL` > PATH の `herdrctl`(setup が入れる)で、無い・古いと tb は止まる(hook 用の `touch` / `role-context` は何も出さず 0)。
+新しいコマンドは `internal/tbcli` に足し、`lib/help.txt` に 1 行書く(テストが突き合わせる)。
 
-| ファイル | 中身 |
+| 場所 | 中身 |
 |---|---|
-| `lib/db.sh` | `sql` / `q` / スキーマの移行(`schema/NNN_*.sql`) |
-| `lib/config.sh` | 設定をキーで引く(`config_text` / `config_has`)・書く(`config_put`)・`tb config` |
-| `lib/core.sh` | エラー終了・入力の検査・タスク行の取得・project ごとの指示役 |
-| `lib/transport.sh` | herdr との境界。herdr を実行するのはここの `herdr_call` だけ。送信と `messages` への記録(`herdr_send`)、`system-send` |
-| `lib/tasks.sh` | add / list / show / claim / update / done / block / report / pending |
-| `lib/conv.sh` | 会話チーム: 振り分け表(`tb conv route` / `routes-set`)・下書きの指示(`draft`)・声の役(`voice` / `voice-check`)・パターンの台帳。`tb conv` の入口(古い名前 `conv-*` も) |
-| `lib/recipes.sh` | 部品とレシピ(ADR 0005): 部品の一覧・引数の型・リスク階層(`tb parts` など)、レシピの登録(`tb recipe-set` など)と汎用の入口(`tb recipe-run`) |
-| `lib/proxy.sh` / `activity.sh` / `comments.sh` / `digest.sh` / `send.sh` / `roles.sh` / `approvals.sh` / `alerts.sh` / `review.sh` / `agents.sh` / `spawn.sh` / `limits.sh` / `shed.sh` / `handoff.sh` / `dbimport.sh` | 各節のコマンド |
+| `internal/kernel/store` | DB(スキーマの移行 `schema/NNN_*.sql`、セッションの一時ビューと見張り) |
+| `internal/kernel/config` | 設定をキーで引く・書く |
+| `internal/kernel/herdr` / `transport` | herdr との境界。herdr を実行するのは herdr アダプタだけ。送信と `messages` への記録 |
+| `internal/kernel/identity` / `perms` | 呼び出し元の確かめと認可(ADR 0006 / 0007。表は `perms/*.tbl`) |
+| `internal/tickets` | add / list / show / claim / update / done / block / report / pending など |
+| `internal/conv` | 会話チーム(`tb conv`) |
+| `internal/recipe` | 部品とレシピ(ADR 0005) |
+| `internal/tbcli` | コマンドの入口(引数・出力)と、ほかの各節のコマンド |
 
-agent への送信も DB への書き込みも、すべて `tb` を通る。後で MCP サーバーなど別の経路を足すときは、`tb` のコマンドを呼ぶか `lib/transport.sh` を差し替えればよい。
+agent への送信も DB への書き込みも、すべて `tb` を通る。後で MCP サーバーなど別の経路を足すときは、`tb` のコマンドを呼ぶか `internal/kernel/transport` を差し替えればよい。
 
 ## セッションと DB
 
@@ -1003,9 +1005,9 @@ DB は 1 つで、全部の herdr セッションが共有する(既定は `${XD
 - Web UI も同じ DB を、自分のセッションの行だけ読む(`webui/app/data.py` の一時ビュー)
 - 共有の SQL(`sql/agent_edges.sql`)は表の名前のまま書き、tb も Web UI も同じ一時ビュー(下の「SQL の書き方」)で絞る
 
-### SQL の書き方(tb の `lib/db.sh`)
+### SQL の書き方(tb の `internal/kernel/store`)
 
-tb の `sql()` は、接続ごとに `herdr_session` 列を持つ表(一覧は [`sql/session_tables`](sql/session_tables))について 2 つを作る。
+tb は、接続ごとに `herdr_session` 列を持つ表(一覧は [`sql/session_tables`](sql/session_tables))について 2 つを作る。
 
 - **一時ビュー**: 表と同じ名前の、今のセッションの行だけのビュー。読みは表の名前のまま書き、`herdr_session` では絞らない(ビューが絞る)。全セッションを見る読み(タスク ID の採番、別セッションにいる agent のヒント、`session_id` での活動記録の引き当て、共通の設定 `'*'`)は `main.<表>` と書く
 - **書き込みの見張り**: `main.<表>` への INSERT / UPDATE / DELETE が別セッションの行に触れたら `RAISE(ABORT)` で止める(設定の `config` / `config_changes` だけは共通の行 `'*'` も書ける)。絞り忘れが「黙って他人の行を変える」ではなく「エラーで止まる」になる
@@ -1033,7 +1035,7 @@ HERDR_SESSION=<その checkout のセッション> tb db-import /path/to/checkou
 
 ## スキーマ
 
-定義は [`schema/`](schema/) の `NNN_*.sql` にあり、DB の `PRAGMA user_version` より新しい番号だけを tb が順に流す(`lib/db.sh`)。
+定義は [`schema/`](schema/) の `NNN_*.sql` にあり、DB の `PRAGMA user_version` より新しい番号だけを tb が順に流す(`internal/kernel/store`)。
 版が最新なら `PRAGMA` を 1 回読むだけで済む。テーブルや列を変えるときは既存ファイルを書き換えず、次の番号のファイルを足す。
 版を付ける前に作られた DB(`user_version=0`)も、中身を保ったまま最新になる。
 012 から全部の表に `herdr_session` がある(移行のとき、既にある行は移行を流したセッションのものになる)。下の列の一覧では省く。
@@ -1060,7 +1062,7 @@ DB パスと herdr の既定値は部品で共通の [`lib/herdr-env.sh`](../lib
 bash test/run.sh
 ```
 
-機能ごとのテストは `test/cases/NN_*.sh`(`lib/` のファイルにおおむね対応)。`run.sh` はケースを「ユニット」ごとに別のプロセス・別の一時ディレクトリ(DB・設定・疑似 herdr の記録)で流し、ユニット同士は並列に流す(`-j N` で本数。既定は CPU の数、`TB_TEST_JOBS` でも変えられる)。
+機能ごとのテストは `test/cases/NN_*.sh`(サービスごと。herdrctl を作って `TB_HERDRCTL` で渡す)。`run.sh` はケースを「ユニット」ごとに別のプロセス・別の一時ディレクトリ(DB・設定・疑似 herdr の記録)で流し、ユニット同士は並列に流す(`-j N` で本数。既定は CPU の数、`TB_TEST_JOBS` でも変えられる)。
 - ユニットは 1 ケースが基本。前のケースが作った状態(変数・DB・設定ファイル)を使うケースだけ、`test/groups` に 1 行で書いて同じシェルで番号順に流す。新しいケースは、前の状態を使わなければ書き足さなくてよい(`project` や `TB_DB` などは自分で用意する)
 - どのユニットでも最後に `99_zzz_session_sweep.sh` を流す(そのユニットが作った DB を見る)
 - `bash test/run.sh 93_prqueue.sh` のようにケースを指定すると、そのケースを含むユニットだけ流す。`--units` でユニットの一覧

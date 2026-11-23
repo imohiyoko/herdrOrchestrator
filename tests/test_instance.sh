@@ -89,7 +89,8 @@ eq "webui plist: ポートの起点を渡す" "$(grep -A1 '<key>TB_UI_GATEWAY_PO
 web c TB_UI_GATEWAY_PORT=80x; eq "webui plist: 数字でないポートは書かない" "$(ls "$TMP/genw-c" 2>/dev/null | wc -l | tr -d ' ')" "0"
 eq "旧版の入口(gateway.py)は無い" "$([[ -e $ROOT/webui/gateway.py || -e $ROOT/webui/bin/gen-gateway-plist.sh ]] && echo left || echo gone)" "gone"
 
-# --- tb のセッション(lib/db.sh の SESS。DB の行の分け方)は socket パスを見る(tb 本体を source せず、定義行だけ評価)
-eq "tb SESS follows the socket" "$(clean env HERDR_SESSION=staging HERDR_SOCKET_PATH=/h/.config/herdr/sessions/training/herdr.sock bash -c "source '$ROOT/lib/herdr-env.sh'; $(grep '^SESS=' "$ROOT/taskboard/lib/db.sh" | sed 's/ *#.*//'); echo \$SESS")" "training"
+# --- tb のセッション(DB の行の分け方)は socket パスを見る(bin/tb が herdrctl に渡す HERDR_SESSION は herdr_session_name)
+eq "tb SESS follows the socket" "$(clean env HERDR_SESSION=staging HERDR_SOCKET_PATH=/h/.config/herdr/sessions/training/herdr.sock bash -c "source '$ROOT/lib/herdr-env.sh'; herdr_session_name")" "training"
+eq "bin/tb passes herdr_session_name to herdrctl" "$(grep -c 'HERDR_SESSION=$(herdr_session_name)' "$ROOT/taskboard/bin/tb")" "1"
 
 echo "pass=$pass fail=$fail"; [[ $fail -eq 0 ]]

@@ -93,7 +93,7 @@ eq "pr-queue run: duplicate check first, then create with draft/base main/head/r
 $TB pr-queue run >/dev/null 2>&1
 eq "pr-queue run: created ones are not run again" "$(pqgh 'pr create')" "1"
 eq "pr-queue: no merge / review / ready / close is ever issued" "$(pqgh 'pr merge\|pr review\|pr ready\|pr close\|--approve')" "0"
-eq "pr-queue: the code has no merge/approve either" "$(grep -cE 'pr (merge|review|ready|close)|--approve' "$HERE/../lib/prqueue.sh")" "0"
+eq "pr-queue: the code has no merge/approve either" "$(cat "$HERE"/../../internal/pr/*.go | grep -v '^\s*//' | grep -cE '"(merge|review|ready|close)"|pr (merge|review|ready|close)|--approve')" "0"
 
 # ---- ガード(approve の時点)
 pqbody g1 'Report: <!-- link -->'; pqbody g2 'TODO'; pqbody g3 'https://example.com/r/1'

@@ -58,7 +58,7 @@ fi
 exec "$_real_sqlite" "\$@"
 WRAP
 chmod +x "$TMP/race-bin2/sqlite3"
-export TB_TEST_HOOKS=1  # Go 版(TB_IMPL=go)は sqlite3 を呼ばないので、同じことを herdrctl のテスト用の口(store.RaceHook)がする
+export TB_TEST_HOOKS=1  # tb(herdrctl)は sqlite3 を呼ばないので、herdrctl のテスト用の口(store.RaceHook)で割り込む
 eq "sprints(race): sprint closed in between" \
   "$(PATH="$TMP/race-bin2:$PATH" RACE_MARK=$TMP/srace1 RACE_SQL="UPDATE sprints SET state='closed' WHERE id=${s3#S-}" rc $TB update "$d" --sprint "$s3")" "2"
 eq "sprints(race): task still in backlog" "$($TB show "$d" | jq -r .sprint_id)" "null"

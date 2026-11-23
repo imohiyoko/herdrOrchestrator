@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
-# --- DB は WAL(lib/db.sh の init_db)。全セッションが同じ DB を使うので、読みと書きが互いを待たないようにする
+# --- DB は WAL。全セッションが同じ DB を使うので、読みと書きが互いを待たないようにする
 _saved_db=$TB_DB
 export TB_DB=$TMP/wal.db
 HERDR_SESSION=wa "$TB" list >/dev/null

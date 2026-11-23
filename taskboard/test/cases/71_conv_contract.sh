@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
 # --- tb conv(振り分け・下書き・学習・段階)の使い方・誤りの文面・終了コード・JSON の形(bash と Go で同じ。期待値は bash の出力から作った)。
-# 動きそのものは 12_conv.sh と 72_conv_learn.sh(どちらも TB_IMPL=go で Go を通る)
+# 動きそのものは 12_conv.sh と 72_conv_learn.sh
 _cc_saved=$(env | grep -E '^(TB_DB|HERDR_PANE_ID|FAKE_AGENTS|TB_CONV_[A-Z_]+)=' || true)
 unset HERDR_PANE_ID TB_CONV_ROUTES TB_CONV_TEAMS
 export TB_DB=$TMP/convcontract.db TB_CONV_DIR=$TMP/cc-conv TB_CONV_STATE_DIR=$TMP/cc-state

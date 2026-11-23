@@ -87,7 +87,10 @@ def make_env(name, **extra):
         WEBUI_STATE_DIR=os.path.join(d, "state"), WEBUI_AUTH_DIR=os.path.join(d, "run"),
         XDG_CONFIG_HOME=os.path.join(d, "xdg"), HERDR_SESSION_FILE=os.path.join(d, "no-herdr-session"),
         TB_PROTECT=os.path.join(d, "protect.conf"), TB_LABELS=os.path.join(d, "labels.conf"),
-        SCHED_FILE_FALLBACK="1")   # ジョブはファイル(jobs/*.conf)に置いて試す。既定(DB だけ)は「既定は DB だけ」のところで確かめる
+        SCHED_FILE_FALLBACK="1",   # ジョブはファイル(jobs/*.conf)に置いて試す。既定(DB だけ)は「既定は DB だけ」のところで確かめる
+        # 展開を含む conf($HOME や $(…))の表示を試すので、scheduler は bash 版で読む(Go 版はそういう conf を読まない)。
+        # PATH に herdrctl があると scheduler の既定は Go になるため、ここで固定する
+        SCHED_IMPL="bash")
     # 役割の既定(roles/)は _common.md だけ。setup の利用例(setup/examples/roles)を入れた状態で試す
     rd = os.path.join(d, "roles")
     if not os.path.isdir(rd):

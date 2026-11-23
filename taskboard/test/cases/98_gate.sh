@@ -1,6 +1,6 @@
 # shellcheck shell=bash
-# run.sh から番号順に source される。merge / approve の判定の口(lib/gate.sh。段 0: 判定は読み取りだけ、実行は常に無効)
-# lib/gate.sh を別のシェルで source して直接評価する。設定の差し替えはテストの中(GATE_CONF / GATE_PATHS の代入)だけ。tb 本体は env で差し替えられない
+# run.sh から番号順に source される。merge / approve の判定の口(tb gate。段 0: 判定は読み取りだけ、実行は常に無効)
+# 設定は隔離ツリー(TB_ROOT の下の固定の置き場所)に置いて tb gate evaluate で評価する。tb 本体は env で差し替えられない
 GT=$TMP/gate; mkdir -p "$GT"
 cat >"$GT/gate.conf" <<'C'
 [mode]
@@ -46,21 +46,15 @@ BASE=(
 gtf() { local drop=$1; shift; local l; for l in "${BASE[@]}"; do [[ $drop != - && $l == "$drop"* ]] || printf '%s\n' "$l"; done; printf '%s\n' "$@"; }
 # 設定の無いツリーと、実設定のあるツリーを $TMP に作って tb を呼ぶ(実チェックアウトの config の有無に左右されない)
 mkiso() { mkdir -p "$1/taskboard" "$1/lib" "$1/roles"; cp -R "$HERE/../bin" "$HERE/../lib" "$HERE/../schema" "$HERE/../sql" "$HERE/../perms" "$1/taskboard/"; cp "$HERE/../../lib/"*.sh "$1/lib/"; mkdir -p "$1/taskboard/config"; }
-# Go 版(TB_IMPL=go)は lib を source できないので、gt は隔離ツリーに設定と記録を置いて tb gate evaluate で同じ評価をする
+# gt は隔離ツリーに設定と記録を置いて tb gate evaluate で評価する(設定の置き場所は TB_ROOT の下に固定で、env では差し替えられない)
 GTGO=$GT/iso-go; mkiso "$GTGO"; mkdir -p "$GTGO/taskboard/data"
 gtcp() { rm -f "$2"; if [[ -e $1 || -L $1 ]]; then cp -P "$1" "$2"; fi; }
 # gt <action> <gate.conf> <paths.conf> [pr] < 事実 → 評価の全出力。終了コードは最後の行 "rc=<n>"
 gt() {
   local act=$1 conf=$2 paths=$3 pr=${4:-} facts=()
   while IFS= read -r l || [[ -n $l ]]; do facts+=("$l"); done
-  if [[ ${TB_IMPL:-bash} == go ]]; then
-    gtcp "$conf" "$GTGO/taskboard/config/gate.conf"; gtcp "$paths" "$GTGO/taskboard/config/gate-paths.conf"; gtcp "${RVF:-$GT/reviews-good.log}" "$GTGO/taskboard/data/gate-reviews.log"
-    printf '%s\n' "${facts[@]}" | "$GTGO/taskboard/bin/tb" gate evaluate T-1 --action "$act" ${pr:+--pr "$pr"} --facts-stdin; echo "rc=$?"
-    return 0
-  fi
-  ( TB_ROOT=$HERE/..; source "$HERE/../lib/gate.sh"; usage() { echo "usage: $*"; exit 2; }
-    GATE_CONF=$conf; GATE_PATHS=$paths; GATE_REVIEWS=${RVF:-$GT/reviews-good.log}
-    gate_eval "$act" T-1 "$pr" "${facts[@]}"; gate_format; echo "rc=$GATE_EXIT" )
+  gtcp "$conf" "$GTGO/taskboard/config/gate.conf"; gtcp "$paths" "$GTGO/taskboard/config/gate-paths.conf"; gtcp "${RVF:-$GT/reviews-good.log}" "$GTGO/taskboard/data/gate-reviews.log"
+  printf '%s\n' "${facts[@]}" | "$GTGO/taskboard/bin/tb" gate evaluate T-1 --action "$act" ${pr:+--pr "$pr"} --facts-stdin; echo "rc=$?"
 }
 G1() { gt "$1" "$GT/gate.conf" "$GT/paths.conf"; }
 hardl() { grep '^hard:' | sed 's/^hard: //'; }
@@ -353,15 +347,6 @@ eq "gate builtin hard: same hit with an empty paths file, the example paths file
 for p in lib/db.sh Lib/db.sh LIB/x.sh taskboard/Lib/db.sh taskboard/CONFIG/x.conf Webui/Scheduler/x.py; do
   eq "gate P-01 case-insensitive: $p → +2" "$(pk "FILE M $p" | cut -d'|' -f1)" "P-01 +2: lib・config・scheduler 配下(重要度 高)"
 done
-# nocasematch の復元は、gate_eval を呼んだのと同じシェルで確かめる(復元の行を消すと落ちる)。呼ぶ前が off なら off、on なら on に戻る
-ncs() { local init=$1 facts=() l; while IFS= read -r l || [[ -n $l ]]; do facts+=("$l"); done
-  ( TB_ROOT=$HERE/..; source "$HERE/../lib/gate.sh"; GATE_CONF=$GT/gate.conf; GATE_PATHS=$GT/paths.conf; GATE_REVIEWS=$GT/reviews-good.log
-    if [[ $init == on ]]; then shopt -s nocasematch; else shopt -u nocasematch; fi
-    gate_eval merge T-1 "" "${facts[@]}" >/dev/null; shopt -q nocasematch && echo on || echo off ); }
-eq "gate P-01: nocasematch restored in the calling shell (was off → off)" "$(gtf - | ncs off)" "off"
-eq "gate P-01: nocasematch restored in the calling shell (was on → on)" "$(gtf - | ncs on)" "on"
-eq "gate P-01: nocasematch restored also when a path hits H-01 (off)" "$(gtf FILE 'FILE M roles/a.md' | ncs off)" "off"
-eq "gate P-01: nocasematch restored also on an evaluation error (off)" "$(printf 'HEAD 3f9c2ab\n' | ncs off)" "off"
 eq "gate P-01 case-insensitive: Docs dir with .MD is docs" "$(pk 'FILE M DOCS/A.MD' | cut -d'|' -f1)" "P-01 +0: docs・tests のみ"
 # docs の分類の細部(N-C): 先頭の . だけの名前や、末尾の . は拡張子なし = コード
 for p in docs/.md docs/a. docs/a.md.js docs/.txt docs/dir.md/x; do

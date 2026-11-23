@@ -5,13 +5,13 @@
 ## 決まり
 
 - **1 PR で 1 サービス**。他の PR が bash 側を書き換えている最中のサービスは後に回す
-- **移し終えた** = そのサービスのコマンドがすべて `herdrctl tb --commands` に出ていて、`taskboard/test/cases` のそのサービスのケースが **書き換えなしで** `TB_IMPL=go` でも通る。出力・終了コード・エラーの文面は bash と同じ。Go のユニットテストも付ける
-- **同期**: CI の `tb contract` ジョブが全ケースを `TB_IMPL=go` で流す。移したコマンドを bash 側だけ変えるとこのジョブが落ちる。ケースで確かめていない振る舞いは、移す PR でケースを足して埋める
-- **bash を消す時期**: tb の全サービスが移ったので、既定を Go にした(`TB_IMPL` が未設定なら、認可と呼び出し元の確かめを持つ herdrctl があれば Go、無い・古いなら何も言わずに bash。`TB_IMPL=go` / `TB_IMPL=bash` で固定できる。テスト(`taskboard/test/run.sh`)は未設定なら bash で流す)。次に setup が herdrctl を必ず入れるようにし、しばらく様子を見てから `taskboard/lib/*.sh` を消し、`tb` を herdrctl を呼ぶだけの shell にする
+- **移し終えた** = そのサービスのコマンドがすべて `herdrctl tb --commands` に出ていて、`taskboard/test/cases` のそのサービスのケースが **書き換えなしで** Go でも通った。出力・終了コード・エラーの文面は bash と同じにした。Go のユニットテストも付けた
+- **同期**: CI の `tb` ジョブが全ケースを herdrctl で流す
+- **bash を消した**: tb の全サービスが移ったので、`taskboard/lib/*.sh` を消した。`taskboard/bin/tb` は checkout の場所・DB・セッションを渡して `herdrctl tb` に置き換わるだけの shell(`help` だけは自分で `lib/help.txt` を出す。hook 用の `touch` / `role-context` は herdrctl が無くても何も出さず 0)。herdrctl は `TB_HERDRCTL` > PATH で、無い・古い(認可と呼び出し元の確かめが無い)と tb は止まる。bash の振る舞いを直接試していたテスト(リスク評価・DB の見張り)は Go のテストに移した(リスク評価は bash 版の出力を写した golden と突き合わせる)
 
 ## コマンドの名前
 
-Go に移すサービスは、`.claude/skills/tb-command-naming` の形(`tb <サービス> <サブコマンド>`)の新しい名前で作る。bash にも同じ名前の `cmd_<サービス>` を足し、古い名前(`tb proxy-request` など)は別名として同じに動かす。role の文面・README・webui などの呼び出し元は、移す PR で新しい名前に直す。
+新しいコマンドは `.claude/skills/tb-command-naming` の形(`tb <サービス> <サブコマンド>`)の名前で作る。古い名前(`tb proxy-request` など)は別名として同じに動かす。role の文面・README・webui などの呼び出し元は、移す PR で新しい名前に直す。
 
 ## 進み具合
 
@@ -47,4 +47,4 @@ Go に移すサービスは、`.claude/skills/tb-command-naming` の形(`tb <サ
 
 土台(`internal/kernel`)は、移すサービスが使う分だけ足していく: store(DB)、env(既定の置き場所)、config(設定を引く・書く)、herdr(herdr アダプタ)、identity(人か agent か。報告者の名前 `resolve_label` も)、transport(herdr への送信 `herdr_send` と messages への記録)、util(`oneline` など)。
 
-`touch` は hook から毎回呼ばれるので、`TB_IMPL=go` でも herdrctl が無い・持たないときは何も出さずに bash で続ける(`bin/tb` の `tb_go_quiet`)。
+`touch` は hook から毎回呼ばれるので、herdrctl が無い・古いときは何も出さずに 0 で終わる(`bin/tb`)。
