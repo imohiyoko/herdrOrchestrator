@@ -1,0 +1,54 @@
+(function () {
+  "use strict";
+  // BASE: /s/<セッション名>(同じオリジンに全セッションの画面が並ぶので、保存キーと通知のタグも分ける)
+  var BASE = __BASE__, POLL = __POLL__, KEY = "herdr-webui-notified" + (BASE ? ":" + BASE : "");
+  var badge = document.getElementById("nbadge");
+  var state = document.getElementById("nstate");
+  var btn = document.getElementById("nenable");
+  function supported() { return "Notification" in window; }
+  function load() {
+    try { var v = JSON.parse(localStorage.getItem(KEY)); return v && typeof v === "object" ? v : null; }
+    catch (x) { return null; }
+  }
+  function save(v) { try { localStorage.setItem(KEY, JSON.stringify(v)); } catch (x) {} }
+  function showState() {
+    if (!state) return;
+    var t;
+    if (!supported()) t = "このブラウザはデスクトップ通知に対応していません";
+    else if (Notification.permission === "granted") t = "Chrome 通知: 有効";
+    else if (Notification.permission === "denied") t = "Chrome 通知: ブロック中(アドレスバー左のサイト情報から通知を許可してください)";
+    else t = "Chrome 通知: まだ許可していません";
+    state.textContent = t;
+    if (btn) btn.hidden = !supported() || Notification.permission !== "default";
+  }
+  function safeHref(h) { return typeof h === "string" && h.charAt(0) === "/" && h.charAt(1) !== "/" && h.charAt(1) !== "\\"; }
+  function notify(it) {
+    var n = new Notification("[herdr] " + it.label + ": " + it.title, {body: (it.body || "-") + "\n対応: " + (it.how || "Web UI で確かめる"), tag: "herdr-" + (BASE ? BASE + "-" : "") + it.id});
+    n.onclick = function () { window.focus(); if (safeHref(it.href)) location.href = BASE + it.href; n.close(); };
+  }
+  if (btn) btn.addEventListener("click", function () {
+    Notification.requestPermission().then(function (p) {
+      showState();
+      if (p === "granted") new Notification("[herdr] 通知を有効にしました", {body: "新しい緊急通知をここに出します", tag: "herdr-enabled"});
+    });
+  });
+  function poll() {
+    fetch(BASE + "/api/notifications", {credentials: "same-origin", cache: "no-store", headers: {"Accept": "application/json"}})
+      .then(function (r) { if (!r.ok) throw new Error("status " + r.status); return r.json(); })
+      .then(function (d) {
+        var items = Array.isArray(d.items) ? d.items : [];
+        if (badge) { badge.textContent = String(items.length); badge.className = items.length ? "badge" : "badge zero"; }
+        var seen = load(), first = seen === null, now = {};
+        var ok = supported() && Notification.permission === "granted";
+        items.forEach(function (it) {
+          now[it.id] = 1;
+          if (!first && !seen[it.id] && ok) notify(it);
+        });
+        save(now);
+      })
+      .catch(function () {});
+  }
+  showState();
+  poll();
+  setInterval(poll, POLL);
+})();

@@ -13,6 +13,7 @@ import (
 	"github.com/imohiyoko/herdrorchestrator/internal/sched"
 	"github.com/imohiyoko/herdrorchestrator/internal/tbcli"
 	"github.com/imohiyoko/herdrorchestrator/internal/version"
+	"github.com/imohiyoko/herdrorchestrator/internal/webui"
 )
 
 const usage = `usage: herdrctl <command>
@@ -23,6 +24,7 @@ commands:
   db migrate  tasks.db のスキーマを最新にする(tb と同じスキーマ。TB_DB で場所を変える)
   tb <cmd>     tb のコマンドの Go 版(移し終えたものだけ。tb --commands で一覧)。ふつうは bin/tb から TB_IMPL=go で呼ぶ
   sched show <job>  scheduler のジョブの実際に効く設定(JSON。scheduler/bin/show.sh の Go 版)
+  webui serve  Web UI の Go 版(移行中。今はログインまわりだけ。ふつうは WEBUI_IMPL=go python3 webui/server.py から呼ぶ)
   help        この一覧を出す
 `
 
@@ -42,6 +44,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runDB(args[1:], stdout, stderr)
 	case "sched":
 		return sched.Run(args[1:], stdout, stderr)
+	case "webui":
+		if len(args) == 2 && args[1] == "serve" {
+			return webui.Serve(stdout, stderr)
+		}
+		fmt.Fprint(stderr, "使い方: herdrctl webui serve\n")
+		return 2
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0

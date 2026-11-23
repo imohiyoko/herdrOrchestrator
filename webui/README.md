@@ -30,6 +30,13 @@ herdr-webui: 開く http://127.0.0.1:8800/s/default/(ログインは全セッシ
 URL に書けるセッション名は、DB に行のあるセッション(agents / tasks / config)、herdr のセッションのディレクトリ
 (`~/.config/herdr/sessions/<名前>/`。`XDG_CONFIG_HOME` で変わる)、`default`、このプロセスのセッションだけ(`app/sessions.py`)。それ以外は 404。
 
+### Go 版(移行中)
+
+`WEBUI_IMPL=go python3 webui/server.py` で、Go 版(`herdrctl webui serve`。場所は `WEBUI_HERDRCTL` > `TB_HERDRCTL` > PATH)に替わる。
+今の Go 版にあるのは、ログインまわり(初回設定・ログイン・再設定・ログアウト)と同梱のスクリプトだけで、ほかの画面は 501 の案内を返す。
+画面の CSS とスクリプト(`static/`)と、ログイン情報のファイル(`auth.json` など)は Python 版と同じものを使うので、入れ替えてもログインは続く。
+既定は Python 版のまま。画面を移し終えてから既定を Go にする。
+
 ## ログイン(ID/パスワード)
 
 認証は ID/パスワードのログイン方式。従来の `?token=` と `run/token` は**廃止**した(コードから参照しない)。
@@ -252,11 +259,14 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.herdr-webui.plist
 | `app/sessions.py` | URL に書けるセッションの一覧(DB の行・herdr のディレクトリ・default・プロセスのセッション) |
 | `app/handler.py` | HTTP ハンドラ・ログイン・起動 |
 | `auth.py` | パスワードとセッション |
+| `static/page.css` ・ `static/*.js` | 画面の CSS とスクリプト(Go 版も同じファイルを読む) |
+| `../internal/webui/` | Go 版(`herdrctl webui serve`。移したものから増やす) |
 
 ## テスト
 
 ```bash
 bash webui/tests/run.sh
+go test ./internal/webui/    # Go 版(Python 版とログイン情報のファイルを入れ替えられることも確かめる)
 ```
 
 herdr は `tests/fake/herdr`(疑似)、DB・ログ・ログイン情報の置き場は一時ディレクトリ。ポートは 30000〜60000 の空き範囲を使い、
