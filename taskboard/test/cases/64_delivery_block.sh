@@ -33,7 +33,7 @@ HERDR_PANE_ID=wreviewer:p1 $TB send worker1 --kind info --text 'question for you
 eq "block: a verified reply passes with reply=now" "$(BW send reviewer --kind answer --reply-to O-6 --text yes | tail -1)" "O-7 sent to reviewer"
 
 # 承認のあとで止めたら、送信者の pane に知らせる(tb send はもう終わっている)
-printf '* send:task reviewer = ask-any\n* * * = allow\n' >"$TB_POLICY_A"
+printf '* send:task reviewer = ask\n* * * = allow\n' >"$TB_POLICY_A"
 eq "block: blocked at send time without asking for approval" "$(BW send reviewer --text nope 2>/dev/null | tail -1) $(bsql "SELECT status FROM outbox WHERE id=8;")" "O-8 blocked by reviewer denied"
 _bl_rules=$(cat "$TB_DELIVERY"); printf '@worker -> reviewer : *=now\n' >"$TB_DELIVERY"
 eq "block: pending first" "$(BW send reviewer --text later 2>/dev/null | tail -1)" "O-9 pending-approval"

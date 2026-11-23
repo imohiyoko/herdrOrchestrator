@@ -7,7 +7,7 @@ _had_grants=${TB_POLICY_G+1}; _saved_grants=${TB_POLICY_G-}; _had_fake=${FAKE_AG
 unset HERDR_PANE_ID
 export TB_DB=$TMP/rnames.db TB_CONFIG=$TMP/rnames-projects.conf TB_POLICY_G=$TMP/rnames-grants.conf TB_ROLES=$TMP/rnames-roles TB_POLICY_A=$TMP/rnames-appr.conf
 mkdir -p "$TB_ROLES"; echo "ROLE-w" >"$TB_ROLES/worker.md"; : >"$TB_ROLES/map.conf"
-printf '* send:info * = allow\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
+printf '* send:info * = allow\n* send:answer * = ask\n' >"$TB_POLICY_A"
 printf '*=old-lead\n*=lead1\nrnx=rnx-lead\nproposal=cfg1\n' >"$TB_CONFIG"
 : >"$TB_POLICY_G"
 rn_() { printf '{"pane_id":"w%s:p1","name":"%s","agent_status":"idle","agent_session":{"value":"s-%s"}}' "$1" "$1" "$1"; }

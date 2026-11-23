@@ -1,12 +1,12 @@
 # tb の全コマンドの権限の既定の表(ADR 0006 / ADR 0007)。bash(taskboard/lib/perms.sh)と herdrctl(internal/kernel/perms。埋め込み)が同じこの表を読む。
-# 人が設定で変えるのは policy の行だけ(例: @worker cmd:ticket:cancel * = ask-human)。この表(既定と下限)を変えるのはコードの変更。
+# 人が設定で変えるのは policy の行だけ(例: @worker cmd:ticket:cancel * = ask)。この表(既定と下限)を変えるのはコードの変更。
 #
 # 1 行 1 つ。空白で区切る: <コマンドの道> <操作名> <既定> <下限> <確かめる場所>
 #   コマンドの道   tb のあとの語を . でつないだもの(例: config.set、ticket.status.add、add)。
 #                  入口では、引数の先頭から長いほうの道(3 語 → 2 語 → 1 語)で当たった行を使う。1 語の行は、そのコマンドの
 #                  ほかの語(help・古い形・引数)の受け皿になる
 #   操作名         cmd:<サービス>:<動詞>。サービスは .claude/skills/tb-command-naming の一覧。古い名前も同じ操作名に寄せる(別名で逃れられない)
-#   既定 / 下限    allow < ask-any < ask-human < deny(agent に対する効果。人は常に通る)。設定の値は下限より緩められない。
+#   既定 / 下限    allow < ask < deny(agent に対する効果。人は常に通る)。設定の値は下限より緩められない。
 #                  下限は今はすべて allow(人が運用を見て、設定で締めたり緩めたりする。守りが要る操作が分かったら、ここで下限を上げる)
 #   確かめる場所   entry  入口(bin/tb の main と herdrctl の Run)で確かめる
 #                  inner  コマンドの中の require_human(呼ぶ文面 "tb <道の語>" で行を引く)で確かめる。入口では見ない

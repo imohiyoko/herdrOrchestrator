@@ -5,7 +5,7 @@ export TB_DB=$TMP/appr.db TB_CONFIG=$TMP/send.conf TB_POLICY=$TMP/policy.conf
 export FAKE_AGENTS='[{"pane_id":"wC:p1","name":"conductor","agent_session":{"value":"sc"}},{"pane_id":"wW:p1","name":"worker1","agent_session":{"value":"s1"}}]'
 : >"$FAKE_LOG"
 asql() { sqlite3 "$TB_DB" "$@"; }
-eq "approval: default table asks for tasks" "$($TB approval send:task:worker1; echo "rc=$?")" "$(printf 'ask\nrule: 既定 ask-any\nrc=20')"
+eq "approval: default table asks for tasks" "$($TB approval send:task:worker1; echo "rc=$?")" "$(printf 'ask\nrule: 既定 ask\nrc=20')"
 eq "approval: info allowed" "$($TB approval send:info:worker1 | head -1)" "allow"
 eq "approval: unknown → ask (catch-all)" "$($TB approval setup:hooks | head -1)" "ask"
 eq "approval: bad name" "$(rc $TB approval 'a b')" "2"
@@ -29,7 +29,7 @@ eq "allow: human (role:change is for the hr role, as approvals was)" "$(HERDR_PA
 eq "allow: rewrites the same line (no duplicate)" "$(HERDR_PANE_ID= $TB allow 'role:change' >/dev/null; grep -c '^@hr role:change \* ' "$TB_POLICY")" "1"
 eq "ask: back to ask" "$(HERDR_PANE_ID= $TB ask 'send:task:worker1' >/dev/null; $TB approval send:task:worker1 | head -1)" "ask"
 eq "approval changes recorded" "$(asql "SELECT pattern||'='||value FROM approval_changes ORDER BY id;" | tr '\n' ' ')" "send:task:worker1=allow role:change=allow role:change=allow send:task:worker1=ask "
-eq "ask: rewrites the row to ask-any" "$(grep -c '^\* send:task worker1 = ask-any' "$TB_POLICY")" "1"
+eq "ask: rewrites the row to ask" "$(grep -c '^\* send:task worker1 = ask' "$TB_POLICY")" "1"
 eq "approval: deny row → deny (exit 4)" "$(printf '* send:task worker1 = deny\n' >>"$TB_POLICY"; $TB approval send:task:worker1; echo "rc=$?")" "$(printf 'deny\nrule: policy: * send:task worker1 = deny\nrc=4')"
 eq "send: deny row → denied, not pending" "$(HERDR_PANE_ID=wC:p1 rc $TB send worker1 --text no) $(asql "SELECT status FROM outbox ORDER BY id DESC LIMIT 1;")" "4 denied"
 eq "approval: config set approvals is refused" "$(echo 'x = allow' | HERDR_PANE_ID= rc $TB config set approvals)" "1"

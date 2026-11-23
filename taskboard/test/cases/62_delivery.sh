@@ -40,7 +40,7 @@ eq "delivery: a line without the kind (and no *) is skipped" "$(C send assistant
 printf 'coordinator -> assistant : info=hold answer=hold task=now\n@worker -> assistant : *=hold\n' >"$TB_DELIVERY"
 
 # 承認待ち → 承認したあとで delivery が決まる
-printf '* send:info assistant = ask-any\n* * * = allow\n' >"$TB_POLICY_A"
+printf '* send:info assistant = ask\n* * * = allow\n' >"$TB_POLICY_A"
 eq "delivery: approvals before delivery (pending first)" "$(C send assistant --kind info --text wait 2>/dev/null | tail -1) $(dsql "SELECT COUNT(*) FROM inbox WHERE outbox_id=10;")" "O-10 pending-approval 0"
 eq "delivery: approved message is held, not typed" "$(n=$(prompts); $TB approve O-10; echo "$(($(prompts) - n))")" "$(printf 'O-10 approved and held for assistant (I-7)\n0')"
 printf '* * * = allow\n' >"$TB_POLICY_A"

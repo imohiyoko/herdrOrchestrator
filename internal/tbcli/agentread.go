@@ -180,7 +180,7 @@ func cmdCan(args []string, w, stderr io.Writer) error {
 			return out("自分の依頼は承認できない")
 		}
 		if r, ok := j.GrantOf(who, op, target); ok {
-			return out(r + "(--always・--all 系・spawn-freeze 中・依頼が ask-human のものは人だけ)")
+			return out(r + "(--always・--all 系・spawn-freeze 中は人だけ)")
 		}
 		verdict = "deny"
 		return out("policy に " + op + " " + target + " を許す approve の行がない(承認は人だけ)")

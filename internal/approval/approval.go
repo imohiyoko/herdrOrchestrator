@@ -276,7 +276,7 @@ func (j *Judge) GrantOf(who, op, target string) (string, bool) {
 	return g.BRule, true
 }
 
-// Authorize は approval_of の効果(allow / ask-any / ask-human / deny)と根拠。act は古い形の操作名(send:task:w1 など)。
+// Authorize は approval_of の効果(allow / ask / deny)と根拠。act は古い形の操作名(send:task:w1 など)。
 // by(実行する agent)が空なら主体の無い判定(主体 * の行だけ)。
 func (j *Judge) Authorize(act, by string) (tier, rule string) {
 	j.warn()

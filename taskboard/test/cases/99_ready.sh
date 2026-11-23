@@ -3,7 +3,7 @@
 # --- 起動直後の最初の指示: 準備完了を待つ / 送ったあと動き出したか確かめる / 本文を二重に送らない
 _saved_pane=${HERDR_PANE_ID-}; unset HERDR_PANE_ID
 export TB_DB=$TMP/ready.db TB_POLICY_A=$TMP/appr-ready.conf TB_SPAWN_RETRY_SEC=0 TB_AGENT_CWD=$TMP
-printf '* send:info * = allow\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
+printf '* send:info * = allow\n* send:answer * = ask\n' >"$TB_POLICY_A"
 rd_reset() { : >"$FAKE_LOG"; rm -f "$FAKE_LOG.ready" "$FAKE_LOG.working"; unset FAKE_READY_AFTER FAKE_PROMPT_MODE FAKE_STATUS; }
 rd_n() { grep -c "$1" "$FAKE_LOG"; }   # 一致する行数
 

@@ -9,7 +9,7 @@ printf 'send:task:w1 = ask\n* = allow\n' >"$TB_APPROVALS"
 printf 'lead send:task ~child\n' >"$TB_GRANTS"
 out=$(env -u HERDR_PANE_ID $TB policy import 2>&1)
 eq "import: dry run writes nothing" "$(wc -c <"$TB_POLICY" | tr -d ' ')" "0"
-eq "import: the ask before the allow is kept" "$(grep -c '^  \* send:task w1 = ask-any' <<<"$out")" "1"
+eq "import: the ask before the allow is kept" "$(grep -c '^  \* send:task w1 = ask' <<<"$out")" "1"
 eq "import: '* = allow' becomes the inner op families, not '* * *'" \
   "$(grep -c '^  \* \* \* = allow' <<<"$out") $(grep -c '^  \* agent:read \* = allow' <<<"$out") $(grep -c '^  \* recipe:\* \* = allow' <<<"$out") $(grep -cE '^  \* (cmd|approve|agent:flag)' <<<"$out")" "0 1 1 0"
 eq "import: grants become allow rows" "$(grep -c '^  lead send:task ~child = allow' <<<"$out")" "1"
@@ -27,7 +27,7 @@ eq "import: nothing to convert" "$(env -u HERDR_PANE_ID $TB policy import)" "古
 # tb allow / ask も同じ: 広い glob はコマンドの中の操作の族に分けて書く
 : >"$TB_POLICY"
 eq "allow '*': inner op families only" "$(env -u HERDR_PANE_ID $TB allow '*' | wc -l | tr -d ' ') $(grep -c '^\* \* \*' "$TB_POLICY") $(grep -cE '^\* (cmd|approve|agent:flag)' "$TB_POLICY")" "18 0 0"
-eq "allow '*' again: rows are replaced, not added" "$(env -u HERDR_PANE_ID $TB ask '*' >/dev/null; grep -c '= ask-any' "$TB_POLICY") $(grep -c '= allow' "$TB_POLICY")" "18 0"
+eq "allow '*' again: rows are replaced, not added" "$(env -u HERDR_PANE_ID $TB ask '*' >/dev/null; grep -c '= ask' "$TB_POLICY") $(grep -c '= allow' "$TB_POLICY")" "18 0"
 eq "allow: a cmd: pattern is refused" "$(env -u HERDR_PANE_ID $TB allow 'cmd:ticket:list' 2>&1 >/dev/null | grep -c 'コマンドの中の操作に当たりません'; env -u HERDR_PANE_ID $TB allow 'approve:send:task' >/dev/null 2>&1; echo $?)" "$(printf '1\n1')"
 eq "allow: a narrow pattern is one row" "$(: >"$TB_POLICY"; env -u HERDR_PANE_ID $TB allow 'agent:stop:w1')" "* agent:stop w1 = allow"
 

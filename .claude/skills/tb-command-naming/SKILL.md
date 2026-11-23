@@ -74,7 +74,7 @@ ADR 0002(サービスの境界)と ADR 0004(3 つの層とモジュール)から
 ## 実装の置き方
 
 - **Go(herdrctl)**: tb の中身は herdrctl だけ(`taskboard/bin/tb` は `herdrctl tb` に置き換わる。bash の実装は消した)。`herdrctl tb ticket move ...` を受ける。`herdrctl tb --commands` にはサービス名(`ticket`)を出す。サービスのコマンドは、そのサービスのパッケージ(`internal/tickets` など、ADR 0004)に置く。動詞の表は `internal/tbcli/services.go`
-- **認可の表**(ADR 0006 / 0007): 新しいコマンド・サブコマンドは、`taskboard/perms/commands.tbl` に行を足す(道 `<サービス名>.<動詞>`、操作名 `cmd:<サービス名>:<動詞>`、agent への既定 `allow` / `ask-any` / `ask-human` / `deny`、下限 `allow`、確かめる場所)。古い名前を別名として残すなら、同じ操作名の行を足す。コマンドの中で `requireHuman("tb <語...>")` を使うなら、その語の道の行を `inner` にする。足し忘れると `03_perms.sh` と `internal/kernel/perms` のテストが落ちる
+- **認可の表**(ADR 0006 / 0007): 新しいコマンド・サブコマンドは、`taskboard/perms/commands.tbl` に行を足す(道 `<サービス名>.<動詞>`、操作名 `cmd:<サービス名>:<動詞>`、agent への既定 `allow` / `ask` / `deny`、下限 `allow`、確かめる場所)。古い名前を別名として残すなら、同じ操作名の行を足す。コマンドの中で `requireHuman("tb <語...>")` を使うなら、その語の道の行を `inner` にする。足し忘れると `03_perms.sh` と `internal/kernel/perms` のテストが落ちる
 - **help.txt**: 新しいコマンドは `tb <サービス名> ...` の行として、そのサービスの近くに書く
 - **テスト**: `testing` スキルに従う。ケースの名前は `NN_<機能>.sh` のまま(サービス名を入れてもよい)
 

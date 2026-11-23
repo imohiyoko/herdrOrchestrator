@@ -4,17 +4,17 @@
 #
 # 1 行 1 つ。空白で区切る: <操作名の glob> <既定>
 #   上から見て最初に当たった行の既定を使う(コードの表なので順番で決めてよい。人が書く policy は順番に依らない)
-#   既定   allow / ask-any / ask-human / deny。ask-any は承認待ち(人か、approve:<操作> を許された agent が承認する)
+#   既定   allow / ask / deny。ask は承認待ち(人か、approve:<操作> を許された agent が承認する)
 # 操作名と対象の分け方(lib/perms.sh の perm_split_act):
 #   role:* alert:* proxy:* setup:* は対象なし。agent:slash:<コマンド>:<宛先> は 3 語目までが操作。それ以外は 2 語目までが操作で、残りが対象
 # 今の値は、ADR 0007 の段 3 の前の approvals.conf.example(既定の approvals)と同じ振る舞いにしてある
 send:info          allow
 send:answer        allow
-send:task          ask-any
-role:change        ask-any
+send:task          ask
+role:change        ask
 proxy:read-only    allow
 alert:analyze      allow
 agent:flag         deny
 approve:*          deny
 policy:*           deny     # 権限の変更(対象は変える行の主体。例: worker1 policy:send:* worker2 = allow)
-*                  ask-any
+*                  ask

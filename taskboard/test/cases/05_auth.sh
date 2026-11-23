@@ -25,7 +25,7 @@ eq "auth: inside herdr, an empty agent list → human" "$(FAKE_AGENTS='[]' in_he
 # system:<名前>(scheduler など): herdr の外から TB_SYSTEM で名乗る。policy の system: の行だけを見る(当たらなければ人と同じ)
 _au_pol=${TB_POLICY-}; export TB_POLICY=$TMP/auth.policy; : >"$TB_POLICY"
 eq "auth: system without system: rows passes like a human (human-only command)" "$(TB_SYSTEM=scheduler au env -u HERDR_PANE_ID $TB config unset projects)" "0"
-printf 'system:scheduler cmd:config:unset * = deny\nsystem:* cmd:config:list * = ask-human\n* cmd:ticket:list * = deny\n' >"$TB_POLICY"
+printf 'system:scheduler cmd:config:unset * = deny\nsystem:* cmd:config:list * = ask\n* cmd:ticket:list * = deny\n' >"$TB_POLICY"
 eq "auth: a system: row restricts the scheduler (inner check)" "$(TB_SYSTEM=scheduler au env -u HERDR_PANE_ID $TB config unset projects) $(grep -c "system:scheduler" "$TMP/auth.err")" "1 1"
 eq "auth: a system:* glob row restricts at the entry" "$(TB_SYSTEM=scheduler au env -u HERDR_PANE_ID $TB config)" "20"
 eq "auth: rows for * (agents) do not apply to system" "$(TB_SYSTEM=scheduler au env -u HERDR_PANE_ID $TB list)" "0"

@@ -355,8 +355,8 @@ open(os.path.join(_J, "prules.conf"), "w").write("TARGET=alpha\nPROMPT_RULES='\n
 open(os.path.join(_J, "cmdx.conf"), "w").write("COMMAND='cd /x && TOKEN=supersecretvalue1 bin/tb <i>y</i> $(date)'\nCOMMAND_TIMEOUT=45\nWINDOW=00:00-23:59\nINTERVAL_SEC=120\nTZ=Asia/Tokyo\n")
 # 権限(設定 policy)の fixture。番号・警告・厳しい行が重なる行・エスケープの確認用
 with open(env["WEBUI_POLICY"], "w") as f:
-    f.write("# 先頭の注釈\n* send:info * = allow   # 2026-11-01T00:00:00Z に人が変更\n* send:task dd-* = allow\n* send:task * = ask-any\n"
-            "* agent:* * = allow   # 2026-11-02T00:00:00Z に人が追加\n* role:* * = ask-any\n* role:change * = allow\n"
+    f.write("# 先頭の注釈\n* send:info * = allow   # 2026-11-01T00:00:00Z に人が変更\n* send:task dd-* = allow\n* send:task * = ask\n"
+            "* agent:* * = allow   # 2026-11-02T00:00:00Z に人が追加\n* role:* * = ask\n* role:change * = allow\n"
             "* x<b>bold</b>y * = allow\n@lead send:task ~child = allow\n")
 open(os.path.join(env["WEBUI_SCHED_LOGS"], "job2.log"), "w").write(
     json.dumps({"ts": "2026-11-06T11:00:00+0900", "job": "job2", "action": "ran", "reason": "exit 0"}) + "\n" +
@@ -556,7 +556,7 @@ check("未ログインの /api/notifications は 401(リダイレクトせず中
       r[0] == 401 and "Location" not in r[1] and "質問" not in r[2] and "alpha" not in r[2], str(r[:2]))
 check("無効な Cookie の /api/notifications も 401", Client(port).get("/api/notifications", cookie="herdr_webui_session=nope")[0] == 401)
 check("POST /api/notifications は 405", cl.raw("POST", "/api/notifications", {"a": "b"})[0] == 405)
-# 送信の承認待ち(tb send が policy で ask-any になったもの)
+# 送信の承認待ち(tb send が policy で ask になったもの)
 _c = sqlite3.connect(env["WEBUI_TB_DB"])
 _c.executescript("INSERT INTO outbox (from_name,from_pane,from_session,target,kind,text,status,created_at) VALUES ('conductor','w0:p1','s','w1','task','調べて <b>x</b>','pending','t');"
                  "INSERT INTO outbox (from_name,from_pane,from_session,target,kind,text,status,created_at) VALUES ('conductor','w0:p1','s','w1','task','済','sent','t');")
@@ -913,8 +913,8 @@ _AP = env["WEBUI_POLICY"]
 _m0 = os.stat(_AP).st_mtime_ns
 P = cl.get("/perms")
 check("権限: 200", P[0] == 200 and "policy" in P[2] and "approvals.conf" not in P[2])
-rows = re.findall(r"<tr><td>(\d+)</td><td><code[^>]*>([^<]*)</code></td><td>(?:<b[^>]*>)?(allow|ask-any|ask-human|deny)", P[2])
-check("権限: 番号・主体 操作 対象・効果", [(a, b, c) for a, b, c in rows][:4] == [("1", "* send:info *", "allow"), ("2", "* send:task dd-*", "allow"), ("3", "* send:task *", "ask-any"), ("4", "* agent:* *", "allow")], str(rows[:5]))
+rows = re.findall(r"<tr><td>(\d+)</td><td><code[^>]*>([^<]*)</code></td><td>(?:<b[^>]*>)?(allow|ask|ask|deny)", P[2])
+check("権限: 番号・主体 操作 対象・効果", [(a, b, c) for a, b, c in rows][:4] == [("1", "* send:info *", "allow"), ("2", "* send:task dd-*", "allow"), ("3", "* send:task *", "ask"), ("4", "* agent:* *", "allow")], str(rows[:5]))
 check("権限: 行末の注記と変更履歴を併記", "2026-11-01T00:00:00Z に人が変更" in P[2] and "履歴: 2026-11-02T00:00:00Z に allow" in P[2])
 check("権限: 一致の例", "<code>send:info:worker1</code>" in P[2] and "<code>agent:new:worker1</code>" in P[2])
 check("権限: 広い allow(agent:*)に警告", "広い allow" in P[2])
@@ -924,10 +924,10 @@ check("権限: 変更履歴の節", "変更履歴(直近 50 件)" in P[2] and "�
 check("権限: 行のパターンの HTML はエスケープ", "<b>bold</b>" not in P[2] and "&lt;b&gt;bold" in P[2])
 check("権限: 変更ボタンも POST フォームも無い(ログアウトだけ)", P[2].count("method=post") == 1 and 'action="/logout"' in P[2] and "<button" in P[2])
 S1 = cl.get("/perms?op=send:task:dd-x")[2]
-check("権限: 検索 send:task:dd-x は厳しい 3 行目で ask-any(2 行目の allow より勝つ)", "3 行目" in S1 and "<b class=\"\">ask-any</b>" in S1, S1[S1.find("→"):S1.find("→") + 200])
-check("権限: 検索 send:task:w1 は 3 行目で ask-any", "3 行目" in cl.get("/perms?op=send:task:w1")[2])
+check("権限: 検索 send:task:dd-x は厳しい 3 行目で ask(2 行目の allow より勝つ)", "3 行目" in S1 and "<b class=\"\">ask</b>" in S1, S1[S1.find("→"):S1.find("→") + 200])
+check("権限: 検索 send:task:w1 は 3 行目で ask", "3 行目" in cl.get("/perms?op=send:task:w1")[2])
 check("権限: 検索 send:info:w1 は 1 行目で allow", "1 行目" in cl.get("/perms?op=send:info:w1")[2])
-check("権限: 検索 zzz:q は当たる行が無く既定の表", "既定の表" in cl.get("/perms?op=zzz:q")[2] and "<b>ask-any</b>" in cl.get("/perms?op=zzz:q")[2])
+check("権限: 検索 zzz:q は当たる行が無く既定の表", "既定の表" in cl.get("/perms?op=zzz:q")[2] and "<b>ask</b>" in cl.get("/perms?op=zzz:q")[2])
 check("権限: 主体を絞った行(@lead)は主体 * の判定に使わない", "9 行目" not in cl.get("/perms?op=send:task:w1")[2].split("ルール一覧")[0])
 check("権限: 不正な操作名は拒否", "使えない文字" in cl.get("/perms?op=a%20b%3Bc")[2] and cl.get("/perms?op=a%20b")[0] == 200)
 C = cl.get("/perms?pat=send:task:w1&val=allow")[2]
@@ -1077,8 +1077,8 @@ def _crow(html, pat):
     m = re.search(r"<tr><td>(?:<span class=note>)?<code>" + re.escape(pat) + r"</code>.*?</tr>", html, re.S)
     return m.group(0) if m else ""
 _t = _crow(P[2], "send:task:*")
-check("カタログ: send:task:* は 3 行目で ask-any(明示)、主体・宛先を絞った行は例外に出る",
-      "3 行目" in _t and ">ask-any<" in _t and "明示" in _t and "* send:task dd-* = allow" in _t and "@lead send:task ~child = allow" in _t, _t[:400])
+check("カタログ: send:task:* は 3 行目で ask(明示)、主体・宛先を絞った行は例外に出る",
+      "3 行目" in _t and ">ask<" in _t and "明示" in _t and "* send:task dd-* = allow" in _t and "@lead send:task ~child = allow" in _t, _t[:400])
 _n = _crow(P[2], "agent:new:*")
 check("カタログ: agent:new:*(high)が agent:* = allow で allow なら警告", "<b class=warn>allow</b>" in _n and "リスク high" in _n and "4 行目" in _n, _n[:300])
 check("カタログ: mid の操作が allow でも警告しない", "リスク mid" not in _crow(P[2], "agent:compact:*") and "<b class=warn>allow</b>" in _crow(P[2], "agent:compact:*"))
@@ -1133,15 +1133,15 @@ check("カタログ単体: ファイルが無ければエラー文を返す", _p
 
 # conf を一時的に差し替えて境界を確かめる(読み取りだけの画面なので、戻せば元の表示に戻る)
 _orig = open(_AP, encoding="utf-8").read()
-open(_AP, "w", encoding="utf-8").write("* send:task [[:alpha:]]* = ask-any\n* send:task * = allow\n* role:change * = ask-any\n")
+open(_AP, "w", encoding="utf-8").write("* send:task [[:alpha:]]* = ask\n* send:task * = allow\n* role:change * = ask\n")
 _B = cl.get("/perms")[2]
 check("権限: [ を含む行に警告を出す", "[ を含むパターン" in _B)
 _R = cl.get("/perms?op=send:task:w1")[2]
 check("カタログ: [ を含む行が先頭なら、現在の値も判定不能(下の行で決めない)", "判定不能" in _B.split("ルール一覧")[0])
-check("権限: [ の行に当たる操作は判定不能(allow と決めつけない)", "判定不能" in _R and "<b class=\"warn\">allow</b>" not in _R and "→ <b>ask-any</b>" not in _R)
+check("権限: [ の行に当たる操作は判定不能(allow と決めつけない)", "判定不能" in _R and "<b class=\"warn\">allow</b>" not in _R and "→ <b>ask</b>" not in _R)
 check("権限: [ の行より下の行の一致の例は出さない(決めつけない)", "<code>send:task:worker1</code>" not in _B)
 check("権限: [ の行が先頭にあれば、どの操作もそこで止まる(下の行を使わない)", "判定不能" in cl.get("/perms?op=role:change")[2])
-open(_AP, "w", encoding="utf-8").write("* gate:merge * = allow\n* send:task * = ask-any\n* send:task dd-* = allow\n* proxy:write * = allow\n* proxy:read-only * = allow\n")
+open(_AP, "w", encoding="utf-8").write("* gate:merge * = allow\n* send:task * = ask\n* send:task dd-* = allow\n* proxy:write * = allow\n* proxy:read-only * = allow\n")
 _G = cl.get("/perms")[2]
 check("カタログ: unwired の操作に当たる規則は「何も効かない」と警告", "何も効きません" in _G and _G.count("何も効きません") == 2)
 check("カタログ: human-only の操作(gate:merge)が allow なら警告", "リスク human-only" in _crow(_G, "gate:merge"))
@@ -1933,19 +1933,19 @@ import app.data as _data2  # noqa: E402
 _qc = _data2.q_checked
 _data2.q_checked = lambda *a, **k: ([], True)   # 台帳は読めるが行が無い
 check("perms: 対象 @役割 の行を役割で照合(当たらなければ既定の表)", [_perms2.decide(_rules, op)[0] for op in ("send:task:worker1", "send:task:conductor", "role:change")]
-      == ["allow", "ask-any", "ask-any"])
+      == ["allow", "ask", "ask"])
 check("perms: いちばん厳しい行が勝つ(行の順番は関係ない)",
       [_perms2.decide(_pr("* send:task * = allow", "* send:task @worker = deny"), "send:task:worker1")[0],
        _perms2.decide(_pr("* send:task @worker = deny", "* send:task * = allow"), "send:task:worker1")[0]] == ["deny", "deny"])
 check("perms: 関係(~child)の行は確かめられないので締める向きにだけ効く",
       [_perms2.decide(_pr("@lead send:task ~child = allow"), "send:task:w1", "lead1")[0],
-       _perms2.decide(_pr("* send:info ~child = deny"), "send:info:w1", "lead1")[0]] == ["ask-any", "deny"])
+       _perms2.decide(_pr("* send:info ~child = deny"), "send:info:w1", "lead1")[0]] == ["ask", "deny"])
 _data2.q_checked = lambda *a, **k: ([], False)
 check("perms: 台帳を読めないときは @役割 を map.conf で一致させない(名前の役割ファイルは使う。確かめられない行は締める向きだけ)",
       [_perms2.decide(_rules, "send:task:worker1")[0],
        _perms2.decide(_pr("* send:* @conductor = allow"), "send:task:conductor")[0],
        _perms2.decide(_pr("* send:task @worker = deny", "* send:task * = allow"), "send:task:worker1")[0]]
-      == ["ask-any", "allow", "deny"])
+      == ["ask", "allow", "deny"])
 _data2.q_checked = _qc
 os.makedirs(os.path.join(_rd, "sessions", "s2"), exist_ok=True)
 open(os.path.join(_rd, "sessions", "s2", "auditor.md"), "w").write("a")
@@ -1973,7 +1973,7 @@ check("graph: ロールは herdr セッション固有(このセッションの 
        _in_session("s2", lambda: _graph.name_matches("worker1", "@auditor"))]
       == ["worker", "auditor", "auditor", "worker", True])
 check("perms: 拡張 glob の行(!(...) など)は判定できないとして止まる(allow と決めつけない)",
-      _perms2.decide(_pr("* send:task @!(conductor) = ask-any", "* send:task * = allow"), "send:task:worker1")[0] == "unknown")
+      _perms2.decide(_pr("* send:task @!(conductor) = ask", "* send:task * = allow"), "send:task:worker1")[0] == "unknown")
 for _k, _v in _old.items():
     if _v is None:
         os.environ.pop(_k, None)

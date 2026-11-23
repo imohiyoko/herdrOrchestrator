@@ -92,7 +92,7 @@ func tier(tb *perms.Table, db *sql.DB, op, who string) (string, string) {
 }
 
 func TestPathOfAndTier(t *testing.T) {
-	tb := perms.Parse("a cmd:x:a allow allow entry\na.b cmd:x:ab deny ask-human inner\na.b.c cmd:x:abc allow allow entry\n")
+	tb := perms.Parse("a cmd:x:a allow allow entry\na.b cmd:x:ab deny ask inner\na.b.c cmd:x:abc allow allow entry\n")
 	for _, c := range []struct {
 		in   []string
 		path string
@@ -176,13 +176,13 @@ func TestTierClampsToFloor(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	tb := perms.Parse("a cmd:x:a deny allow inner\nb cmd:x:b deny ask-human inner\nc cmd:x:c deny deny inner\n")
-	for op, want := range map[string]string{"cmd:x:a": "allow", "cmd:x:b": "ask-human", "cmd:x:c": "deny"} {
+	tb := perms.Parse("a cmd:x:a deny allow inner\nb cmd:x:b deny ask inner\nc cmd:x:c deny deny inner\n")
+	for op, want := range map[string]string{"cmd:x:a": "allow", "cmd:x:b": "ask", "cmd:x:c": "deny"} {
 		if tier, rule := tier(tb, db, op, "w1"); tier != want {
 			t.Errorf("%s = %s %s, want %s", op, tier, rule, want)
 		}
 	}
-	if _, rule := tier(tb, db, "cmd:x:b", "w1"); !strings.Contains(rule, "下限 ask-human より緩いので ask-human") {
+	if _, rule := tier(tb, db, "cmd:x:b", "w1"); !strings.Contains(rule, "下限 ask より緩いので ask") {
 		t.Errorf("丸めの根拠が無い: %s", rule)
 	}
 }
@@ -221,8 +221,8 @@ func TestTierFailsClosedOnUnsearchableDir(t *testing.T) {
 func TestPolicyStrictestWins(t *testing.T) {
 	f := filepath.Join(t.TempDir(), "policy")
 	body := "w*  cmd:x:a * = allow\n" +
-		"w1  cmd:x:a * = ask-human\n" +
-		"*   cmd:x:b * = ask-any\n" +
+		"w1  cmd:x:a * = ask\n" +
+		"*   cmd:x:b * = ask\n" +
 		"w2  cmd:x:b * = allow\n" +
 		"@lead cmd:x:c * = allow\n" +
 		"@worker cmd:x:d * = deny\n" +
@@ -238,12 +238,12 @@ func TestPolicyStrictestWins(t *testing.T) {
 	defer db.Close()
 	tb := perms.Parse("a cmd:x:a allow allow entry\nb cmd:x:b allow allow entry\nc cmd:x:c deny allow inner\nd cmd:x:d allow allow entry\ne cmd:x:e deny allow inner\nz cmd:x:z allow allow entry\n")
 	for _, c := range []struct{ op, who, want string }{
-		{"cmd:x:a", "w1", "ask-human"}, // 広い allow と狭い ask-human → 厳しい方
+		{"cmd:x:a", "w1", "ask"}, // 広い allow と狭い ask → 厳しい方
 		{"cmd:x:a", "w3", "allow"},
-		{"cmd:x:b", "w2", "ask-any"}, // 狭い allow でも、広い ask-any が当たれば厳しい方
-		{"cmd:x:c", "w1", "deny"},    // @役割を確かめられない allow は緩める向きに使わない(既定 deny のまま)
-		{"cmd:x:d", "w1", "deny"},    // @役割を確かめられない deny は締める向きに効く
-		{"cmd:x:e", "w1", "deny"},    // 知らない効果の行は無視(既定)
+		{"cmd:x:b", "w2", "ask"},  // 狭い allow でも、広い ask が当たれば厳しい方
+		{"cmd:x:c", "w1", "deny"}, // @役割を確かめられない allow は緩める向きに使わない(既定 deny のまま)
+		{"cmd:x:d", "w1", "deny"}, // @役割を確かめられない deny は締める向きに効く
+		{"cmd:x:e", "w1", "deny"}, // 知らない効果の行は無視(既定)
 	} {
 		if got, rule := tier(tb, db, c.op, c.who); got != c.want {
 			t.Errorf("%s by %s = %s %s, want %s", c.op, c.who, got, rule, c.want)
@@ -259,7 +259,7 @@ func TestPolicyStrictestWins(t *testing.T) {
 }
 
 func TestValidatePolicy(t *testing.T) {
-	if msg := perms.ValidatePolicy("# c\n\n@worker cmd:ticket:* * = ask-human\nw1 send:task lead1 = deny\n@lead agent:read ~child = allow\n"); msg != "" {
+	if msg := perms.ValidatePolicy("# c\n\n@worker cmd:ticket:* * = ask\nw1 send:task lead1 = deny\n@lead agent:read ~child = allow\n"); msg != "" {
 		t.Errorf("正しい本文が落ちた: %s", msg)
 	}
 	msg := perms.ValidatePolicy("w1 cmd:x = allow\nw1 cmd:x:y * = maybe\nhuman cmd:x:y * = deny\nno equals here\nw1 cmd:x:y lead1 = deny\nw1 agent:read ~cousin = allow\n")
@@ -297,5 +297,14 @@ func TestPolicyDiff(t *testing.T) {
 	want := []string{"a|send:task|a send:task * = allow", "a|send:task|a send:task * = ask-any", "c|x:y|c x:y * = allow"}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestLegacyAsk(t *testing.T) {
+	if perms.Rank("ask-human") != perms.Rank("ask") || perms.Rank("ask-any") != perms.Rank("ask") {
+		t.Fatal("前の ask-any / ask-human は ask と同じ順位で読む")
+	}
+	if msg := perms.ValidatePolicy("w1 send:task * = ask-human\n"); !strings.Contains(msg, "ask にまとめました") {
+		t.Fatalf("前の効果は書かせない: %q", msg)
 	}
 }

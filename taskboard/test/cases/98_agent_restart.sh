@@ -11,7 +11,7 @@ rs_closes() { grep -c '^pane-close' "$FAKE_LOG"; }
 rs_last() { rssql "SELECT op||' '||status||' '||requested_by||' '||COALESCE(json_extract(args,'\$.restart'),'-') FROM agent_ops ORDER BY id DESC LIMIT 1;"; }
 RS_C=$(rs_ag conductor wC:p1); RS_W=$(rs_ag worker1 wW:p1 idle s1); RS_H=$(rs_ag helper1 wH:p1 idle sh)
 export FAKE_AGENTS="[$RS_C,$RS_W,$RS_H]"
-printf '* agent:stop worker1 = allow\n* agent:revive worker1 = allow\n* agent:stop conductor = allow\n* agent:revive conductor = allow\n* agent:stop helper1 = allow\n* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
+printf '* agent:stop worker1 = allow\n* agent:revive worker1 = allow\n* agent:stop conductor = allow\n* agent:revive conductor = allow\n* agent:stop helper1 = allow\n* send:info * = ask\n* send:answer * = ask\n' >"$TB_POLICY_A"
 rs_reset
 $TB agents >/dev/null
 

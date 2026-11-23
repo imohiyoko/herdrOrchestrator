@@ -9,7 +9,7 @@ unset HERDR_PANE_ID
 export TB_DB=$TMP/delegate.db TB_POLICY_A=$TMP/delegate-appr.conf TB_ROLES=$TMP/delegate-roles TB_POLICY_G=$TMP/delegate-grants.conf TB_AGENT_CWD=$TMP
 mkdir -p "$TB_ROLES"; for r in lead worker; do echo "ROLE-$r" >"$TB_ROLES/$r.md"; done
 printf 'lead* = lead\nw* = worker\n' >"$TB_ROLES/map.conf"
-printf '* send:info * = ask-any\n* send:answer * = ask-any\n' >"$TB_POLICY_A"
+printf '* send:info * = ask\n* send:answer * = ask\n' >"$TB_POLICY_A"
 export TB_DELIVERY=$TMP/delegate-delivery.conf; printf '* -> *\n' >"$TB_DELIVERY"
 dg_() { printf '{"pane_id":"w%s:p1","name":"%s","agent_status":"idle","agent_session":{"value":"s-%s"},"cwd":"%s"}' "$1" "$1" "$1" "$TMP"; }
 export FAKE_AGENTS="[$(dg_ lead1),$(dg_ w1),$(dg_ w2),$(dg_ rev1)]"
@@ -65,7 +65,7 @@ eq "agent-reject: by the granted agent, recorded" "$(as rev1 $TB agent-reject "$
 dsql "INSERT INTO agent_ops (herdr_session, op, target, args, requested_by, status, result, created_at) VALUES
   ('default','revive','w1','{\"model_set\":1,\"model\":\"haiku\",\"all\":1}','w2','pending','--all は人の承認が要ります','x'),
   ('default','slash','*','{\"command\":\"clear\",\"args\":\"\",\"all\":1}','w2','pending','slash --all は常に人の承認','x'),
-  ('default','revive','w1','{\"model_set\":1,\"model\":\"haiku\"}','w2','pending','認可: 既定 ask-any','x');"
+  ('default','revive','w1','{\"model_set\":1,\"model\":\"haiku\"}','w2','pending','認可: 既定 ask','x');"
 ml=$(dsql "SELECT 'L-'||id FROM agent_ops WHERE op='revive' AND json_extract(args,'\$.all')=1;")
 sl=$(dsql "SELECT 'L-'||id FROM agent_ops WHERE op='slash';")
 m1=$(dsql "SELECT 'L-'||id FROM agent_ops WHERE op='revive' AND json_extract(args,'\$.all') IS NULL;")

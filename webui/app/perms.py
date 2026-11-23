@@ -12,7 +12,8 @@ from .sanitize import clean
 
 # tb の valid_action と同じ文字種
 ACTION_RE = re.compile(r"[A-Za-z0-9._:*?@][A-Za-z0-9._:*?@-]{0,127}")
-EFFECTS = ("allow", "ask-any", "ask-human", "deny")   # 緩い順
+EFFECTS = ("allow", "ask", "deny")   # 緩い順
+LEGACY_ASK = ("ask-any", "ask-human")   # 前の効果。読むときは ask と同じ
 
 # 一致の例に使う、tb が実際に出す操作名(宛先は仮の名前)
 SAMPLE_OPS = ["send:task:worker1", "send:info:worker1", "send:answer:worker1", "role:change", "proxy:read-only",
@@ -24,6 +25,8 @@ MAX_BYTES = 262144
 
 
 def rank(eff):
+    if eff in LEGACY_ASK:
+        eff = "ask"
     return EFFECTS.index(eff) if eff in EFFECTS else len(EFFECTS) - 1
 
 
@@ -79,7 +82,7 @@ def load_rules():
             continue
         lhs, _, v = body.partition("=")
         f, v = lhs.split(), v.strip()
-        if len(f) != 3 or v not in EFFECTS:
+        if len(f) != 3 or (v not in EFFECTS and v not in LEGACY_ASK):
             continue
         raw = " ".join(f)
         rules.append({"no": len(rules) + 1, "subject": f[0], "op": f[1], "target": f[2], "effect": v, "value": v,
@@ -198,7 +201,7 @@ def tb_command(val, pat):
 def policy_row(val, pat):
     """tb approval allow|ask <パターン> が書く policy の行。"""
     op, target = split_act(pat)
-    return f"* {op} {target or '*'} = {'allow' if val == 'allow' else 'ask-any'}"
+    return f"* {op} {target or '*'} = {'allow' if val == 'allow' else 'ask'}"
 
 
 def conf_path_label():

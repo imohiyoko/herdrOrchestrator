@@ -148,7 +148,7 @@ tb recipe queue [--all] [--json]   待ち行列(既定は queued と running。R
 tb recipe cancel R-<n>   待ち行列の queued を取り消す(人と、頼んだ agent 自身だけ)
   別名(古い名前): tb recipe-cancel
 
-認可(設定 policy。<主体> <操作> <対象> = allow|ask-any|ask-human|deny、当たる行のいちばん厳しい効果、無ければ既定の表 perms/ops.tbl。ADR 0007):
+認可(設定 policy。<主体> <操作> <対象> = allow|ask|deny、当たる行のいちばん厳しい効果、無ければ既定の表 perms/ops.tbl。ADR 0007):
 tb agent can [<主体>] <操作> <対象>   主体(省くと叩いた agent。pane から決める)が対象にその操作をできるかを、実際の判定と同じ規則で出す(読むだけ)。1 行目 allow|ask|hold|deny、続けて rule:。
   別名(古い名前): tb can
          終了コード 0=allow 20=ask(人の承認待ち)21=hold(inbox に置かれる)4=deny。主体 human は人の端末。
@@ -166,11 +166,11 @@ tb gate ingest-events <task-id> --pr <o>/<r>#<n>   PR の全レビュー(reviews
 tb gate reviewers <o>/<r>#<n> [--task <id>]   記録をレビュアーごとにまとめて表示する(読み取りだけ。gh は呼ばない)
 tb approval allow <パターン>   今後は承認なしにする(設定 policy に * <操作> <対象> = allow を書く。agent は cmd:approval:allow と policy:<操作> * が要る)
   別名(古い名前): tb allow <パターン>
-tb approval ask <パターン>     承認制に戻す(設定 policy に * <操作> <対象> = ask-any を書く。agent は cmd:approval:ask と policy:<操作> * が要る)
+tb approval ask <パターン>     承認制に戻す(設定 policy に * <操作> <対象> = ask を書く。agent は cmd:approval:ask と policy:<操作> * が要る)
   別名(古い名前): tb ask <パターン>
 tb approval list [--json]      承認待ちの一覧(送信 O-<n> と agent の操作 L-<n>。古い順。ID・操作・依頼者・対象・作った時刻)
 tb approval approve O-<n>|L-<n> [--always]   承認する。L-<n> は tb agent-approve と同じ。O-<n> は承認待ちの送信を届ける。--always なら send:<kind>:<宛先> を allow にする(人だけ)。
-                              policy の <agent> approve:send:<kind>:<宛先> <依頼者> = allow に当たる agent も承認できる(自分の依頼・ask-human の依頼は不可)
+                              policy の <agent> approve:send:<kind>:<宛先> <依頼者> = allow に当たる agent も承認できる(自分の依頼は不可)
   別名(古い名前): tb approve O-<n> [--always]
 tb approval reject O-<n>|L-<n>   却下する(L-<n> は tb agent-reject と同じ)。O-<n> は承認待ちの送信を却下する(承認と同じく、人か approve: の許可がある agent)
   別名(古い名前): tb reject O-<n>
@@ -246,7 +246,7 @@ tb agent ops [--status pending|done|failed|rejected] [--json]   操作の記録�
   別名(古い名前): tb agent-ops
 tb agent approve L-<n> [--always]   承認待ちの操作を実行(--always で agent:<op>:<名前> を allow。人だけ)。
   別名(古い名前): tb agent-approve
-                              policy の <agent> approve:agent:<op>:<名前> <依頼者> = allow に当たる agent も承認できる(--all・spawn-freeze 中・ask-human の依頼は人だけ)
+                              policy の <agent> approve:agent:<op>:<名前> <依頼者> = allow に当たる agent も承認できる(--all・spawn-freeze 中は人だけ)
 tb agent reject L-<n>   却下(人か approve: の許可がある agent)
   別名(古い名前): tb agent-reject
 
@@ -258,7 +258,7 @@ tb agent spawn <役割|-> --task <task-id> --brief <依頼の本文(2000 字ま�
          (既定: worker だけ、親 1 体あたり 2、全体 6、深さ 1、モデル sonnet。denied_parents に当たる親は不可)
          終了コード: 0 作成済み(規則に合い、policy の agent:spawn <子の名前> が allow) 20 人の承認待ち(L-<n>。policy が ask-* か spawn-freeze 中)
                     4 規則で拒否(理由を stderr に出し、何も作らない)
-         自動で作るには人が policy に `* agent:spawn * = allow` を足す(tb approval allow 'agent:spawn:*')。agent:new は ask-any のまま
+         自動で作るには人が policy に `* agent:spawn * = allow` を足す(tb approval allow 'agent:spawn:*')。agent:new は ask のまま
 tb agent freeze     自動承認を止める。以後の agent-spawn は全部人の承認待ち(人の端末からだけ)
   別名(古い名前): tb spawn-freeze
 tb agent unfreeze   解除する(人の端末からだけ)

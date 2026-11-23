@@ -41,19 +41,19 @@ eq "reply: a message that does not exist → held" "$(tail -1 <<<"$out") $(grep 
 eq "reply: --reply-to must be O-<n>" "$(rc RC send assistant --reply-to 1 --text x) $(rc RC send assistant --reply-to I-1 --text x)" "2 2"
 
 # まだ届いていない(承認待ち)の送信への返信は認めない
-printf '* send:task coordinator = ask-any\n* * * = allow\n' >"$TB_POLICY_A"
+printf '* send:task coordinator = ask\n* * * = allow\n' >"$TB_POLICY_A"
 RA send coordinator --kind task --text 'pending q' >/dev/null 2>&1   # O-8 pending
 out=$(RC send assistant --kind answer --reply-to O-8 --text 'early' 2>&1)
 eq "reply: the original must have been delivered" "$(tail -1 <<<"$out") $(grep -c 'O-8 はまだ届いていない(pending)' <<<"$out")" "O-9 held for assistant (I-6) 1"
 # 返信が承認待ちで却下されたら、返信済みに数えない
 RA send coordinator --kind info --text 'q2' >/dev/null 2>&1   # O-10 sent(info は allow)
-printf '* send:answer assistant = ask-any\n* * * = allow\n' >"$TB_POLICY_A"
+printf '* send:answer assistant = ask\n* * * = allow\n' >"$TB_POLICY_A"
 eq "reply: a verified reply still waits for approval first" "$(RC send assistant --kind answer --reply-to O-10 --text r1 2>/dev/null | tail -1)" "O-11 pending-approval"
 $TB reject O-11 >/dev/null
 printf '* * * = allow\n' >"$TB_POLICY_A"
 eq "reply: a rejected reply does not count as answered" "$(RC send assistant --kind answer --reply-to O-10 --text r2 2>/dev/null | tail -1) $(rsql "SELECT reply_check FROM outbox WHERE id=11;")" "O-12 sent to assistant 人が却下"
 # 承認されれば、届ける時点で返信として扱う
-printf '* send:answer assistant = ask-any\n* * * = allow\n' >"$TB_POLICY_A"
+printf '* send:answer assistant = ask\n* * * = allow\n' >"$TB_POLICY_A"
 RA send coordinator --kind info --text 'q3' >/dev/null 2>&1   # O-13
 RC send assistant --kind answer --reply-to O-13 --text r3 >/dev/null 2>&1   # O-14 pending
 eq "reply: an approved verified reply is delivered now" "$($TB approve O-14)" "O-14 approved and sent to assistant"
