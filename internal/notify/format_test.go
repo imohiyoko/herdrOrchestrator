@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// 細かい振る舞いは taskboard/test/cases/94_notify_contract.sh(bash と同じ出力)で確かめる。ここは部品の要所だけ。
+// 細かい振る舞いは taskboard/test/cases/94_notify_contract.sh(消した bash 版と同じ出力)で確かめる。ここは部品の要所だけ。
 
 func TestScanRedact(t *testing.T) {
 	tok := "ghp_" + "abcdefghij0123456789"

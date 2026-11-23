@@ -72,7 +72,7 @@ eq "config import: 取り込んだファイルは checkout から退かし、取
 eq "config import: 2 回目は何もしない" "$(SA config import | grep -c '取り込み、')" "0"
 
 
-# 検査の文面(bash と Go で同じ。キーごとに不正な本文を書き、標準エラーの全文を比べる)
+# 検査の文面(消した bash 版と同じ文面。キーごとに不正な本文を書き、標準エラーの全文を比べる)
 cfgbad() { printf '%b' "$2" | SA config set "$1" 2>&1 >/dev/null; echo "rc=$?"; }
 eq $'config set messages: validation message (1)' "$(cfgbad messages $'nudge.text = hi {bogus}\\nno-equals\\nunknown.code = x\\nalert.analyze =\\nidentity.no-pane = {id}')" $'1 行目: nudge.text では {bogus} は使えません(使えるのは: task title minutes status active)\n2 行目: <識別子> = <文面> の形ではありません\n3 行目: 知らない識別子です: unknown.code(使えるのは: alert.analyze identity.herdr-failed identity.no-pane nudge.multi nudge.pool nudge.start nudge.text role.change.needs-approval send.blocked.notice send.denied.default spawn.denied)\n4 行目: 文面が空です: alert.analyze\n5 行目: identity.no-pane では {id} は使えません(使えるのは: なし)\ntb: messages の本文に問題があるため書きませんでした\nrc=1'
 eq $'config set statuses: validation message (2)' "$(cfgbad statuses $'todo todo\\nin_progress done\\nfoo\\nbad,name active\\nx weird\\ntodo todo\\n')" $'2 行目: 組み込みの状態 in_progress の分類は active だけです(別の分類にするなら別の名前にする): done\n3 行目: <状態> <分類> [= 説明] の形ではありません: foo\n4 行目: 状態は 1〜30 文字で、カンマ・引用符・* ? [ ] を含まない: bad,name\n5 行目: 分類は todo active review blocked done cancelled のどれか: weird\n6 行目: 状態が重複しています: todo\ntb: statuses の本文に問題があるため書きませんでした\nrc=1'

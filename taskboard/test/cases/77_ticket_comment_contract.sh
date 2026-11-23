@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
-# --- 報告コメントのコマンド(comment / comments / resolve / reopen / report / pending)の使い方・文面・終了コード・保存内容(bash と Go で同じ。期待値は bash の出力から作った)。project は tcm / tcm2 だけを使う
+# --- 報告コメントのコマンド(comment / comments / resolve / reopen / report / pending)の使い方・文面・終了コード・保存内容(期待値は消した bash 版の出力から作った。今はこれが約束)。project は tcm / tcm2 だけを使う
 _tc_saved=$(declare -p HERDR_PANE_ID TB_IMMEDIATE_KINDS FAKE_STATUS 2>/dev/null || true)
 export HERDR_PANE_ID=wW:p1 FAKE_STATUS=idle; unset TB_IMMEDIATE_KINDS
 tcerr() { "$@" 2>&1; echo "rc=$?"; }

@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
-# --- tb deadlines-import(期限ファイルの行をチケットにする)の使い方・文面・終了コード・作るチケット(bash と Go で同じ。期待値は bash の出力から作った)。project は dlc / dlc2 だけを使う
+# --- tb deadlines-import(期限ファイルの行をチケットにする)の使い方・文面・終了コード・作るチケット(期待値は消した bash 版の出力から作った。今はこれが約束)。project は dlc / dlc2 だけを使う
 _dl_saved=$(declare -p HERDR_PANE_ID TB_REMINDERS_DEADLINES TB_SYSTEM_LABELS TB_LABELS 2>/dev/null || true)
 unset HERDR_PANE_ID TB_LABELS
 export TB_REMINDERS_DEADLINES=$TMP/dl-deadlines.conf TB_SYSTEM_LABELS=$TMP/dl-system-labels.conf; rm -f "$TB_REMINDERS_DEADLINES" "$TB_SYSTEM_LABELS"

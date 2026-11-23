@@ -58,7 +58,7 @@ did=$($TB proxy-list --json | jq -r 'select(.cmd=="gh pr view 12") | .id' | head
 eq "resolve done with file path stored as-is" "$($TB proxy-resolve $did --status done --result /tmp/out.txt)" "$did done"
 eq "result stored" "$($TB proxy-list --json | jq -r "select(.id==$did) | .result")" "/tmp/out.txt"
 
-# 出力の形(Go 版と突き合わせる)
+# 出力の形
 eq "list: tsv columns" "$($TB proxy-list --status denied | head -1)" "$pid	denied	read-only	$a1	gh pr diff 7"
 eq "list: tab/newline in cmd flattened" "$(pr --cmd $'git log\t-1\nx' --effect write >/dev/null; $TB proxy-list | tail -1 | cut -f5)" "git log -1 x"
 eq "re-register of denied: message" "$(pr --cmd 'gh pr diff 7' --effect read-only 2>&1 >/dev/null)" "tb: 同一 cmd が人に拒否済み(依頼 $pid)。同じ依頼は出し直さず、別の方法を提案すること"

@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
-# --- tb can / org / peek の使い方・文面・終了コード(bash と Go で同じ。期待値は bash の出力から作った)。DB は自分のものを使う
+# --- tb can / org / peek の使い方・文面・終了コード(期待値は消した bash 版の出力から作った。今はこれが約束)。DB は自分のものを使う
 _ar_saved=$(declare -p HERDR_PANE_ID TB_DB TB_POLICY_A TB_ROLES TB_POLICY_G TB_ORG TB_DELIVERY TB_PROTECT TB_ROUTES TB_ROLE_ADMIN TB_SWEEPER_PATTERN FAKE_AGENTS FAKE_READ_RC FAKE_READ_TEXT 2>/dev/null || true)
 unset HERDR_PANE_ID TB_ROUTES TB_ROLE_ADMIN TB_SWEEPER_PATTERN FAKE_READ_RC FAKE_READ_TEXT
 export TB_DB=$TMP/ar.db TB_POLICY_A=$TMP/ar-appr.conf TB_ROLES=$TMP/ar-roles TB_POLICY_G=$TMP/ar-grants.conf

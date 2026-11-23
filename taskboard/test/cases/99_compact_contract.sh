@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
-# --- tb compact-check の使い方・文面・終了コード・記録(bash と Go で同じ。期待値は bash の出力から作った)。DB は自分のものを使う
+# --- tb compact-check の使い方・文面・終了コード・記録(期待値は消した bash 版の出力から作った。今はこれが約束)。DB は自分のものを使う
 _cc_saved=$(declare -p HERDR_PANE_ID TB_DB TB_POLICY_A TB_COMPACT_CONF TB_CLAUDE_PROJECTS TB_COMPACT_ENABLED TB_COMPACT_THRESHOLD_TOKENS FAKE_AGENTS FAKE_STATUS FAKE_PROMPT_RC FAKE_PROMPT_MODE TB_PROMPT_VERIFY_SEC TB_VERIFY_POLL_SEC COMPACT_TAIL_BYTES 2>/dev/null || true)
 unset HERDR_PANE_ID TB_COMPACT_ENABLED TB_COMPACT_THRESHOLD_TOKENS FAKE_STATUS FAKE_PROMPT_RC FAKE_PROMPT_MODE COMPACT_TAIL_BYTES FAKE_DYNAMIC
 export TB_DB=$TMP/cc.db TB_POLICY_A=$TMP/cc-appr.conf TB_COMPACT_CONF=$TMP/cc.conf TB_CLAUDE_PROJECTS=$TMP/cc-projects

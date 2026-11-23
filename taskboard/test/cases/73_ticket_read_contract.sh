@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
-# --- チケットの読み取り(show / tree / labels / sprints / board / history / events)の使い方・文面・終了コード(bash と Go で同じ。期待値は bash の出力から作った)。project は trc / trc2 だけを使う
+# --- チケットの読み取り(show / tree / labels / sprints / board / history / events)の使い方・文面・終了コード(期待値は消した bash 版の出力から作った。今はこれが約束)。project は trc / trc2 だけを使う
 trerr() { "$@" 2>&1; echo "rc=$?"; }
 trmask() { sed -E -e 's/[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9:]{8}Z?/TS/g' -e 's/\b([ES])-[0-9]+\b/\1-N/g' -e 's/"sprint_id": ?[0-9]+/"sprint_id":N/g'; }
 

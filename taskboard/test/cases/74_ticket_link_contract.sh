@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
-# --- チケットのリンクとスプリントの書き込み(link / unlink / sprint-add / sprint-start / sprint-close)の使い方・文面・終了コード・履歴(bash と Go で同じ。期待値は bash の出力から作った)。project は tlc / tlc2 だけを使う
+# --- チケットのリンクとスプリントの書き込み(link / unlink / sprint-add / sprint-start / sprint-close)の使い方・文面・終了コード・履歴(期待値は消した bash 版の出力から作った。今はこれが約束)。project は tlc / tlc2 だけを使う
 # 並行の検査は 11_tickets.sh と 12_sprints.sh
 _tl_saved=$(env | grep -E '^(FAKE_AGENTS|HERDR_PANE_ID)=' || true)
 unset HERDR_PANE_ID

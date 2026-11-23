@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
-# --- tb ticket(move / status と従来のコマンドへの振り分け)の使い方・文面・終了コード・保存内容(bash と Go で同じ。期待値は bash の出力から作った)。project は tkc だけを使う
+# --- tb ticket(move / status と従来のコマンドへの振り分け)の使い方・文面・終了コード・保存内容(期待値は消した bash 版の出力から作った。今はこれが約束)。project は tkc だけを使う
 _tk_saved=$(declare -p HERDR_PANE_ID TB_STATUSES TB_NOTIFY_ENABLED TB_NOTIFY_DEDUPE_SEC 2>/dev/null || true)
 unset HERDR_PANE_ID
 export TB_STATUSES=$TMP/tk-statuses.conf TB_NOTIFY_ENABLED=on TB_NOTIFY_DEDUPE_SEC=0; rm -f "$TB_STATUSES"

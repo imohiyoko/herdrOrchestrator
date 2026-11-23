@@ -7,7 +7,7 @@ permissions:
   contents: read
 jobs:
   # 組の一覧は tests/run-all.sh --list から作る(組を足しても、ここは書き換えない)。
-  # taskboard の組は tb の中身(herdrctl)を作って流すので go.yml の tb ジョブが流す(ここでは除く)
+  # tb・scheduler の中身は herdrctl なので、どの組も下で herdrctl を作って PATH に置いてから流す
   plan:
     runs-on: ubuntu-latest
     outputs:
@@ -17,7 +17,7 @@ jobs:
         with:
           persist-credentials: false
       - id: list
-        run: echo "suites=$(bash tests/run-all.sh --list | jq -c 'map(select(startswith("taskboard-") | not))')" >> "$GITHUB_OUTPUT"
+        run: echo "suites=$(bash tests/run-all.sh --list)" >> "$GITHUB_OUTPUT"
   test:
     needs: plan
     runs-on: ubuntu-latest
@@ -31,7 +31,7 @@ jobs:
         with:
           persist-credentials: false
       - run: sudo apt-get update && sudo apt-get install -y sqlite3 jq
-      # tb の中身(herdrctl)。tb を呼ぶテスト(misc の tests/test_instance.sh など)のために PATH に置く
+      # tb・scheduler の中身(herdrctl)。taskboard・scheduler の組と、tb を呼ぶテスト(misc の tests/test_instance.sh など)のために PATH に置く
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod

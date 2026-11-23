@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # run.sh から番号順に source される(前のファイルが作った状態は使わない)
-# --- チケットを作る・変える(add / update)の使い方・文面・終了コード・保存する値・履歴(bash と Go で同じ。期待値は bash の出力から作った)。project は tec / tec2 だけを使う
+# --- チケットを作る・変える(add / update)の使い方・文面・終了コード・保存する値・履歴(期待値は消した bash 版の出力から作った。今はこれが約束)。project は tec / tec2 だけを使う
 # 並行の検査は 11_tickets.sh と 12_sprints.sh、用意したラベルは 11_labels_defined.sh
 _te_saved=$(declare -p HERDR_PANE_ID TB_STATUSES TB_LABELS TB_SYSTEM_LABELS 2>/dev/null || true)
 unset HERDR_PANE_ID

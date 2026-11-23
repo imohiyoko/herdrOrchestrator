@@ -21,9 +21,6 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      # ubuntu だけ、sqlite3 と jq を使うテストも流す
-      - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y sqlite3 jq
       - run: go vet ./...
       - run: go test ./...
       - run: go run ./cmd/herdrctl version
@@ -41,53 +38,10 @@ jobs:
         with:
           version: "~> v2"
           args: release --snapshot --clean
-  # tb のテスト: taskboard のテストを herdrctl を作って流す(tb の中身は herdrctl)。組は taskboard/test/run.sh --list-shards(weights の秒数で自動で分ける)
-  tb-shards:
-    runs-on: ubuntu-latest
-    outputs:
-      shards: ${{ steps.list.outputs.shards }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - id: list
-        run: echo "shards=$(bash taskboard/test/run.sh --list-shards | jq -Rsc 'split("\n") | map(select(length > 0))')" >> "$GITHUB_OUTPUT"
-  tb-go:
-    needs: tb-shards
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: ${{ fromJSON(needs.tb-shards.outputs.shards) }}
-    name: tb (${{ matrix.shard }})
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - run: sudo apt-get update && sudo apt-get install -y sqlite3 jq
-      - run: go build -o "$RUNNER_TEMP/herdrctl" ./cmd/herdrctl
-      - run: TB_HERDRCTL="$RUNNER_TEMP/herdrctl" bash taskboard/test/run.sh --shard "${{ matrix.shard }}"
-  # scheduler のテスト(bin/*.sh の中身は herdrctl sched)
-  sched-go:
-    runs-on: ubuntu-latest
-    name: scheduler (herdrctl)
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - run: sudo apt-get update && sudo apt-get install -y sqlite3 jq
-      - run: go build -o "$RUNNER_TEMP/herdrctl" ./cmd/herdrctl
-      - run: SCHED_HERDRCTL="$RUNNER_TEMP/herdrctl" TB_HERDRCTL="$RUNNER_TEMP/herdrctl" bash scheduler/tests/run.sh   # scheduler のテストは tb も呼ぶ
   # ブランチ保護で必須にする 1 つのチェック
   go-all:
     if: always()
-    needs: [test, snapshot, tb-go, sched-go]
+    needs: [test, snapshot]
     runs-on: ubuntu-latest
     steps:
-      - run: '[ "${{ needs.test.result }}" = success ] && [ "${{ needs.snapshot.result }}" = success ] && [ "${{ needs.tb-go.result }}" = success ] && [ "${{ needs.sched-go.result }}" = success ]'
+      - run: '[ "${{ needs.test.result }}" = success ] && [ "${{ needs.snapshot.result }}" = success ]'
