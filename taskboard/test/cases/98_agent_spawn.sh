@@ -200,5 +200,12 @@ spsql "UPDATE agent_ops SET args=json_set(args,'\$.spawn.task','$T5') WHERE id=$
 out=$(HERDR_PANE_ID= $TB agent-approve "$lid")
 eq "agent-approve: still valid → approved (the op itself is not counted against the limit)" "$(grep -c 'parent3-s1 started' <<<"$out")" "1"
 
+# 役割名 freeze: 新旧どちらの名前でも役割として起こす(tb agent freeze は別のコマンド)
+rm -rf "$TMP/roles98f"; cp -r "$TB_ROLES" "$TMP/roles98f"; cp "$TB_ROLES/worker.md" "$TMP/roles98f/freeze.md"
+printf 'allowed_roles = freeze\nmax_children_per_parent = 5\nmax_children_total = 99\n' >"$TMP/spawn-frz.conf"
+T6=$(sp_task parent4 in_progress)
+frz() { FAKE_AGENTS="[$SP_C,$(sp_ag parent4 wR:p1)]" TB_ROLES=$TMP/roles98f TB_SPAWN_POLICY=$TMP/spawn-frz.conf HERDR_PANE_ID=wR:p1 $TB "$@" --task "$T6" --brief x | cut -d' ' -f1-2; }
+eq "agent-spawn: a role named freeze spawns under both names" "$(frz agent-spawn freeze) / $(frz agent spawn freeze) / $(spsql "SELECT group_concat(role,' ') FROM agents WHERE name LIKE 'parent4-s%';")" "parent4-s1 started / parent4-s2 started / freeze freeze"
+
 unset FAKE_AGENTS TB_SPAWN_POLICY TB_SPAWN_RULES; export HERDR_PANE_ID=$_saved_pane
 export TB_POLICY_A=$TMP/appr.conf

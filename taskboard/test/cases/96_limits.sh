@@ -235,7 +235,7 @@ eq "handoff: env TB_LIMIT_HUMAN_HANDOFF=off wins" "$(TB_LIMIT_HUMAN_HANDOFF=off 
 $TB limits unset human_handoff >/dev/null; rm -f "$TB_LIMITS"
 
 # ---- 構成: help と README に載っている
-eq "limits: new commands are in help.txt" "$(for c in limits agent-shed handoff; do grep -qE "^tb $c( |$)" "$HERE/../lib/help.txt" && echo 1 || echo 0; done | tr '\n' ' ')" "1 1 1 "
+eq "limits: new commands are in help.txt" "$(for c in limits "agent shed" handoff; do grep -qE "^tb $c( |$)" "$HERE/../lib/help.txt" && echo 1 || echo 0; done | tr '\n' ' ')" "1 1 1 "
 eq "limits: limits.conf.example lists every key" "$(for k in max_running_agents max_working_agents incident_max_open incident_roles analyst_max spawn_max_per_parent spawn_max_total watchers human_handoff; do grep -cE "^#? *$k = " "$HERE/../config/limits.conf.example"; done | tr '\n' ' ')" "1 1 1 1 1 1 1 1 1 "
 [[ -z $_saved_pane ]] || export HERDR_PANE_ID=$_saved_pane
 [[ -z $_saved_am ]] || export TB_ANALYST_MAX=$_saved_am

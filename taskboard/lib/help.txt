@@ -97,38 +97,60 @@ tb message read I-<n> [--json]   保留された送信を全文で読み、既�
 
 役割の配布(roles/。SessionStart hook は bin/tb-role-hook 経由):
 tb role-context --source startup|resume|clear|compact --session-id S   hook 用。渡すときだけ hook の JSON を出す。常に 0
-tb role-broadcast [agent 名 ...]   動いている agent に役割の更新を知らせる(tb role-show で読み直す。同じ版を渡し済みのセッションは飛ばす)
-tb role-show [agent 名]            その agent に渡す役割の本文(省略時は自分の pane の agent)。agent は役割をファイルではなくこれで読む
-tb role-list                       役割名と出どころ(DB のこのセッションの行 / 共通の行 / roles/ のファイル)。_common と @map(名前と役割の対応)も出す
-tb role-edit <役割名|@map> [--shared]   tb role-write と同じ(本文を $EDITOR で編集)
-tb role-write <役割名|@map> [--shared] < 本文   役割の定義を DB のこのセッションの行(--shared なら共通の行)に書く。人と人事役(role:change が allow のとき)。人事役は人事役の役割・人事役を付ける対応は書けない
-tb role-unset <役割名|@map> [--shared]   DB の役割の行を消す(人だけ)。消すと共通の行、無ければ roles/ のファイルに戻る
-tb roles [--json]                  agent ごとの役割ファイルと、渡した版が最新か(current|outdated|never|no-role)
-tb role-set <agent 名> <ロール[,ロール...]> [--reason R]   ロールを変える(台帳。複数は 分野×立場 の組み合わせ、例 hr,manager)。人と人事役(@hr)だけ。人事役からは role:change が allow のときだけ。自分・人事役のロールは不可
-tb role-log [--json]               ロール変更の記録(このセッションの分。誰がいつ誰を何から何に)
+tb agent role broadcast [agent 名 ...]   動いている agent に役割の更新を知らせる(tb role-show で読み直す。同じ版を渡し済みのセッションは飛ばす)
+  別名(古い名前): tb role-broadcast
+tb agent role show [agent 名]            その agent に渡す役割の本文(省略時は自分の pane の agent)。agent は役割をファイルではなくこれで読む
+  別名(古い名前): tb role-show
+tb agent role list                       役割名と出どころ(DB のこのセッションの行 / 共通の行 / roles/ のファイル)。_common と @map(名前と役割の対応)も出す
+  別名(古い名前): tb role-list
+tb agent role edit <役割名|@map> [--shared]   tb role-write と同じ(本文を $EDITOR で編集)
+  別名(古い名前): tb role-edit
+tb agent role write <役割名|@map> [--shared] < 本文   役割の定義を DB のこのセッションの行(--shared なら共通の行)に書く。人と人事役(role:change が allow のとき)。人事役は人事役の役割・人事役を付ける対応は書けない
+  別名(古い名前): tb role-write
+tb agent role unset <役割名|@map> [--shared]   DB の役割の行を消す(人だけ)。消すと共通の行、無ければ roles/ のファイルに戻る
+  別名(古い名前): tb role-unset
+tb agent role status [--json]                  agent ごとの役割ファイルと、渡した版が最新か(current|outdated|never|no-role)
+  別名(古い名前): tb roles
+tb agent role set <agent 名> <ロール[,ロール...]> [--reason R]   ロールを変える(台帳。複数は 分野×立場 の組み合わせ、例 hr,manager)。人と人事役(@hr)だけ。人事役からは role:change が allow のときだけ。自分・人事役のロールは不可
+  別名(古い名前): tb role-set
+tb agent role log [--json]               ロール変更の記録(このセッションの分。誰がいつ誰を何から何に)
+  別名(古い名前): tb role-log
 
 部品(ADR 0005。レシピの材料。一覧・引数の型・リスク階層はコードに固定で、設定・DB では増やせず緩められない。docs/recipes.md):
-tb parts [--json]   部品の一覧(名前 副作用 リスク階層 人だけ 実行役 判定の操作名 引数 説明)。人だけ = リスク階層 human-only
-tb part-check <部品> [<名前>=<値> ...]   引数の型を確かめ、risk / human_only / runner と判定の操作名(op:)を出す(実行しない)。0=通った 1=一覧にない 2=引数の誤り
-tb part-risk <部品> ...   部品の並びのリスク階層(中の最大。1 つでも高ければ高い)。一覧にない部品があれば 1
-tb recipe-set <名前> [--file F]   レシピ(部品の並び)を登録・置き換え(人だけ)。本文は省くと標準入力: desc / risk / arg <名前>[?] <型> / step <部品> <名前>=<値>(値はリテラルか $requester / $target / $<引数>。部品の agent 型の引数は $requester か $target だけ)
+tb recipe part list [--json]   部品の一覧(名前 副作用 リスク階層 人だけ 実行役 判定の操作名 引数 説明)。人だけ = リスク階層 human-only
+  別名(古い名前): tb parts
+tb recipe part check <部品> [<名前>=<値> ...]   引数の型を確かめ、risk / human_only / runner と判定の操作名(op:)を出す(実行しない)。0=通った 1=一覧にない 2=引数の誤り
+  別名(古い名前): tb part-check
+tb recipe part risk <部品> ...   部品の並びのリスク階層(中の最大。1 つでも高ければ高い)。一覧にない部品があれば 1
+  別名(古い名前): tb part-risk
+tb recipe set <名前> [--file F]   レシピ(部品の並び)を登録・置き換え(人だけ)。本文は省くと標準入力: desc / risk / arg <名前>[?] <型> / step <部品> <名前>=<値>(値はリテラルか $requester / $target / $<引数>。部品の agent 型の引数は $requester か $target だけ)
+  別名(古い名前): tb recipe-set
          登録のときに部品・引数の型・名前(: は不可)を検査し、通らなければ登録しない(終了コード 2)。リスク階層は中の部品の最大(宣言 risk で下げられない)
-tb recipe-rm <名前>   登録を消す(人だけ。履歴は残る)
-tb recipe-list [--json]   名前 リスク階層 step 数 更新者 更新時刻 説明(リスク階層は今のコードで計算し直す。登録時と違えば !、検査を通らなければ invalid)
-tb recipe-show <名前>   判定の操作名・リスク階層・step ごとの部品の性質と本文
-tb recipe-history [<名前>] [--json]   登録の変更(時刻 名前 add|update|rm リスク階層 変えた者)
-tb recipe-run <名前> [--target A] [--task T-..] [--dry-run] [<名前>=<値> ...]   汎用の入口。判定は recipe:<名前>:<対象>(既定の対象は依頼者。人の端末は --target が要る)、続けて部品ごと
+tb recipe rm <名前>   登録を消す(人だけ。履歴は残る)
+  別名(古い名前): tb recipe-rm
+tb recipe list [--json]   名前 リスク階層 step 数 更新者 更新時刻 説明(リスク階層は今のコードで計算し直す。登録時と違えば !、検査を通らなければ invalid)
+  別名(古い名前): tb recipe-list
+tb recipe show <名前>   判定の操作名・リスク階層・step ごとの部品の性質と本文
+  別名(古い名前): tb recipe-show
+tb recipe history [<名前>] [--json]   登録の変更(時刻 名前 add|update|rm リスク階層 変えた者)
+  別名(古い名前): tb recipe-history
+tb recipe run <名前> [--target A] [--task T-..] [--dry-run] [<名前>=<値> ...]   汎用の入口。判定は recipe:<名前>:<対象>(既定の対象は依頼者。人の端末は --target が要る)、続けて部品ごと
+  別名(古い名前): tb recipe-run
          (人だけの部品は agent から止まる。部品の操作名も policy で判定。agent から指揮官は止めない)。全部を判定してから、依頼者が agent で pane の外で行う部品があれば
          検査済みの並びだけを待ち行列に置く(R-<n> queued。外の実行役 tb recipe-runner が実行する)。人の依頼と、外の部品が無い並びはその場で実行する。記録は tb events(recipe_run / recipe_step / recipe_end)
          定期ジョブ(SCHED_JOB)からはジョブの持ち主(OWNER → SCHED_OWNER)の権限で判定し、持ち主が無ければ実行しない
          終了コード 0=済んだ・置いた 1=途中の部品が失敗(残りは続行しない)2=使い方 4=実行しない(未登録・検査を通らない・人だけ・まだ実行できない部品・持ち主の無い定期ジョブ)20=人の承認が要る
-tb recipe-runner [--max N]   外の実行役(人の端末か、人が登録した定期ジョブから)。待ち行列の queued を古い順に N 件(既定 1)、依頼者の権限で判定し直してから実行する。
+tb recipe runner [--max N]   外の実行役(人の端末か、人が登録した定期ジョブから)。待ち行列の queued を古い順に N 件(既定 1)、依頼者の権限で判定し直してから実行する。
+  別名(古い名前): tb recipe-runner
          本文が変わった・消えた・TB_RECIPE_QUEUE_TTL_SEC(既定 900)秒を過ぎた・判定が allow でない、のどれでも実行しない。出力は 1 件ごとに R-<n> <状態>
-tb recipe-queue [--all] [--json]   待ち行列(既定は queued と running。R-<n> 状態 レシピ 対象 依頼者 置いた時刻 結果)
-tb recipe-cancel R-<n>   待ち行列の queued を取り消す(人と、頼んだ agent 自身だけ)
+tb recipe queue [--all] [--json]   待ち行列(既定は queued と running。R-<n> 状態 レシピ 対象 依頼者 置いた時刻 結果)
+  別名(古い名前): tb recipe-queue
+tb recipe cancel R-<n>   待ち行列の queued を取り消す(人と、頼んだ agent 自身だけ)
+  別名(古い名前): tb recipe-cancel
 
 認可(設定 policy。<主体> <操作> <対象> = allow|ask-any|ask-human|deny、当たる行のいちばん厳しい効果、無ければ既定の表 perms/ops.tbl。ADR 0007):
-tb can [<主体>] <操作> <対象>   主体(省くと叩いた agent。pane から決める)が対象にその操作をできるかを、実際の判定と同じ規則で出す(読むだけ)。1 行目 allow|ask|hold|deny、続けて rule:。
+tb agent can [<主体>] <操作> <対象>   主体(省くと叩いた agent。pane から決める)が対象にその操作をできるかを、実際の判定と同じ規則で出す(読むだけ)。1 行目 allow|ask|hold|deny、続けて rule:。
+  別名(古い名前): tb can
          終了コード 0=allow 20=ask(人の承認待ち)21=hold(inbox に置かれる)4=deny。主体 human は人の端末。
          操作: send:task|info|answer(delivery → policy)/ agent:stop(protect → policy)/ role:change / agent:flag / ほかは policy の操作名
          approve:<元の操作>(対象は依頼した agent。policy の approve: の allow の行だけで allow か deny)
@@ -180,44 +202,65 @@ tb proposal resolve P-<n> --status applied|rejected [--note N]   設定役か人
   (提案は project proposal のチケット T-proposal-NNN でもある。担当は設定役)
 
 agent の停止・復活・新規作成(台帳 agents。人の端末からはそのまま、agent の pane からは policy の agent:<op> <名前>):
-tb org [<agent 名> | --me] [--json]   組織図(設定 org: <部下のパターン> -> <上司>)。全員が見られる。agent 名を付けると上司・上の全員・直属の部下・同じ上司。--me は叩いた agent(pane から決める)
+tb agent org [<agent 名> | --me] [--json]   組織図(設定 org: <部下のパターン> -> <上司>)。全員が見られる。agent 名を付けると上司・上の全員・直属の部下・同じ上司。--me は叩いた agent(pane から決める)
+  別名(古い名前): tb org
          policy の対象と delivery の宛先に ~report / ~subordinate / ~manager / ~superior / ~peer と書くと、この線で判定する(書式: config/org.conf.example)
-tb peek <agent 名> [--lines N]   agent の直近の出力を読む(1〜200 行、既定 40)。人と本人はそのまま、ほかの agent は policy の agent:read <名前>(対象は @<役割> や ~child も可)が allow のときだけ(終了コード 20、deny なら 4)。記録は read_log
-tb agents [--json] [--all] [--group role] [--graph]   台帳と判定材料(状態・killable・未完了タスク・未対応の質問・idle 分・役割)。herdr と同期する。
+tb agent peek <agent 名> [--lines N]   agent の直近の出力を読む(1〜200 行、既定 40)。人と本人はそのまま、ほかの agent は policy の agent:read <名前>(対象は @<役割> や ~child も可)が allow のときだけ(終了コード 20、deny なら 4)。記録は read_log
+  別名(古い名前): tb peek
+tb agent list [--json] [--all] [--group role] [--graph]   台帳と判定材料(状態・killable・未完了タスク・未対応の質問・idle 分・役割)。herdr と同期する。
+  別名(古い名前): tb agents
          --group role はロールごとにまとめる。--graph は関係グラフ(誰が誰に何をしたか: spawn / lead / send:<kind> / report / analyze。直近 7 日)。--json と併用で {nodes, edges}
-tb agent-new <名前> [--cwd D] [--kind K] [--model M] [--role R] [--prompt P] [--killable yes|no]
+tb agent open <名前> [--cwd D] [--kind K] [--model M] [--role R] [--prompt P] [--killable yes|no]
+  別名(古い名前): tb agent-new
          専用 workspace で agent(--kind の既定は claude)を起動。kind が対応していない指定(--model など)は終了コード 12。--role は roles/<R>.md(台帳に残り、復活後も同じ役割)
-tb agent-stop <名前> [--force]   pane を閉じて止める。killable=yes(判定後に新しい入力なし)で未完了タスクが無いときだけ。
+tb agent stop <名前> [--force]   pane を閉じて止める。killable=yes(判定後に新しい入力なし)で未完了タスクが無いときだけ。
+  別名(古い名前): tb agent-stop
          --force は人だけ。止める前に session と cwd を台帳に残す。config の protect で保護された agent は --force でも止めない
-tb agent-revive <名前> [--fresh] [--model M] [--prompt P]   台帳の session を kind の方法(claude は --resume)で再開(--fresh なら新しい会話)。再開できない kind は終了コード 12
-tb agent-kinds   kind(claude / codex / gemini)ごとの対応項目の表(起動・モデル指定・再開・起動中のモデル変更)。設計は docs/agent-kinds.md
-tb agent-restart <名前> [--prompt P]   MCP が切れた agent の復旧: 停止 + 同じ会話での復活。idle/done で in_progress のタスクが無いときだけ
+tb agent revive <名前> [--fresh] [--model M] [--prompt P]   台帳の session を kind の方法(claude は --resume)で再開(--fresh なら新しい会話)。再開できない kind は終了コード 12
+  別名(古い名前): tb agent-revive
+tb agent kinds   kind(claude / codex / gemini)ごとの対応項目の表(起動・モデル指定・再開・起動中のモデル変更)。設計は docs/agent-kinds.md
+  別名(古い名前): tb agent-kinds
+tb agent restart <名前> [--prompt P]   MCP が切れた agent の復旧: 停止 + 同じ会話での復活。idle/done で in_progress のタスクが無いときだけ
+  別名(古い名前): tb agent-restart
          (持つなら --prompt の再開メモが要る)。人はいつでも。agent からは agent:stop と agent:revive が両方 allow の名前だけ(自分・指揮官は不可)。--force は無い
          終了コード: 0 再起動済み 1 拒否・前提違い 4 上限・許可なし 10 再開したが最初の指示を確認できない 11 herdr の失敗
-tb model-set <名前|@役割|--all> <モデル> [--dry-run]   idle/done の agent を止めて同じ会話を --model 付きで復活(--all は人の承認待ち。policy の agent:model <名前>)
-tb model-set <名前|@役割|--all> --reset [--dry-run]    台帳のモデルを消す(次の起動から config の role-models の既定)
-tb compact-check [--dry-run] [--apply]   idle/done で文脈が大きい agent に /compact を送る(既定 dry-run。config/compact.conf と policy の agent:compact <名前>)
-tb slash <コマンド> <agent 名|@役割>... [--apply]   許可リスト(config/slash.conf)のスラッシュコマンドを idle/done の agent に送る(既定 dry-run)。
+tb agent model set <名前|@役割|--all> <モデル> [--dry-run]   idle/done の agent を止めて同じ会話を --model 付きで復活(--all は人の承認待ち。policy の agent:model <名前>)
+  別名(古い名前): tb model-set
+tb agent model set <名前|@役割|--all> --reset [--dry-run]    台帳のモデルを消す(次の起動から config の role-models の既定)
+  別名(古い名前): tb model-set
+tb agent compact check [--dry-run] [--apply]   idle/done で文脈が大きい agent に /compact を送る(既定 dry-run。config/compact.conf と policy の agent:compact <名前>)
+  別名(古い名前): tb compact-check
+tb agent slash <コマンド> <agent 名|@役割>... [--apply]   許可リスト(config/slash.conf)のスラッシュコマンドを idle/done の agent に送る(既定 dry-run)。
+  別名(古い名前): tb slash
          自分と指揮官は除く。agent からは policy の agent:slash:<コマンド> <宛先>(ask-* なら L-<n>、deny なら送らない)。記録は agent_ops(op=slash)
-tb slash <コマンド> --all [--apply]   全 agent へ。--apply しても L-<n> を積むだけで、人が tb agent-approve するまで送らない
-tb slash --list   許可リストを出す(deny の行は送らない)
-tb agent-flag <名前> --killable yes|no|unknown [--reason R]   止めてよいかの判定。判定役(TB_SWEEPER_PATTERN、既定 sweeper*)か人だけ
+tb agent slash <コマンド> --all [--apply]   全 agent へ。--apply しても L-<n> を積むだけで、人が tb agent-approve するまで送らない
+  別名(古い名前): tb slash
+tb agent slash --list   許可リストを出す(deny の行は送らない)
+  別名(古い名前): tb slash
+tb agent flag <名前> --killable yes|no|unknown [--reason R]   止めてよいかの判定。判定役(TB_SWEEPER_PATTERN、既定 sweeper*)か人だけ
+  別名(古い名前): tb agent-flag
          終了コード(new/stop/revive): 0 実行済み 1 拒否・前提違い 11 herdr の失敗 20 人の承認待ち(L-<n>)
-tb agent-ops [--status pending|done|failed|rejected] [--json]   操作の記録と承認待ち
-tb agent-approve L-<n> [--always]   承認待ちの操作を実行(--always で agent:<op>:<名前> を allow。人だけ)。
+tb agent ops [--status pending|done|failed|rejected] [--json]   操作の記録と承認待ち
+  別名(古い名前): tb agent-ops
+tb agent approve L-<n> [--always]   承認待ちの操作を実行(--always で agent:<op>:<名前> を allow。人だけ)。
+  別名(古い名前): tb agent-approve
                               policy の <agent> approve:agent:<op>:<名前> <依頼者> = allow に当たる agent も承認できる(--all・spawn-freeze 中・ask-human の依頼は人だけ)
-tb agent-reject L-<n>   却下(人か approve: の許可がある agent)
+tb agent reject L-<n>   却下(人か approve: の許可がある agent)
+  別名(古い名前): tb agent-reject
 
 規則つきの子 agent 作成(agent の pane から。自動承認は LLM ではなく tb の規則。config/spawn-policy.conf は人だけが編集):
-tb agent-spawn <役割|-> --task <task-id> --brief <依頼の本文(2000 字まで)>
+tb agent spawn <役割|-> --task <task-id> --brief <依頼の本文(2000 字まで)>
+  別名(古い名前): tb agent-spawn
          子の名前は tb が <親>-s<連番> で付け、プロンプトも tb がテンプレートで組む(依頼は役割の指示を上書きできない)。
          親は動いていて、--task が親の in_progress のタスクであること。許可する役割・子の数・深さは spawn-policy.conf
          (既定: worker だけ、親 1 体あたり 2、全体 6、深さ 1、モデル sonnet。denied_parents に当たる親は不可)
          終了コード: 0 作成済み(規則に合い、policy の agent:spawn <子の名前> が allow) 20 人の承認待ち(L-<n>。policy が ask-* か spawn-freeze 中)
                     4 規則で拒否(理由を stderr に出し、何も作らない)
          自動で作るには人が policy に `* agent:spawn * = allow` を足す(tb approval allow 'agent:spawn:*')。agent:new は ask-any のまま
-tb spawn-freeze     自動承認を止める。以後の agent-spawn は全部人の承認待ち(人の端末からだけ)
-tb spawn-unfreeze   解除する(人の端末からだけ)
+tb agent freeze     自動承認を止める。以後の agent-spawn は全部人の承認待ち(人の端末からだけ)
+  別名(古い名前): tb spawn-freeze
+tb agent unfreeze   解除する(人の端末からだけ)
+  別名(古い名前): tb spawn-unfreeze
          子の tb comment には spawned_by: <親> が付く。tb digest は子の数が上限の 1 つ手前以上のときと、親のタスクが done/blocked なのに子が動いているときに知らせる
 
 制限(動作 agent 数など。config/limits.conf は人だけが編集。優先は 環境変数 TB_LIMIT_<キー大文字> > limits.conf > 既定):
@@ -229,7 +272,8 @@ tb limits mode normal|lean|minimal   まとめて絞る・戻す(人だけ。値
 tb limits get <キー>               今の値だけを出す
 tb limits check incident-open|running   上限の検査だけ(0 ok / 4 上限 / 1 確かめられない)。agent をまとめて起動するスクリプトが、作る前に呼ぶ
 tb limits watcher-enabled <名前>   watchers に入っていれば終了コード 0、無ければ 1(scheduler のジョブのガード用)
-tb agent-shed [--count N] [--json]   絞る(止める)候補を、完了済みで待機中 → 止めてよい判定(stale でない)→ 解析役・親が終わった子 の順に一覧にする。
+tb agent shed [--count N] [--json]   絞る(止める)候補を、完了済みで待機中 → 止めてよい判定(stale でない)→ 解析役・親が終わった子 の順に一覧にする。
+  別名(古い名前): tb agent-shed
                                    読み取り専用(何も止めない)。各行に実行する tb agent-stop <名前> を出す(止めてよい判定が無いものは --force 付き。人だけ)
 
 他の人への調査依頼(human_handoff が on のときだけ。agent は誰にも連絡しない):

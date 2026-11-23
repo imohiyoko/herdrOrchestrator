@@ -899,3 +899,51 @@ cmd_can() {
       _can_out "$APPROVAL_RULE";;
   esac
 }
+
+# ---------- tb agent <動詞>(サービス agent)----------
+# 古い名前(agent-new / agent-stop / agents / role-show / model-set など)も同じに動く。古い名前は bash を消す PR で外す
+cmd_agent() {
+  if [[ $# -eq 0 ]]; then agent_usage; exit 2; fi
+  local sub=$1; shift
+  case $sub in
+    list) cmd_agents "$@";;
+    open) cmd_agent-new "$@";;
+    stop|revive|restart|flag|ops|approve|reject|kinds|shed) "cmd_agent-$sub" "$@";;
+    spawn) cmd_agent-spawn "$@";;   # 1 語目は役割名(freeze なども役割として扱う。止める・解除は tb agent freeze / unfreeze)
+    freeze|unfreeze) "cmd_spawn-$sub" "$@";;
+    can|org|peek|slash) "cmd_$sub" "$@";;
+    model)
+      [[ ${1:-} == set ]] || usage "agent model: サブコマンドは set だけです(tb agent model set ...)"
+      shift; cmd_model-set "$@";;
+    compact)   # ほかの動詞と同じく名前で引く(cmd_compact-<動詞>。lib/compact.sh)
+      local cv=${1:-}
+      [[ $cv == check ]] || usage "agent compact: サブコマンドは check だけです(tb agent compact check ...)"
+      shift; "cmd_compact-$cv" "$@";;
+    role)
+      local v=${1:-}; shift || true
+      case $v in
+        show|list|write|edit|unset|set|log|broadcast) "cmd_role-$v" "$@";;
+        status) cmd_roles "$@";;
+        *) usage "agent role: 不明なサブコマンド ${v:-(なし)}(show / list / write / edit / unset / set / log / broadcast / status)";;
+      esac;;
+    help|-h|--help) agent_usage;;
+    *) usage "agent: 不明なサブコマンド $sub(tb agent で一覧)";;
+  esac
+}
+agent_usage() {
+  cat <<'USAGE'
+tb agent list [--json] [--all] [--group role] [--graph]   台帳と判定材料(古い名前 tb agents)
+tb agent open <名前> [--cwd D] [--kind K] [--model M] [--role R] [--prompt P] [--killable yes|no]   作る(古い名前 tb agent-new)
+tb agent stop|revive|restart <名前> ...   止める / 同じ会話で戻す / 止めて戻す(古い名前 tb agent-stop など)
+tb agent flag <名前> --killable yes|no|unknown [--reason R]   止めてよいかの判定
+tb agent ops [--status S] [--json] / tb agent approve|reject L-<n>   操作の記録と承認待ち
+tb agent spawn <役割|-> --task T --brief B   規則つきの子 agent(古い名前 tb agent-spawn)
+tb agent freeze|unfreeze   子 agent の自動承認を止める / 戻す(人だけ。古い名前 tb spawn-freeze / tb spawn-unfreeze)
+tb agent shed / tb agent kinds   絞る候補 / kind の対応表
+tb agent can|org|peek ...   できるか / 組織図 / 直近の出力
+tb agent model set <名前|@役割|--all> <モデル>|--reset [--dry-run]   モデルを変える(古い名前 tb model-set)
+tb agent compact check [--dry-run|--apply]   文脈の圧縮(古い名前 tb compact-check)
+tb agent slash <コマンド> <agent 名|@役割>...|--all [--apply] / tb agent slash --list   スラッシュコマンドを送る
+tb agent role show|list|write|edit|unset|set|log|broadcast|status ...   役割(古い名前 tb role-<動詞>、status は tb roles)
+USAGE
+}

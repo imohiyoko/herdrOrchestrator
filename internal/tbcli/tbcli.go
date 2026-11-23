@@ -5,6 +5,7 @@ package tbcli
 import (
 	"database/sql"
 	"github.com/imohiyoko/herdrorchestrator/internal/approval"
+	"sort"
 
 	"bufio"
 	"errors"
@@ -59,7 +60,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	if args[0] == "--commands" {
-		fmt.Fprintln(stdout, strings.Join(Commands, " "))
+		svc := serviceCommands()
+		sort.Strings(svc)
+		fmt.Fprintln(stdout, strings.Join(append(append([]string{}, Commands...), svc...), " "))
 		return 0
 	}
 	perms.OpenDB = permDB
@@ -181,6 +184,10 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		err = cmdPartCheck(args[1:], w, stderr)
 	case "part-risk":
 		err = cmdPartRisk(args[1:], w, stderr)
+	case "agent":
+		err = cmdAgent(args[1:], w, stderr)
+	case "recipe":
+		err = cmdRecipe(args[1:], w, stderr)
 	case "slash":
 		err = cmdSlash(args[1:], w, stderr)
 	case "compact-check":
