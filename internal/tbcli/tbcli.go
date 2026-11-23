@@ -5,6 +5,7 @@ package tbcli
 import (
 	"database/sql"
 	"github.com/imohiyoko/herdrorchestrator/internal/approval"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/identity"
 	"sort"
 
 	"bufio"
@@ -27,8 +28,8 @@ import (
 // Commands は Go に移し終えたコマンド。bin/tb はこの一覧(herdrctl tb --commands)を見て渡すかを決める。
 var Commands = []string{"activity", "add", "agent-approve", "agent-flag", "agent-kinds", "agent-new", "agent-ops", "agent-reject", "agent-restart", "agent-revive", "agent-shed", "agent-spawn", "agent-stop", "agents", "alert", "alert-approve", "alert-close", "alert-dispatch", "alert-result", "alerts", "allow", "approval", "approve", "ask", "block", "board", "can", "cancel", "claim", "comment", "comments", "compact-check", "config", "conv", "conv-candidate-add", "conv-candidate-adopt", "conv-candidate-reject", "conv-draft", "conv-gate", "conv-incident", "conv-kinds", "conv-learn-purge", "conv-ledger", "conv-length", "conv-lint", "conv-pair-add", "conv-pair-show", "conv-pairs", "conv-patterns", "conv-route", "conv-routes-set", "conv-scan", "conv-stage", "conv-stage-log", "conv-stage-reset", "conv-stage-set", "conv-voice", "conv-voice-check", "db-import", "deadlines-import", "digest", "digests", "done", "due-scan", "events", "flush", "gate", "handoff", "history", "inbox", "inbox-read", "job", "labels", "limits", "link", "list", "message", "model-set", "notify", "nudge", "org", "outbox", "part-check", "part-risk", "parts", "peek", "pending", "pr", "pr-queue", "pr-watch", "proposal", "proposal-resolve", "proposals", "proxy", "proxy-check", "proxy-list", "proxy-request", "proxy-resolve", "recipe-cancel", "recipe-history", "recipe-list", "recipe-queue", "recipe-rm", "recipe-run", "recipe-runner", "recipe-set", "recipe-show", "reject", "reminder", "reminders", "reopen", "report", "resolve", "review", "review-pack", "review-submit", "role-broadcast", "role-context", "role-edit", "role-list", "role-log", "role-set", "role-show", "role-unset", "role-write", "roles", "sched-job", "send", "show", "slash", "spawn-freeze", "spawn-unfreeze", "sprint-add", "sprint-close", "sprint-start", "sprints", "system-send", "ticket", "touch", "tree", "unlink", "update"}
 
-// Features は bin/tb が渡す前に確かめる機能(perms = 権限段階の門。ADR 0006。policy = 認可の表。policy-ops = コマンドの中の操作も policy で判定。ADR 0007)。
-var Features = []string{"perms", "policy", "policy-ops"}
+// Features は bin/tb が渡す前に確かめる機能(perms = 権限段階の門。ADR 0006。policy = 認可の表。policy-ops = コマンドの中の操作も policy で判定。auth = 呼び出し元の確かめ。ADR 0007)。
+var Features = []string{"perms", "policy", "policy-ops", "auth"}
 
 // 終了コード(tb と同じ)
 const (
@@ -71,6 +72,13 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return approval.NewJudge(db, session).Relation(a, b, rel)
 	}
 	approval.Warn = func(msg string) { fmt.Fprintln(stderr, msg) }
+	if args[0] != "touch" && args[0] != "role-context" {
+		// 呼び出し元の確かめ(HERDR_PANE_ID を信じず、pane の中かを herdr とプロセスの親子で確かめる。ADR 0007 段 1a。bash の auth_or_die)
+		if _, msg := identity.Authenticate(); msg != "" {
+			fmt.Fprintln(stderr, "tb: [identity.unverified] "+msg)
+			return 3
+		}
+	}
 	if args[0] != "touch" {
 		// 権限段階の入口(ADR 0006。bash の main → perm_gate と同じ)
 		if err := permErr(perms.Gate(args, permDB)); err != nil {

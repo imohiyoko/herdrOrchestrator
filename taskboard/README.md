@@ -414,6 +414,7 @@ agent が何をしてよいかは、設定 `policy` の 1 表で決める(「設
   - 役割・関係を確かめられない行は、締める向きにだけ効く。設定を読めないときは deny
   - `agent:flag` と `approve:*` は、allow の行で明示したときだけ許す
 - 人の端末からは判定にかけない(いつでも実行できる)。判定は agent の pane からの実行だけ
+- 呼び出し元は `HERDR_PANE_ID` の申告をそのまま信じず、本当にその pane の中から呼ばれたかを確かめる(herdr の `pane process-info` が返す pane の最初のプロセスが祖先にいるか、同じ端末か)。herdr の中で `HERDR_PANE_ID` を消しても、agent の pane を探して付け直す。確かめられなければ何もしない(`identity.unverified`、終了コード 3。hook の `touch` と `role-context` は確かめない)。同じ OS ユーザーの agent がわざと親子と端末を切る、tb を書き換える、といった回避は止められない(許容。ADR 0007)
 
 ```bash
 tb can <主体> <操作> <対象>            # 実際の判定と同じ順で、誰が誰に何をできるかを出す(読むだけ)
