@@ -63,6 +63,14 @@ INSERT INTO notify_seen (herdr_session, key, value, updated_at) VALUES
    {"p": 2, "status": "new", "key": "q:1", "what": "二番目"},
    {"p": 1, "status": "gone", "key": "bad"},
    "junk"], "removed": [1, 2]}', '2026-01-01T00:00:00Z');
+INSERT INTO messages (kind, ref, target, body, result, created_at, herdr_session) VALUES
+ ('send', 'O-1', 'beta', 'first line
+second line', 'sent', '2026-01-01T00:00:00Z', 'default'),
+ ('send', 'O-x', 'beta', '  <b>bold</b> ' || replace(hex(zeroblob(250)), '00', 'う'), 'failed', '2026-01-02T00:00:00Z', 'default'),
+ ('report', 'T-p-1', 'alpha', 'report body', 'busy', '2026-01-02T10:00:00Z', 'default'),
+ ('report', NULL, 'beta', 'report 2', 'failed', '2026-01-03T00:00:00Z', 'default'),
+ ('報 告', 'C-1', 'alpha', '', 'sent', '2026-01-03T00:00:00Z', 'default'),
+ ('send', 'O-2', 'other', 'other session', 'sent', '2026-01-01T00:00:00Z', 'other');
 INSERT INTO agents (herdr_session, name, kind, state, killable, created_by, created_at, updated_at) VALUES
  ('other', 'zeta', 'claude', 'running', 'no', 'human', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
 `
@@ -129,12 +137,15 @@ not json
 const pyRender = `
 import json, sys
 sys.path.insert(0, sys.argv[1])
+from urllib.parse import parse_qs
 from app import views, reqctx, data
 out = {}
 with reqctx.use("default", "default"), data.request_db():
-    for p in json.loads(sys.argv[2]):
-        title, body = views.route(p, {}, {"csrf": "X"})
-        out[p] = [title, body, views.page(title, body, p, data.badge_count(), "<LOGOUT>")]
+    for u in json.loads(sys.argv[2]):
+        p, _, query = u.partition("?")
+        ctx = {"csrf": "X"}
+        title, body = views.route(p, parse_qs(query), ctx)
+        out[u] = [title, body, views.page(title, body, p, data.badge_count(), "<LOGOUT>", refresh=not ctx.get("norefresh"))]
     out["api"] = json.dumps({"items": data.urgent_items(), "poll_sec": data.NOTIFY_POLL_SEC}, ensure_ascii=False)
 print(json.dumps(out))
 `
@@ -145,7 +156,10 @@ func TestPagesMatchPython(t *testing.T) {
 		t.Skip("python3 が無い")
 	}
 	webui := pagesFixture(t)
-	paths := []string{"/notifications", "/outbox", "/sessions"}
+	paths := []string{"/notifications", "/outbox", "/sessions", "/ledger",
+		"/ledger?result=all", "/ledger?result=failed&kind=send", "/ledger?kind=report&target=beta&from=2026-01-02",
+		"/ledger?target=bad%20name&from=2026/01/01&to=x&kind=nope&result=weird", "/ledger?to=2026-01-02&target=&target=alpha",
+		"/ledger?kind=%E5%A0%B1+%E5%91%8A", "/ledger?result=busy&to=2026-01-01"}
 	pj, _ := json.Marshal(paths)
 	c := exec.Command(py, "-c", pyRender, webui, string(pj))
 	raw, err := c.Output()
@@ -159,10 +173,11 @@ func TestPagesMatchPython(t *testing.T) {
 	s := &Server{Log: os.Stderr}
 	q := &rq{name: "default"}
 	defer func() { q.v.close() }() // q.v は途中で作られるので、閉じるときの値を見る
-	for _, p := range paths {
+	for _, u := range paths {
+		p, query, _ := strings.Cut(u, "?")
 		opts := &pageOpts{}
-		title, body := ported[p](s, q, pageCtx{csrf: "X", opts: opts})
-		w := want[p].([]any)
+		title, body := ported[p](s, q, pageCtx{csrf: "X", opts: opts, qs: pyParseQS(query)})
+		w := want[u].([]any)
 		if title != w[0] {
 			t.Errorf("%s title: %q != %q", p, title, w[0])
 		}
@@ -225,6 +240,7 @@ func TestPagesHTTP(t *testing.T) {
 		"/s/default/notifications":     {200, "<h1>緊急通知</h1>"},
 		"/s/default/outbox/":           {200, "<h1>送信 (outbox)</h1>"},
 		"/s/default/sessions":          {200, `<a href="../other/">other</a>`},
+		"/s/default/ledger?kind=send":  {200, `<option value="send" selected>send</option>`},
 		"/s/default/nope":              {404, "<h1>見つかりません</h1>"},
 		"/s/default/tasks":             {501, "Go 版の Web UI にまだありません"},
 		"/s/default/jobs/x":            {501, "Go 版の Web UI にまだありません"},

@@ -506,7 +506,7 @@ func (s *Server) get(q *rq, path, query string) {
 	case "/static/mermaid.min.js":
 		s.staticFile(q, "mermaid.min.js", js)
 	default:
-		s.safe(q, func() { s.route(q, path, logout, a.FormToken("s:"+sh)) })
+		s.safe(q, func() { s.route(q, path, query, logout, a.FormToken("s:"+sh)) })
 	}
 }
 
@@ -534,7 +534,7 @@ var (
 )
 
 // route は views.route(と handler.py の /jobs/<job>)。
-func (s *Server) route(q *rq, path, logout, csrf string) {
+func (s *Server) route(q *rq, path, query, logout, csrf string) {
 	if p, err := url.PathUnescape(path); err == nil {
 		path = p
 	}
@@ -543,7 +543,7 @@ func (s *Server) route(q *rq, path, logout, csrf string) {
 	}
 	opts := &pageOpts{}
 	if fn, ok := ported[path]; ok {
-		title, body := fn(s, q, pageCtx{csrf: csrf, opts: opts})
+		title, body := fn(s, q, pageCtx{csrf: csrf, opts: opts, qs: pyParseQS(query)})
 		s.html(q, 200, s.page(q, title, body, path, logout, *opts))
 		return
 	}
