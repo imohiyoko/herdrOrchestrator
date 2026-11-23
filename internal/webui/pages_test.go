@@ -178,6 +178,22 @@ START=09:00
 END=18:00
 DAYS=daily
 TZ=UTC', 'human', '2026-01-01T00:00:00Z');
+INSERT INTO tasks (id, project, title, status, owner_agent, type, priority, labels, due, sprint_id, points, parent_id, reported_at, deliverables, created_at, updated_at, herdr_session) VALUES
+ ('T-q-1', 'q', 'バグ <i>直す</i> ' || replace(hex(zeroblob(50)), '00', 'い'), 'todo', 'alpha', 'bug', 'highest', '["ui","x y",3]', '2026-03-01', 1, 3, 'T-p-1', '2026-03-01T00:00:00Z', '["/tmp/a","/tmp/b"]', '2026-02-01T10:20:30Z', '2026-03-01T00:00:00.123Z', 'default'),
+ ('T-q-2', 'q', 'done task', 'done', NULL, 'story', 'low', '["ui"]', '2026-03-02', 1, 5, NULL, NULL, 'bad json', '2026-02-01T00:00:00Z', '2026-02-02 00:00:00', 'default'),
+ ('T-q-3', 'q', 'legacy state', 'legacy', '', 'task', 'medium', '[]', '2026-03-06', 1, NULL, NULL, NULL, '[]', '2026-02-01T00:00:00Z', '2026-02-01T00:00:00Z', 'default'),
+ ('T-q-4', 'q', 'stale wip', 'wip', 'beta', 'epic', 'high', '["backend"]', NULL, NULL, NULL, NULL, NULL, '[]', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 'default'),
+ ('T-q-5', 'q', 'other sprint', 'todo', 'beta', 'subtask', 'lowest', '[]', '2026-04-01', 2, 1, 'T-q-1', NULL, '[]', '2026-02-01T00:00:00Z', '2026-03-03T00:00:00Z', 'default');
+INSERT INTO sprints (id, project, name, goal, start_date, end_date, state, created_at, herdr_session) VALUES
+ (1, 'q', 'Sprint <A>', 'goal <x>', '2026-03-01', '2026-03-14', 'active', '2026-02-01T00:00:00Z', 'default'),
+ (2, 'q', 'Sprint B', NULL, NULL, NULL, 'planned', '2026-02-01T00:00:00Z', 'default'),
+ (3, 'p', 'Old', NULL, '2026-01-01', NULL, 'closed', '2026-01-01T00:00:00Z', 'default'),
+ (4, 'z', 'other session', NULL, NULL, NULL, 'active', '2026-01-01T00:00:00Z', 'other');
+INSERT INTO config (herdr_session, key, body, updated_by, updated_at) VALUES
+ ('default', 'labels', 'ui = 画面
+backend # 裏側
+ui
+unused', 'human', '2026-01-01T00:00:00Z');
 INSERT INTO approval_changes (pattern, value, created_at, herdr_session) VALUES
  ('send:task:worker1', 'allow', '2026-01-01T00:00:00Z', 'default'), ('send:info:*', 'ask', '2026-01-02T00:00:00Z', 'default'),
  ('send:task:worker1', 'ask', '2026-01-03T00:00:00Z', 'default'), ('agent:*', 'allow', '2026-01-04T00:00:00Z', 'default'),
@@ -266,7 +282,13 @@ sys.path.insert(0, sys.argv[1])
 from urllib.parse import parse_qs
 from datetime import datetime, timezone
 from app import views, reqctx, data, jobview
-views.next_runs = lambda info: jobview.next_runs(info, now=datetime(2026, 3, 4, 12, 34, 56, tzinfo=timezone.utc))
+FIXED = datetime(2026, 3, 4, 12, 34, 56, tzinfo=timezone.utc)
+views.next_runs = lambda info: jobview.next_runs(info, now=FIXED)
+class FixedDT(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return FIXED.astimezone(tz) if tz else FIXED.astimezone().replace(tzinfo=None)
+views.datetime = FixedDT
 out = {}
 with reqctx.use("default", "default"), data.request_db():
     for u in json.loads(sys.argv[2]):
@@ -277,7 +299,7 @@ with reqctx.use("default", "default"), data.request_db():
             title, body = views.page_job(p[6:], "X", saved=parse_qs(query).get("saved") == ["1"])
         else:
             title, body = views.route(p, parse_qs(query), ctx)
-        out[u] = [title, body, views.page(title, body, p, data.badge_count(), "<LOGOUT>", refresh=not ctx.get("norefresh"))]
+        out[u] = [title, body, views.page(title, body, p, data.badge_count(), "<LOGOUT>", refresh=not ctx.get("norefresh"), scripts=ctx.get("scripts", ()))]
     out["api"] = json.dumps({"items": data.urgent_items(), "poll_sec": data.NOTIFY_POLL_SEC}, ensure_ascii=False)
 print(json.dumps(out))
 `
@@ -299,7 +321,12 @@ func TestPagesMatchPython(t *testing.T) {
 		"/perms?allowed=1&kind=bogus", "/perms?state=unwired", "/perms?pat=send:task:*&val=allow", "/perms?pat=*&val=allow",
 		"/perms?pat=send:info&val=ask", "/perms?pat=bad%20x&val=allow", "/perms?val=deny", "/perms?pat=proxy:write&val=allow",
 		"/jobs", "/jobs/nightly", "/jobs/fine?saved=1", "/jobs/pfile", "/jobs/pin", "/jobs/dupjob", "/jobs/nobody", "/jobs/badjob",
-		"/jobs/shared1", "/jobs/missing"}
+		"/jobs/shared1", "/jobs/missing",
+		"/tasks", "/tasks?view=all", "/tasks?view=closed&sort=due", "/tasks?status=legacy&status=todo&status=todo&status=nope",
+		"/tasks?q=%25_&project=q&owner=~&type=bug&priority=highest&label=ui&due=overdue&days=5&unreported=1&stale=1&sort=priority",
+		"/tasks?due=soon&days=3", "/tasks?due=soon&days=x&view=bad&type=no&priority=no&label=a%20b&owner=bad%20o&sort=nope",
+		"/tasks?stale=1", "/tasks?owner=alpha&q=%E3%83%90%E3%82%B0", "/tasks?sort=id&view=open&label=x%20y",
+		"/board", "/board?sprint=S-2", "/board?sprint=S-9&label=ui", "/board?sprint=bad&label=a%20b", "/board?project=p", "/board?label=backend&project=q"}
 	nowFn = func() time.Time { return time.Date(2026, 3, 4, 12, 34, 56, 0, time.UTC) }
 	defer func() { nowFn = time.Now }()
 	t.Setenv("SCHED_HERDRCTL", buildHerdrctl(t))
@@ -392,7 +419,7 @@ func TestPagesHTTP(t *testing.T) {
 		"/s/default/sessions":          {200, `<a href="../other/">other</a>`},
 		"/s/default/ledger?kind=send":  {200, `<option value="send" selected>send</option>`},
 		"/s/default/nope":              {404, "<h1>見つかりません</h1>"},
-		"/s/default/tasks":             {501, "Go 版の Web UI にまだありません"},
+		"/s/default/tasks":             {200, "<h1>タスク</h1>"},
 		"/s/default/jobs/x":            {404, "<h1>見つかりません</h1>"},
 		"/s/default/agents/x":          {501, "Go 版の Web UI にまだありません"},
 		"/s/default/api/notifications": {200, `"poll_sec": 15}`},
