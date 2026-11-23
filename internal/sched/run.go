@@ -13,6 +13,13 @@ const usage = `usage: herdrctl sched <command>
 commands:
   show <job>   実際に効く設定(定義 + 上書き設定 + SCHED_*)を JSON 1 行で出す(scheduler/bin/show.sh の Go 版)
   tick <job>   この回に実行する回を判定して実行し、logs/<job>.log に記録する(scheduler/bin/tick.sh の Go 版)
+  jobs         ジョブ名の一覧(scheduler/bin/jobs.sh の Go 版)
+  dispatch <job> [<job> ...]
+               複数のジョブの tick を並べて動かす(scheduler/bin/dispatch.sh の Go 版)
+  gen-plist <job> | --dispatch <job> [<job> ...]
+               launchd の plist を作る(scheduler/bin/gen-plist.sh の Go 版)
+  install {install|uninstall|status} <job> | --dispatch
+               launchd に登録する・外す・状態を見る(scheduler/bin/install.sh の Go 版)
 `
 
 // Run は herdrctl sched <args>。終了コードは scheduler に合わせる(die は 2)。
@@ -34,6 +41,21 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			name = args[1]
 		}
 		return Tick(DefaultTickEnv(), name, stdout, stderr)
+	case "jobs":
+		for _, j := range DefaultEnv().JobNames() {
+			fmt.Fprintln(stdout, j)
+		}
+		return 0
+	case "dispatch":
+		return Dispatch(args[1:], stdout, stderr)
+	case "gen-plist":
+		return finish(GenPlist(DefaultEnv(), DefaultTickEnv().LogDir, args[1:], stdout), stderr)
+	case "install":
+		rc, err := Launchd(DefaultEnv(), args[1:], stdout, stderr)
+		if err != nil {
+			return finish(err, stderr)
+		}
+		return rc
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0

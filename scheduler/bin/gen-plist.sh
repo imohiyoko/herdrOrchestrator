@@ -7,6 +7,7 @@
 set -eu
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+sched_go gen-plist "$@"   # SCHED_IMPL=go なら Go 版に渡す
 OUT_DIR="${OUT_DIR:-$SCHED_ROOT/generated}"
 
 if [ "${1:-}" = --dispatch ]; then

@@ -4,6 +4,7 @@
 set -eu
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+sched_go install "$@"   # SCHED_IMPL=go なら Go 版に渡す
 cmd="${1:-}"
 if [ "${2:-}" = --dispatch ]; then JOB=dispatch; else load_job "${2:-}"; fi
 LABEL="$(herdr_label_prefix)sched-$JOB" || exit 2   # TB_INSTANCE 未設定なら従来のラベル

@@ -39,7 +39,8 @@ Go に移すサービスは、`.claude/skills/tb-command-naming` の形(`tb <サ
 | 5 | recipe | 部品の `parts` / `part-check` / `part-risk`、レシピの登録と読み取り `recipe-set` / `recipe-rm` / `recipe-list` / `recipe-show` / `recipe-history`(部品の表は `internal/recipe` と recipes.sh の両方に置き、`go test` が同じかを確かめる)、実行の `recipe-run` / `recipe-runner` / `recipe-queue` / `recipe-cancel`(判定・待ち行列・外の実行役)。新しい名前 `tb recipe <動詞>` と `tb recipe part list/check/risk` も足した | 済み(`tb recipe` だけ・help の使い方の表示は bash) |
 | 6 | scheduler の読み込み | `herdrctl sched show`(scheduler/bin/show.sh の Go 版。`SCHED_IMPL=go` で show.sh が渡す)。ジョブ定義(conf)は bash として実行せず、決まった書き方(KEY=値。値は `'…'` / `"…"` / 引用なし)だけを読み、展開(`$` や `` ` ``)・コマンド・知らないキーは拒む。CI の scheduler contract が scheduler のテストを `SCHED_IMPL=go` で流す | 済み(既定は bash のまま) |
 | 6 | scheduler の判定・実行 | `herdrctl sched tick`(scheduler/bin/tick.sh の Go 版。`SCHED_IMPL=go` で tick.sh が渡すので、dispatch.sh から動かすジョブも Go になる)。曜日・時間帯・間隔・一時停止の判定、GATE・COMMAND(ロック・時間切れ)・PROMPT_CMD / PROMPT_RULES / PROMPT_VARS、herdr の状態の確かめと tb system-send での送信、ログの 1 行の形と理由の文言は tick.sh と同じ。時間切れはプロセスグループごと止める | 済み(既定は bash のまま) |
-| 6 | scheduler の起動器 / webui | dispatch.sh・gen-plist.sh・install.sh・jobs.sh、webui | まだ(ADR 0002 の手順 4・5) |
+| 6 | scheduler の起動器 | `herdrctl sched jobs` / `dispatch` / `gen-plist` / `install`(jobs.sh・dispatch.sh・gen-plist.sh・install.sh の Go 版。`SCHED_IMPL=go` で各スクリプトが lib.sh の `sched_go` から渡す)。dispatch はジョブごとに `herdrctl sched tick` を別のプロセスで並べる。plist の中身・ラベル・メッセージは bash 版と同じ | 済み(既定は bash のまま) |
+| 6 | webui | webui | まだ(ADR 0002 の手順 5) |
 
 サービスのコマンドより先に、ほかのサービスが使う部品だけを移すことがある(例: approval の PR で `internal/agents` の役割の引き方と `internal/message` の届け方)。そのサービスのコマンドはまだ bash のままで、移す PR でこの部品を使う。
 
