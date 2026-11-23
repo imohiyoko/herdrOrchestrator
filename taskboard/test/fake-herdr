@@ -56,6 +56,14 @@ case "$1 $2" in
     printf '{"result":{"workspaces":%s},"type":"workspace_list"}\n' "${FAKE_WORKSPACES:-[]}";;
   "workspace close")
     echo "workspace-close $3" >>"${FAKE_LOG:?}";;
+  "pane process-info")
+    # 呼び出し元の確かめ(ADR 0007 段 1a)用。呼んだ tb の HERDR_PANE_ID の pane だけ、テストのプロセス(TB_TEST_SHELL_PID)を最初のプロセスとして返す
+    # (テストの tb はその子孫なので「その pane の中」になる)。ほかの pane は誰の祖先でもない pid。FAKE_SHELL_PID で差し替え、FAKE_PINFO_FAIL=1 で失敗
+    [[ ${FAKE_PINFO_FAIL:-0} == 1 ]] && { echo '{"error":{"code":"x"}}'; exit 1; }
+    if [[ -n ${FAKE_SHELL_PID:-} ]]; then sp=$FAKE_SHELL_PID
+    elif [[ $3 == "${HERDR_PANE_ID:-}" && -n ${TB_TEST_SHELL_PID:-} ]]; then sp=$TB_TEST_SHELL_PID
+    else sp=999999; fi
+    printf '{"result":{"process_info":{"pane_id":"%s","shell_pid":%s,"foreground_processes":[]},"type":"pane_process_info"}}\n' "$3" "$sp";;
   "pane close")
     echo "pane-close $3" >>"${FAKE_LOG:?}"
     [[ ${FAKE_CLOSE_RC:-0} == 0 ]] && echo "$3" >>"$FAKE_LOG.closed"
