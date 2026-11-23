@@ -7,9 +7,16 @@
 # launchd は毎分起動する。実行するかどうか(曜日・時間帯・間隔・一時停止)はここで判定するので、
 # 間隔や時間帯を変えても plist を作り直す必要はない。対象外の回は(DRY_RUN 以外では)何も記録しない。
 # 判定は秒単位。起動した分の中に刻みの回が複数ある(INTERVAL_SEC が 60 未満など)ときは、その時刻まで待って順に実行する。
+# SCHED_IMPL=go なら Go 版(herdrctl sched tick。conf は決まった書き方だけを読み、展開は拒む)に渡す。herdrctl は SCHED_HERDRCTL > TB_HERDRCTL > PATH
 set -u
+_hc=${SCHED_HERDRCTL:-${TB_HERDRCTL:-}}; [ -n "$_hc" ] || _hc=$(command -v herdrctl 2>/dev/null) || _hc=""
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+if [ "${SCHED_IMPL:-bash}" = go ]; then
+  [ -n "$_hc" ] && command -v "$_hc" >/dev/null 2>&1 || die "SCHED_IMPL=go ですが herdrctl が見つかりません"
+  SCHED_ROOT=$SCHED_ROOT JOBS_DIR=$JOBS_DIR SCHED_SETTINGS_DIR=$SETTINGS_DIR TB_DB=$SCHED_DB LOG_DIR=$LOG_DIR HERDR_BIN=$HERDR \
+    TB_BIN="${TB_BIN:-$SCHED_ROOT/../taskboard/bin/tb}" exec "$_hc" sched tick "$@"
+fi
 # 定義が DB に無いジョブ(jobs/*.conf を取り込んでいないなど)は動かさず、failed を記録する(Web UI の一覧と logs/<job>.log で見える)。
 # 毎分起動されるので、同じ理由が最後の記録なら書き足さない
 if [[ "${1:-}" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] && ! sched_files_ok && ! sched_db_body "sched-job:$1" >/dev/null; then
