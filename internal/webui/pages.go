@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 )
 
 // pages.go は webui/app/views.py の Go 版(画面の枠と、移し終えた画面)。
@@ -147,7 +146,7 @@ func (v *sv) outboxRows() []outboxRow {
 			taskID: Clean(or(o["task_id"], "")), status: Clean(pyStr(o["status"])), text: short(o["text"], 80)}
 		if t, ok := parseTS(o["created_at"]); ok {
 			r.hasAge = true
-			r.age = int(time.Since(t).Seconds())
+			r.age = int(nowFn().Sub(t).Seconds())
 			if r.age < 0 {
 				r.age = 0
 			}

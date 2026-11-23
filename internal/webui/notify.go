@@ -94,7 +94,7 @@ func stalled(a map[string]any, act row) bool {
 	if s, ok := parseTS(act["last_stop_at"]); ok && !s.Before(p) {
 		return false
 	}
-	return time.Since(p) > stallMin*time.Minute
+	return nowFn().Sub(p) > stallMin*time.Minute
 }
 
 // ---- tb reminder publish の結果(notify_seen の reminders:last)
