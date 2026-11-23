@@ -1,9 +1,15 @@
 #!/bin/bash
 # 使い方: show.sh <job>   実際に効く設定(conf + settings + SCHED_*)を JSON 1 行で出す。Web UI が使う
 # interval_sec は間隔(秒)。interval_min は 60 で割り切れるときだけ数値で、そうでなければ null
+# SCHED_IMPL=go なら Go 版(herdrctl sched show。conf は決まった書き方だけを読み、展開は拒む)に渡す。herdrctl は SCHED_HERDRCTL > TB_HERDRCTL > PATH
 set -eu
+_hc=${SCHED_HERDRCTL:-${TB_HERDRCTL:-}}; [ -n "$_hc" ] || _hc=$(command -v herdrctl 2>/dev/null) || _hc=""
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+if [ "${SCHED_IMPL:-bash}" = go ]; then
+  [ -n "$_hc" ] && command -v "$_hc" >/dev/null 2>&1 || die "SCHED_IMPL=go ですが herdrctl が見つかりません"
+  SCHED_ROOT=$SCHED_ROOT JOBS_DIR=$JOBS_DIR SCHED_SETTINGS_DIR=$SETTINGS_DIR TB_DB=$SCHED_DB exec "$_hc" sched show "$@"
+fi
 load_job "${1:-}"
 days_to_nums >/dev/null
 jq -nc --arg job "$JOB" --arg kind "$([ -n "${COMMAND:-}" ] && echo command || echo prompt)" --arg target "${TARGET:-}" \

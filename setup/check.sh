@@ -8,12 +8,13 @@
 # 終了コード: warn も missing もなければ 0、あれば 1。
 #
 # このスクリプトはファイルを作らず、書き換えず、launchctl は print だけを使う。
-# 環境変数(テスト用の差し替え): SETUP_ROOT(リポジトリ) HOME HERDR_BIN LAUNCHCTL_BIN LAUNCH_AGENTS_DIR
+# 環境変数(テスト用の差し替え): SETUP_ROOT(リポジトリ) HOME HERDR_BIN TB_HERDRCTL LAUNCHCTL_BIN LAUNCH_AGENTS_DIR
 #   SETUP_UNAME(uname -s の結果)
 set -u
 
 ROOT="${SETUP_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 HERDR="${HERDR_BIN:-herdr}"
+HERDRCTL="${TB_HERDRCTL:-herdrctl}"   # bin/tb と同じ(TB_HERDRCTL があればそれ)
 LAUNCHCTL="${LAUNCHCTL_BIN:-launchctl}"
 LA_DIR="${LAUNCH_AGENTS_DIR:-$HOME/Library/LaunchAgents}"
 LABEL_PREFIX="local.herdr-${TB_INSTANCE:+$TB_INSTANCE-}"   # lib/herdr-env.sh の herdr_label_prefix と同じ規則(未設定なら従来のラベル)
@@ -61,6 +62,18 @@ if have "$HERDR"; then
 else
   report missing "cmd:herdr" "PATH にない" "herdr をインストールする"
   report skip "herdr:server" "herdr がないので確認できない"
+fi
+# herdrctl(Go の tb。ADR 0002)。認可と呼び出し元の確かめを持つ版があれば tb は Go で動く。無ければ bash で動く(bash は後で外す)
+HC_NEXT="このリポジトリで go build -o <PATH の通ったディレクトリ>/herdrctl ./cmd/herdrctl(Go が要る)、または GitHub の release から herdrctl を入れる"
+if have "$HERDRCTL"; then
+  hcf=$("$HERDRCTL" tb --features 2>/dev/null) || hcf=""
+  if [[ " $hcf " == *" policy-ops "* && " $hcf " == *" auth "* ]]; then   # bin/tb の tb_impl_resolve と同じ条件
+    report ok "cmd:herdrctl" "$(command -v "$HERDRCTL")(tb は Go で動く)"
+  else
+    report warn "cmd:herdrctl" "古い版(認可と呼び出し元の確かめが無いので、tb は bash で動く): $(command -v "$HERDRCTL")" "入れ直す: $HC_NEXT"
+  fi
+else
+  report warn "cmd:herdrctl" "PATH にない(tb は bash で動く。bash の実装は後で外す)" "$HC_NEXT"
 fi
 if is_mac; then
   if have plutil; then report ok "cmd:plutil" "$(command -v plutil)"

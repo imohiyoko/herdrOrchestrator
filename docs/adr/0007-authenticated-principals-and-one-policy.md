@@ -39,7 +39,7 @@
 
 関係のデータ(`org` の組織図、spawn の親子、役割)は、`grants` と `delivery` の対象の書き方(`~child` `~report` `@worker` など)で使われる。
 
-認可ではないもの: `limits`(数の上限)、`risk-rules`(リスクの表示。第 1 段は判定に使わない)、`gate`(merge の参考値)、`delivery` の hold(届け方)。
+認可ではないもの: `limits`(数の上限)、`risk-rules`(リスクの表示。第 1 段は判定に使わない)、`gate`(merge の参考値)、`delivery` の hold(届け方)。段 3b をやめたため、`routes` / `delivery`(経路)、`protect`(安全装置)、`spawn-policy`(子の上限と条件)、proxy check(コマンドの中身の判定)も policy の外に残す(下の「段 3 の進み具合」)。
 
 ## 決定
 
@@ -134,7 +134,12 @@ lead1        approve:agent:stop  ~report      = allow       # 旧 grants の app
   - 記録(`requested_by` など)は今は `human` のまま。`tb can` は system の主体をまだ受けない
   - hook(`touch`・`role-context`)は認可を通らないので、主体は要らない(必要になったら `TB_SYSTEM=hook` で同じ形にする)
 
-- **段 3b(これから)**: `routes` / `delivery` の許可・拒否、`protect`、spawn の方針の自動承認、proxy check を policy に移し、古い仕組みを消す
+- **段 3b(やめた。2026-11-23 の人の決定)**: `routes` / `delivery`、`protect`、`spawn-policy`、proxy check は policy に移さず、認可ではない仕組みとして残す。調べた結果、どれも今の policy の形(主体 × 操作 × 対象、当たる行のいちばん厳しい効果、操作ごとに 1 つの既定)に入れると振る舞いが変わるか、判定を広げる必要があった
+  - `protect`: 人の操作も止める安全装置(`--force` でも止めない)。policy は人を常に通すので、移すと人に効かなくなる
+  - proxy check: コマンドの中身(許可リストと危ない構文)を見る判定で、主体と対象では書けない
+  - `spawn-policy`: 大半は数の上限・深さ・モデル(`limits` と同じ種類)。役割と親の条件だけを移しても、規則が 2 か所に分かれる
+  - `routes` / `delivery`: 既定が「指揮官だけ送れる」で、送り手によって既定が変わる。いちばん厳しい効果で決める形では「全員止めて指揮官だけ通す」が書けない(主体ごとの既定が要る)
+  - 送信は、`delivery` / `routes` で経路(now / hold / block)を決めたうえで、policy の `send:<種別>` で認可(allow / ask-* / deny)を決める。この 2 段のまま
 
 ### 段 4 の進み具合(2026-11-23)
 
