@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -484,6 +485,8 @@ func TestPagesGolden(t *testing.T) {
 		}
 	}
 	norm = strings.ReplaceAll(norm, strings.Repeat("あ", 1000), "@あx1000@") // 大きいファイル(big.txt)の中身
+	// 本文の版(編集フォームの base)は本文から作るので、checkout の場所を含む本文では実行ごとに違う
+	norm = regexp.MustCompile(`name=base value=\\"[0-9a-f]{32}\\"`).ReplaceAllString(norm, `name=base value=\"@HASH@\"`)
 	var got map[string]any
 	json.Unmarshal([]byte(norm), &got)
 	golden(t, "pages", got)
