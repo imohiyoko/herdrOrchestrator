@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/herdr"
 )
 
 // herdr.go は webui/app/herdr.py の Go 版(herdr CLI の呼び出し。読むだけ)と短いキャッシュ。
@@ -57,14 +59,6 @@ func cached[T any](sess, key string, fn func() T) T {
 	return v
 }
 
-// HerdrBin は HERDR_BIN(既定は PATH の herdr)。
-func HerdrBin() string {
-	if b := os.Getenv("HERDR_BIN"); b != "" {
-		return b
-	}
-	return "herdr"
-}
-
 // childEnv は reqctx.child_env: herdr / tb の子プロセスに渡す環境。プロセスのセッションと違うときは HERDR_SESSION で明示する。
 func childEnv(sess string) []string {
 	env := os.Environ()
@@ -95,7 +89,7 @@ func childEnv(sess string) []string {
 func runHerdr(sess string, args ...string) (string, string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	c := exec.CommandContext(ctx, HerdrBin(), args...)
+	c := exec.CommandContext(ctx, herdr.Bin(), args...) // 実体の場所は herdr アダプタ(kernel/herdr)の Bin と同じ
 	c.Env = childEnv(sess)
 	var out, errb bytes.Buffer
 	c.Stdout, c.Stderr = &out, &errb
