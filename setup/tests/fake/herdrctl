@@ -1,0 +1,5 @@
+#!/bin/sh
+# 疑似の herdrctl。FAKE_HERDRCTL_FEATURES で tb --features の答えを変える(既定は今の版)
+echo "fake-herdrctl $*" >>"${FAKE_LOG:-/dev/null}"
+if [ "$1 $2" = "tb --features" ]; then echo "${FAKE_HERDRCTL_FEATURES-perms policy policy-ops auth}"; exit 0; fi
+exit 2

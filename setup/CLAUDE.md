@@ -39,6 +39,7 @@ worker のプロジェクトが presets に書かれていないときは `bash 
 ### 1. コマンド(`cmd:*`)
 足りないものを伝え、インストール方法(`brew install sqlite3 jq` など)を示す。インストールは利用者に実行してもらう
 (パッケージマネージャを勝手に動かさない)。herdr と Claude Code は各配布元の手順に従う。
+`cmd:herdrctl`(Go の tb)が無い・古いときは、このリポジトリで `go build -o <PATH の通ったディレクトリ>/herdrctl ./cmd/herdrctl`(Go が要る)か、GitHub の release から入れる方法を示す。これも利用者に実行してもらう。入れると tb は Go で動く(無ければ bash で動くが、bash の実装は後で外す)。
 
 ### 2. 自分用のプリセット(`presets`)
 `presets/example.conf` を見せながら、どんな agent の workspace をどう並べたいかを聞いて

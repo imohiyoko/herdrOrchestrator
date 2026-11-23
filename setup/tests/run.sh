@@ -39,7 +39,8 @@ fresh() {
   for c in $CORE jq; do ln -s "$(command -v "$c")" "$B/$c"; done
   for c in python3 claude plutil; do ln -s "$HERE/fake/stub" "$B/$c"; done
   ln -s "$SQLITE" "$B/sqlite3"
-  ln -s "$HERE/fake/herdr" "$B/herdr"; ln -s "$HERE/fake/launchctl" "$B/launchctl"
+  ln -s "$HERE/fake/herdr" "$B/herdr"; ln -s "$HERE/fake/launchctl" "$B/launchctl"; ln -s "$HERE/fake/herdrctl" "$B/herdrctl"
+  unset FAKE_HERDRCTL_FEATURES
   export FAKE_LOADED="local.herdr-sched-taskboard-digest local.herdr-webui" FAKE_HERDR_DOWN=0 FAKE_LOG="$W/calls.log"
   OSNAME=Darwin
 }
@@ -54,6 +55,7 @@ hook_json() {
 run() {
   OUT=$(env -i PATH="$B" HOME="$H" SETUP_ROOT="$R" LAUNCH_AGENTS_DIR="$LA" SETUP_UNAME="$OSNAME" \
     FAKE_LOADED="$FAKE_LOADED" FAKE_HERDR_DOWN="$FAKE_HERDR_DOWN" FAKE_LOG="$FAKE_LOG" \
+    ${FAKE_HERDRCTL_FEATURES+FAKE_HERDRCTL_FEATURES="$FAKE_HERDRCTL_FEATURES"} \
     "$B/bash" "$CHECK" "$@" 2>&1)
   RC=$?
 }
@@ -99,6 +101,9 @@ has "herdr がない" missing cmd:herdr; has "herdr がないと server は skip
 fresh; FAKE_HERDR_DOWN=1; run
 has "server が止まっている" warn herdr:server; rc_is "warn だけでも終了コード 1" 1
 fresh; rm "$B/plutil"; run; has "macOS で plutil がない" warn cmd:plutil
+fresh; run; has "herdrctl があれば tb は Go" ok cmd:herdrctl "Go で動く"
+fresh; rm "$B/herdrctl"; run; has "herdrctl がない" warn cmd:herdrctl "PATH にない"; rc_is "herdrctl がなければ終了コード 1" 1
+fresh; FAKE_HERDRCTL_FEATURES="perms policy"; run; has "古い herdrctl" warn cmd:herdrctl "古い版"
 fresh; rm "$B/plutil"; OSNAME=Linux; run; hasnt "macOS 以外は plutil を見ない" warn cmd:plutil
 
 # --- tb-hook ---
