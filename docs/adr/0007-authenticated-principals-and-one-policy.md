@@ -127,7 +127,7 @@ lead1        approve:agent:stop  ~report      = allow       # 旧 grants の app
   - `HERDR_PANE_ID` が無くても、herdr の中(祖先か、同じ端末の持ち主の親に herdr のプロセスがいる)なら agent の pane を探し、見つかれば `HERDR_PANE_ID` を付け直す。`HERDR_PANE_ID` を消して人のふりをする、を止める。どの agent の pane でもなければ人の pane
   - 確かめられないとき(申告した pane の中にいない、herdr に聞けない)は何もしない(`identity.unverified`、終了コード 3)。hook(`touch`、`role-context`)は止めない
   - herdr の外(人の端末・scheduler・Web UI)は今までどおり人
-- **許容すること(段 1a で止めないもの)**: 親子関係と端末の両方を切る実行(`setsid` と新しい端末)、`HERDR_BIN` などで偽の herdr を使わせる、tb を書き換えて実行する、DB に直接書く。どれも同じ OS ユーザーで動く限り tb の中では止められない。止めるには OS のユーザーを分ける(代替案 C)
+- **許容すること(段 1a で止めないもの)**: 親子関係と端末の両方を切る実行(`setsid` と新しい端末)、`HERDR_BIN` などで偽の herdr を使わせる、tb を書き換えて実行する、DB に直接書く。どれも同じ OS ユーザーで動く限り tb の中では止められない。Windows(herdrctl)では ps が無いため確かめず、段 1a より前と同じく `HERDR_PANE_ID` を信じる。止めるには OS のユーザーを分ける(代替案 C)
 - **これから**: scheduler・hook の主体 `system:<名前>` と、policy の `system:` の行
 
 - **段 3b(これから)**: `routes` / `delivery` の許可・拒否、`protect`、spawn の方針の自動承認、proxy check を policy に移し、古い仕組みを消す

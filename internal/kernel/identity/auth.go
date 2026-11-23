@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -111,7 +112,11 @@ func (p *procs) inPane(pane string, me int, anc map[int]bool) int {
 
 // Authenticate は呼び出し元を確かめる。確かめられなければ理由を返す(呼ぶ側は何もせず終了コード 3)。
 // herdr の中で HERDR_PANE_ID が無ければ、見つけた agent の pane を HERDR_PANE_ID に入れる。
+// Windows には ps が無いので確かめない(段 1a より前と同じく HERDR_PANE_ID を信じる。ADR 0007 の許容すること)。
 func Authenticate() (state, errMsg string) {
+	if runtime.GOOS == "windows" {
+		return "unchecked", ""
+	}
 	p, ok := snapshot()
 	if !ok {
 		return "", "プロセスの一覧(ps)を読めないため、呼び出し元を確かめられません"
