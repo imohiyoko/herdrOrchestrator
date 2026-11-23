@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -20,6 +21,13 @@ import (
 )
 
 var errBadList = errors.New("agent list")
+
+// System は system:<名前> の主体(ADR 0007。bash の AUTH_SYSTEM)。herdr の外から、起動の仕組み(scheduler の tick.sh)が
+// TB_SYSTEM=<名前> を付けて呼んだときだけ入る。印は自己申告だが、herdr の外の呼び出しは元から人なので、名乗っても権限は増えない
+// (policy の system: の行で締まるだけ)。herdr の中では使わない。
+var System string
+
+var reSystem = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
 type procs struct {
 	ppid map[int]int
@@ -117,6 +125,7 @@ func (p *procs) inPane(pane string, me int, anc map[int]bool) int {
 // herdr の中で HERDR_PANE_ID が無ければ、見つけた agent の pane を HERDR_PANE_ID に入れる。
 // Windows には ps が無いので確かめない(段 1a より前と同じく HERDR_PANE_ID を信じる。ADR 0007 の許容すること)。
 func Authenticate() (state, errMsg string) {
+	System = ""
 	if runtime.GOOS == "windows" {
 		return "unchecked", ""
 	}
@@ -137,6 +146,12 @@ func Authenticate() (state, errMsg string) {
 		}
 	}
 	if !p.insideHerdr(me, anc) {
+		if n := os.Getenv("TB_SYSTEM"); n != "" {
+			if !reSystem.MatchString(n) {
+				return "", "TB_SYSTEM は英小文字・数字・- の名前です: " + n
+			}
+			System = "system:" + n
+		}
 		return "outside", ""
 	}
 	out, err := herdr.Call("agent", "list")

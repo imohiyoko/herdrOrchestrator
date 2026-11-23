@@ -77,7 +77,7 @@ eq "perms: rows with an unknown effect or without 3 columns are ignored (default
 printf 'human cmd:ticket:show * = deny\n' >"$TB_POLICY"
 eq "perms: rows for human do not apply (agent default allow)" "$(rc $TB show "$t1")" "0"
 eq "perms: rows for human do not stop a human" "$(env -u HERDR_PANE_ID bash -c "$TB show $t1 >/dev/null 2>&1; echo \$?")" "0"
-eq "perms: config set refuses a human row" "$(printf 'human cmd:ticket:show * = deny\n' | env -u HERDR_PANE_ID $TB config set policy 2>&1 >/dev/null | grep -c '主体 human の行はまだ効きません')" "1"
+eq "perms: config set refuses a human row" "$(printf 'human cmd:ticket:show * = deny\n' | env -u HERDR_PANE_ID $TB config set policy 2>&1 >/dev/null | grep -c '主体 human の行は効きません')" "1"
 eq "perms: config set refuses an unknown effect" "$(printf 'pw1 cmd:ticket:show * = maybe\n' | env -u HERDR_PANE_ID $TB config set policy 2>&1 >/dev/null | grep -c '効果は allow / ask-any / ask-human / deny')" "1"
 if [[ $(id -u) != 0 ]]; then
   printf 'pw1 cmd:ticket:show * = allow\n' >"$TB_POLICY"; chmod 000 "$TB_POLICY"

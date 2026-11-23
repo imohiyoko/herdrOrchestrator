@@ -48,6 +48,16 @@ requester() {
 # (HERDR_PANE_ID を消して人のふりをする、を止める)。herdr の外(人の端末・scheduler・Web UI)は今までどおり。
 # 確かめられないときは、呼び出し元が分からない(unknown)として何もしない(終了コード 3)。
 # 限界: 同じ OS ユーザーの agent が、わざと親子関係と端末を切って(setsid と新しい端末)実行したり、tb を書き換えて実行したりするのは止められない(ADR 0007)。
+# system:<名前>(ADR 0007): herdr の外から、起動の仕組み(scheduler の tick.sh)が TB_SYSTEM=<名前> を付けて呼んだもの。
+# 印は自己申告だが、herdr の外の呼び出しは元から人なので、名乗っても権限は増えない(policy の system: の行で締まるだけ)。
+# herdr の中(agent の pane・人の pane)では使わない。hook(touch / role-context)は認可を通らないので主体は要らない。
+AUTH_SYSTEM=""
+_auth_system() {
+  AUTH_SYSTEM=""
+  [[ -n ${TB_SYSTEM:-} ]] || return 0
+  [[ $TB_SYSTEM =~ ^[a-z][a-z0-9-]*$ ]] || { AUTH_ERR="TB_SYSTEM は英小文字・数字・- の名前です: $TB_SYSTEM"; return 1; }
+  AUTH_SYSTEM=system:$TB_SYSTEM
+}
 AUTH_STATE=""   # pane(pane を確かめた)/ found(pane を探して付け直した)/ outside(herdr の外)
 declare -A _AU_PPID=() _AU_TTY=() _AU_COMM=()
 _auth_snapshot() {
@@ -96,7 +106,7 @@ authenticate() {
       *) AUTH_ERR="HERDR_PANE_ID=$claim の pane の中から実行されていません(呼び出し元を確かめられないため、何もしません)"; return 1;;
     esac
   fi
-  if ! _auth_inside_herdr; then AUTH_STATE=outside; return 0; fi
+  if ! _auth_inside_herdr; then AUTH_STATE=outside; _auth_system || return 1; return 0; fi
   # herdr の中なのに HERDR_PANE_ID が無い: agent の pane を探す。どれにも当たらなければ人の pane
   out=$(herdr_call agent list 2>/dev/null) && jq -e '.result.agents | type == "array"' >/dev/null 2>&1 <<<"$out" \
     || { AUTH_ERR="herdr agent list に失敗したため、呼び出し元を確かめられません"; return 1; }

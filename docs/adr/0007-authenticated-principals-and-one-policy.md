@@ -105,7 +105,7 @@ lead1        approve:agent:stop  ~report      = allow       # 旧 grants の app
 
 | 段 | 内容 | 振る舞い |
 |---|---|---|
-| 1 | 認証: tb が「呼び出し元はその pane の中か」を herdr の pane process-info とプロセスの親子で確かめる(段 1a。herdr は変えない)。Web UI と scheduler の印 | 主体の決め方だけが変わる。`HERDR_PANE_ID` を消しても人にはなれない |
+| 1 | 認証: tb が「呼び出し元はその pane の中か」を herdr の pane process-info とプロセスの親子で確かめる(段 1a。herdr は変えない)。scheduler は `system:scheduler`(済み)。Web UI の印 | 主体の決め方だけが変わる。`HERDR_PANE_ID` を消しても人にはなれない |
 | 2 | `policy` の表と `authorize`。PR 197 の門の中身を替える | 既定の表で、今と同じ |
 | 3 | `tb policy import` と、コマンドの中の判定の置き換え。古いキーと関数を消す | 変換した行で、今と同じ |
 | 4 | 承認待ちを 1 つにする(ask-any / ask-human の承認) | ask-* が exit 20 で止まる代わりに、承認待ちになる |
@@ -128,7 +128,11 @@ lead1        approve:agent:stop  ~report      = allow       # 旧 grants の app
   - 確かめられないとき(申告した pane の中にいない、herdr に聞けない)は何もしない(`identity.unverified`、終了コード 3)。hook(`touch`、`role-context`)は止めない
   - herdr の外(人の端末・scheduler・Web UI)は今までどおり人
 - **許容すること(段 1a で止めないもの)**: 親子関係と端末の両方を切る実行(`setsid` と新しい端末)、`HERDR_BIN` などで偽の herdr を使わせる、tb を書き換えて実行する、DB に直接書く。どれも同じ OS ユーザーで動く限り tb の中では止められない。Windows(herdrctl)では ps が無いため確かめず、段 1a より前と同じく `HERDR_PANE_ID` を信じる。止めるには OS のユーザーを分ける(代替案 C)
-- **これから**: scheduler・hook の主体 `system:<名前>` と、policy の `system:` の行
+- **system:<名前>(済み)**: scheduler(`scheduler/bin/tick.sh`)は tb を `TB_SYSTEM=scheduler` を付けて呼び、herdr の外からの呼び出しなら主体は `system:scheduler` になる
+  - 印は自己申告のまま(署名しない)。herdr の外の呼び出しは元から人なので、名乗っても権限は増えず、policy の `system:` の行で締まるだけ。herdr の中(agent の pane・人の pane)では `TB_SYSTEM` を使わない(agent が名乗っても agent のまま)
+  - 判定: system の主体には、主体が `system:` の行(`system:scheduler`、`system:*` など)だけが当たる。主体 `*` の行は agent 向けなので当てない。関係(`~child` など・`self`)は持たない。当たる行が無ければ人と同じく通る(入れた時点の振る舞いは今と同じ)
+  - 記録(`requested_by` など)は今は `human` のまま。`tb can` は system の主体をまだ受けない
+  - hook(`touch`・`role-context`)は認可を通らないので、主体は要らない(必要になったら `TB_SYSTEM=hook` で同じ形にする)
 
 - **段 3b(これから)**: `routes` / `delivery` の許可・拒否、`protect`、spawn の方針の自動承認、proxy check を policy に移し、古い仕組みを消す
 
