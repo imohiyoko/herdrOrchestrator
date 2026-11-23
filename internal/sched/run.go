@@ -14,19 +14,19 @@ const usage = `usage: herdrctl sched <command>
 
 commands:
   --features   受け持てるものを空白区切りで出す
-  lint <job>   標準入力のジョブ定義を Go 版が読めるかを確かめる(上書き設定と SCHED_* は今のものを使う。setup/check.sh が使う)
-  show <job>   実際に効く設定(定義 + 上書き設定 + SCHED_*)を JSON 1 行で出す(scheduler/bin/show.sh の Go 版)
-  tick <job>   この回に実行する回を判定して実行し、logs/<job>.log に記録する(scheduler/bin/tick.sh の Go 版)
-  jobs         ジョブ名の一覧(scheduler/bin/jobs.sh の Go 版)
+  lint <job>   標準入力のジョブ定義を読めるかを確かめる(上書き設定と SCHED_* は今のものを使う。setup/check.sh が使う)
+  show <job>   実際に効く設定(定義 + 上書き設定 + SCHED_*)を JSON 1 行で出す(scheduler/bin/show.sh が渡す)
+  tick <job>   この回に実行する回を判定して実行し、logs/<job>.log に記録する(scheduler/bin/tick.sh が渡す)
+  jobs         ジョブ名の一覧(scheduler/bin/jobs.sh が渡す)
   dispatch <job> [<job> ...]
-               複数のジョブの tick を並べて動かす(scheduler/bin/dispatch.sh の Go 版)
+               複数のジョブの tick を並べて動かす(scheduler/bin/dispatch.sh が渡す)
   gen-plist <job> | --dispatch <job> [<job> ...]
-               launchd の plist を作る(scheduler/bin/gen-plist.sh の Go 版)
+               launchd の plist を作る(scheduler/bin/gen-plist.sh が渡す)
   install {install|uninstall|status} <job> | --dispatch
-               launchd に登録する・外す・状態を見る(scheduler/bin/install.sh の Go 版)
+               launchd に登録する・外す・状態を見る(scheduler/bin/install.sh が渡す)
 `
 
-// Features は Go 版が受け持てるもの(scheduler/bin/lib.sh の sched_go が、既定で Go にしてよいかをこれで決める)。
+// Features は受け持てるもの(scheduler/bin/lib.sh の sched_go が、このサブコマンドがあるかをこれで確かめる。無ければ herdrctl が古い)。
 var Features = []string{"show", "tick", "jobs", "dispatch", "gen-plist", "install", "lint"}
 
 // Run は herdrctl sched <args>。終了コードは scheduler に合わせる(die は 2)。

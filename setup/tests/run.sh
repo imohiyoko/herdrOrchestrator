@@ -104,12 +104,12 @@ fresh; rm "$B/plutil"; run; has "macOS で plutil がない" warn cmd:plutil
 fresh; run; has "herdrctl があれば ok" ok cmd:herdrctl "$B/herdrctl"
 fresh; rm "$B/herdrctl"; run; has "herdrctl がない" missing cmd:herdrctl "PATH にない"; rc_is "herdrctl がなければ終了コード 1" 1
 fresh; FAKE_HERDRCTL_FEATURES="perms policy"; run; has "古い herdrctl" missing cmd:herdrctl "古い版"
-# Go 版の scheduler(既定)が DB の定義を読めるか(herdrctl sched lint)
+# scheduler(herdrctl sched)が DB の定義を読めるか(herdrctl sched lint)
 fresh; FAKE_SCHED_FEATURES="show tick lint"; run; has "Go 版が読める定義は ok" ok job:taskboard-digest "DB に定義あり"
 fresh; FAKE_SCHED_FEATURES="show tick lint"; sjob taskboard-digest 'COMMAND=$(id)'; run
-has "Go 版が読めない定義は warn" warn job:taskboard-digest "Go 版の scheduler が読めない"; has "読めない理由を出す" warn job:taskboard-digest "展開は使えない"
+has "Go 版が読めない定義は warn" warn job:taskboard-digest "scheduler が読めない"; has "読めない理由を出す" warn job:taskboard-digest "展開は使えない"
 fresh; FAKE_SCHED_FEATURES="show tick lint"; FAKE_LINT_MSG="taskboard-digest: settings の ENABLED は 0 か 1"; run
-has "上書き設定の誤りは上書き設定の誤りとして出す" warn job:taskboard-digest "上書き設定を Go 版"
+has "上書き設定の誤りは上書き設定の誤りとして出す" warn job:taskboard-digest "上書き設定を scheduler が読めない"
 fresh; sjob taskboard-digest 'COMMAND=$(id)'; run; has "sched lint の無い herdrctl なら見ない" ok job:taskboard-digest "DB に定義あり"
 fresh; rm "$B/plutil"; OSNAME=Linux; run; hasnt "macOS 以外は plutil を見ない" warn cmd:plutil
 

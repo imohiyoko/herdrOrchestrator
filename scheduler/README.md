@@ -6,7 +6,7 @@ launchd が `bin/tick.sh <job>` を毎分起動し、時間帯・曜日・間隔
 
 ## ジョブの足し方
 
-ジョブの定義(bash の変数代入)を DB に置く: `taskboard/bin/tb job set <name> < 本文のファイル`(下の「ジョブ定義は DB に置く」)。
+ジョブの定義(`KEY=値` の行)を DB に置く: `taskboard/bin/tb job set <name> < 本文のファイル`(下の「ジョブ定義は DB に置く」)。
 本文の例は `jobs/watch.conf.example`(パスを直してから `set` に渡す)。**定期実行は DB の定義だけで動く。`jobs/<name>.conf` を置いただけでは動かない**(`tb job import` で取り込む)。
 
 | 変数 | 意味 |
@@ -131,7 +131,7 @@ PROMPT='新しい bug の issue です。優先度をつけてください:
   「conf の値に戻す」はこのセッションの行を消す。共通の行は人が `tb job unset <job> --settings --shared` で消す。
   保存・戻したあと、`show.sh` の値が書いた値になったかを確かめ、違えばエラーにする
 - plist(`gen-plist.sh`)はジョブ名だけを持つので、取り込んだあとも作り直さなくてよい
-- DB の本文も `COMMAND` と同じく bash として評価される。`tb job` は人の端末からだけ書ける(agent の pane からは断る)
+- DB の本文は bash として実行しない(`KEY=値` だけを読む。下の「Go 版」)。ただし `COMMAND` などの値は `bash -c` で実行される。`tb job` は人の端末からだけ書ける(agent の pane からは断る)
 
 ## Web UI からの変更(settings)
 
@@ -214,14 +214,13 @@ SCHED_FILE_FALLBACK=1 DRY_RUN=1 bash bin/tick.sh <job>       # DB に取り込�
   jobs の COMMAND に `HERDR_SESSION=…` を書かなくてよい(tick.sh も tb も Web UI もファイルを読む)。今どれで決まったかは `tb whoami`。
 - launchd 自体の出力は `logs/launchd-<job>.out / .err`。
 
-## Go 版(移行中)
+## Go 版
 
-Go 版なら `bin/show.sh` は `herdrctl sched show` に、`bin/tick.sh` は `herdrctl sched tick` に渡す(herdrctl は `SCHED_HERDRCTL` > `TB_HERDRCTL` > PATH)。
-`jobs.sh` / `dispatch.sh` / `gen-plist.sh` / `install.sh` も同じく `herdrctl sched jobs` / `dispatch` / `gen-plist` / `install` に渡す(どれも `lib.sh` の `sched_go`)。
-判定・記録の形、plist の中身は bash 版と同じ。plist が起動するのは今までどおり `bin/tick.sh` / `bin/dispatch.sh` なので、作り直さなくても `SCHED_IMPL` で切り替わる。
-Go 版はジョブ定義を bash として実行しない。書けるのは `KEY=値` だけで、値は `'…'`(そのまま)/ `"…"`(`\"` などの逃がしだけ)/ 引用なし。
-`$VAR`・`$(…)`・`` `…` ``・`~` の展開、`;` などのコマンド、知らないキーは読み込みでエラーになる(`$` を文字として書くなら `'…'` で囲む)。
-既定(`SCHED_IMPL` 未設定)は、使える herdrctl(`herdrctl sched --features` にそのサブコマンドがある)があれば Go、無ければ bash。
-`SCHED_IMPL=bash` なら bash、`SCHED_IMPL=go` なら Go(herdrctl が無ければエラー)。conf に展開を書いているジョブは Go では読み込みでエラーになるので、書き直すか `SCHED_IMPL=bash` で戻す(launchd から動かすなら plist の EnvironmentVariables に足す)。
-launchd から動くときに探す PATH は plist の PATH(`/opt/homebrew/bin` / `/usr/local/bin` など)なので、herdrctl がそこに無ければ launchd のジョブは bash のまま動く。
+`bin/*.sh` の中身は herdrctl(`herdrctl sched <サブコマンド>`)。`bin/show.sh` は `herdrctl sched show` に、`bin/tick.sh` は `herdrctl sched tick` に、
+`jobs.sh` / `dispatch.sh` / `gen-plist.sh` / `install.sh` は `herdrctl sched jobs` / `dispatch` / `gen-plist` / `install` に、環境をそろえて置き換わるだけ(`lib.sh` の `sched_go`)。
+herdrctl は `SCHED_HERDRCTL` > `TB_HERDRCTL` > PATH。無い・古い(`herdrctl sched --features` にそのサブコマンドが無い)とエラー(exit 2)で、ジョブは動かない(`go install ./cmd/herdrctl` で入れる)。
+plist が起動するのは今までどおり `bin/tick.sh` / `bin/dispatch.sh` なので、作り直さなくてよい。
+launchd から動くときに探す PATH は plist の PATH(`/opt/homebrew/bin` / `/usr/local/bin` / `~/.local/bin` / `~/go/bin` など)なので、herdrctl はそこに置くか `SCHED_HERDRCTL` を plist の EnvironmentVariables に足す。
+ジョブ定義は bash として実行しない。書けるのは `KEY=値` だけで、値は `'…'`(そのまま)/ `"…"`(`\"` などの逃がしだけ)/ 引用なし。
+`$VAR`・`$(…)`・`` `…` ``・`~` の展開、`;` などのコマンド、知らないキーは読み込みでエラーになる(`$` を文字として書くなら `'…'` で囲む)。そういうジョブは動かないので書き直す(`tb job edit <job>`)。
 Go 版が読めない定義は `setup/check.sh` が `job:<job>` の warn で知らせる(`herdrctl sched lint`)。移す順は [docs/go-migration.md](../docs/go-migration.md)。

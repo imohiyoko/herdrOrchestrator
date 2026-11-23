@@ -18,8 +18,8 @@ import (
 	"time"
 )
 
-// tick は scheduler/bin/tick.sh の Go 版: この回(今の分、または NOW)に実行する回を判定し、実行して logs/<job>.log に 1 行ずつ記録する。
-// 判定の順・記録の JSON(キーの順も)・理由の文言は tick.sh と同じ。環境変数も同じ(NOW / DRY_RUN / FAKE_STATE / LOG_DIR / HERDR_BIN / TB_BIN)。
+// tick は scheduler/bin/tick.sh の中身: この回(今の分、または NOW)に実行する回を判定し、実行して logs/<job>.log に 1 行ずつ記録する。
+// 判定の順・記録の JSON(キーの順も)・理由の文言は 元の bash 版の tick.sh と同じ。環境変数も同じ(NOW / DRY_RUN / FAKE_STATE / LOG_DIR / HERDR_BIN / TB_BIN)。
 
 // TickEnv は tick が使う置き場所とコマンド(lib.sh の LOG_DIR / HERDR と、送信に使う tb)。
 type TickEnv struct {

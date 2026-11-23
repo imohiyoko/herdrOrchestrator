@@ -1,4 +1,4 @@
-// Package sched は scheduler(scheduler/bin)の Go 版。ジョブ定義(conf)の読み込みと検証は scheduler/bin/lib.sh の load_job と同じにする。
+// Package sched は scheduler の中身(scheduler/bin/*.sh はここに置き換わるだけ)。ジョブ定義(conf)の読み込みと検証は、元の bash 版(lib.sh の load_job)と同じ。
 // ただし conf は bash として実行しない: 決まった書き方(KEY=値。値は '…' / "…" / 引用なし)だけを読み、展開($ や `)は拒む。
 package sched
 
@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// ConfKeys は conf に書けるキー(lib.sh の load_job が読み込みの前に unset する変数と同じ)。
+// ConfKeys は conf に書けるキー(元の bash 版の load_job が読み込みの前に unset していた変数と同じ)。
 var ConfKeys = map[string]bool{
 	"TARGET": true, "PROMPT": true, "PROMPT_FILE": true, "PROMPT_RULES": true, "PROMPT_CMD": true, "PROMPT_CMD_TIMEOUT": true,
 	"PROMPT_VARS": true, "PROMPT_VAR_TIMEOUT": true, "COMMAND": true, "COMMAND_TIMEOUT": true, "GATE": true, "GATE_TIMEOUT": true,
