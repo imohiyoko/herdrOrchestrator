@@ -90,7 +90,7 @@ func TestCommandFailsClosed(t *testing.T) {
 }
 
 func TestValidRepo(t *testing.T) {
-	for r, want := range map[string]bool{"o/r": true, "my-org/repo.go": true, "o/r/x": false, "o": false, "-o/r": false, "o/..": false, "o/r;x": false} {
+	for r, want := range map[string]bool{"o/r": true, "my-org/repo.go": true, "o/r/x": false, "o": false, "-o/r": false, "o/..": false, "o/r;x": false, "acme/.github": true, "o/.": false, ".o/r": false} {
 		if ValidRepo(r) != want {
 			t.Errorf("%s: want %v", r, want)
 		}

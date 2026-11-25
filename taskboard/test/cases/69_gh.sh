@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # tb gh(PR のコメント・レビューを読む・書く・approve)。GitHub へは github.conf のコマンドだけで出て、権限は policy の gh:<操作> <owner/repo> で決まる
 # DB は gh.db、設定は $TMP/gh.* だけを使う
-_gh_saved=$(declare -p TB_DB TB_POLICY TB_GITHUB_CONF HERDR_PANE_ID FAKE_AGENTS 2>/dev/null || true)
+_gh_saved=$(declare -p TB_DB TB_POLICY TB_GITHUB_CONF HERDR_PANE_ID FAKE_AGENTS GH_FAKE_LOG 2>/dev/null || true)
 unset HERDR_PANE_ID
 export TB_DB=$TMP/gh.db TB_POLICY=$TMP/gh.policy TB_GITHUB_CONF=$TMP/gh.conf
 : >"$TB_POLICY"
@@ -114,6 +114,11 @@ eq "gh policy: merge set to ask → queued as a Q-, not run" "$(HERDR_PANE_ID=wG
 eq "gh policy: the grant does not reach another owner" "$(HERDR_PANE_ID=wG:p1 rc $TB gh review approve x/r 7 2>/dev/null)" "4"
 eq "gh policy: another agent is still denied" "$(HERDR_PANE_ID=wG:p2 rc $TB gh review approve o/r 7 2>/dev/null)" "4"
 eq "gh policy: comment granted → runs without a Q-" "$(HERDR_PANE_ID=wG:p1 $TB gh comment add o/r 7 --body ok >/dev/null 2>&1; echo $?)" "0"
+eq "gh policy: repo names match case-insensitively (deny row in lower case, input in upper case)" "$(HERDR_PANE_ID=wG:p2 rc $TB gh comment list Secret/R 1 2>/dev/null)" "4"
+printf '* gh:read Acme/Secret = deny\n' >>"$TB_POLICY"
+eq "gh policy: repo names match case-insensitively (deny row in upper case, input in lower case)" "$(HERDR_PANE_ID=wG:p2 rc $TB gh comment list acme/secret 1 2>/dev/null)" "4"
+eq "gh policy: tb agent can matches case-insensitively too" "$($TB agent can dev1 gh:read ACME/SECRET | head -1)" "deny"
+eq "gh: a .github repo is accepted" "$($TB gh review list acme/.github 1 >/dev/null 2>&1; echo $?)" "0"
 eq "gh policy: read denied for a repo" "$(HERDR_PANE_ID=wG:p2 rc $TB gh comment list secret/r 1 2>/dev/null)" "4"
 eq "gh policy: tb agent can gives the same answer" "$($TB agent can rev1 gh:approve o/r | head -1) / $($TB agent can dev1 gh:approve o/r | head -1)" "allow / deny"
 eq "gh: a person is not limited by agent rows" "$($TB gh comment list secret/r 1 >/dev/null 2>&1; echo $?)" "0"

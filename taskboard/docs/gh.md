@@ -34,6 +34,8 @@ lead1       approve:gh:comment ~report  = allow    # lead1 は部下のコメン
 
 確かめるには `tb agent can <agent> gh:approve my-org/app`。
 
+GitHub と同じく、`owner/repo` は大文字・小文字を区別せずに照合します(`my-org/*` の行は `My-Org/App` にも当たる)。
+
 ## GitHub へ出るコマンド(config/github.conf)
 
 `taskboard/config/github.conf.example` を `github.conf` に写して書きます(人だけ。`gate-paths.conf.example` の保護対象にも入れてあります)。環境変数 `TB_GITHUB_CONF` でファイルを差し替えられます(テスト用)。
@@ -83,20 +85,25 @@ gh_merge   = /opt/homebrew/bin/ghtkn exec -e GH_TOKEN:{owner}/pr-merge -- /opt/h
 #!/usr/bin/env bash
 set -u
 REAL_GH=/opt/homebrew/bin/gh
-kind=${1:-}; shift                                 # github.conf の固定の引数(read / comment / review / approve)
-case "$kind ${1:-} ${2:-}" in
-  "read pr view"|"read api --method") ;;
-  "comment pr comment") ;;
-  "review pr review")  case " $* " in *" --approve "*) echo "tb-gh: review で approve はしない" >&2; exit 64 ;; esac ;;
-  "approve pr review") case " $* " in *" --approve "*) ;; *) echo "tb-gh: approve 以外" >&2; exit 64 ;; esac ;;
-  "merge pr merge") ;;
-  *) echo "tb-gh: 許可外の操作: $kind ${1:-} ${2:-}" >&2; exit 64 ;;
+kind=${1:-}; shift                                 # github.conf の固定の引数(read / comment / review / approve / merge)
+R='[A-Za-z0-9_][A-Za-z0-9_.-]*/[A-Za-z0-9_.][A-Za-z0-9_.-]*'; N='[1-9][0-9]*'
+# 引数の並び全体を、tb が使う形とだけ突き合わせる(-a のような短い形や、余分な引数を通さない)
+case $kind in
+  read)    re="^(pr view $N --repo ($R) --json (comments|reviews,reviewDecision)|api --method GET repos/($R)/pulls/$N/comments\\?per_page=100)\$" ;;
+  comment) re="^pr comment $N --repo ($R) --body-file -\$" ;;
+  review)  re="^pr review $N --repo ($R) (--comment|--request-changes)( --body-file -)?\$" ;;
+  approve) re="^pr review $N --repo ($R) --approve( --body-file -)?\$" ;;
+  merge)   re="^pr merge $N --repo ($R) (--merge|--squash|--rebase)( --match-head-commit [0-9a-f]{40})?( --delete-branch)?\$" ;;
+  *) echo "tb-gh: 知らない種類: $kind" >&2; exit 64 ;;
 esac
-case "$kind:${TB_GH_REPO%%/*}" in                  # 操作 × 所有者 → app(人が管理する表)
-  read:example-owner)                     app=example-owner/pr-read ;;
+[[ "$*" =~ $re ]] || { echo "tb-gh: 許可外の呼び出し: $kind $*" >&2; exit 64; }
+repo=""; for m in "${BASH_REMATCH[@]:1}"; do [[ -z $repo && $m =~ ^$R$ ]] && repo=$m; done
+owner=$(printf '%s' "${repo%%/*}" | tr 'A-Z' 'a-z')  # TB_GH_REPO は直接呼べば偽れるので、引数の --repo から決める
+case "$kind:$owner" in                             # 操作 × 所有者 → app(人が管理する表)
+  read:example-owner)                         app=example-owner/pr-read ;;
   comment:example-owner|review:example-owner) app=example-owner/pr-review ;;
-  approve:example-owner)                  app=example-owner/pr-approve ;;
-  merge:example-owner)                    app=example-owner/pr-merge ;;
+  approve:example-owner)                      app=example-owner/pr-approve ;;
+  merge:example-owner)                        app=example-owner/pr-merge ;;
   *) echo "tb-gh: 対応する app が無い" >&2; exit 64 ;;
 esac
 ghtkn exec -e "GH_TOKEN:$app" -- "$REAL_GH" "$@"

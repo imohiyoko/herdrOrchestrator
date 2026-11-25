@@ -178,6 +178,11 @@ func cmdCan(args []string, w, stderr io.Writer) error {
 		verdict = "deny"
 		return out("policy に " + op + " " + target + " を許す approve の行がない(承認は人だけ)")
 	}
+	if strings.HasPrefix(op, "gh:") { // tb gh と同じ照合(owner/repo は大文字・小文字を区別しない)
+		tier, rule := ghJudge(db.DB, db.Session, who, op, target)
+		verdict = approval.Value(tier)
+		return out(rule)
+	}
 	v, rule := j.Of(op+":"+target, who)
 	verdict = v
 	return out(rule)

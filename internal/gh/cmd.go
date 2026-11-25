@@ -60,12 +60,14 @@ GitHub へ出るコマンドは config/github.conf の gh_<操作> → gh_write 
 `
 
 var (
-	reRepo = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]*/[A-Za-z0-9_][A-Za-z0-9_.-]*$`)
+	reRepo = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]*/[A-Za-z0-9_.][A-Za-z0-9_.-]*$`) // repo は .github のように . で始まってよい
 	reNum  = regexp.MustCompile(`^[1-9][0-9]{0,9}$`)
 )
 
 // ValidRepo は <owner>/<repo> の形か。
-func ValidRepo(r string) bool { return reRepo.MatchString(r) && !strings.Contains(r, "..") }
+func ValidRepo(r string) bool {
+	return reRepo.MatchString(r) && !strings.Contains(r, "..") && !strings.HasSuffix(r, "/.")
+}
 
 // Run は tb gh <対象> <動詞> ...。
 func (s *Svc) Run(args []string) error {
