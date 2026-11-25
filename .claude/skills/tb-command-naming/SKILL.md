@@ -57,6 +57,7 @@ ADR 0002(サービスの境界)と ADR 0004(3 つの層とモジュール)から
 | `review` | 機能 | 会計役のレビュー材料・レビューの提出 | review, gate / `review pack/submit`(古い名前 `review-pack` `review-submit`) |
 | `proposal` | 機能 | 会計役 → 設定役の改善提案(project proposal のチケット) | review / `proposal add/list/show/resolve`(古い名前 `proposal --role ...` `proposals` `proposal-resolve`) |
 | `pr` | 機能 | PR キュー・PR の見張り | prqueue / `pr queue add/list/show/approve/reject/retry/run/scan` `pr watch`(古い名前 `pr-queue` `pr-watch`) |
+| `gh` | 機能 | GitHub の PR のコメント・レビューを読む・書く・approve(GitHub へ出るコマンドは github.conf で差し替える) | internal/gh / `gh comment list/add`、`gh review list/add/approve` |
 | `gate` | 機能 | ゲート | gate / `gate` |
 | `approval` | 土台(authz) | 承認・人だけの判定 | approvals, risk / `approval check/allow/ask/approve/reject`(古い名前 `approval <操作>` `allow` `ask` `approve` `reject`) |
 | `recipe` | 機能 | レシピと部品(ADR 0005) | recipes / `recipe set/rm/list/show/history/run/runner/queue/cancel`、`recipe part list/check/risk`(古い名前 `recipe-*` `parts` `part-*`) |

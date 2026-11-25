@@ -2,6 +2,7 @@ package tbcli
 
 import (
 	"fmt"
+	"github.com/imohiyoko/herdrorchestrator/internal/gh"
 	"io"
 	"os"
 	"regexp"
@@ -73,7 +74,11 @@ func cmdCan(args []string, w, stderr io.Writer) error {
 			return err
 		}
 	}
-	if err := validAgentName(target); err != nil {
+	if strings.HasPrefix(op, "gh:") { // tb gh の操作の対象はリポジトリ(owner/repo)
+		if !gh.ValidRepo(target) {
+			return usage("can: gh:<操作> の対象は <owner>/<repo>: %s", target)
+		}
+	} else if err := validAgentName(target); err != nil {
 		return err
 	}
 	if err := validAction(op); err != nil {
@@ -172,6 +177,11 @@ func cmdCan(args []string, w, stderr io.Writer) error {
 		}
 		verdict = "deny"
 		return out("policy に " + op + " " + target + " を許す approve の行がない(承認は人だけ)")
+	}
+	if strings.HasPrefix(op, "gh:") { // tb gh と同じ照合(owner/repo は大文字・小文字を区別しない)
+		tier, rule := ghJudge(db.DB, db.Session, who, op, target)
+		verdict = approval.Value(tier)
+		return out(rule)
 	}
 	v, rule := j.Of(op+":"+target, who)
 	verdict = v

@@ -12,6 +12,7 @@
 **/routes.conf
 **/spawn-policy.conf
 **/pr-queue.conf
+**/github.conf
 roles/**
 **/.claude/settings*.json
 **/CLAUDE.md

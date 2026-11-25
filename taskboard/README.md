@@ -909,6 +909,19 @@ tb pr queue scan [--dry-run] [--repo <org/repo>]                                
   - 決めていること: マージの順(下から)は `show` に出すだけで、見張りはしない。下がマージ・close されたあとの上の付け替えは人。積み直し(force push)は自動ではしない。base が既定ブランチでない PR では CI が走らないことがある(`show` に出す)。複数の PR を 1 つの宣言(manifest)で出すのは後の段。
 - 設定は `config/pr-queue.conf`(人だけ。`pr-queue.conf.example` を写して使う): `gh`、`deny_patterns`、`deny_exceptions`、`branch_prefixes`、`branch_prefix`(既定 `agent/`)、`body_root`(既定 `taskboard/data/pr-bodies`)、`body_first_line`、`auto_approve`(既定 0。1 なら scan で積んだものを承認済みにする)、`max_create_per_run`(既定 3)、`base_mode`(既定 `fixed`)、`base_allow`(既定は空 = 既定の base だけ)。
 
+## GitHub の PR のコメント・レビュー(tb gh)
+
+agent が PR のコメントとレビューを読み、コメント・レビュー・approve を出す口。詳しくは [`docs/gh.md`](docs/gh.md)。
+
+```
+tb gh comment list|add <owner/repo> <PR 番号> ...       # gh:read(既定 allow)/ gh:comment(既定 ask)
+tb gh review list|add|approve <owner/repo> <PR 番号> ...  # gh:read / gh:review(既定 ask)/ gh:approve(既定 deny)
+tb gh pr merge <owner/repo> <PR 番号> --squash ...         # gh:merge(既定 deny。--head <SHA> で先頭のコミットを固定)
+```
+
+- 権限は policy の `<主体> gh:<操作> <owner/repo の glob> = allow|ask|deny`(例: `@reviewer gh:approve my-org/* = allow`)
+- GitHub へ出るコマンドは `config/github.conf`(人だけ。`github.conf.example` を写す)の `gh_<操作>` → `gh_write` → `gh`(読みは `gh_read` → `gh`)。絶対パスの実行ファイル(gh か、ghtkn などで GitHub App の token を操作ごとに切り替えるラッパー)。未指定なら止まる(PATH 上の gh には落ちない)
+
 ## 会話チーム(下書きの層と振り分け表)
 
 人が読んで直してから送る返事の**下書き**を作る仕組み(issue #95 / #96)。送信・承認・状態の変更はしない。設計・書式・流れは [`conversation/README.md`](../conversation/README.md)。
