@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/capv"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/config"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/util"
@@ -187,10 +188,10 @@ func (n *notifyCmd) status(args []string) error {
 	})
 	cs := strings.Join(counts, ",")
 	if len(args) > 0 && args[0] == "--json" {
-		fmt.Fprintf(w, `{"enabled":%s,"slack_via":%s,"slack_target":%s,"notifier_agent":%s,"webhook_file":%s,"default_sinks":%s,"rate_per_min":%d,"rate_per_hour":%d,"max_len":%d,"slack_status_counts":%s}`+"\n",
+		fmt.Fprintf(w, `{"enabled":%s,"slack_via":%s,"slack_target":%s,"notifier_agent":%s,"webhook_file":%s,"default_sinks":%s,"rate_per_min":%s,"rate_per_hour":%s,"max_len":%s,"slack_status_counts":%s}`+"\n",
 			util.JQString(c.Get("enabled")), util.JQString(c.Get("slack_via")), util.JQString(setOrUnset(c.Get("slack_target"), "set", "unset")),
 			util.JQString(c.Get("notifier_agent")), util.JQString(n.webhookState()), util.JQString(c.Get("sinks_default")),
-			c.Int("rate_per_min"), c.Int("rate_per_hour"), c.Int("max_len"), util.JQString(cs))
+			notifyCapJSON(c, "rate_per_min"), notifyCapJSON(c, "rate_per_hour"), notifyCapJSON(c, "max_len"), util.JQString(cs))
 		return nil
 	}
 	fmt.Fprintf(w, "enabled: %s (%s)\n", c.Get("enabled"), c.Source("enabled"))
@@ -495,4 +496,12 @@ func (n *notifyCmd) rules(args []string) error {
 		return nil
 	}
 	return usage("notify rules [show | test E-<n> | run]")
+}
+
+// notifyCapJSON は上限の設定を JSON の値にする(上限なしは null)。
+func notifyCapJSON(c *notify.Cfg, k string) string {
+	if capv.IsUnlimited(c.Get(k)) {
+		return "null"
+	}
+	return strconv.Itoa(c.Int(k))
 }

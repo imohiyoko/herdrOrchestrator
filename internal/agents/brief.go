@@ -4,11 +4,11 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"os"
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/capv"
 )
 
 // 役割を渡す(taskboard/lib/roles.sh の load_role / last_briefed_hash / record_briefing)。
@@ -21,12 +21,8 @@ type Role struct {
 }
 
 // roleMax は ROLE_MAX(渡す本文の上限。超えたら切る)。
-func roleMax() int {
-	if n, err := strconv.Atoi(os.Getenv("TB_ROLE_MAX")); err == nil && n >= 0 { // 負の値は既定に戻す
-		return n
-	}
-	return 12000
-}
+// 負の値は既定に戻す。unlimited で切らない。
+func roleMax() int { return capv.Env("TB_ROLE_MAX", 12000) }
 
 // LoadRole は load_role: agent に渡す役割の本文(_common のあとに役割を順に)。渡すものが無ければ ok=false。
 func (r *Roles) LoadRole(name string) (Role, bool) {

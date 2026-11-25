@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/capv"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/util"
 	"github.com/imohiyoko/herdrorchestrator/internal/message"
@@ -240,8 +241,8 @@ func nudge(args []string, w, stderr io.Writer) error {
 			n.Targets = append(n.Targets, a)
 		}
 	}
-	if !reDigitsOnly.MatchString(idle) || !reDigitsOnly.MatchString(mx) {
-		return usage("nudge: --idle-min / --max(TB_NUDGE_IDLE_MIN / TB_NUDGE_MAX)は数字")
+	if !reDigitsOnly.MatchString(idle) || !reDigitsOnly.MatchString(mx) && !capv.IsUnlimited(mx) {
+		return usage("nudge: --idle-min / --max(TB_NUDGE_IDLE_MIN / TB_NUDGE_MAX)は数字(--max は unlimited も可)")
 	}
 	n.SetLimits(idle, mx)
 	if !n.Dry {

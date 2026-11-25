@@ -4,7 +4,7 @@
 # 優先: 環境変数 TB_LIMIT_<キー大文字> > limits.conf > 既定
 # 見る: tb limits show / 絞る候補: tb agent-shed(止めるのは人が tb agent-stop)
 # 数え方: 動作中 = 停止中を除いた agent。作業中 = そのうち herdr の状態が working
-# 上限なし: 数の上限のキー(max_running_agents / max_working_agents / incident_max_open / analyst_max / spawn_max_*)は unlimited と書くと上限なし。0 は「許さない」(max_working_agents だけは 0 も無制限)
+# 上限なし: 数の上限のキー(max_running_agents / max_working_agents / incident_max_open / analyst_max / spawn_max_*)は unlimited と書くと上限なし。0 は「許さない」(max_working_agents だけは 0 も無制限。max_running_agents は 0 を受け付けない)
 
 max_running_agents = 30      # 動作中の agent の総数。超えるときは、agent-new / agent-spawn / 障害 workspace / 解析役のどれも作らず理由を出す
 max_working_agents = 0       # 同時に作業中(working)の agent の数。0 = 無制限。超えたら、新しい依頼の送信は outbox で待たせる(tb message flush で再送)

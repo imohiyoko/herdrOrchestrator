@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/capv"
 	"github.com/imohiyoko/herdrorchestrator/internal/notify"
 )
 
@@ -100,6 +101,8 @@ func (q *Q) Run(dry bool) error {
 	maxc := MaxCreate
 	if v := Conf("max_create_per_run", strconv.Itoa(MaxCreate)); reNum.MatchString(v) {
 		maxc, _ = strconv.Atoi(v)
+	} else if capv.IsUnlimited(v) { // 上限なし
+		maxc = capv.NoLimit
 	}
 	var ids []int64
 	rows, err := q.DB.Query(`SELECT id FROM pr_queue WHERE status='approved' ORDER BY id`)

@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/capv"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/util"
 )
 
@@ -168,6 +169,7 @@ type Conf struct {
 	Repos              []string
 	ThApprove, ThMerge int
 	hasApprove, hasMrg bool
+	NoCap              bool // [threshold] cap = off: approve / merge の上限(capApprove / capMerge)で抑えない
 	Warns              []string
 }
 
@@ -272,9 +274,17 @@ func LoadConf(f string) (c Conf, err string) {
 			} else {
 				c.ThMerge, c.hasMrg = x, true
 			}
+		case "threshold.cap":
+			if v != "on" && v != "off" {
+				return c, fmt.Sprintf("L%d: cap は on | off です: %s", n, v)
+			}
+			c.NoCap = v == "off"
 		case "limits.merge-per-day", "limits.merge-min-interval-min", "limits.approve-per-day":
+			if capv.IsUnlimited(v) { // 上限なし
+				continue
+			}
 			if !reDigits.MatchString(v) || len(v) > 4 {
-				return c, fmt.Sprintf("L%d: 上限は整数です: %s = %s", n, k, v)
+				return c, fmt.Sprintf("L%d: 上限は整数か unlimited です: %s = %s", n, k, v)
 			}
 		default:
 			return c, fmt.Sprintf("L%d: 未知のキー [%s] %s", n, sec, k)
@@ -289,11 +299,11 @@ func LoadConf(f string) (c Conf, err string) {
 	if !c.hasMrg {
 		return c, "[threshold] merge がありません"
 	}
-	if c.ThApprove > capApprove {
+	if !c.NoCap && c.ThApprove > capApprove {
 		c.Warns = append(c.Warns, fmt.Sprintf("緩め設定は無効: [threshold] approve = %d(上限 %d のまま)", c.ThApprove, capApprove))
 		c.ThApprove = capApprove
 	}
-	if c.ThMerge > capMerge {
+	if !c.NoCap && c.ThMerge > capMerge {
 		c.Warns = append(c.Warns, fmt.Sprintf("緩め設定は無効: [threshold] merge = %d(上限 %d のまま)", c.ThMerge, capMerge))
 		c.ThMerge = capMerge
 	}

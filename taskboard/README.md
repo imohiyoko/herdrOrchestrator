@@ -752,7 +752,7 @@ tb slash mcp --all --apply              # 全 agent。L-<n> を積むだけで�
 動作中の agent の数や、障害・解析役・子 agent の同時数を、人が 1 か所で絞れるようにする。値は `config/limits.conf`(人だけが編集。再起動は要らない。tb が毎回読む)。
 無ければ `limits.conf.example`、それも無ければ組み込みの既定を使う。優先は **環境変数 `TB_LIMIT_<キー大文字>` > `limits.conf` > 既定**。
 数の上限のキー(`max_running_agents` / `max_working_agents` / `incident_max_open` / `analyst_max` / `spawn_max_per_parent` / `spawn_max_total`)は、値に `unlimited` を書くと上限なしになる
-(例: `tb limits set max_running_agents unlimited`、`TB_LIMIT_MAX_RUNNING_AGENTS=unlimited`)。既定は下の表のまま。`0` は「1 つも許さない」の意味のまま(`max_working_agents` だけは前から `0` も無制限)。
+(例: `tb limits set max_running_agents unlimited`、`TB_LIMIT_MAX_RUNNING_AGENTS=unlimited`)。既定は下の表のまま。`0` は「1 つも許さない」の意味のまま(`max_working_agents` だけは前から `0` も無制限。`max_running_agents` は `0` を受け付けず拒否する)。
 `tb limits show` では上限なしを `無制限`、`--json` では `max` を `null` で出す。`spawn-policy.conf` の `max_children_per_parent` / `max_children_total` / `max_depth` も `unlimited` を受け付ける。
 
 | キー | 既定 | 意味 |
@@ -791,6 +791,22 @@ tb agent-shed [--count N] [--json]        # 絞る候補の一覧。何も止め
   (文面にも「agent は誰にも連絡しません」と書く)。題名・要約に秘密らしい文字列(トークン、AWS のアクセスキー、秘密鍵のヘッダなど)が含まれるときは書かずに終了コード 4。既にある文面は上書きしない
 
 使い始めるには(人): `cp config/limits.conf.example config/limits.conf`(コピーしなくても、`.example` の値で動く。`limits.conf` は git に載せない)。
+
+### 上限を外す(unlimited)
+
+上限のある設定は、どれも値に `unlimited`(大文字小文字は問わない)を書くと上限なしになる。既定値はそのままで、外すかどうかは人が決める。読み方は `internal/kernel/capv` で共通。
+
+| どこ | キー | 既定 |
+|---|---|---|
+| `limits.conf`(`tb limits set`、`TB_LIMIT_<キー>`) | `max_running_agents` / `max_working_agents` / `incident_max_open` / `analyst_max` / `spawn_max_per_parent` / `spawn_max_total` | 30 / 0(無制限) / 2 / 2 / 2 / 4 |
+| `spawn-policy.conf` | `max_children_per_parent` / `max_children_total` / `max_depth` | 2 / 6 / 1 |
+| `gate.conf` | `[limits]` の `merge-per-day` / `merge-min-interval-min` / `approve-per-day`。`[threshold]` の上限(approve 2、merge 1)は `cap = off` で外す | 3 / 30 / 5、`cap = on` |
+| `notify.conf` | `rate_per_min` / `rate_per_hour` / `max_len` | 6 / 60 / 600 |
+| `pr-queue.conf` | `max_create_per_run` | 3 |
+| 環境変数 | `TB_ANALYST_MAX` / `TB_NUDGE_MAX`(`tb nudge --max` も) / `TB_SEND_MAX` / `TB_ROLE_MAX` / `TB_DIGEST_ITEM_MAX` / `TB_DIGEST_MSG_MAX` / `TB_SPAWN_ERR_MAX` | 2 / 3 / 4000 / 12000 / 160 / 1800 / 200 |
+
+`0` の意味は各キーのまま(多くは「許さない」。`max_working_agents` は前から 0 も無制限。`max_running_agents` は 0 を拒否する)。
+外せないもの: 入力の検査(名前・本文の長さ、Web UI が受け取る大きさ)、画面の 1 ページの件数、時間切れの秒数、承認の評価で緩める方向の設定を第 3 段まで効かせない決まり(`docs/risk-based-approvals.md`)とレビュー取り込みの重大度を下げない決まり。これらは数の上限ではなく、守りの決まりとして残す。
 
 ## 会計役(定期レビュー)と改善提案
 

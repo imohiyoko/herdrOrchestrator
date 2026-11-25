@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/capv"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/config"
 )
 
@@ -49,31 +50,21 @@ var (
 
 func trim(s string) string { return strings.Trim(s, " \t\n\v\f\r") }
 
-// Unlimited は数の上限のキーで「上限なし」を表す値。
-const Unlimited = "unlimited"
+// Unlimited は数の上限のキーで「上限なし」を表す値(capv.Unlimited)。
+const Unlimited = capv.Unlimited
 
-// IsUnlimited は v が「上限なし」の書き方か(unlimited。大文字小文字は問わない)。
-func IsUnlimited(v string) bool { return strings.EqualFold(trim(v), Unlimited) }
+// IsUnlimited / Exceeds / Show は capv のもの。
+var (
+	IsUnlimited = capv.IsUnlimited
+	Exceeds     = capv.Exceeds
+	Show        = capv.Show
+)
 
 // Cap は数の上限の値を読む。limited=false なら上限なし(unlimited)。
 // 数でない値は 0(上限 0)とみなす。max_working_agents の 0 = 無制限は呼ぶ側(Set.Max)が決める。
 func Cap(v string) (n int, limited bool) {
-	if IsUnlimited(v) {
-		return 0, false
-	}
-	n, _ = strconv.Atoi(trim(v))
-	return n, true
-}
-
-// Exceeds は n が上限 max(limited=false なら上限なし)を超えるか。
-func Exceeds(n, max int, limited bool) bool { return limited && n > max }
-
-// Show は上限を表示用の文字列にする(上限なしは「無制限」)。
-func Show(max int, limited bool) string {
-	if !limited {
-		return "無制限"
-	}
-	return strconv.Itoa(max)
+	n, limited, _ = capv.Parse(v)
+	return n, limited
 }
 
 // Norm は limit_norm: 値を検査して正規化する。通らなければ理由を err に入れる。

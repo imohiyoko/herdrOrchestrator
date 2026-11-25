@@ -29,9 +29,10 @@ eq "scan: bad project" "$(rcerr $TB reminder scan -p 'a b')" $'tb: project は�
 eq "scan: unknown arg" "$(rcerr $TB due-scan --bogus)" $'tb: due-scan: 不明な引数 --bogus\n(tb help で使い方)\nrc=2'
 eq "scan: bad today" "$(TB_TODAY=x rcerr $TB reminder scan)" $'tb: 期日は YYYY-MM-DD の日付: x\n(tb help で使い方)\nrc=2'
 eq "nudge: unknown option" "$(rcerr $TB reminder nudge --bogus)" $'tb: nudge [<宛先> ...] [--pool] [--dry-run] [--wake <分類|状態>[,...]] [--idle-min N] [--max N] [--json]\n(tb help で使い方)\nrc=2'
-eq "nudge: bad --idle-min" "$(rcerr $TB nudge --dry-run --idle-min x)" $'tb: nudge: --idle-min / --max(TB_NUDGE_IDLE_MIN / TB_NUDGE_MAX)は数字\n(tb help で使い方)\nrc=2'
+eq "nudge: bad --idle-min" "$(rcerr $TB nudge --dry-run --idle-min x)" $'tb: nudge: --idle-min / --max(TB_NUDGE_IDLE_MIN / TB_NUDGE_MAX)は数字(--max は unlimited も可)\n(tb help で使い方)\nrc=2'
+eq "nudge: --max unlimited is accepted, a word is not" "$(rcerr $TB nudge --dry-run --max unlimited >/dev/null; echo $?; TB_NUDGE_MAX=lots rcerr $TB nudge --dry-run | tail -1)" $'0\nrc=2'
 eq "nudge: --max needs a value" "$(rcerr $TB nudge --max)" $'tb: --max に値が必要です\n(tb help で使い方)\nrc=2'
-eq "nudge: bad TB_NUDGE_MAX" "$(TB_NUDGE_MAX=-1 rcerr $TB nudge --dry-run)" $'tb: nudge: --idle-min / --max(TB_NUDGE_IDLE_MIN / TB_NUDGE_MAX)は数字\n(tb help で使い方)\nrc=2'
+eq "nudge: bad TB_NUDGE_MAX" "$(TB_NUDGE_MAX=-1 rcerr $TB nudge --dry-run)" $'tb: nudge: --idle-min / --max(TB_NUDGE_IDLE_MIN / TB_NUDGE_MAX)は数字(--max は unlimited も可)\n(tb help で使い方)\nrc=2'
 
 # ---- 空の DB
 eq "check: nothing → 3, no output" "$(rcerr $TB reminder check)" $'rc=3'

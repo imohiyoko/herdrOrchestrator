@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/capv"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/herdr"
 )
 
@@ -53,10 +54,7 @@ func spawnErrorOf(out []byte, rc int) (code, msg string) {
 	}
 	code = string(b)
 	msg = strings.NewReplacer("\t", " ", "\r", " ").Replace(msg)
-	max := 200
-	if n, err := strconv.Atoi(os.Getenv("TB_SPAWN_ERR_MAX")); err == nil {
-		max = n
-	}
+	max := capv.Env("TB_SPAWN_ERR_MAX", 200) // unlimited で切らない
 	if r := []rune(msg); len(r) > max {
 		msg = string(r[:max])
 	}

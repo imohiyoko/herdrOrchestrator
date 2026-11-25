@@ -54,7 +54,9 @@ func TestUnlimited(t *testing.T) {
 	if n, lim := (Set{}).Max("max_running_agents"); lim {
 		t.Errorf("env unlimited = %d limited", n)
 	}
-	t.Setenv("TB_LIMIT_MAX_RUNNING_AGENTS", "")
+	for _, k := range []string{"TB_LIMIT_MAX_RUNNING_AGENTS", "TB_LIMIT_INCIDENT_MAX_OPEN", "TB_LIMIT_ANALYST_MAX", "TB_LIMIT_MAX_WORKING_AGENTS", "TB_ANALYST_MAX"} {
+		t.Setenv(k, "") // 手元の環境の値が conf より優先されないように
+	}
 	s := Set{conf: map[string]string{"incident_max_open": Unlimited, "analyst_max": "0", "max_working_agents": "0"}}
 	if _, lim := s.Max("incident_max_open"); lim {
 		t.Error("conf unlimited is limited")

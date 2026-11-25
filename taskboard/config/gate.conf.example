@@ -18,8 +18,9 @@ merge   = docs-only
 [threshold]                   # 点がこの値以下で allow(hard に当たらないとき)
 approve = 2                   # 上限 2。これより大きい値は警告して上限のままにする
 merge   = 1                   # 上限 1
+# cap = off                   # off なら上の上限(approve 2 / merge 1)で抑えない。既定は on
 
-[limits]                      # 段 0 では検査するだけ
+[limits]                      # 段 0 では検査するだけ。どれも unlimited で上限なし
 merge-per-day = 3
 merge-min-interval-min = 30
 approve-per-day = 5

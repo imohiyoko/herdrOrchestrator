@@ -213,6 +213,8 @@ bad 'unknown key' "$GOODC"$'\n[limits]\nbogus = 1'
 bad 'bad state' "${GOODC/state = disabled/state = on}"
 bad 'bad threshold' "${GOODC/merge = 1/merge = abc}"
 bad 'threshold out of range' "${GOODC/merge = 1/merge = 100}"
+bad 'bad cap' "${GOODC/merge = 1/merge = 1$'\n'cap = no}"
+bad 'bad limits value' "${GOODC/merge-per-day = 3/merge-per-day = lots}"
 bad 'bad repo' "${GOODC/other-owner\/other-repo/not a repo}"
 bad 'bad pr-kind' "${GOODC/docs-only, tests-only/everything}"
 bad 'no threshold.merge' "$(grep -v '^merge = 1' "$GT/gate.conf")"
@@ -249,6 +251,9 @@ eq "gate: --pr equal to the recorded PR → evaluates normally" "$(gtf - | gt me
 
 # --- 緩め設定は無効(しきい値の上限)
 eq "gate threshold cap: merge = 5 is warned and capped at 1" "$(sed 's/^merge = 1/merge = 5/' "$GT/gate.conf" >"$GT/loose.conf"; gtf 'AUTHOR-REJECT-RATE' 'AUTHOR-REJECT-RATE high' | gt merge "$GT/loose.conf" "$GT/paths.conf" | grep -E '^(gate|score|warn)' | tr '\n' '|')" "gate: ask|score: 2 / threshold(merge) 1|warn: 緩め設定は無効: [threshold] merge = 5(上限 1 のまま)|"
+eq "gate threshold cap = off: merge = 5 is honored, no warning" "$(sed 's/^merge = 1/merge = 5\ncap = off/' "$GT/gate.conf" >"$GT/nocap.conf"; gtf 'AUTHOR-REJECT-RATE' 'AUTHOR-REJECT-RATE high' | gt merge "$GT/nocap.conf" "$GT/paths.conf" | grep -E '^(score|warn)' | tr '\n' '|')" "score: 2 / threshold(merge) 5|"
+eq "gate threshold cap = on: same as the default (capped)" "$(sed 's/^merge = 1/merge = 5\ncap = on/' "$GT/gate.conf" >"$GT/cap.conf"; gtf 'AUTHOR-REJECT-RATE' 'AUTHOR-REJECT-RATE high' | gt merge "$GT/cap.conf" "$GT/paths.conf" | grep -c '^warn: 緩め設定は無効')" "1"
+eq "gate [limits] unlimited is a valid value" "$(sed 's/^merge-per-day = 3/merge-per-day = unlimited/; s/^approve-per-day = 5/approve-per-day = Unlimited/' "$GT/gate.conf" >"$GT/unl.conf"; gtf - | gt merge "$GT/unl.conf" "$GT/paths.conf" | rcof)" "$(gtf - | gt merge "$GT/gate.conf" "$GT/paths.conf" | rcof)"
 eq "gate threshold: stricter setting is honored (approve = 0)" "$(sed 's/^approve = 2/approve = 0/' "$GT/gate.conf" >"$GT/strict.conf"; gtf 'AUTHOR-REJECT-RATE' 'AUTHOR-REJECT-RATE mid' | gt approve "$GT/strict.conf" "$GT/paths.conf" | sed -n 1p)" "gate: ask"
 # 理由は locale に依存しない(語境界などを使わず、LC_ALL を変えても同じ)
 eq "gate: same output under LC_ALL=C and ja_JP.UTF-8" "$(gtf - | LC_ALL=C G1 merge | cksum)" "$(gtf - | LC_ALL=ja_JP.UTF-8 G1 merge | cksum)"

@@ -24,6 +24,8 @@ eq "notify: defaults (rate 6/60, mask email on, others off)" "$($TB notify statu
 printf 'enabled = on  # conf\nrate_per_min = 3\nslack_target = CCONFVAL\nmask_ip = on\n' >"$TB_NOTIFY_CONF"
 eq "notify: notify.conf turns it on" "$($TB notify status --json | jq -r .enabled)" "on"
 eq "notify: env wins over notify.conf" "$(TB_NOTIFY_ENABLED=off $TB notify status --json | jq -r .enabled) $(TB_NOTIFY_RATE_PER_MIN=9 $TB notify status --json | jq -r .rate_per_min)" "off 9"
+eq "notify: rate_per_* / max_len = unlimited → null in --json, shown as is" "$(TB_NOTIFY_RATE_PER_MIN=unlimited TB_NOTIFY_RATE_PER_HOUR=Unlimited TB_NOTIFY_MAX_LEN=unlimited $TB notify status --json | jq -c '[.rate_per_min, .rate_per_hour, .max_len]') $(TB_NOTIFY_RATE_PER_MIN=unlimited $TB notify status | grep -o 'rate: [^/]*')" "[null,null,null] rate: unlimited"
+eq "notify: unlimited is not accepted for a non-cap key" "$(TB_NOTIFY_DEDUPE_SEC=unlimited $TB notify status | grep -o 'dedupe_sec: [0-9a-z]*')" "dedupe_sec: 600"
 eq "notify: invalid env ignored, conf used" "$(TB_NOTIFY_RATE_PER_MIN=x $TB notify status --json | jq -r .rate_per_min)" "3"
 eq "notify: the channel id is never printed" "$($TB notify status | grep -c CCONFVAL)$($TB notify status --json | grep -c CCONFVAL)" "00"
 rm -f "$TB_NOTIFY_CONF"; cp "$HERE/../config/notify.conf.example" "$TB_NOTIFY_CONF.example"
