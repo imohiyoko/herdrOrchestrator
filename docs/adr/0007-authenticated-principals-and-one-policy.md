@@ -152,12 +152,12 @@ lead1        approve:agent:stop  ~report      = allow       # 旧 grants の app
 ### 段 4 の続き: すべての判定を Q-<n> に残し、承認の結果を依頼者に返す(2026-11-25)
 
 - **ねらい**: 誰が依頼し、何が・誰が決めたかを 1 か所で追えるようにする(監査)。承認したコマンドは、依頼者が 1 回だけ使えるコマンドとして返し、同じ依頼が何度も実行されないようにする。
-- **allow / ask / deny のどれも `Q-<n>`**: agent(と `system:<名前>`)が叩いた tb は、権限の門で決まった時点で `requests` に 1 行残す(スキーマ 029 で `tier` と `rule` を足した)。
+- **allow / ask / deny のどれも `Q-<n>`**: agent が叩いた tb は、権限の門で決まった時点で `requests` に 1 行残す(スキーマ 029 で `tier` と `rule` を足した)。
   - `allow`: 状態 `allowed`、決めたのは `policy`(認可の仕組み)と当たった行。承認は要らない。標準入力は読まない
   - `ask`: 状態 `pending`。承認・却下した人(人か agent と根拠の行)を `decided_by` に残す
   - `deny`: 状態 `denied`、決めたのは `policy`。引数と標準入力ごと残し、**人だけ**が `tb approval approve Q-<n>` で例外として承認できる(`approve:` を持つ agent にも開けさせない)。例外の実行で通るのは、その `Q-<n>` の操作の deny だけ
-  - 人の端末からの tb は残さない(人は常に通る)。`tb approval list` は今までどおり決まっていないもの(`pending`)だけ。全部は `tb approval history [--mine|--by A]`
-- **承認の結果を依頼者に返す**: コマンドの `Q-<n>` を承認しても、その場では実行しない。依頼した agent に「`tb approval run Q-<n>` で 1 回だけ実行できます」と送り(outbox に積んで届ける。使用中なら後で届く)、依頼者が自分で実行する。却下したときも知らせる。送信・agent の操作の `Q-<n>` も、決まったら依頼者に知らせる
+  - 人の端末からの tb は残さない(人は常に通る)。`system:<名前>`(scheduler など)の allow も残さない(定期の呼び出しで数が多いため。ask / deny は残す)。実行の結果(出力の末尾)は依頼者本人と人にだけ見せる。`tb approval list` は今までどおり決まっていないもの(`pending`)だけ。全部は `tb approval history [--mine|--by A]`
+- **承認の結果を依頼者に返す**: コマンドの `Q-<n>` を承認しても、その場では実行しない。依頼した agent の pane に「`tb approval run Q-<n>` で 1 回だけ実行できます」と直接送り(tb からの知らせなので、agent 同士の送信の経路 routes / delivery は通さない。記録は messages の kind=approval)、依頼者が自分で実行する。使用中・不在で届かなければ承認した側にそう出し、依頼者は `tb approval history --mine` で見る。却下したときも知らせる。送信・agent の操作の `Q-<n>` も、決まったら依頼者に知らせる
   - `tb approval run Q-<n>` を使えるのは依頼した agent だけで、状態が `approved` のときだけ動き、実行に入った時点で `running` になる(2 回目は断る)。中身は前と同じ仕組み(鍵を子に渡し、子は依頼者として 1 回だけ動く)
   - 知らせる相手がいない依頼者(`system:<名前>`)は、前と同じく承認した側がその場で依頼者として実行する
 - **代わりに増えるもの**: agent の tb の呼び出しごとに `requests` の行と、呼び出し元を確かめる `herdr agent list` が 1 回増える(1 回の tb の中では 1 回だけ聞く)。`Q-<n>` の番号は allow の行と同じ並びで増える。古い行を消す仕組みはまだ無い

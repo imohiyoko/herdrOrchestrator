@@ -25,7 +25,7 @@ import (
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/identity"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/perms"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
-	"github.com/imohiyoko/herdrorchestrator/internal/message"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/transport"
 )
 
 var reQID = regexp.MustCompile(`^Q-[0-9]+$`)
@@ -193,6 +193,9 @@ func insertCmd(tier, op, target, rule string, withStdin bool) (string, error) {
 	if who == "human" && tier != "ask" {
 		return "", nil // 人の端末は記録しない(人は常に通る)
 	}
+	if tier == "allow" && strings.HasPrefix(who, "system:") {
+		return "", nil // scheduler などの定期の呼び出しの allow は残さない(数が多く、誰が依頼したかの記録にならない。ask / deny は残す)
+	}
 	db, session, done, err := permDB()
 	if err != nil {
 		return "", err
@@ -358,7 +361,7 @@ func requestDecide(sub string, args []string, w, stderr io.Writer) error {
 		fmt.Fprintf(w, "%s approved by %s: 依頼者 %s に知らせました(%s が tb approval run %s で 1 回だけ実行します): tb %s\n",
 			r.qid(), ap.name, r.requester, r.requester, r.qid(), strings.Join(pl.Args, " "))
 		if !notifyRequester(db, r, ap, r.qid()+" は "+ap.name+" に承認されました。tb approval run "+r.qid()+" で 1 回だけ実行できます(実行するコマンド: tb "+strings.Join(pl.Args, " ")+")") {
-			fmt.Fprintf(stderr, "tb: 依頼者 %s に知らせを届けられませんでした(%s は承認済みのまま。依頼者が tb approval history --mine で見られます)\n", r.requester, r.qid())
+			fmt.Fprintf(stderr, "tb: 依頼者 %s に知らせを届けられませんでした(使用中か不在。%s は承認済みのまま。依頼者は tb approval history --mine で見られます)\n", r.requester, r.qid())
 		}
 		return nil
 	}
@@ -371,8 +374,8 @@ func requestDecide(sub string, args []string, w, stderr io.Writer) error {
 // decidedNotice は送信・agent の操作の承認待ちが決まったことを、依頼した agent に知らせる(決まらなかったら送らない)。
 func decidedNotice(db *store.DB, r request, sub string, err error) {
 	var ex *exit
-	if err != nil && !(errors.As(err, &ex) && (ex.code == 11 || ex.code == 12)) {
-		return // 承認・却下そのものが通らなかった(11 / 12 は承認済みで届けるところだけ失敗)
+	if err != nil && !(r.source == "outbox" && sub == "approve" && errors.As(err, &ex) && (ex.code == 11 || ex.code == 12)) {
+		return // 承認・却下そのものが通らなかった(送信の承認の 11 / 12 は、承認済みで届けるところだけ失敗)
 	}
 	who, cerr := callerName()
 	if cerr != nil {
@@ -383,11 +386,13 @@ func decidedNotice(db *store.DB, r request, sub string, err error) {
 		what = "agent の操作"
 	}
 	done := "承認され、実行されました"
-	if r.source == "outbox" {
-		done = "承認され、届けました"
-	}
-	if sub == "reject" {
+	switch {
+	case sub == "reject":
 		done = "却下されました"
+	case err != nil:
+		done = "承認されました(届けるところで止まっています。queued のまま、直れば tb flush で届きます)"
+	case r.source == "outbox":
+		done = "承認され、届けました"
 	}
 	notifyRequester(db, r, approver{name: who}, fmt.Sprintf("%s(%s %s %s)は %s に%s", r.qid(), what, r.op, r.target, who, done))
 }
@@ -425,21 +430,19 @@ func handBack(requester string) bool {
 	return requester != "human" && requester != "" && !strings.HasPrefix(requester, "system:")
 }
 
-// notifyRequester は決まったことを依頼した agent に 1 通送る(送信の経路と同じく outbox に積んで届ける。宛先が使用中なら queued に残り tb flush で届く)。
-// 送り主は決めた側(人なら human)。届けられなかったら false。人・system: の依頼者には送らない。
+// notifyRequester は決まったことを依頼した agent の pane に直接 1 通送る(tb からの知らせ。agent 同士の送信の経路 routes / delivery は通さない)。
+// 記録は messages(kind=approval、ref=Q-<n>)。宛先が使用中・不在なら送らずに false(依頼者は tb approval history --mine で見られる)。
+// 人・system: の依頼者には送らない。
 func notifyRequester(db *store.DB, r request, ap approver, text string) bool {
 	if !handBack(r.requester) {
 		return true
 	}
-	res, err := db.Exec(`INSERT INTO main.outbox (herdr_session, from_name, from_pane, from_session, target, kind, task_id, text, status, reason, created_at)
-	  VALUES (?, ?, 'approval', '', ?, 'info', NULL, ?, 'queued', ?, ?)`, db.Session, ap.name, r.requester, text, "approval: "+r.qid()+" の結果の知らせ", nowTS())
-	if err != nil {
+	msg := "[tb approval / " + r.qid() + " / " + ap.name + "] " + text
+	if transport.Send(db.DB, db.Session, r.requester, msg, r.qid(), "approval", io.Discard) != transport.Sent {
 		return false
 	}
-	oid, _ := res.LastInsertId()
 	_, _ = db.Exec(`UPDATE main.requests SET notified_at=? WHERE id=?`, nowTS(), r.id)
-	rr := message.Deliver(approval.NewJudge(db.DB, db.Session), oid, true, io.Discard, io.Discard)
-	return (rr.Code == 0 && rr.Blocked == "") || rr.Code == 10 // 10 は宛先が使用中で queued(あとで届く)
+	return true
 }
 
 // approvalRun は tb approval run Q-<n>: 承認された自分の依頼を、自分で 1 回だけ実行する(依頼した agent だけ)。
@@ -574,7 +577,13 @@ func approvalHistory(db *store.DB, args []string, w io.Writer) error {
 	  r.requester AS requested_by, r.op, r.target, COALESCE(r.decided_by, '') AS decided_by, COALESCE(r.rule, '') AS rule,
 	  r.created_at, COALESCE(r.decided_at, '') AS decided_at, r.detail, COALESCE(r.result, '') AS result
 	  FROM requests r WHERE r.herdr_session=? AND (?='' OR r.requester=?) ORDER BY r.id DESC LIMIT ?`
-	qa := []any{db.Session, by, by, limit}
+	// 実行の結果(出力の末尾)は、依頼者本人と人にだけ見せる(ほかの agent の出力を読ませない)
+	viewer, err := callerName()
+	if err != nil {
+		return die("herdr agent list に失敗したため、実行者を特定できません")
+	}
+	q = strings.Replace(q, `COALESCE(r.result, '') AS result`, `CASE WHEN ?='human' OR r.requester=? THEN COALESCE(r.result, '') ELSE '' END AS result`, 1)
+	qa := []any{viewer, viewer, db.Session, by, by, limit}
 	if asJSON {
 		rows, err := sqlObjs(db.DB, nil, q, qa...)
 		if err != nil {
