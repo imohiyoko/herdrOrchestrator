@@ -86,7 +86,7 @@ eq "role-edit: new" "$(EDITOR=$TMP/rc-ed.sh rcerr $TB role-edit newrole --shared
 eq "role-edit: editor fails" "$(EDITOR=$TMP/rc-ed-fail.sh rcerr $TB role-edit lead)" $'tb: 編集を中止しました\nrc=1'
 eq "role-edit: usage" "$(rcerr $TB role-edit)" $'tb: role-write|role-edit <役割名|@map> [--shared]\n(tb help で使い方)\nrc=2'
 eq "role-unset: usage" "$(rcerr $TB role-unset)" $'tb: role-write|role-edit <役割名|@map> [--shared]\n(tb help で使い方)\nrc=2'
-eq "role-unset: agent" "$(HERDR_PANE_ID=whr1:p1 rcerr $TB role-unset worker)" $'tb: tb role-unset は人が自分の端末で実行します(agent \'hr1\' の pane からは実行できません)\nrc=1'
+eq "role-unset: agent" "$(HERDR_PANE_ID=whr1:p1 rcerr $TB role-unset worker)" $'tb: tb role-unset は人が自分の端末で実行します(agent \'hr1\' の pane からは実行できません)。記録 Q-13(例外は人が tb approval approve Q-13 で許可できます)\nrc=1'
 eq "role-unset: back to the shared row" "$(rcerr $TB role-unset worker)" $'worker: db:*\nrc=0'
 eq "role-unset: back to the file" "$(rcerr $TB role-unset worker --shared)" $'worker: file:<TMP>/rc-roles/worker.md\nrc=0'
 eq "role-unset: none" "$(rcerr $TB role-unset newrole --shared; rcerr $TB role-unset newrole)" $'newrole: なし\nrc=0\nnewrole: なし\nrc=0'

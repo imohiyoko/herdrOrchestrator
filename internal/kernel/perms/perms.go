@@ -429,18 +429,32 @@ func (d *Denied) Error() string { return d.Msg }
 func Enforce(op, tier, rule, what string) error { return EnforceTarget(op, "*", tier, rule, what) }
 
 // Queue は ask で止めたコマンドを承認待ちに積む(herdrctl tb の入口が入れる)。積んだ承認待ちの ID(Q-<n>)を返す。nil なら積まない。
-var Queue func(op, target, what string) (string, error)
+var Queue func(op, target, rule, what string) (string, error)
 
-// Approved は承認済みの依頼を実行しているとき(tb approval approve が立てる。ask は通す。deny は通さない)。
+// Record は agent の呼び出しの allow / deny を、承認待ちの表に決まった行(Q-<n>)として残す(herdrctl tb の入口が入れる)。
+// allow は policy が許可した記録だけ(標準入力は読まない)。deny は人が例外として承認できるよう、引数と標準入力ごと残す。
+// 残せなかったときは空を返す(allow は止めない。deny はもともと止まる)。nil なら残さない。
+var Record func(tier, op, target, rule, what string) string
+
+// Approved は承認済みの依頼を実行しているとき(tb approval approve / run が立てる。ask は通す。deny は ApprovedDeny の操作だけ通す)。
 var Approved bool
+
+// ApprovedDeny は、人が deny を例外として承認した依頼の操作名(その操作の deny だけを通す。空なら deny は通さない)。
+var ApprovedDeny string
 
 // EnforceTarget は Enforce に操作の対象を足したもの(承認待ちのラベルに使う)。
 func EnforceTarget(op, target, tier, rule, what string) error {
-	if tier == "ask" && Approved {
-		return nil
+	if Approved && (tier == "allow" || tier == "ask" || (tier == "deny" && ApprovedDeny != "" && op == ApprovedDeny)) {
+		return nil // 承認済みの依頼の実行(その Q-<n> に記録がある。もう 1 行は残さない)
 	}
 	pane := identityPane()
-	if tier == "allow" || (pane == "" && identity.System == "") {
+	if pane == "" && identity.System == "" {
+		return nil
+	}
+	if tier == "allow" {
+		if Record != nil {
+			Record("allow", op, target, rule, what)
+		}
 		return nil
 	}
 	n := identity.System // scheduler など(system: の行で締められた)
@@ -457,18 +471,24 @@ func EnforceTarget(op, target, tier, rule, what string) error {
 	case "ask":
 		msg := what + " は承認が要ります(" + op + " = " + tier + "。" + rule + ")"
 		if Queue != nil {
-			id, err := Queue(op, target, what)
+			id, err := Queue(op, target, rule, what)
 			if err != nil {
 				return &Denied{20, msg + "。承認待ちに積めませんでした(" + err.Error() + ")。人が自分の端末で実行してください(agent '" + n + "')"}
 			}
-			return &Denied{20, msg + "。承認待ち " + id + " に積みました(承認されると、依頼者の権限で実行されます。tb approval list)(agent '" + n + "')"}
+			return &Denied{20, msg + "。承認待ち " + id + " に積みました(承認されると知らせが届き、tb approval run " + id + " で 1 回だけ実行できます。tb approval list)(agent '" + n + "')"}
 		}
 		return &Denied{20, msg + "。承認待ちに積めないため実行しません。人が自分の端末で実行してください(agent '" + n + "')"}
 	}
-	if strings.HasPrefix(rule, "policy:") {
-		return &Denied{1, what + " は実行できません(" + op + " = deny。" + rule + ")(agent '" + n + "')"}
+	note := ""
+	if Record != nil && !strings.HasPrefix(op, "cmd:?:") {
+		if id := Record("deny", op, target, rule, what); id != "" {
+			note = "。記録 " + id + "(例外は人が tb approval approve " + id + " で許可できます)"
+		}
 	}
-	return &Denied{1, what + " は人が自分の端末で実行します(agent '" + n + "' の pane からは実行できません)"}
+	if strings.HasPrefix(rule, "policy:") {
+		return &Denied{1, what + " は実行できません(" + op + " = deny。" + rule + ")(agent '" + n + "')" + note}
+	}
+	return &Denied{1, what + " は人が自分の端末で実行します(agent '" + n + "' の pane からは実行できません)" + note}
 }
 
 // HumanPane は今の呼び出しが pane の外(人の端末)か。pane があっても agent がいなければ人だが、それは Enforce が herdr に聞いて決める。
@@ -637,8 +657,12 @@ func RequirePolicyWrite(old, new, what string, openDB func() (*sql.DB, string, f
 		if err := EnforceTarget(op, c.Subject, tier, rule, what+"(変わる行: "+c.Line+")"); err != nil {
 			var d *Denied
 			if errors.As(err, &d) && d.Code == 1 && tier == "deny" && !strings.HasPrefix(rule, "policy:") {
+				note := ""
+				if i := strings.Index(d.Msg, "。記録 Q-"); i >= 0 {
+					note = d.Msg[i:]
+				}
 				d.Msg = what + " は実行できません(変わる行: " + c.Line + ")。" + op + " を対象 " + c.Subject +
-					" に許す行がありません(既定 deny。人が policy に書く: <agent> " + op + " " + c.Subject + " = allow)(agent '" + who + "')"
+					" に許す行がありません(既定 deny。人が policy に書く: <agent> " + op + " " + c.Subject + " = allow)(agent '" + who + "')" + note
 			}
 			return err
 		}

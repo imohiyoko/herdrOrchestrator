@@ -85,6 +85,6 @@ eq "sched-job: no subcommand → list" "$(SJA sched-job | head -1)" "セッシ�
 eq "job: unknown subcommand → 2" "$(rc SJA job bogus)" "2"
 eq "job unset: no row message" "$(SJA job unset j1 2>&1)" "tb: sched-job:j1 の DB の行はありません(このセッションの行)"
 eq "job set: refused body message" "$(printf 'TARGET=x\nWINDOW=bad\nINTERVAL_MIN=5\nPROMPT=y\n' | SJA job set j1 2>&1 | tail -1)" "tb: sched-job:j1 は書きませんでした"
-eq "job set from an agent pane: message" "$(printf '%s\n' "$J1" | FAKE_AGENTS='[{"pane_id":"wW:p1","name":"worker1","agent_session":{"value":"s"}}]' HERDR_PANE_ID=wW:p1 SJA job set j1 2>&1)" "tb: tb job set は人が自分の端末で実行します(agent 'worker1' の pane からは実行できません)"
+eq "job set from an agent pane: message" "$(printf '%s\n' "$J1" | FAKE_AGENTS='[{"pane_id":"wW:p1","name":"worker1","agent_session":{"value":"s"}}]' HERDR_PANE_ID=wW:p1 SJA job set j1 2>&1)" "tb: tb job set は人が自分の端末で実行します(agent 'worker1' の pane からは実行できません)。記録 Q-3(例外は人が tb approval approve Q-3 で許可できます)"
 eq "job set: herdr fails → refused" "$(printf '%s\n' "$J1" | FAKE_AGENTS='not json' HERDR_PANE_ID=wW:p1 rc SJA job set j1)" "1"
 unset TB_SCHED_DIR; export HERDR_PANE_ID=$_saved_pane

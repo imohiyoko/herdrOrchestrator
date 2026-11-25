@@ -25,8 +25,11 @@ const approvalUsage = `tb approval check <操作> [--by A] [--to 宛先 --text �
 tb approval allow <操作のパターン>    今後は許可する(人だけ。設定 policy に * <操作> <対象> = allow の行を書く)
 tb approval ask <操作のパターン>      承認制に戻す(人だけ。設定 policy に * <操作> <対象> = ask の行を書く)
 tb approval list [--json]             承認待ちの一覧(Q-<n>。送信・agent の操作・ask で止まったコマンド。優先度の高い順、同じなら古い順)
-tb approval approve Q-<n> [--always]  承認する(送信は届け、agent の操作とコマンドは実行する。前の O-<n> / L-<n> も受ける)
-tb approval reject Q-<n>              却下する
+tb approval history [--mine|--by A] [--limit N] [--json]   allow / ask / deny の記録(新しい順。判定・状態・依頼者・決めた人・当たった行)
+tb approval approve Q-<n> [--always]  承認する(送信は届け、agent の操作は実行する。コマンドは依頼した agent に知らせ、依頼者が run で実行する。
+                                      deny の記録 Q-<n> は人だけが例外として承認できる。前の O-<n> / L-<n> も受ける)
+tb approval run Q-<n>                 承認された自分の依頼を 1 回だけ実行する(依頼した agent だけ。2 回目は実行しない)
+tb approval reject Q-<n>              却下する(依頼した agent に知らせる)
 tb approval priority Q-<n> high|normal|low   優先度を変える(依頼した agent と人。積むときは TB_PRIORITY で付けられる)
 (古い名前 tb approval <操作> / tb allow / tb ask / tb approve / tb reject も同じに使える)
 `
@@ -60,7 +63,7 @@ func cmdApproval(args []string, w, stderr io.Writer, legacy string) error {
 			return &exit{exitUsage, ""}
 		}
 		switch args[0] {
-		case "check", "list", "allow", "ask", "approve", "reject", "priority":
+		case "check", "list", "history", "run", "allow", "ask", "approve", "reject", "priority":
 			sub, args = args[0], args[1:]
 		case "help", "-h", "--help":
 			fmt.Fprint(w, approvalUsage)
@@ -95,6 +98,10 @@ func cmdApproval(args []string, w, stderr io.Writer, legacy string) error {
 	switch sub {
 	case "list":
 		return approvalList(db, args, w)
+	case "history":
+		return approvalHistory(db, args, w)
+	case "run":
+		return approvalRun(db, args, w, stderr)
 	case "check":
 		return approvalCheck(db, args, w, stderr)
 	case "allow", "ask":

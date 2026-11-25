@@ -48,7 +48,7 @@ rm -f "$TB_NOTIFY_CONF"
 eq "on: no conf yet → one line" "$($TB notify on >/dev/null; cat "$TB_NOTIFY_CONF")" $'enabled = on'
 : >"$TB_NOTIFY_CONF"
 eq "on: empty conf → one line" "$($TB notify on >/dev/null; cat "$TB_NOTIFY_CONF")" $'enabled = on'
-eq "human only: on/off/test/flush from an agent pane" "$(for s in on off test flush; do HERDR_PANE_ID=wW:p1 ncerr $TB notify $s; done)" $'tb: tb notify on は人が自分の端末で実行します(agent \'worker1\' の pane からは実行できません)\nrc=1\ntb: tb notify off は人が自分の端末で実行します(agent \'worker1\' の pane からは実行できません)\nrc=1\ntb: tb notify test は人が自分の端末で実行します(agent \'worker1\' の pane からは実行できません)\nrc=1\ntb: tb notify flush は人が自分の端末で実行します(agent \'worker1\' の pane からは実行できません)\nrc=1'
+eq "human only: on/off/test/flush from an agent pane" "$(for s in on off test flush; do HERDR_PANE_ID=wW:p1 ncerr $TB notify $s; done)" $'tb: tb notify on は人が自分の端末で実行します(agent \'worker1\' の pane からは実行できません)。記録 Q-1(例外は人が tb approval approve Q-1 で許可できます)\nrc=1\ntb: tb notify off は人が自分の端末で実行します(agent \'worker1\' の pane からは実行できません)。記録 Q-2(例外は人が tb approval approve Q-2 で許可できます)\nrc=1\ntb: tb notify test は人が自分の端末で実行します(agent \'worker1\' の pane からは実行できません)。記録 Q-3(例外は人が tb approval approve Q-3 で許可できます)\nrc=1\ntb: tb notify flush は人が自分の端末で実行します(agent \'worker1\' の pane からは実行できません)。記録 Q-4(例外は人が tb approval approve Q-4 で許可できます)\nrc=1'
 eq "error: tb notify on x" "$(ncerr $TB notify on x)" $'tb: notify on(引数なし)\n(tb help で使い方)\nrc=2'
 eq "error: tb notify off x" "$(ncerr $TB notify off x)" $'tb: notify off(引数なし)\n(tb help で使い方)\nrc=2'
 eq "error: tb notify test x" "$(ncerr $TB notify test x)" $'tb: notify test(引数なし)\n(tb help で使い方)\nrc=2'

@@ -163,7 +163,7 @@ export TB_NOTIFY_RATE_PER_MIN=100; unset TB_NOTIFY_DEDUPE_SEC
 nsql "DELETE FROM notify_events WHERE type IN ('summary','approvals_pending'); UPDATE notify_events SET slack_status='none' WHERE slack_status IN ('pending','awaiting-ack'); DELETE FROM notify_seen;
   INSERT INTO outbox (herdr_session, from_name, from_pane, from_session, target, kind, text, status, created_at) VALUES ('default', 'conductor','wC:p1','sc','worker1','task','本文は出さない','pending','2026-01-01T00:00:00Z');"
 $TB notify flush >/dev/null 2>&1; $TB notify flush >/dev/null 2>&1
-eq "periodic: approvals pending queued once with ids only" "$(nsql "SELECT text FROM notify_events WHERE type='approvals_pending';")" "[承認待ち] 承認待ち 1 件: Q-1(tb approval list)"
+eq "periodic: approvals pending queued once with ids only" "$(nsql "SELECT text FROM notify_events WHERE type='approvals_pending';")" "[承認待ち] 承認待ち 1 件: Q-$(nsql "SELECT id FROM requests WHERE source='outbox';")(tb approval list)"
 eq "periodic: summary queued" "$(nsql "SELECT COUNT(*) FROM notify_events WHERE type='summary';")" "1"
 nsql "DELETE FROM outbox;"
 

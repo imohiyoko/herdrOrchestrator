@@ -52,7 +52,7 @@ q=$(HERDR_PANE_ID= $TB comments "$a" --kind question --json | jq -r .id | tail -
 p=$(HERDR_PANE_ID= $TB comments "$a" --kind progress --json | jq -r .id | tail -1)
 # ---- resolve
 eq "resolve: no args" "$(HERDR_PANE_ID= tcerr $TB resolve)" $'tb: resolve <C-n> [-m <メモ>]\n(tb help で使い方)\nrc=2'
-eq "resolve: agent pane" "$(tcerr $TB resolve "$q")" $'tb: tb resolve は人が自分の端末で実行します(agent \'worker1\' の pane からは実行できません)\nrc=1'
+eq "resolve: agent pane" "$(tcerr $TB resolve "$q")" $'tb: tb resolve は人が自分の端末で実行します(agent \'worker1\' の pane からは実行できません)。記録 Q-35(例外は人が tb approval approve Q-35 で許可できます)\nrc=1'
 eq "resolve: bad id" "$(HERDR_PANE_ID= tcerr $TB resolve X-1)" $'tb: resolve: ID は C-<数字>: X-1\n(tb help で使い方)\nrc=2'
 eq "resolve: unknown" "$(HERDR_PANE_ID= tcerr $TB resolve "$q" --bogus)" $'tb: resolve: 不明な引数 --bogus\n(tb help で使い方)\nrc=2'
 eq "resolve: -m needs a value" "$(HERDR_PANE_ID= tcerr $TB resolve "$q" -m)" $'tb: -m に値が必要です\n(tb help で使い方)\nrc=2'
@@ -65,7 +65,7 @@ eq "resolve: row" "$(tcrow "$q")" $'T-tcm-001|question|どちら\nですか|[]|w
 
 # ---- reopen
 eq "reopen: no args" "$(HERDR_PANE_ID= tcerr $TB reopen)" $'tb: reopen <C-n> [-m <理由>]\n(tb help で使い方)\nrc=2'
-eq "reopen: agent pane" "$(tcerr $TB reopen "$q")" $'tb: tb reopen は人が自分の端末で実行します(agent \'worker1\' の pane からは実行できません)\nrc=1'
+eq "reopen: agent pane" "$(tcerr $TB reopen "$q")" $'tb: tb reopen は人が自分の端末で実行します(agent \'worker1\' の pane からは実行できません)。記録 Q-36(例外は人が tb approval approve Q-36 で許可できます)\nrc=1'
 eq "reopen: bad id" "$(HERDR_PANE_ID= tcerr $TB reopen X-1)" $'tb: reopen: ID は C-<数字>: X-1\n(tb help で使い方)\nrc=2'
 eq "reopen: missing" "$(HERDR_PANE_ID= tcerr $TB reopen C-99999)" $'tb: 報告が見つかりません: C-99999\nrc=1'
 eq "reopen: progress" "$(HERDR_PANE_ID= tcerr $TB reopen "$p" | tcmask)" $'tb: 未対応に戻せるのは question / blocked だけです(C-N は progress)\nrc=1'

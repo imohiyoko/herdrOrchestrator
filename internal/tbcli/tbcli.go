@@ -75,6 +75,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 	perms.OpenDB = permDB
 	perms.Queue = queueCmd
+	perms.Record = recordCmd
 	runArgs = args
 	perms.NameMatch = func(db *sql.DB, session, name, pat string) int { return agents.NewRoles(db, session).Match(name, pat) }
 	perms.RelMatch = func(db *sql.DB, session, a, b, rel string) int {

@@ -107,6 +107,8 @@ alert-close              cmd:alert:close              deny        allow       in
 approval                 cmd:approval:check           allow       allow       entry
 approval.check           cmd:approval:check           allow       allow       entry
 approval.list            cmd:approval:list            allow       allow       entry
+approval.history         cmd:approval:history         allow       allow       entry
+approval.run             cmd:approval:run             allow       allow       entry
 approval.approve         cmd:approval:approve         allow       allow       entry
 approval.reject          cmd:approval:reject          allow       allow       entry
 approve                  cmd:approval:approve         allow       allow       entry

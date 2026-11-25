@@ -58,7 +58,7 @@ unset HERDR_PANE_ID
 t1=$($TB add -p pm -t "権限 1"); t2=$($TB add -p pm -t "権限 2"); t3=$($TB add -p pm -t "権限 3")
 export HERDR_PANE_ID=wW:p1
 eq "perms: agent runs an allow command (default)" "$(rc $TB cancel "$t1")" "0"
-eq "perms: default allow does not ask herdr who is calling (no extra herdr call)" "$(: >"$FAKE_LOG"; $TB list -p pm >/dev/null; grep -c '^list' "$FAKE_LOG" || true)" "0"
+eq "perms: default allow asks herdr who is calling at most once (to record it as an allowed Q-)" "$(: >"$FAKE_LOG"; $TB list -p pm >/dev/null; grep -c '^list' "$FAKE_LOG" || true)" "1"
 
 printf 'pw1 cmd:ticket:cancel * = ask\n' >"$TB_POLICY"
 eq "perms: tightened to ask for pw1 → agent stops with 20" "$(rc $TB cancel "$t2")" "20"
@@ -73,7 +73,7 @@ printf '* cmd:ticket:* * = deny\n' >"$TB_POLICY"
 eq "perms: a glob row applies (deny → 1)" "$(rc $TB show "$t1")" "1"
 eq "perms: a pane with no agent is a human (rows do not apply)" "$(HERDR_PANE_ID=wW:p9 rc $TB show "$t1")" "0"
 eq "perms: the gate also covers commands moved to herdrctl (tb list)" "$($TB list -p pm 2>&1 >/dev/null)" \
-  "tb: tb list は実行できません(cmd:ticket:list = deny。policy: * cmd:ticket:* * = deny)(agent 'pw1')"
+  "tb: tb list は実行できません(cmd:ticket:list = deny。policy: * cmd:ticket:* * = deny)(agent 'pw1')。記録 Q-9(例外は人が tb approval approve Q-9 で許可できます)"
 printf 'pw* cmd:ticket:show * = allow\npw1 cmd:ticket:show * = ask\n' >"$TB_POLICY"
 eq "perms: the strictest matching row wins, whatever the order (→ 20)" "$(rc $TB show "$t1")" "20"
 printf 'pw1 cmd:ticket:show * = ask\npw* cmd:ticket:show * = allow\n' >"$TB_POLICY"
@@ -115,7 +115,7 @@ eq "perms: a deny default loosened to allow → the command itself runs (no gate
   "$($TB resolve C-1 2>&1 | grep -cE '人が自分の端末で|承認が要ります|実行できません' || true)" "0"
 : >"$TB_POLICY"
 eq "perms: default require_human is unchanged (1 and the old message)" "$($TB resolve C-1 2>&1 >/dev/null)" \
-  "tb: tb resolve は人が自分の端末で実行します(agent 'pw1' の pane からは実行できません)"
+  "tb: tb resolve は人が自分の端末で実行します(agent 'pw1' の pane からは実行できません)。記録 Q-18(例外は人が tb approval approve Q-18 で許可できます)"
 eq "perms: --dry-run paths that skip require_human still run (nudge --dry-run)" "$(rc $TB nudge --dry-run)" "0"
 eq "perms: herdr failure while checking → 1" "$(FAKE_LIST_FAIL=1 rc $TB resolve C-1)" "1"
 printf 'pw1 cmd:ticket:show * = allow\n' >"$TB_POLICY"

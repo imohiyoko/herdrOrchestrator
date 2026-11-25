@@ -30,7 +30,7 @@ eq "approval reject Q- (agent op): the person rejects it" "$($TB approval reject
 eq "approval reject Q- (send): the person rejects it" "$($TB approval reject "$oq" >/dev/null 2>&1; alsql "SELECT status FROM outbox WHERE text='please review';")" "denied"
 eq "approval list: decided rows drop out" "$($TB approval list)" ""
 
-# --- ask で止まったコマンドも Q- に積む(引数と標準入力ごと)。承認すると承認した側が実行する
+# --- ask で止まったコマンドも Q- に積む(引数と標準入力ごと)。承認されると依頼した agent に知らせ、依頼者が tb approval run で 1 回だけ実行する
 printf 'worker1 cmd:config:set * = allow\nworker1 policy:send:* * = ask\nworker1 policy:send:* worker1 = deny\n' >"$TB_POLICY"
 cp "$TB_POLICY" "$TMP/al.base"
 eq "cmd queue: an ask stops with 20 and names the Q-" "$(printf '%s\n' "$(cat "$TMP/al.base")" 'worker2 send:task * = allow' | TB_PRIORITY=high HERDR_PANE_ID=wW:p1 $TB config set policy >/dev/null 2>"$TMP/al.err"; echo $?) $(grep -c '承認待ち Q-[0-9]* に積みました' "$TMP/al.err")" "20 1"
@@ -39,22 +39,48 @@ eq "cmd queue: listed with the required permission, the requester and the priori
 eq "cmd queue: nothing was written yet" "$(grep -c '^worker2' "$TB_POLICY")" "0"
 eq "cmd queue: the requester cannot approve its own request" "$(HERDR_PANE_ID=wW:p1 rc $TB approval approve "$cq" 2>/dev/null)" "1"
 eq "cmd queue: an agent without approve: cannot approve" "$(HERDR_PANE_ID=wW:p2 $TB approval approve "$cq" 2>&1 >/dev/null | grep -c '承認する許可がありません')" "1"
-eq "cmd queue: a person approves → the command runs with the saved stdin" "$($TB approval approve "$cq" >/dev/null 2>&1; echo $?) $(grep -c '^worker2 send:task' "$TB_POLICY") $(alsql "SELECT status FROM requests WHERE id=${cq#Q-};")" "0 1 done"
-eq "cmd queue: an approved request runs once" "$($TB approval approve "$cq" 2>&1 >/dev/null | grep -c '承認待ちではありません')" "1"
+eq "cmd queue: the requester cannot run it before approval" "$(HERDR_PANE_ID=wW:p1 $TB approval run "$cq" 2>&1 >/dev/null | grep -c 'まだ承認されていません')" "1"
+eq "cmd queue: a person approves → not run yet, approved by human" "$($TB approval approve "$cq" >/dev/null 2>&1; echo $?) $(grep -c '^worker2 send:task' "$TB_POLICY") $(alsql "SELECT status||' '||decided_by FROM requests WHERE id=${cq#Q-};")" "0 0 approved human"
+eq "cmd queue: the requester is told with the one-time command" "$(alsql "SELECT count(*) FROM outbox WHERE target='worker1' AND from_name='human' AND text LIKE '%$cq は human に承認されました。tb approval run $cq%';") $(alsql "SELECT notified_at IS NOT NULL FROM requests WHERE id=${cq#Q-};")" "1 1"
+eq "cmd queue: another agent cannot run someone else's request" "$(HERDR_PANE_ID=wW:p2 $TB approval run "$cq" 2>&1 >/dev/null | grep -c '依頼した agent だけ') $(grep -c '^worker2' "$TB_POLICY")" "1 0"
+eq "cmd queue: the requester runs it → the command runs with the saved stdin" "$(HERDR_PANE_ID=wW:p1 $TB approval run "$cq" >/dev/null 2>&1; echo $?) $(grep -c '^worker2 send:task' "$TB_POLICY") $(alsql "SELECT status FROM requests WHERE id=${cq#Q-};")" "0 1 done"
+eq "cmd queue: the run is one-time (a second run is refused)" "$(HERDR_PANE_ID=wW:p1 $TB approval run "$cq" 2>&1 >/dev/null | grep -c 'もう実行しました')" "1"
+eq "cmd queue: an approved request cannot be approved again" "$($TB approval approve "$cq" 2>&1 >/dev/null | grep -c '承認待ちではありません')" "1"
 eq "cmd queue: the run key is not stored in the clear" "$(alsql "SELECT count(*) FROM requests WHERE run_key IS NOT NULL;")" "0"
 eq "cmd queue: the token cannot be reused by hand" "$(TB_APPROVED_REQUEST=$cq HERDR_PANE_ID=wW:p1 rc $TB config set policy </dev/null 2>/dev/null)" "1"
 # agent の承認者: approve:<操作>:<対象> <依頼者> の行で決まる
-# 承認者は承認の権限だけを持つ(config set も policy: も持たない)。実行は依頼者 worker1 の権限で機械的に行う
+# 承認者は承認の権限だけを持つ(config set も policy: も持たない)。実行は依頼者 worker1 が自分の権限で行う
 cp "$TMP/al.base" "$TB_POLICY"; printf 'lead1 approve:policy:send:task:* worker1 = allow\n' >>"$TB_POLICY"
 printf '%s\n' "$(cat "$TB_POLICY")" 'worker3 send:task * = allow' | HERDR_PANE_ID=wW:p1 $TB config set policy >/dev/null 2>"$TMP/al.err"
 cq2=$(grep -o 'Q-[0-9]*' "$TMP/al.err" | head -1)
-eq "cmd queue: an agent with only approve:<op>:<target> <requester> approves; it runs as the requester" "$(HERDR_PANE_ID=wW:p2 $TB approval approve "$cq2" >/dev/null 2>&1; echo $?) $(grep -c '^worker3 send:task' "$TB_POLICY") $(alsql "SELECT decided_by FROM requests WHERE id=${cq2#Q-};")" "0 1 lead1"
+eq "cmd queue: an agent with only approve:<op>:<target> <requester> approves; the requester runs it" "$(HERDR_PANE_ID=wW:p2 $TB approval approve "$cq2" >/dev/null 2>&1; HERDR_PANE_ID=wW:p1 $TB approval run "$cq2" >/dev/null 2>&1; echo $?) $(grep -c '^worker3 send:task' "$TB_POLICY") $(alsql "SELECT decided_by FROM requests WHERE id=${cq2#Q-};")" "0 1 lead1"
 cp "$TMP/al.base" "$TB_POLICY"
 printf '%s\n' "$(cat "$TB_POLICY")" 'worker4 send:task * = allow' | HERDR_PANE_ID=wW:p1 $TB config set policy >/dev/null 2>"$TMP/al.err"
 cq3=$(grep -o 'Q-[0-9]*' "$TMP/al.err" | head -1)
 eq "cmd queue: reject → not run" "$($TB approval reject "$cq3") $(grep -c '^worker4' "$TB_POLICY") $(alsql "SELECT status FROM requests WHERE id=${cq3#Q-};")" "$cq3 rejected 0 rejected"
+eq "cmd queue: reject → the requester is told" "$(alsql "SELECT count(*) FROM outbox WHERE target='worker1' AND text LIKE '$cq3 は human に却下されました%';")" "1"
+eq "cmd queue: a rejected request cannot be run" "$(HERDR_PANE_ID=wW:p1 $TB approval run "$cq3" 2>&1 >/dev/null | grep -c '承認されていません')" "1"
 printf '%s\n' "$(cat "$TB_POLICY")" 'worker5 send:task * = allow' | HERDR_PANE_ID=wW:p1 $TB config set policy >/dev/null 2>"$TMP/al.err"
 cq4=$(grep -o 'Q-[0-9]*' "$TMP/al.err" | head -1)
-eq "cmd queue: the requester is gone → not run, failed" "$(FAKE_AGENTS='[{"pane_id":"wW:p2","name":"lead1","agent_session":{"value":"s2"}}]' $TB approval approve "$cq4" 2>&1 >/dev/null | grep -c 'もういない') $(grep -c '^worker5' "$TB_POLICY") $(alsql "SELECT status FROM requests WHERE id=${cq4#Q-};")" "1 0 failed"
-eq "cmd queue: deny still stops without a Q-" "$(printf '%s\n' "$(cat "$TB_POLICY")" 'worker1 send:task * = allow' | HERDR_PANE_ID=wW:p1 $TB config set policy >/dev/null 2>"$TMP/al.err"; echo $?) $(grep -c 'Q-' "$TMP/al.err")" "1 0"
-unset -f alsql; unset oq lq cq cq2 cq3 cq4 TB_DB TB_POLICY HERDR_PANE_ID FAKE_AGENTS; eval "$_al_saved"; unset _al_saved
+eq "cmd queue: the requester is gone → approved, not run" "$(FAKE_AGENTS='[{"pane_id":"wW:p2","name":"lead1","agent_session":{"value":"s2"}}]' $TB approval approve "$cq4" >/dev/null 2>&1; echo $?) $(grep -c '^worker5' "$TB_POLICY") $(alsql "SELECT status FROM requests WHERE id=${cq4#Q-};")" "0 0 approved"
+
+# --- deny も Q- に残る。開けられるのは人だけ。人が承認すると、依頼者が 1 回だけ実行できる(承認者 lead1 の行は先に書いておく)
+printf 'lead1 approve:policy:send:task:* worker1 = allow\n' >>"$TB_POLICY"
+eq "deny: stops with 1 and is recorded as a denied Q-" "$(printf '%s\n' "$(cat "$TB_POLICY")" 'worker1 send:task * = allow' | HERDR_PANE_ID=wW:p1 $TB config set policy >/dev/null 2>"$TMP/al.err"; echo $?) $(grep -c '記録 Q-[0-9]*(例外は人が tb approval approve Q-[0-9]* で許可できます)' "$TMP/al.err")" "1 1"
+dq=$(grep -o 'Q-[0-9]*' "$TMP/al.err" | head -1)
+eq "deny: the record says who asked, what and which rule" "$(alsql "SELECT tier||' '||status||' '||requester||' '||op||' '||decided_by||' '||rule FROM requests WHERE id=${dq#Q-};")" "deny denied worker1 policy:send:task policy policy: worker1 policy:send:* worker1 = deny"
+eq "deny: not in the pending list" "$($TB approval list | grep -c "^$dq	")" "0"
+eq "deny: the requester cannot run it" "$(HERDR_PANE_ID=wW:p1 $TB approval run "$dq" 2>&1 >/dev/null | grep -c '承認されていません')" "1"
+eq "deny: an agent with approve: still cannot open a deny" "$(HERDR_PANE_ID=wW:p2 rc $TB approval approve "$dq" 2>/dev/null) $(alsql "SELECT status FROM requests WHERE id=${dq#Q-};")" "1 denied"
+eq "deny: a person approves the exception → the requester runs it once" "$($TB approval approve "$dq" >/dev/null 2>&1; HERDR_PANE_ID=wW:p1 $TB approval run "$dq" >/dev/null 2>&1; echo $?) $(grep -c '^worker1 send:task' "$TB_POLICY") $(alsql "SELECT status||' '||decided_by FROM requests WHERE id=${dq#Q-};")" "0 1 done human"
+eq "deny: rejecting a deny record is refused (it is already refused)" "$($TB approval reject "$dq" 2>&1 >/dev/null | grep -c '承認待ちではありません')" "1"
+
+# --- allow も Q- に残る(policy が許可。承認は要らない)。history で誰が依頼し、何が・誰が決めたかを見る
+eq "allow: an allowed agent call is recorded as allowed by policy" "$(alsql "SELECT count(*) FROM requests WHERE tier='allow' AND status='allowed' AND requester='worker1' AND op='cmd:config:set' AND decided_by='policy';" | awk '{print ($1>0)}')" "1"
+eq "allow: not in the pending list" "$($TB approval list)" "$(alsql "SELECT 'Q-'||id FROM requests WHERE 0;")"
+eq "allow: a person's own calls are not recorded" "$(alsql "SELECT count(*) FROM requests WHERE requester='human';")" "0"
+eq "history --mine: the requester sees its own records, newest first" "$(HERDR_PANE_ID=wW:p1 $TB approval history --mine --limit 1 | cut -f1-4,7)" "$(alsql "SELECT 'Q-'||id||char(9)||tier||char(9)||status||char(9)||requester||char(9)||decided_by FROM requests WHERE requester='worker1' ORDER BY id DESC LIMIT 1;")"
+eq "history --by: shows ask, deny and allow with who decided" "$($TB approval history --by worker1 --limit 1000 | awk -F'\t' '{print $2" "$7}' | sort -u | tr '\n' ',')" "allow policy,ask human,ask lead1,deny human,deny policy,"
+eq "history --json: rule and result are there" "$($TB approval history --json --limit 1000 | jq -r "select(.id==\"$dq\") | [.rule, (.result|startswith(\"exit 0\"))] | @tsv")" "policy: worker1 policy:send:* worker1 = deny	true"
+eq "history: bad args" "$(rc $TB approval history --limit 0 2>/dev/null) $(rc $TB approval history --bogus 2>/dev/null)" "2 2"
+unset -f alsql; unset oq lq cq cq2 cq3 cq4 dq TB_DB TB_POLICY HERDR_PANE_ID FAKE_AGENTS; eval "$_al_saved"; unset _al_saved
