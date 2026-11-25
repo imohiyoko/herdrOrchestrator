@@ -975,9 +975,9 @@ for _n, _body in (("pdeny1", "DENIED-KEY-BODY"), ("pdeny2", "DENIED-ENV-BODY"), 
     check(f"ジョブ詳細: PROMPT_FILE が認証情報の置き場({_n})なら中身を出さない", _body not in _d and "認証情報などの置き場なので、中身は表示しません" in _d, _d[:0])
 _vv = cl.get("/jobs/pvar")[2]
 # 展開($ や `)を含む conf は scheduler(herdrctl sched)が読まない(動かない)。詳細はその理由を出す
-check("ジョブ詳細: PROMPT_FILE=$HOME/x の conf は scheduler が読めない理由を出す", "展開($ や ` や ~)は使えない" in _vv and "相対パスなので" not in _vv and 'action="/jobs/pvar"' not in _vv)
+check("ジョブ詳細: PROMPT_FILE=$HOME/x の conf は scheduler が読めない理由を出す(フォームは消すものだけ)", "展開($ や ` や ~)は使えない" in _vv and "相対パスなので" not in _vv and _vv.count('action="/jobs/pvar"') == 1 and "value=rm>" in _vv and "value=save>" not in _vv)
 _cs = cl.get("/jobs/cmdsub")[2]
-check("ジョブ詳細: COMMAND=$(…) の conf は scheduler が読めない理由を出す(コマンドは実行しない)", "展開($ や ` や ~)は使えない" in _cs and 'action="/jobs/cmdsub"' not in _cs)
+check("ジョブ詳細: COMMAND=$(…) の conf は scheduler が読めない理由を出す(コマンドは実行しない。フォームは消すものだけ)", "展開($ や ` や ~)は使えない" in _cs and _cs.count('action="/jobs/cmdsub"') == 1 and "value=rm>" in _cs and "value=save>" not in _cs)
 _cp = cl.get("/jobs/cmdplain")[2]
 check("ジョブ詳細: 単純な引用符なしの値は警告なし", "bin/tb-prwatch" in _cp and "シェルで展開・解釈される記述です" not in _cp)
 check("ジョブ詳細: 展開される記述でない PROMPT(単一引用符)は警告なし", "シェルで展開・解釈される記述です" not in cl.get("/jobs/pcomment")[2])
@@ -1693,15 +1693,18 @@ edb("INSERT INTO tasks (id, project, title, status, parent_id, created_at, updat
 edb("INSERT INTO comments (task_id, kind, text, from_name, from_pane, from_session, created_at, herdr_session) VALUES "
     "('T-pj-003', 'progress', 'x', 'w', 'p', 's', '2026-11-06T00:00:00Z', 'default')")
 tp = ec.get("/tasks/T-pj-003")[2]
-check("チケットを消す: タスク画面に消すフォーム(印が要る)", 'action="/task-rm"' in tp and "name=confirm value=1 required" in tp)
+check("チケットを消す: タスク画面に消すフォーム(印が要る・作成時刻を持つ)", 'action="/task-rm"' in tp and "name=confirm value=1 required" in tp
+      and 'name=created value="2026-11-06T00:00:00Z"' in tp)
 check("チケットを消す: CSRF 無しは拒否", ec.raw("POST", "/task-rm", {"id": "T-pj-003", "confirm": "1"})[0] == 403)
 check("チケットを消す: 未ログインは /login へ", Client(port).raw("POST", "/task-rm", {"id": "T-pj-003", "confirm": "1"})[0] == 302)
 check("チケットを消す: 無いタスクは 404", ec.raw("POST", "/task-rm", {"id": "T-404", "confirm": "1", "csrf": ec.csrf("/tasks/T-pj-003")})[0] == 404)
 r = ec.raw("POST", "/task-rm", {"id": "T-pj-003", "csrf": ec.csrf("/tasks/T-pj-003")})
 check("チケットを消す: 印が無ければ 400 で消さない", r[0] == 400 and "元に戻せないことを確かめた" in r[2] and edb("SELECT 1 FROM tasks WHERE id='T-pj-003'"))
-r = ec.raw("POST", "/task-rm", {"id": "T-pj-002", "confirm": "1", "csrf": ec.csrf("/tasks/T-pj-002")})
+r = ec.raw("POST", "/task-rm", {"id": "T-pj-002", "confirm": "1", "created": "2026-11-06T00:00:00Z", "csrf": ec.csrf("/tasks/T-pj-002")})
 check("チケットを消す: 子があれば tb が断り、理由を見せる", r[0] == 400 and "子チケット" in r[2] and edb("SELECT 1 FROM tasks WHERE id='T-pj-002'"), r[2][-300:])
-r = ec.raw("POST", "/task-rm", {"id": "T-pj-003", "confirm": "1", "csrf": ec.csrf("/tasks/T-pj-003")})
+r = ec.raw("POST", "/task-rm", {"id": "T-pj-003", "confirm": "1", "created": "2000-01-01T00:00:00Z", "csrf": ec.csrf("/tasks/T-pj-003")})
+check("チケットを消す: 画面を開いたときのチケットでなければ(ID がまた使われた)消さない", r[0] == 400 and "開き直して" in r[2] and edb("SELECT 1 FROM tasks WHERE id='T-pj-003'"), r[2][-300:])
+r = ec.raw("POST", "/task-rm", {"id": "T-pj-003", "confirm": "1", "created": "2026-11-06T00:00:00Z", "csrf": ec.csrf("/tasks/T-pj-003")})
 check("チケットを消す: tb ticket rm で消し、一覧へ戻る(コメントも消える)", r[0] == 302 and r[1].get("Location") == "/tasks?done=task-rm"
       and not edb("SELECT 1 FROM tasks WHERE id='T-pj-003'") and not edb("SELECT 1 FROM comments WHERE task_id='T-pj-003'"), str(r[:2]))
 check("チケットを消す: 消したと知らせ、画面は 404", "チケットを消しました" in ec.get("/tasks?done=task-rm")[2] and ec.get("/tasks/T-pj-003")[0] == 404)

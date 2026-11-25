@@ -456,23 +456,28 @@ func jobRm(db *store.DB, e jobs.Env, args []string, w io.Writer) error {
 	if a.shared {
 		which = "共通の行"
 	}
+	// 定義と上書き設定は 1 つのトランザクションで消す(片方だけ残さない)
 	var gone []string
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	for _, st := range []bool{false, true} {
 		key := jobs.Key(a.job, st)
-		ok, err := config.HasRow(db.DB, db.Session, key, a.shared)
+		ok, err := config.UnsetTx(tx, db.Session, key, a.shared)
 		if err != nil {
 			return err
 		}
-		if !ok {
-			continue
+		if ok {
+			gone = append(gone, key)
 		}
-		if err := config.Unset(db.DB, db.Session, key, a.shared); err != nil {
-			return err
-		}
-		gone = append(gone, key)
 	}
 	if len(gone) == 0 {
 		return die("ジョブ %s の DB の行はありません(%s)", a.job, which)
+	}
+	if err := tx.Commit(); err != nil {
+		return err
 	}
 	fmt.Fprintf(w, "%s: %s を消しました(%s)\n", a.job, strings.Join(gone, " と "), which)
 	if _, src, ok := e.Lookup(db.DB, db.Session, a.job, false); ok {

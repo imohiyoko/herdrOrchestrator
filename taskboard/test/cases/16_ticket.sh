@@ -64,5 +64,12 @@ eq "ticket rm: missing ticket → 1" "$(rc $TB ticket rm "$r1")" "1"
 eq "ticket rm: no id → 2" "$(rc $TB ticket rm)" "2"
 eq "ticket rm: bad id → 2" "$(rc $TB ticket rm nope)" "2"
 eq "ticket rm: alert ticket guarded" "$(rc $TB ticket rm "$al")" "1"
+# どれか 1 枚でも断れば何も消さない(1 つのトランザクション)
+r4=$($TB add -p tk -t 一緒に断られる)
+eq "ticket rm: all or nothing" "$(rc $TB ticket rm "$r4" "$al") $($TB show "$r4" | jq -r .id)" "1 $r4"
+# --if-created: 画面を開いたときのチケットでなければ消さない(消した ID がまた使われたとき)
+eq "ticket rm --if-created: mismatch → refused" "$(rc $TB ticket rm "$r4" --if-created 2000-01-01T00:00:00Z) $($TB show "$r4" | jq -r .id)" "1 $r4"
+eq "ticket rm --if-created: only with one id → 2" "$(rc $TB ticket rm "$r4" "$r3" --if-created x)" "2"
+eq "ticket rm --if-created: match → removed" "$($TB ticket rm "$r4" --if-created "$($TB show "$r4" | jq -r .created_at)" | cut -d'(' -f1)" "$r4 を消しました"
 # agent からは ask(Q チケットになり、人が承認するまで消さない)
 eq "ticket rm from an agent pane → ask" "$(FAKE_AGENTS='[{"pane_id":"wW:p1","name":"worker1","agent_session":{"value":"s"}}]' HERDR_PANE_ID=wW:p1 rc $TB ticket rm "$r3") $($TB show "$r3" | jq -r .id)" "20 $r3"

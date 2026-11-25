@@ -225,19 +225,20 @@ func (s *Server) postTaskRm(q *rq, f form) (string, string, string, func(pageCtx
 	if f["confirm"] != "1" {
 		return "", "", "消すときは「元に戻せないことを確かめた」に印を付けてください", render
 	}
-	if rc, out := runTB(q.name, 15*time.Second, "ticket", "rm", id); rc != 0 {
+	// 画面を開いたときのチケットか(消した ID がまた使われていれば、tb が断る)
+	if rc, out := runTB(q.name, 15*time.Second, "ticket", "rm", id, "--if-created", f["created"]); rc != 0 {
 		return "", "", tbFail(rc, out), render
 	}
 	return "/tasks", "task-rm", "", render
 }
 
 // taskRmForm はタスク画面の「チケットを消す」(元に戻せないので、印を付けないと送れない)。
-func taskRmForm(id string, c pageCtx) string {
+func taskRmForm(id, created string, c pageCtx) string {
 	if c.csrf == "" {
 		return ""
 	}
 	return `<h2>チケットを消す</h2><form method=post action="/task-rm"><input type=hidden name=csrf value="` + E(c.csrf) + `">` +
-		`<input type=hidden name=id value="` + E(id) + `"><p><label><input type=checkbox name=confirm value=1 required> 元に戻せないことを確かめた</label> ` +
+		`<input type=hidden name=id value="` + E(id) + `"><input type=hidden name=created value="` + E(created) + `"><p><label><input type=checkbox name=confirm value=1 required> 元に戻せないことを確かめた</label> ` +
 		`<button type=submit>消す</button></p></form>` +
 		`<p class=note><code>tb ticket rm</code> と同じ扱いです(コメント・履歴・リンクも消え、相手のチケットの履歴には unlink が残る)。` +
 		`子チケットがあると消せません。アラート・提案のチケットは消せません。</p>`

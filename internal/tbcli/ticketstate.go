@@ -14,7 +14,12 @@ import (
 )
 
 // specialTicketGuard は special_ticket_guard: アラート・提案のチケットの状態は、それぞれのコマンドだけが変える。
-func specialTicketGuard(db *sql.DB, id, op string) error {
+// rowQuerier は *sql.DB と *sql.Tx(トランザクションの中でも確かめられるように)。
+type rowQuerier interface {
+	QueryRow(query string, args ...any) *sql.Row
+}
+
+func specialTicketGuard(db rowQuerier, id, op string) error {
 	var w string
 	err := db.QueryRow(`SELECT 'A-'||alert_no FROM alert_details WHERE task_id=?1 UNION ALL SELECT 'P-'||proposal_no FROM proposal_details WHERE task_id=?1 LIMIT 1`, id).Scan(&w)
 	if err != nil {

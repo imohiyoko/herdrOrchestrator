@@ -314,8 +314,9 @@ func (s *Server) pageJob(q *rq, name, csrf, errMsg string, saved bool) (string, 
 func (s *Server) pageJobDraft(q *rq, name, csrf, errMsg string, saved bool, done string, draft form) (string, string) {
 	v := q.data()
 	info, err := v.jobInfo(name)
-	if info == nil {
-		return "定期実行: " + name, errHTML(orStr(err, errMsg)) + `<p><a href="/jobs">一覧へ</a></p>`
+	if info == nil { // scheduler が読めない定義でも、消すことはできる(tb job rm は本文を読まない)
+		hid := `<input type=hidden name=csrf value="` + E(csrf) + `">`
+		return "定期実行: " + name, errHTML(orStr(err, errMsg)) + jobRmForm(pyQuote(name, "/"), hid) + `<p><a href="/jobs">一覧へ</a></p>`
 	}
 	days := info.days
 	preset := ""
