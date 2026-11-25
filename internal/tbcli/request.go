@@ -348,6 +348,19 @@ func requestDecide(sub string, args []string, w, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if handBack(r.requester) {
+		// 依頼者が herdr にいなければ承認しない(知らせが届かず、run できるのも依頼者だけなので、承認しても使われない)
+		alive, err := agentAlive(r.requester)
+		if err != nil {
+			return die("herdr agent list に失敗したため、依頼者 %s がいるか確かめられません(%s は承認していません)", r.requester, r.qid())
+		}
+		if !alive {
+			if from == "denied" {
+				return die("依頼者 %s が herdr にいないため承認しません(%s は deny の記録のまま。%s を復活させてから承認してください)", r.requester, r.qid(), r.requester)
+			}
+			return die("依頼者 %s が herdr にいないため承認しません(%s は承認待ちのまま。tb approval reject %s で却下するか、%s を復活させてから承認してください)", r.requester, r.qid(), r.qid(), r.requester)
+		}
+	}
 	res, err := db.Exec(`UPDATE main.requests SET status='approved', decided_by=?, decided_at=? WHERE id=? AND status=?`, ap.name, nowTS(), r.id, from)
 	if err != nil {
 		return err
@@ -423,6 +436,20 @@ func (r request) detailLine() string {
 		d = string([]rune(d)[:200]) + "…"
 	}
 	return d
+}
+
+// agentAlive は名前の agent が herdr にいるか。
+func agentAlive(name string) (bool, error) {
+	as, err := herdr.Agents()
+	if err != nil {
+		return false, err
+	}
+	for _, a := range as {
+		if a.Name == name {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // handBack は承認の結果を依頼者に返して、依頼者が自分で実行する形にするか(pane のある agent だけ)。

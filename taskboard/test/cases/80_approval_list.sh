@@ -62,6 +62,7 @@ eq "cmd queue: reject → the requester is told" "$(grep -c "^prompt worker1	\[t
 eq "cmd queue: a rejected request cannot be run" "$(HERDR_PANE_ID=wW:p1 $TB approval run "$cq3" 2>&1 >/dev/null | grep -c '承認されていません')" "1"
 printf '%s\n' "$(cat "$TB_POLICY")" 'worker5 send:task * = allow' | HERDR_PANE_ID=wW:p1 $TB config set policy >/dev/null 2>"$TMP/al.err"
 cq4=$(grep -o 'Q-[0-9]*' "$TMP/al.err" | head -1)
+eq "cmd queue: the requester is gone → not approved, stays pending, says to reject or revive" "$(FAKE_AGENTS='[{"pane_id":"wW:p2","name":"lead1","agent_session":{"value":"s2"}}]' $TB approval approve "$cq4" 2>&1 >/dev/null | grep -c "依頼者 worker1 が herdr にいないため承認しません") $(alsql "SELECT status||' '||(decided_by IS NULL) FROM requests WHERE id=${cq4#Q-};")" "1 pending 1"
 eq "cmd queue: the requester is busy → approved, not run, the approver is told the notice did not go out" "$(FAKE_STATUS=working $TB approval approve "$cq4" 2>&1 >/dev/null | grep -c '知らせを届けられませんでした'; grep -c '^worker5' "$TB_POLICY") $(alsql "SELECT status||' '||(notified_at IS NULL) FROM requests WHERE id=${cq4#Q-};")" "1
 0 approved 1"
 
