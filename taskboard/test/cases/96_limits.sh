@@ -130,6 +130,7 @@ eq "spawn: spawn-policy.conf max_children_* = unlimited" "$(TB_SPAWN_POLICY=$TMP
 LT2=$($TB add -p lm -t 'work of parent1-s1' --owner parent1-s1); $TB update "$LT2" --status in_progress >/dev/null
 eq "spawn: the default depth 1 still refuses a grandchild" "$(TB_SPAWN_POLICY=$TMP/lim-spawn-old.conf TB_LIMIT_SPAWN_MAX_TOTAL=unlimited HERDR_PANE_ID=wA:p1 $TB agent-spawn worker --task "$LT2" --brief x 2>&1 >/dev/null | grep -c '深さの上限(1)')" "1"
 eq "spawn: max_depth = unlimited lets a child spawn" "$(TB_SPAWN_POLICY=$TMP/lim-spawn-unl.conf HERDR_PANE_ID=wA:p1 $TB agent-spawn worker --task "$LT2" --brief x | cut -d' ' -f1-2)" "parent1-s1-s1 started"
+eq "spawn: the prompt tells the child whether it may spawn (depth 1: no, unlimited: yes)" "$(lgsql "SELECT target||' '||(json_extract(args,'\$.prompt') LIKE '%子は子 agent を立てられない%')||(json_extract(args,'\$.prompt') LIKE '%spawn-policy の規則に従う%') FROM agent_ops WHERE op='new' AND target IN ('parent1-s3','parent1-s4','parent1-s1-s1') ORDER BY target;" | tr '\n' ,)" "parent1-s1-s1 01,parent1-s3 10,parent1-s4 01,"
 
 # ---- 強制: 解析役(analyst_max、max_running_agents)
 export TB_DB=$TMP/limits-alert.db; : >"$FAKE_LOG"
