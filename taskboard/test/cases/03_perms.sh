@@ -51,6 +51,7 @@ eq "perms: every inner operation is reached by a requireHuman label" \
 eq "perms: the table is the one herdrctl embeds (no copy)" "$(ls "$PM_ROOT/perms")" "$(printf 'commands.tbl\nembed.go\nops.tbl')"
 
 # ---------- 振る舞い(設定 policy。ADR 0007)----------
+pm_lastq() { sqlite3 "$TB_DB" "SELECT max(id) FROM requests;"; }   # いま残った Q-<n>(前のケースの数に頼らない)
 export TB_DB=$TMP/perms.db TB_POLICY=$TMP/perms.policy
 export FAKE_AGENTS='[{"pane_id":"wW:p1","name":"pw1","agent_session":{"value":"s1"}},{"pane_id":"wW:p2","name":"pw2","agent_session":{"value":"s2"}}]'
 : >"$TB_POLICY"
@@ -73,7 +74,7 @@ printf '* cmd:ticket:* * = deny\n' >"$TB_POLICY"
 eq "perms: a glob row applies (deny → 1)" "$(rc $TB show "$t1")" "1"
 eq "perms: a pane with no agent is a human (rows do not apply)" "$(HERDR_PANE_ID=wW:p9 rc $TB show "$t1")" "0"
 eq "perms: the gate also covers commands moved to herdrctl (tb list)" "$($TB list -p pm 2>&1 >/dev/null)" \
-  "tb: tb list は実行できません(cmd:ticket:list = deny。policy: * cmd:ticket:* * = deny)(agent 'pw1')。記録 Q-9(例外は人が tb approval approve Q-9 で許可できます)"
+  "tb: tb list は実行できません(cmd:ticket:list = deny。policy: * cmd:ticket:* * = deny)(agent 'pw1')。記録 Q-$(pm_lastq)(例外は人が tb approval approve Q-$(pm_lastq) で許可できます)"
 printf 'pw* cmd:ticket:show * = allow\npw1 cmd:ticket:show * = ask\n' >"$TB_POLICY"
 eq "perms: the strictest matching row wins, whatever the order (→ 20)" "$(rc $TB show "$t1")" "20"
 printf 'pw1 cmd:ticket:show * = ask\npw* cmd:ticket:show * = allow\n' >"$TB_POLICY"
@@ -115,7 +116,7 @@ eq "perms: a deny default loosened to allow → the command itself runs (no gate
   "$($TB resolve C-1 2>&1 | grep -cE '人が自分の端末で|承認が要ります|実行できません' || true)" "0"
 : >"$TB_POLICY"
 eq "perms: default require_human is unchanged (1 and the old message)" "$($TB resolve C-1 2>&1 >/dev/null)" \
-  "tb: tb resolve は人が自分の端末で実行します(agent 'pw1' の pane からは実行できません)。記録 Q-18(例外は人が tb approval approve Q-18 で許可できます)"
+  "tb: tb resolve は人が自分の端末で実行します(agent 'pw1' の pane からは実行できません)。記録 Q-$(pm_lastq)(例外は人が tb approval approve Q-$(pm_lastq) で許可できます)"
 eq "perms: --dry-run paths that skip require_human still run (nudge --dry-run)" "$(rc $TB nudge --dry-run)" "0"
 eq "perms: herdr failure while checking → 1" "$(FAKE_LIST_FAIL=1 rc $TB resolve C-1)" "1"
 printf 'pw1 cmd:ticket:show * = allow\n' >"$TB_POLICY"
@@ -152,5 +153,5 @@ mkdir -p "$TMP/perms-failhc"; printf '#!/bin/sh\ncase "$2" in --features) echo "
 eq "impl: hooks stay 0 when herdrctl fails (touch quiet, role-context keeps stdout)" "$(TB_HERDRCTL=$TMP/perms-failhc/herdrctl $TB touch --event x; echo "rc=$?"; TB_HERDRCTL=$TMP/perms-failhc/herdrctl $TB role-context; echo "rc=$?")" "$(printf 'rc=0\nout\nrc=0')"
 eq "impl: help works without herdrctl" "$(TB_HERDRCTL=$TMP/no-such-herdrctl $TB help | head -c 3 | wc -c | tr -d ' ')" "3"
 
-unset TB_DB TB_POLICY TB_POLICY_A HERDR_PANE_ID FAKE_AGENTS
+unset -f pm_lastq; unset TB_DB TB_POLICY TB_POLICY_A HERDR_PANE_ID FAKE_AGENTS
 eval "$_saved_env"
