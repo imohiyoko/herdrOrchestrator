@@ -94,6 +94,13 @@ eq "db-import: the old DB is only read" "$(sqlite3 "$OLD" .dump | cksum)" "$befo
 eq "db-import: the same file twice is refused" "$(HERDR_SESSION=imp "$TB" db-import "$OLD" 2>&1 | grep -c '取り込み済み') $(psql "SELECT COUNT(*) FROM tasks WHERE project NOT IN ('alert','proposal');")" "1 5"
 eq "db-import: a DB of the new format is refused" "$(HERDR_SESSION=x "$TB" db-import "$TMP/partition.db" 2>&1 | grep -c '旧形式')" "1"
 eq "db-import: the shared DB itself is refused" "$(HERDR_SESSION=x "$TB" db-import "$TB_DB" 2>&1 | grep -c '同じ DB')" "1"
+# 消したチケットの番号は、取り込みでも使い直さない
+OLD2=$TMP/partition-old2.db; rm -f "$OLD2"
+for f in "$HERE"/../schema/0{01..11}_*.sql; do cat "$f"; echo "PRAGMA user_version=$((10#$(basename "$f" | cut -c1-3)));"; done | sqlite3 "$OLD2"
+sqlite3 "$OLD2" "INSERT INTO tasks (id, project, title, created_at, updated_at) VALUES ('T-qq-001','qq','old qq','t','t');"
+q1=$(HERDR_SESSION=main "$TB" add -p qq -t 'main qq'); HERDR_SESSION=main "$TB" ticket rm "$q1" >/dev/null
+HERDR_SESSION=imp2 "$TB" db-import "$OLD2" >/dev/null
+eq "db-import: a removed ticket's number is not reused" "$(psql "SELECT id FROM tasks WHERE project='qq';")" "T-qq-002"
 eq "db-import: not from an agent pane" "$(FAKE_AGENTS='[{"pane_id":"wK:p1","name":"wk"}]' HERDR_PANE_ID=wK:p1 HERDR_SESSION=imp rc "$TB" db-import "$OLD")" "1"
 
 if [[ -n $_saved_hs ]]; then export HERDR_SESSION=$_saved_hs; fi

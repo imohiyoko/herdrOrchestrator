@@ -148,7 +148,7 @@ tb ticket rm T-web-012 T-web-013                # チケットを消す(記録�
 - アラート・提案のチケットは今までどおり専用のコマンドだけで動かす(DB のトリガーが状態を書くため)。
 - `tb ticket rm <id> [<id> ...]` はチケットを消す(記録が貯まったときの整理)。そのチケットのコメント・履歴・リンクも消し、リンクの相手の履歴には `unlink` を残す。
   子チケットがあれば、子も一緒に指定しないと断る(親を指したまま残さない)。アラート・提案のチケットは消さない。送信・inbox・PR キューなど、ほかのサービスの記録はそのまま残る。
-  消した番号は使い直さない(`tb add` は「残っている最大の番号」と「消した最大の番号」(`tb_flags` の `ticket-rm-max:<PJ>`)の大きいほう + 1 を振る)。
+  消した番号は使い直さない(`tb add` は「残っている最大の番号」と「消した最大の番号」(`tb_flags` の `ticket-rm-max:<PJ>`)の大きいほう + 1 を振る。`tb db-import` も消した番号以下の ID は付け替える)。
   Web UI の削除フォームは作成時刻も送り(`--if-created`)、画面を開いたときのチケットでなければ消さない。権限の既定は agent に `ask`(Q チケットになり、人が承認するまで消さない)。
 
 tb 自身が付ける・探すラベルの名前は設定 `system-labels` で変えられる(1 行 1 つ `<用途> = <ラベル>`。例は [config/system-labels.conf.example](config/system-labels.conf.example))。`deadline`(`tb deadlines-import` が付ける。既定 `deadline`)と `team`(`tb reminder nudge --pool` が探す team のラベルの形。`{team}` が team の名前。既定 `team:{team}`)。アラート・提案のラベル(`alert` / `proposal` / `rejected` / `role:*`)は DB のトリガーが付けるので固定。
