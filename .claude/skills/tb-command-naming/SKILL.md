@@ -59,6 +59,7 @@ ADR 0002(サービスの境界)と ADR 0004(3 つの層とモジュール)から
 | `pr` | 機能 | PR キュー・PR の見張り | prqueue / `pr queue add/list/show/approve/reject/retry/run/scan` `pr watch`(古い名前 `pr-queue` `pr-watch`) |
 | `gh` | 機能 | GitHub の PR のコメント・レビューを読む・書く・approve(GitHub へ出るコマンドは github.conf で差し替える) | internal/gh / `gh comment list/add`、`gh review list/add/approve` |
 | `gate` | 機能 | ゲート | gate / `gate` |
+| `herdr` | 機能 | herdr の workspace / pane を見る・閉じる(agent の居る所は閉じない。agent は `agent` サービスで止める) | internal/tbcli/herdrcmd.go / `herdr workspace list/close` `herdr pane close` |
 | `approval` | 土台(authz) | 承認・人だけの判定 | approvals, risk / `approval check/allow/ask/approve/reject`(古い名前 `approval <操作>` `allow` `ask` `approve` `reject`) |
 | `recipe` | 機能 | レシピと部品(ADR 0005) | recipes / `recipe set/rm/list/show/history/run/runner/queue/cancel`、`recipe part list/check/risk`(古い名前 `recipe-*` `parts` `part-*`) |
 | `conv` | 機能 | 会話の下書き・振り分け・学習 | conv, convlearn, convstage / `conv route/draft/voice/…` `conv pair-add/ledger/candidate-adopt/…` `conv stage/stage-set/gate/…`(古い名前 `conv-<サブコマンド>`) |
