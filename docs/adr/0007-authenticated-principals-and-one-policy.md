@@ -155,6 +155,7 @@ lead1        approve:agent:stop  ~report      = allow       # 旧 grants の app
 - **allow / ask / deny のどれも `Q-<n>`**: agent が叩いた tb は、権限の門で決まった時点で `requests` に 1 行残す(スキーマ 029 で `tier` と `rule` を足した)。
   - `allow`: 状態 `allowed`、決めたのは `policy`(認可の仕組み)と当たった行。承認は要らない。標準入力は読まない
   - `ask`: 状態 `pending`。承認・却下した人(人か agent と根拠の行)を `decided_by` に残す
+    (送信・agent の操作も、どの入口(`Q-` / `O-` / `L-` / `tb agent-approve`)で決めても、Q の行に `approved` / `rejected` と `decided_by` を残す。届いたか・実行できたかは元の行の状態)
   - `deny`: 状態 `denied`、決めたのは `policy`。引数と標準入力ごと残し、**人だけ**が `tb approval approve Q-<n>` で例外として承認できる(`approve:` を持つ agent にも開けさせない)。例外の実行で通るのは、その `Q-<n>` の操作の deny だけ
   - 人の端末からの tb は残さない(人は常に通る)。`system:<名前>`(scheduler など)の allow も残さない(定期の呼び出しで数が多いため。ask / deny は残す)。実行の結果(出力の末尾)は依頼者本人と人にだけ見せる。会話(`tb conv`)の呼び出しは、文面を DB・記録に書かない約束に合わせて、引数と標準入力を残さずコマンドの語だけ残す(承認しても実行できない)。`tb approval list` は今までどおり決まっていないもの(`pending`)だけ。全部は `tb approval history [--mine|--by A]`
 - **承認の結果を依頼者に返す**: コマンドの `Q-<n>` を承認しても、その場では実行しない。依頼した agent の pane に「`tb approval run Q-<n>` で 1 回だけ実行できます」と直接送り(tb からの知らせなので、agent 同士の送信の経路 routes / delivery は通さない。記録は messages の kind=approval)、依頼者が自分で実行する。使用中・不在で届かなければ承認した側にそう出し、依頼者は `tb approval history --mine` で見る。却下したときも知らせる。送信・agent の操作も、どの入口(`Q-<n>` / `O-<n>` / `L-<n>` / `tb agent-approve`)で決めても 1 回だけ知らせ、文面は元の行の状態(届けた・inbox に置いた・まだ届けていない・実行した)から作る。承認のあと delivery で止めた送信は、送信者に止めた知らせ(`tb: blocked`)が届くので重ねて送らない

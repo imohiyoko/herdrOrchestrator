@@ -1352,11 +1352,11 @@ def _req(status, tier, requester, target):
     return regdb("SELECT max(id) FROM requests")[0][0]
 _qa, _qr, _qd, _qg = _req("pending", "ask", "alpha", "T-1"), _req("pending", "ask", "alpha", "T-2"), _req("denied", "deny", "alpha", "T-3"), _req("pending", "ask", "ghost", "T-4")
 ap = cl.get("/approvals?tier=all")[2]
-check("Q チケット画面に承認・却下・例外のボタン", f'name=id value="{_qa}"><input type=hidden name=op value=approve>' in ap
-      and f'name=id value="{_qd}"><input type=hidden name=op value=exception>' in ap and 'action="/approval-op"' in ap)
+check("Q チケット画面に承認・却下・例外のボタン(戻り先はいまの絞り込み)", re.search(f'name=id value="{_qa}"><input type=hidden name=back value="/approvals\\?tier=all"><input type=hidden name=op value=approve>', ap)
+      and re.search(f'name=id value="{_qd}"><input type=hidden name=back value="[^"]*"><input type=hidden name=op value=exception>', ap) and 'action="/approval-op"' in ap)
 _tok = cl.csrf("/approvals")
-r = cl.raw("POST", "/approval-op", {"op": "approve", "id": str(_qa), "csrf": _tok})
-check("承認すると依頼者に知らせ、記録は human が approved", r[0] == 302 and r[1].get("Location") == f"/approvals?tier=all&id=Q-{_qa}&done=approve"
+r = cl.raw("POST", "/approval-op", {"op": "approve", "id": str(_qa), "back": "/approvals?tier=all", "csrf": _tok})
+check("承認すると依頼者に知らせ、記録は human が approved(押した画面の絞り込みのまま戻る)", r[0] == 302 and r[1].get("Location") == f"/approvals?tier=all&decided=Q-{_qa}&done=approve"
       and regdb("SELECT status, decided_by FROM requests WHERE id=?", (_qa,)) == [("approved", "human")]
       and f"agent prompt alpha [tb approval / Q-{_qa} / human] Q-{_qa} は human に承認されました。tb approval run Q-{_qa} で 1 回だけ実行できます" in flog(),
       str(r[:2]) + str([x for x in flog().splitlines() if "Q-" in x]))
@@ -1365,13 +1365,20 @@ check("却下すると rejected", r[0] == 302 and regdb("SELECT status, decided_
 r = cl.raw("POST", "/approval-op", {"op": "exception", "id": str(_qd), "csrf": _tok})
 check("例外の許可は確認のチェックが要る", r[0] == 400 and "確認のチェック" in r[2] and regdb("SELECT status FROM requests WHERE id=?", (_qd,)) == [("denied",)])
 r = cl.raw("POST", "/approval-op", {"op": "exception", "id": str(_qd), "confirm": "1", "csrf": _tok})
-check("deny を例外として許可すると approved", r[0] == 302 and r[1].get("Location") == f"/approvals?tier=all&id=Q-{_qd}&done=exception"
+check("deny を例外として許可すると approved", r[0] == 302 and r[1].get("Location") == f"/approvals?decided=Q-{_qd}&done=exception"
       and regdb("SELECT status, decided_by FROM requests WHERE id=?", (_qd,)) == [("approved", "human")], str(r[:2]) + str(re.findall(r"<p class=err>.*?</p>", r[2])))
 r = cl.raw("POST", "/approval-op", {"op": "approve", "id": str(_qg), "csrf": _tok})
 check("依頼した agent がいなければ tb が断り、理由を出す", r[0] == 400 and "tb が断りました" in r[2]
       and regdb("SELECT status FROM requests WHERE id=?", (_qg,)) == [("pending",)], r[2][-400:])
 r = cl.raw("POST", "/approval-op", {"op": "reject", "id": str(_qa), "csrf": _tok})
 check("決まったものは決め直せない", r[0] == 400 and "承認待ちではありません(approved)" in r[2])
+regdb("INSERT INTO outbox (from_name,from_pane,from_session,target,kind,text,status,created_at) VALUES ('conductor','w0:p1','s','alpha','info','見て','pending','2026-11-10T00:00:00Z')")
+_qo = regdb("SELECT id FROM requests WHERE source='outbox' AND source_id=(SELECT max(id) FROM outbox)")[0][0]
+r = cl.raw("POST", "/approval-op", {"op": "approve", "id": str(_qo), "csrf": _tok})
+_ap = cl.get(r[1].get("Location", "/approvals"))[2] if r[0] == 302 else r[2]
+check("送信の承認も Q の記録に human が approved で残り、届いたかは別に出る", r[0] == 302
+      and regdb("SELECT status, decided_by FROM requests WHERE id=?", (_qo,)) == [("approved", "human")]
+      and f"Q-{_qo}: 承認しました" in _ap and re.search(f"Q-{_qo}</a></td><td>ask</td><td>approved<br><span class=note>送信: (sent|denied)", _ap), str(regdb("SELECT status, reason FROM outbox ORDER BY id DESC LIMIT 1")) + str(re.findall(r"<p class=note>Q-[^<]*</p>", _ap)) + str(re.findall(f"Q-{_qo}</a>.{{0,300}}", _ap)))
 check("CSRF 無しの /approval-op は拒否", cl.raw("POST", "/approval-op", {"op": "approve", "id": str(_qg)})[0] == 403)
 # ---- ドキュメント(agent が成果物として報告したローカルのファイル)
 DOCS = os.path.join(d, "work")

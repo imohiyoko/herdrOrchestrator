@@ -174,6 +174,13 @@ func callerName() (string, error) {
 	return "human", nil
 }
 
+// recordDecision は送信・agent の操作の承認待ち(Q-<n>)に、決めた結果と誰が決めたかを残す(元の行の状態とは別に、Q の記録として)。
+// 元の行を決めたあとに呼ぶ。Q-<n> が無い(承認待ちを通らなかった)行なら何もしない。
+func recordDecision(db *store.DB, source string, sourceID int64, status, by string) {
+	_, _ = db.Exec(`UPDATE main.requests SET status=?, decided_by=?, decided_at=? WHERE herdr_session=? AND source=? AND source_id=?`,
+		status, by, nowTS(), db.Session, source, sourceID)
+}
+
 // insertCmd は requests にコマンドの 1 行を足す。ask は pending、allow は allowed(policy が許可)、deny は denied(policy が拒否)。
 func insertCmd(tier, op, target, rule string, withStdin bool) (string, error) {
 	p, err := envPriority()
