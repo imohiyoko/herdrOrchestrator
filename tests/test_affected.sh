@@ -22,7 +22,7 @@ eq "全部: --base に無い REF" "$(bash "$HERE/affected.sh" --base no-such-ref
 eq "使い方の誤りは 2" "$(bash "$HERE/affected.sh" --nope >/dev/null 2>&1; echo $?)" "2"
 
 # --- 何も流さないもの
-eq "なし: docs だけ" "$(q '[.full, .suites, .go, .snapshot]' docs/adr/0001.md README.md)" '[false,[],[],false]'
+eq "なし: docs だけ" "$(q '[.full, .suites, .go, .snapshot]' docs/adr/0001.md taskboard/docs/x.md)" '[false,[],[],false]'
 eq "なし: 空" "$(q '[.suites, .go]')" '[[],[]]'
 
 # --- 部品ごと
@@ -30,17 +30,27 @@ eq "webui の画面だけ → webui の組と internal/webui" "$(q '[.suites, .g
 eq "Go のテストだけ → そのパッケージのテストだけ(組・配布物は流さない)" "$(q '[.suites, .go, .snapshot]' internal/webui/testdata/pages.json)" '[[],["./internal/webui"],false]'
 eq "internal/webui のコード → webui と、Go を文字で読む tb のケースだけ(tb の組全部は流さない)" \
   "$(q '[.suites, (.go | index("./internal/webui") != null), (.go | index("./internal/tbcli")), .snapshot]' internal/webui/server.go)" \
-  '[["taskboard-only:83_parts.sh,99_layout.sh","webui"],true,null,true]'
+  '[["taskboard-only:69_pr_contract.sh,83_parts.sh,93_prqueue.sh,99_layout.sh","webui"],true,null,true]'
 eq "tb のコード → tb を呼ぶ組すべて" "$(q .suites internal/tbcli/run.go)" "[\"misc\",$TB4,\"webui\",\"scheduler\"]"
 eq "tb のコード → 依存する側の Go のテスト" "$(q '.go | (index("./internal/tbcli") != null and index("./cmd/herdrctl") != null)' internal/tbcli/run.go)" "true"
 eq "依存の根(store) → 使う側の Go のテストへ広がる" "$(q '.go | (index("./internal/webui") != null and index("./internal/tbcli") != null)' internal/kernel/store/store.go)" "true"
-eq "tb のケースだけ → そのケースだけ" "$(q .suites taskboard/test/cases/14_cancel.sh taskboard/test/cases/12_conv.sh)" '["taskboard-only:12_conv.sh,14_cancel.sh"]'
+eq "tb のケースだけ → そのケースだけ" "$(q '.suites | map(select(startswith("taskboard")))' taskboard/test/cases/14_cancel.sh taskboard/test/cases/12_conv.sh)" '["taskboard-only:12_conv.sh,14_cancel.sh"]'
 eq "tb のケースと tb のコード → tb の組全部(ケースだけの組は出さない)" "$(q .suites taskboard/test/cases/14_cancel.sh taskboard/bin/tb | jq -c 'map(select(startswith("taskboard")))')" "[$TB4]"
-eq "消した tb のケース → 流せないので出さない" "$(q .suites taskboard/test/cases/00_gone.sh)" '[]'
-eq "どのユニットでも流れるケース → tb の組全部" "$(q .suites taskboard/test/cases/99_zzz_session_sweep.sh)" "[$TB4]"
+eq "消した tb のケース → 流せないので出さない" "$(q .suites taskboard/test/cases/00_gone.sh)" '["misc"]'
+eq "どのユニットでも流れるケース → tb の組全部" "$(q .suites taskboard/test/cases/99_zzz_session_sweep.sh)" "[\"misc\",$TB4]"
 eq "scheduler の bash" "$(q .suites scheduler/bin/tick.sh)" '["webui","scheduler"]'
 eq "setup" "$(q '[.suites, .go]' setup/check.sh presets/example.conf)" '[["setup"],[]]'
-eq "repoindex" "$(q '[.suites, .go]' repoindex/ri/cli.py)" '[["repoindex"],[]]'
+# 任意の部品(core でない組)。名前は core に書かない約束なので、run-all.sh --list の最後の組を使う
+OPT=$(bash "$HERE/run-all.sh" --list | jq -r '.[-1]')
+case $OPT in misc|taskboard-*|webui|scheduler|setup) OPT=;; esac
+if [[ -n $OPT ]]; then
+  eq "任意の部品: そのディレクトリ" "$(q '[.suites, .go]' "$OPT/x.py")" "[[\"$OPT\"],[]]"
+  eq "任意の部品: 名前を出してよい README では流さない" "$(q .suites README.md)" "[]"
+fi
+eq "Go のテストだけでも、Go を文字で読む tb のケースは流す" "$(q .suites internal/pr/conf_test.go)" '["taskboard-only:69_pr_contract.sh,83_parts.sh,93_prqueue.sh,99_layout.sh"]'
+eq "配布物に入るファイル → 配布物のビルド" "$(q '[.suites, .snapshot]' LICENSE README.md)" '[[],true]'
+eq "tb のケース → misc も(test_affected がケースを見る)" "$(q .suites taskboard/test/cases/14_cancel.sh | jq -c 'index("misc") != null')" "true"
+eq "scheduler のジョブの例 → tb の組も(ケースが読む)" "$(q .suites scheduler/jobs/watch.conf.example | jq -c 'map(select(startswith("taskboard"))) | length')" "4"
 eq "配布の設定 → 配布物のビルドだけ" "$(q '[.suites, .go, .snapshot]' .goreleaser.yaml)" '[[],[],true]'
 eq "改行 CRLF のファイル名一覧も読む" "$(printf 'webui/static/app.js\r\n' | bash "$HERE/affected.sh" | jq -c .suites)" '["webui"]'
 

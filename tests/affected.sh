@@ -29,22 +29,26 @@ cd "$ROOT" || exit 1
 # 変わったら全部流すもの
 GLOBAL=(.github/workflows/test.yml .github/workflows/go.yml .github/actions/ tests/run-all.sh tests/affected.sh go.mod go.sum .gitattributes)
 # どのテストも読まないもの
-IGNORE=(docs/ .claude/ LICENSE README.md herdr-up.sh conductor/ taskboard/docs/ taskboard/README.md webui/README.md setup/README.md
+IGNORE=(docs/ .claude/ herdr-up.sh conductor/ taskboard/docs/ taskboard/README.md webui/README.md setup/README.md
   .github/workflows/release.yml)
-# 組ごとの、読むファイル(パスの前方一致)
+# 配布物(.goreleaser.yaml の files)に入るもの: 変わったら配布物のビルドを流す
+SNAPSHOT_FILES=(.goreleaser.yaml LICENSE README.md)
+# 組ごとの、読むファイル(パスの前方一致)。任意の部品(core でない組)はここに書かない(core から名前を出さない約束)。
+# 任意の部品は、その部品のディレクトリと、名前を含むファイル(core から名前を出さないことをその部品のテストが確かめる)で流す
 suite_paths() {
   case $1 in
     misc)      echo tests/test_env.sh tests/test_instance.sh tests/test_affected.sh lib/ taskboard/bin/ taskboard/schema/ \
-                    webui/bin/gen-plist.sh webui/bin/gen-gateway-plist.sh scheduler/bin/gen-plist.sh;;
+                    webui/bin/gen-plist.sh webui/bin/gen-gateway-plist.sh scheduler/bin/gen-plist.sh scheduler/bin/lib.sh \
+                    taskboard/test/run.sh taskboard/test/groups taskboard/test/weights taskboard/test/cases/;;   # test_affected が tb の組・ケースを見る
     taskboard) echo taskboard/bin/ taskboard/lib/ taskboard/schema/ taskboard/sql/ taskboard/perms/ taskboard/config/ taskboard/.gitignore \
                     taskboard/test/run.sh taskboard/test/fake-herdr taskboard/test/groups taskboard/test/weights \
                     taskboard/test/cases/99_zzz_session_sweep.sh .gitignore roles/ setup/examples/ conversation/ lib/ \
-                    scheduler/bin/show.sh scheduler/bin/lib.sh;;
+                    scheduler/bin/show.sh scheduler/bin/lib.sh scheduler/jobs/;;
     webui)     echo webui/ roles/ conversation/ setup/examples/ scheduler/ lib/ \
                     taskboard/bin/ taskboard/lib/ taskboard/schema/ taskboard/sql/ taskboard/perms/ taskboard/config/;;
     scheduler) echo scheduler/ lib/ taskboard/bin/ taskboard/schema/ taskboard/test/fake-herdr;;
     setup)     echo setup/ presets/ lib/ taskboard/schema/;;
-    repoindex) echo repoindex/;;
+    *)         echo "$1/";;   # 任意の部品
   esac
 }
 # 組が動かす herdrctl の Go パッケージ。go:<pkg> はそのパッケージと依存、pkg:<pkg> はそのパッケージだけ
@@ -61,9 +65,11 @@ GO_EXTRA=(
   "internal/webui: webui/ taskboard/sql/ scheduler/ internal/tbcli/request.go"
   "internal/kernel/perms: internal/*.go"   # internal/*/*.go を読んで確かめる
 )
-# Go のコードを文字として読む tb のケース(internal/ の .go が変わったら、tb の組を流さないときもこれだけ流す)
-TB_SOURCE_CASES=(83_parts.sh 99_layout.sh)
-SUITE_ORDER=(misc taskboard webui scheduler setup repoindex)
+# Go のコードを文字として読む tb のケース(internal/ の .go が変わったら、*_test.go でも、tb の組を流さないときもこれだけ流す)
+TB_SOURCE_CASES=(69_pr_contract.sh 83_parts.sh 93_prqueue.sh 99_layout.sh)
+CORE_SUITES=(misc taskboard webui scheduler setup)
+# core のうち、任意の部品の名前を出してよいファイル(部品の一覧と、全体の README)
+NAME_OK=(tests/run-all.sh README.md)
 
 # ---------- 引数
 mode=stdin base= event=
@@ -102,7 +108,7 @@ files=()
 case $mode in
   all) reasons+=("すべて流す指定");;
   base)
-    if ! out=$( { git diff --name-only --no-renames "$base...HEAD" && git diff --name-only --no-renames HEAD && git ls-files --others --exclude-standard; } 2>&1); then
+    if ! out=$( { git diff --name-only --no-renames "$base...HEAD" && git diff --name-only --no-renames HEAD && git ls-files --others --exclude-standard; } 2>/dev/null); then
       reasons+=("git diff が取れない: $base")
     else mapfile -t files < <(printf '%s\n' "$out" | sed '/^$/d' | sort -u); fi;;
   stdin) mapfile -t files < <(sed 's/\r$//; /^$/d' | sort -u);;
@@ -114,6 +120,11 @@ emit_full() {
   exit 0
 }
 ((${#reasons[@]})) && emit_full "${reasons[@]}"
+# 組の並び(run-all.sh --list の順。taskboard-<組> は taskboard 1 つにまとめる)。core でないものは任意の部品
+mapfile -t SUITE_ORDER < <(bash "$ROOT/tests/run-all.sh" --list | jq -r '.[]' | sed 's/^taskboard-.*/taskboard/' | awk '!seen[$0]++')
+((${#SUITE_ORDER[@]})) || emit_full "組の一覧が取れない"
+OPTIONAL=()
+for s in "${SUITE_ORDER[@]}"; do [[ " ${CORE_SUITES[*]} " == *" $s "* ]] || OPTIONAL+=("$s"); done
 
 has_prefix() {  # $1=ファイル 残り=前方一致のパス
   local f=$1 p; shift
@@ -143,7 +154,7 @@ deps_of() { local o; o=$(go list -deps "./$1" 2>/dev/null) || { echo "$1"; retur
 # ---------- ファイルを分ける
 declare -A SUITE=() CHG_SRC=() CHG_TEST=() GO_SEL=() TB_CASES=()
 snapshot=false
-for f in "${files[@]}"; do
+for f in ${files[@]+"${files[@]}"}; do
   matched=
   has_prefix "$f" "${GLOBAL[@]}" && emit_full "全体にかかるファイル: $f"
   if pkg=$(pkg_of "$f"); then
@@ -157,12 +168,15 @@ for f in "${files[@]}"; do
   if [[ $f =~ ^taskboard/test/cases/([A-Za-z0-9_.-]+\.sh)$ ]]; then
     TB_CASES[${BASH_REMATCH[1]}]=1; matched=1
   fi
-  [[ $f == internal/*.go && $f != *_test.go ]] && for c in "${TB_SOURCE_CASES[@]}"; do TB_CASES[$c]=1; done
+  [[ $f == internal/*.go ]] && for c in "${TB_SOURCE_CASES[@]}"; do TB_CASES[$c]=1; done
   for rule in "${GO_EXTRA[@]}"; do
     # shellcheck disable=SC2086
     has_prefix "$f" ${rule#*:} && { GO_SEL[${rule%%:*}]=1; matched=1; }
   done
-  [[ $f == .goreleaser.yaml ]] && { snapshot=true; matched=1; }
+  has_prefix "$f" "${SNAPSHOT_FILES[@]}" && { snapshot=true; matched=1; }
+  for s in ${OPTIONAL[@]+"${OPTIONAL[@]}"}; do
+    [[ $f != "$s/"* && -f $f ]] && ! has_prefix "$f" "${NAME_OK[@]}" && grep -qiF -- "$s" "$f" && SUITE[$s]=1
+  done
   has_prefix "$f" "${IGNORE[@]}" && matched=1
   [[ -n $matched ]] || emit_full "規則に無いファイル: $f"
 done
@@ -207,6 +221,6 @@ done
 gopkgs=()
 for p in "${!GO_SEL[@]}"; do gopkgs+=("./$p"); done
 jq -nc --argjson snap "$snapshot" \
-  --argjson s "$(printf '%s\n' "${suites[@]}" | jq -Rnc '[inputs | select(. != "")]')" \
-  --argjson g "$(printf '%s\n' "${gopkgs[@]}" | sort -u | jq -Rnc '[inputs | select(. != "")]')" \
+  --argjson s "$(printf '%s\n' ${suites[@]+"${suites[@]}"} | jq -Rnc '[inputs | select(. != "")]')" \
+  --argjson g "$(printf '%s\n' ${gopkgs[@]+"${gopkgs[@]}"} | sort -u | jq -Rnc '[inputs | select(. != "")]')" \
   '{full:false, reasons:[], suites:$s, go:$g, snapshot:$snap}'
