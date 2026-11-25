@@ -142,7 +142,7 @@ func loadRisk() (*riskConf, string) {
 	if strings.HasSuffix(body, "\n") {
 		lines = lines[:len(lines)-1]
 	}
-	sec, fileAskAt := "", ""
+	sec, fileAskAt, relax := "", "", false
 	var seen []string
 	var uAttrs, uVals []string
 	for i, line := range lines {
@@ -171,8 +171,15 @@ func loadRisk() (*riskConf, string) {
 			if e != "" {
 				return nil, e
 			}
+			if k == "relax" { // 人が明示したときだけ、既定より緩い設定も効かせる
+				if v != "on" && v != "off" {
+					return nil, fmt.Sprintf("L%d: relax は on | off です: %s", n, v)
+				}
+				relax = v == "on"
+				continue
+			}
 			if k != "ask-at" {
-				return nil, fmt.Sprintf("L%d: [threshold] で使えるのは ask-at だけです", n)
+				return nil, fmt.Sprintf("L%d: [threshold] で使えるのは ask-at と relax だけです", n)
 			}
 			if !reInt.MatchString(v) || atoi(v) < 1 || atoi(v) > 99 {
 				return nil, fmt.Sprintf("L%d: ask-at は 1 以上の整数です", n)
@@ -245,13 +252,19 @@ func loadRisk() (*riskConf, string) {
 	if fileAskAt != "" {
 		if a := atoi(fileAskAt); a < c.askAt {
 			c.askAt = a
+		} else if a > c.askAt && relax {
+			c.warns = append(c.warns, fmt.Sprintf("緩め設定が有効(relax = on): [threshold] ask-at = %s(既定 %d)", fileAskAt, c.askAt))
+			c.askAt = a
 		} else if a > c.askAt {
 			c.warns = append(c.warns, fmt.Sprintf("緩め設定は第 3 段まで無効: [threshold] ask-at = %s(既定 %d のまま)", fileAskAt, c.askAt))
 		}
 	}
 	for i, a := range uAttrs {
 		v := uVals[i]
-		if level(v) < level(c.unknown[a]) {
+		if level(v) < level(c.unknown[a]) && relax {
+			c.warns = append(c.warns, fmt.Sprintf("緩め設定が有効(relax = on): [unknown] %s = %s(既定 %s)", a, v, c.unknown[a]))
+			c.unknown[a] = v
+		} else if level(v) < level(c.unknown[a]) {
 			c.warns = append(c.warns, fmt.Sprintf("緩め設定は第 3 段まで無効: [unknown] %s = %s(既定 %s のまま)", a, v, c.unknown[a]))
 		} else {
 			c.unknown[a] = v

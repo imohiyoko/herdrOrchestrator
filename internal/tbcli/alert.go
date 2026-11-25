@@ -227,7 +227,7 @@ func alertDispatchOne(db *store.DB, id int64) int {
 	if v, _, ok := ls.Raw("analyst_max"); ok { // limits で設定されていれば TB_ANALYST_MAX より優先
 		amax = v
 	}
-	if n, err := strconv.ParseInt(strings.TrimSpace(amax), 10, 64); err == nil && busy >= n {
+	if n, err := strconv.ParseInt(strings.TrimSpace(amax), 10, 64); err == nil && busy >= n { // unlimited は数でないので待たせない
 		alertSetStatus(db, id, "queued")
 		return 0
 	}

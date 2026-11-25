@@ -10,6 +10,6 @@ branch_prefix = agent/        # キューに積めるブランチの接頭辞(�
 body_root =                   # 本文ファイルの置き場(空なら taskboard/data/pr-bodies)。この中の実ファイルだけを本文にできる
 body_first_line =             # 本文 1 行目が合うべき正規表現(例: ^Report: https://example\.com/r/[0-9]+$)。空なら見ない
 auto_approve = 0              # 1 なら scan で積んだものを approved にする(人の承認を飛ばす)。既定は 0
-max_create_per_run = 3        # 1 回の run で作る PR の上限
+max_create_per_run = 3        # 1 回の run で作る PR の上限(unlimited で上限なし)
 base_mode = fixed             # PR の向き先(base)。fixed = main 固定(既定)/ default_branch = origin の既定ブランチ(develop などのリポジトリ用)
 base_allow =                  # add --base で明示できるブランチ(空白かカンマ区切りのグロブ。例: release/* develop)。空なら既定の base だけ。origin に実在すること

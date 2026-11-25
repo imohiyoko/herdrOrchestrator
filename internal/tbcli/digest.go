@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/agents"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/capv"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/herdr"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/jv"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
@@ -369,7 +370,7 @@ func cmdDigest(args []string, w, stderr io.Writer) error {
 			_, _ = proposal.Deliver(db.DB, db.Session, p, io.Discard)
 		}
 	}
-	d := &digestRun{db: db, st: st, itemMax: atoi(envOr("TB_DIGEST_ITEM_MAX", "160")),
+	d := &digestRun{db: db, st: st, itemMax: capv.Env("TB_DIGEST_ITEM_MAX", 160),
 		idleMin: atoi(idle), stuckMin: atoi(stuck), queuedSec: atoi(queued),
 		dt: message.TargetFor(db.DB, db.Session, "*")}
 	if err := d.collect(); err != nil {
@@ -379,7 +380,7 @@ func cmdDigest(args []string, w, stderr io.Writer) error {
 		fmt.Fprintln(w, "digest: 送るものはありません")
 		return nil
 	}
-	msgMax := atoi(envOr("TB_DIGEST_MSG_MAX", "1800"))
+	msgMax := capv.Env("TB_DIGEST_MSG_MAX", 1800) // unlimited で 1 通にまとめる
 	var targets []string
 	seenT := map[string]bool{}
 	for _, it := range d.items {

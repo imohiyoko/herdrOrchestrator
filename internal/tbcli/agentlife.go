@@ -363,8 +363,8 @@ func limitsRefuseRunning(db *store.DB, add int, stderr io.Writer) error {
 	if !ok {
 		return nil
 	}
-	max := atoi(limits.Load(db.DB, db.Session).Get("max_running_agents"))
-	if running+add > max {
+	max, lim := limits.Load(db.DB, db.Session).Max("max_running_agents")
+	if limits.Exceeds(running+add, max, lim) {
 		fmt.Fprintf(stderr, "tb: 動作中の agent が上限です(動作中 %d、上限 max_running_agents=%d)。何も作りません。 止める候補は tb agent-shed、上限を変えるのは人(tb limits set max_running_agents <数>)\n", running, max)
 		return &exit{4, ""}
 	}

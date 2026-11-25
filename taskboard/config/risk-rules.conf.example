@@ -13,9 +13,11 @@
 #
 # 「厳しくする」設定だけが効く。既定より緩い設定(しきい値を上げる、[unknown] を既定より弱くする)は
 # 第 3 段まで効かず、読み込んで警告(risk-warn)を出すだけ。
+# [threshold] に relax = on と書いたときだけ、緩い設定も効かせる(効いたことは risk-warn に必ず出す)。既定は off。
 
 [threshold]
 # ask-at = 2
+# relax = off
 
 [unknown]
 # 属性が不明のときの値: ask(必ず ask)| allow(0 点)| risk:<整数>(点を足す)

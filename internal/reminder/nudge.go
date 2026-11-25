@@ -13,6 +13,7 @@ import (
 
 	"github.com/imohiyoko/herdrorchestrator/internal/agents"
 	"github.com/imohiyoko/herdrorchestrator/internal/approval"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/capv"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/config"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/herdr"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/util"
@@ -72,7 +73,7 @@ func (ErrLive) Error() string {
 func (n *Nudge) SetLimits(idle, max string) {
 	n.idleS, n.maxS = idle, max
 	n.Idle, _ = strconv.Atoi(idle)
-	n.Max, _ = strconv.Atoi(max)
+	n.Max = capv.Int(max, 0) // unlimited なら催促の回数で止めない
 }
 
 func (n *Nudge) quote(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }

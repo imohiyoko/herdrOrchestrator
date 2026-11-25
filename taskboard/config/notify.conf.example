@@ -22,7 +22,7 @@ ack_timeout_min = 5         # この分数たっても ack が来なければ再
 ack_retries = 3             # 送る回数の上限。超えたら failed(情報は file と webapp に残る)
 # webhook_file = ~/.config/<名前>/notify-webhook   # slack_via=webhook のとき。1 行目に URL。権限 0600 の通常ファイルだけ使う(リポジトリの外に置く)
 
-rate_per_min = 6            # 1 分あたりの slack への送信数。超えた分は 1 通にまとめて送る
+rate_per_min = 6            # 1 分あたりの slack への送信数。超えた分は 1 通にまとめて送る(rate_per_* と max_len は unlimited で上限なし)
 rate_per_hour = 60          # 1 時間あたり
 max_len = 600               # 1 通の長さの上限(字)
 dedupe_sec = 600            # 同じ種別・同じ対象のイベントを、この秒数のあいだは 1 回だけ積む(0 = 抑止しない)

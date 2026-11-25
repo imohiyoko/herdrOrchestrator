@@ -123,6 +123,14 @@ eq "limits.conf spawn_max_total overrides it (raised to 9 → passes)" "$(TB_LIM
 printf 'spawn_max_per_parent = 1\n' >"$TB_LIMITS"
 eq "limits.conf spawn_max_per_parent overrides it (lowered to 1 → 4)" "$(TB_SPAWN_POLICY=$TMP/lim-spawn-old.conf HERDR_PANE_ID=wP:p1 rc $TB agent-spawn worker --task "$LT" --brief x)" "4"
 rm -f "$TB_LIMITS"
+# unlimited: 子の数・深さの上限を外す
+eq "spawn: TB_LIMIT_SPAWN_MAX_TOTAL=unlimited lifts the total (spawn-policy says 1)" "$(TB_LIMIT_SPAWN_MAX_TOTAL=unlimited TB_SPAWN_POLICY=$TMP/lim-spawn-old.conf HERDR_PANE_ID=wP:p1 $TB agent-spawn worker --task "$LT" --brief x | cut -d' ' -f1-2)" "parent1-s3 started"
+printf 'allowed_roles = worker\nmax_children_per_parent = unlimited\nmax_children_total = unlimited\nmax_depth = unlimited\n' >"$TMP/lim-spawn-unl.conf"
+eq "spawn: spawn-policy.conf max_children_* = unlimited" "$(TB_SPAWN_POLICY=$TMP/lim-spawn-unl.conf HERDR_PANE_ID=wP:p1 $TB agent-spawn worker --task "$LT" --brief x | cut -d' ' -f1-2)" "parent1-s4 started"
+LT2=$($TB add -p lm -t 'work of parent1-s1' --owner parent1-s1); $TB update "$LT2" --status in_progress >/dev/null
+eq "spawn: the default depth 1 still refuses a grandchild" "$(TB_SPAWN_POLICY=$TMP/lim-spawn-old.conf TB_LIMIT_SPAWN_MAX_TOTAL=unlimited HERDR_PANE_ID=wA:p1 $TB agent-spawn worker --task "$LT2" --brief x 2>&1 >/dev/null | grep -c '深さの上限(1)')" "1"
+eq "spawn: max_depth = unlimited lets a child spawn" "$(TB_SPAWN_POLICY=$TMP/lim-spawn-unl.conf HERDR_PANE_ID=wA:p1 $TB agent-spawn worker --task "$LT2" --brief x | cut -d' ' -f1-2)" "parent1-s1-s1 started"
+eq "spawn: the prompt tells the child whether it may spawn (depth 1: no, unlimited: yes)" "$(lgsql "SELECT target||' '||(json_extract(args,'\$.prompt') LIKE '%子は子 agent を立てられない%')||(json_extract(args,'\$.prompt') LIKE '%spawn-policy の規則に従う%') FROM agent_ops WHERE op='new' AND target IN ('parent1-s3','parent1-s4','parent1-s1-s1') ORDER BY target;" | tr '\n' ,)" "parent1-s1-s1 01,parent1-s3 10,parent1-s4 01,"
 
 # ---- 強制: 解析役(analyst_max、max_running_agents)
 export TB_DB=$TMP/limits-alert.db; : >"$FAKE_LOG"
@@ -136,6 +144,7 @@ n0=$(lg_ws)
 eq "analyst: max_running_agents reached → queued with the reason, no workspace" "$($TB alert-dispatch >/dev/null; lgsql "SELECT status||' '||(note LIKE '%max_running_agents%') FROM alerts WHERE id=3;") $(( $(lg_ws) - n0 ))" "queued 1 0"
 printf 'analyst_max = 5\n' >"$TB_LIMITS"
 eq "analyst: room again → it starts" "$($TB alert-dispatch >/dev/null; lgsql "SELECT status FROM alerts WHERE id=3;")" "analyzing"
+eq "analyst: analyst_max = unlimited never queues for it" "$(TB_LIMIT_ANALYST_MAX=unlimited HERDR_PANE_ID=wX:p1 $TB alert --title 'a4' | cut -d' ' -f1-3) $(TB_ANALYST_MAX=unlimited TB_LIMITS=$TMP/none.conf HERDR_PANE_ID=wX:p1 $TB alert --title 'a5' | cut -d' ' -f1-3)" "A-4 new analyzing A-5 new analyzing"
 rm -f "$TB_LIMITS"
 export TB_DB=$TMP/limits.db
 
@@ -151,6 +160,7 @@ printf 'max_working_agents = 2\n' >"$TB_LIMITS"
 eq "send: below the limit (a working count of 1) delivers" "$(FAKE_AGENTS="[$LG_C,$LG_W1,$LG_W2]" HERDR_PANE_ID=wC:p1 rc $TB send w2 --text 'again') $(grep -c '^prompt w2' "$FAKE_LOG")" "0 2"
 rm -f "$TB_LIMITS"
 eq "send: no limit (0) never queues for it" "$(HERDR_PANE_ID=wC:p1 rc $TB send w2 --text 'free') $(grep -c '^prompt w2' "$FAKE_LOG")" "0 3"
+eq "send: max_working_agents = unlimited never queues for it" "$(TB_LIMIT_MAX_WORKING_AGENTS=unlimited HERDR_PANE_ID=wC:p1 rc $TB send w2 --text 'free2') $(grep -c '^prompt w2' "$FAKE_LOG")" "0 4"
 
 # ---- 別の herdr セッションの台帳の行は、数えない・一覧に出さない・止める候補にしない
 export TB_DB=$TMP/limits-sess.db; : >"$FAKE_LOG"

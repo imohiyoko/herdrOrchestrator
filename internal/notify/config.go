@@ -10,6 +10,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/capv"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/config"
 )
 
@@ -19,6 +20,7 @@ var Types = []string{"alert_raised", "alert_result", "pr_opened", "pr_approved",
 var (
 	boolKeys = []string{"enabled", "hash_check", "mask_ip", "mask_repo", "mask_account", "mask_host", "mask_email", "strip_raw_logs"}
 	intKeys  = []string{"rate_per_min", "rate_per_hour", "max_len", "dedupe_sec", "ack_timeout_min", "ack_retries", "summary_interval_min"}
+	capKeys  = []string{"rate_per_min", "rate_per_hour", "max_len"} // unlimited(上限なし)も書ける
 	strKeys  = []string{"slack_via", "slack_target", "notifier_agent", "webhook_file"}
 	reInt    = regexp.MustCompile(`^[0-9]{1,6}$`)
 	reTarget = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
@@ -80,8 +82,13 @@ func Norm(k, v string) (norm, errMsg string, ok bool) {
 			return "off", "", true
 		}
 		return "", k + " は on|off: " + v, false
+	case slices.Contains(capKeys, k) && capv.IsUnlimited(v):
+		return capv.Unlimited, "", true
 	case slices.Contains(intKeys, k):
 		if !reInt.MatchString(v) {
+			if slices.Contains(capKeys, k) {
+				return "", k + " は 0 以上の整数か unlimited: " + v, false
+			}
 			return "", k + " は 0 以上の整数: " + v, false
 		}
 		n, _ := strconv.Atoi(v)
@@ -170,8 +177,8 @@ func (c *Cfg) Get(k string) string {
 	return Default(k)
 }
 
-// Int は数の設定(不正なら 0)。
-func (c *Cfg) Int(k string) int { n, _ := strconv.Atoi(c.Get(k)); return n }
+// Int は数の設定(不正なら 0。unlimited は capv.NoLimit)。
+func (c *Cfg) Int(k string) int { return capv.Int(c.Get(k), 0) }
 
 // Source は notify_source: env / conf / default。
 func (c *Cfg) Source(k string) string {
