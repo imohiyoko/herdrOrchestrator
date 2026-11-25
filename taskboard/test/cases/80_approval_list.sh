@@ -53,6 +53,12 @@ eq "cmd queue: the token cannot be reused by hand" "$(TB_APPROVED_REQUEST=$cq HE
 cp "$TMP/al.base" "$TB_POLICY"; printf 'lead1 approve:policy:send:task:* worker1 = allow\n' >>"$TB_POLICY"
 printf '%s\n' "$(cat "$TB_POLICY")" 'worker3 send:task * = allow' | HERDR_PANE_ID=wW:p1 $TB config set policy >/dev/null 2>"$TMP/al.err"
 cq2=$(grep -o 'Q-[0-9]*' "$TMP/al.err" | head -1)
+eq "approvers: the agent that can decide it is told once (requester, permission, target; no command args)" "$(grep -c "^prompt lead1	\[tb approval / $cq2\] worker1 からの承認待ちです(policy:send:task worker3)。tb approval approve $cq2 か tb approval reject $cq2" "$FAKE_LOG") $(grep "^prompt lead1	\[tb approval / $cq2\]" "$FAKE_LOG" | grep -c 'worker3 send:task')" "1 0"
+eq "approvers: the requester itself is not told" "$(grep -c "^prompt worker1	\[tb approval / $cq2\]" "$FAKE_LOG")" "0"
+eq "list --mine: the approver sees what it can decide" "$(HERDR_PANE_ID=wW:p2 $TB approval list --mine | cut -f1)" "$cq2"
+eq "list --mine: the requester does not see its own request" "$(HERDR_PANE_ID=wW:p1 $TB approval list --mine)" ""
+eq "list --mine: a person sees everything pending" "$($TB approval list --mine | cut -f1)" "$($TB approval list | cut -f1)"
+eq "list --mine --json" "$(HERDR_PANE_ID=wW:p2 $TB approval list --mine --json | jq -r .id)" "$cq2"
 eq "cmd queue: an agent with only approve:<op>:<target> <requester> approves; the requester runs it" "$(HERDR_PANE_ID=wW:p2 $TB approval approve "$cq2" >/dev/null 2>&1; HERDR_PANE_ID=wW:p1 $TB approval run "$cq2" >/dev/null 2>&1; echo $?) $(grep -c '^worker3 send:task' "$TB_POLICY") $(alsql "SELECT decided_by FROM requests WHERE id=${cq2#Q-};")" "0 1 lead1"
 cp "$TMP/al.base" "$TB_POLICY"
 printf '%s\n' "$(cat "$TB_POLICY")" 'worker4 send:task * = allow' | HERDR_PANE_ID=wW:p1 $TB config set policy >/dev/null 2>"$TMP/al.err"

@@ -169,7 +169,9 @@ tb approval allow <パターン>   今後は承認なしにする(設定 policy 
   別名(古い名前): tb allow <パターン>
 tb approval ask <パターン>     承認制に戻す(設定 policy に * <操作> <対象> = ask を書く。agent は cmd:approval:ask と policy:<操作> * が要る)
   別名(古い名前): tb ask <パターン>
-tb approval list [--json]      承認待ちの一覧(Q-<n>。送信・agent の操作・ask で止まったコマンド。優先度の高い順、同じなら古い順。ID・優先度・要る権限・依頼者・対象・作った時刻)
+tb approval list [--mine] [--json]   承認待ちの一覧(Q-<n>。送信・agent の操作・ask で止まったコマンド。優先度の高い順、同じなら古い順。ID・優先度・要る権限・依頼者・対象・作った時刻)。
+                              --mine は呼んだ agent が approve: で決められるものだけ(自分の依頼・人だけのものは出ない。人は全部)。
+                              承認待ちができると、決められる agent の pane に 1 度だけ知らせる(依頼者・要る権限・対象だけ。使用中なら送らない)
 tb approval history [--mine|--by A] [--limit N] [--json]   allow / ask / deny の記録(新しい順。ID・判定・状態・依頼者・要る権限・対象・決めた人・作った時刻。--json は当たった行と実行の結果も)。
                               agent が叩いた tb は allow(決めた人 policy)・ask(承認・却下した人)・deny(決めた人 policy)のどれでも Q-<n> を 1 行残す。人の端末の tb は残さない
 tb approval approve Q-<n> [--always]   承認する。送信は届け、agent の操作は実行する。コマンドは実行せず、依頼した agent に「tb approval run Q-<n>」を知らせる
