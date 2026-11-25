@@ -103,7 +103,7 @@ AUTHOR-REJECT-RATE low|mid|high|unknown           作者の過去の差し戻し
 
 | 分類 | パス |
 |---|---|
-| 判定・承認の設定と実装、`tb` の入口、テスト基盤 | `.github`(どの階層でも)、`gate*.conf`、`gate-paths.conf`、`gate*.sh`、`approvals.conf`・`policy.conf`・`perms/*.tbl`、`risk-rules.conf`、`bin/tb`、`run-all.sh`、`test/run.sh`、`tests/run.sh`、gate のテスト |
+| 判定・承認の設定と実装、`tb` の入口、テスト基盤 | `.github`(どの階層でも)、`gate*.conf`、`gate-paths.conf`、`gate*.sh`、`approvals.conf`・`policy.conf`・`perms/*.tbl`、`risk-rules.conf`、`bin/tb`、`run-all.sh`、`tests/affected.sh`(CI で流すテストを決める)、`test/run.sh`、`tests/run.sh`、gate のテスト |
 | agent への指示・権限・拡張の設定(どの階層でも) | `.claude.json`、`.agents/`、`AGENT.md`、`.aider.conf.*`、`.claude/`(hooks、commands、agents、skills、settings)、`CLAUDE.md`、`CLAUDE.local.md`、`AGENTS.md`、`GEMINI.md`、`copilot-instructions.md`、`.cursor/`、`.cursorrules`、`.windsurf/`、`.windsurfrules`、`.clinerules*`、`.roo/`、`.continue/`、`.codex/`、`.gemini/`、`mcp.json`、`.mcp.json`、`.vscode/tasks.json`、`.vscode/settings.json` |
 | レビュー必須の規則・レビューの設定 | `CODEOWNERS`(ルート・`docs/`・`.github/` のどこでも)、`.coderabbit.yaml` |
 | 実行の入口(git・起動・CI) | `.githooks`、`.husky`、`.gitattributes`、`.gitmodules`、`.pre-commit-config.yaml`、`.envrc`、`.mcp.json`、`.devcontainer/`、`.circleci/`、`Jenkinsfile`、`.gitlab-ci.yml`、`.gitlab/`、`.travis.yml`、`azure-pipelines*.y*ml`、`.azure-pipelines/`、`bitbucket-pipelines.yml`、`cloudbuild.y*ml`、`appveyor.yml`、`.drone.yml`、`buildspec*.y*ml`、`lefthook*.y*ml`、`.pre-commit-hooks.yaml`、`renovate.json`(`.json5`)、`.renovaterc*`、`.dependabot/` |
@@ -225,7 +225,7 @@ tb gate reviewers <o>/<r>#<n> [--task <id>]           記録をレビュアー(�
 
 - どちらかが無い・読めない・構文エラー・未知のキー・範囲外の値は、**評価不能(21)**です(fail-closed)。設定で緩めることはできません。
 - パスの glob は、`*` が `/` も越えて一致し、大文字小文字を区別しません(広めに当たる = 人に回る側へ倒す)。`**/` で始めると根直下にも当たります。
-- 判定・承認の設定そのもの(`.github`、gate の設定とその実装、承認とリスク評価の設定)と、`tb` の入口(`bin/tb`)、テスト基盤(`run-all.sh`、`test/run.sh`、`tests/run.sh`)、gate のテストは、パス規則ファイルに書かなくても常に hard です。判定を弱める変更を点数だけで通さないためです。
+- 判定・承認の設定そのもの(`.github`、gate の設定とその実装、承認とリスク評価の設定)と、`tb` の入口(`bin/tb`)、テスト基盤(`run-all.sh`、`tests/affected.sh`(CI で流すテストを決める)、`test/run.sh`、`tests/run.sh`)、gate のテストは、パス規則ファイルに書かなくても常に hard です。判定を弱める変更を点数だけで通さないためです。
 - 点数の分類(P-01)も、hard と同じく大文字小文字を区別しません(`Lib/db.sh` は `lib/db.sh` と同じ重さです)。
 - `docs/` 配下で docs として数えるのは、拡張子が `.md` `.txt` `.rst` `.png` `.svg` `.jpg` `.jpeg` `.gif` のものだけです(大文字小文字は区別しません)。それ以外(拡張子なし、`.js` `.yml` `.sh` など)は一般のコードとして数えます。
 - パスは入力の正規形に頼りません。空・`.`・`..` の階層、先頭の `/`、末尾の `/` を含むパスは不正で、評価不能(21)です(`./x`、`a//b`、`a/../b` など)。

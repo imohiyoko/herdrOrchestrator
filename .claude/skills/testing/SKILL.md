@@ -24,7 +24,7 @@ description: このリポジトリでテストを設計・追加・修正・実�
 | setup | `setup/tests/run.sh`(疑似の repo・HOME・LaunchAgents、`setup/tests/fake/`) | 同左 |
 | 任意の部品(core から呼ばない部品) | その部品の `tests/run.sh`(組の一覧は `bash tests/run-all.sh --list`) | 同左 |
 | herdrctl(Go) | `internal/**/*_test.go`、`cmd/herdrctl/main_test.go` | `go test ./internal/kernel/store/` |
-| 全体の小物(misc) | `tests/test_env.sh`(bash と Python の既定値の突き合わせ)、`tests/test_instance.sh`(複数 herdr セッションの切り分け) | `bash tests/run-all.sh misc` |
+| 全体の小物(misc) | `tests/test_env.sh`(bash と Python の既定値の突き合わせ)、`tests/test_instance.sh`(複数 herdr セッションの切り分け)、`tests/test_affected.sh`(CI で流すテストの決め方) | `bash tests/run-all.sh misc` |
 
 すべて流すのは `bash tests/run-all.sh`(`-j N` で組を並列に)。必要なもの: bash 4.3 以上、sqlite3、jq、python3、go。
 
@@ -76,6 +76,17 @@ git show HEAD:internal/tbcli/reciperun.go > internal/tbcli/reciperun.go
 go build -o /tmp/herdrctl ./cmd/herdrctl && TB_HERDRCTL=/tmp/herdrctl bash taskboard/test/run.sh 84_recipe_runner.sh   # 足したテストだけが FAIL する
 cp /tmp/fixed.go internal/tbcli/reciperun.go
 ```
+
+### PR で流すテストの決め方(`tests/affected.sh`)
+
+PR の CI は、変えたファイルに関わる組と Go のパッケージだけを流す。main への push と手で流す(workflow_dispatch)ときは全部。決め方は `tests/affected.sh` の頭にある:
+
+- 組は `suite_paths`(組が読むファイル)に当たるか、`suite_go`(組が動かす herdrctl の Go パッケージとその依存)のコードが変わったら流す
+- Go のテストは `go list -test -deps` で、変わったパッケージに依存するものだけ。`*_test.go`・`testdata/` だけの変更はそのパッケージだけ。自分のディレクトリの外を読む Go のテストは `GO_EXTRA` に書く
+- tb のケースだけの変更はそのケースだけ(`taskboard-only:<ケース>,...` の組)
+- CI・go.mod・この仕組み自身(`GLOBAL`)が変わった、**どの規則にも当たらないファイルがある**、go list が失敗した、のどれかなら全部
+
+**テストが新しいファイルを読むようになったら、`tests/affected.sh` の規則に足す**(足さないと PR では流れず、main で初めて落ちる)。新しい部品のディレクトリは規則に足すまで「規則に無いファイル」で全部流れる。決め方を変えたら `tests/test_affected.sh` に例を足す。手元では `bash tests/run-all.sh --affected` で同じ組を流せる。
 
 ### CI の組と weights
 

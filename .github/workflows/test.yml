@@ -3,23 +3,32 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
-  # 組の一覧は tests/run-all.sh --list から作る(組を足しても、ここは書き換えない)。
+  # 流す組は tests/affected.sh が変えたファイルから決める(PR だけ。main への push と手で流すときは全部)。
+  # 決め方・全部に倒れる条件は tests/affected.sh の頭。組を足しても、ここは書き換えない。
   # tb・scheduler の中身は herdrctl なので、どの組も下で herdrctl を作って PATH に置いてから流す
   plan:
     runs-on: ubuntu-latest
     outputs:
-      suites: ${{ steps.list.outputs.suites }}
+      suites: ${{ steps.plan.outputs.suites }}
     steps:
       - uses: actions/checkout@v4
         with:
+          fetch-depth: 2    # PR はマージ後のコミット。1 つ目の親(main)との差が PR の変更
           persist-credentials: false
-      - id: list
-        run: echo "suites=$(bash tests/run-all.sh --list)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@v5    # affected.sh が go list で Go のパッケージの依存を見る
+        with:
+          go-version-file: go.mod
+      - id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+        run: bash tests/affected.sh --ci "$EVENT"
   test:
     needs: plan
+    if: needs.plan.outputs.suites != '[]'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -36,11 +45,14 @@ jobs:
         with:
           go-version-file: go.mod
       - run: mkdir -p "$RUNNER_TEMP/bin" && go build -o "$RUNNER_TEMP/bin/herdrctl" ./cmd/herdrctl && echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-      - run: bash tests/run-all.sh "${{ matrix.suite }}"
-  # ブランチ保護で必須にする 1 つのチェック(matrix の名前が変わっても、これだけ見ればよい)
+      - run: bash tests/run-all.sh "$SUITE"
+        env:
+          SUITE: ${{ matrix.suite }}
+  # ブランチ保護で必須にする 1 つのチェック(matrix の名前が変わっても、これだけ見ればよい)。
+  # 流す組が無くて test を飛ばしたときも通す(plan が通っていることは確かめる)
   test-all:
     if: always()
-    needs: test
+    needs: [plan, test]
     runs-on: ubuntu-latest
     steps:
-      - run: '[ "${{ needs.test.result }}" = success ]'
+      - run: '[ "${{ needs.plan.result }}" = success ] && case "${{ needs.test.result }}" in success|skipped) ;; *) false;; esac'
