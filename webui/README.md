@@ -123,6 +123,7 @@ POST/PUT/DELETE/PATCH は 405。
 | `/statuses` | チケットの状態の定義(設定 `statuses`): 状態・分類・説明・チケットの件数と、状態を足す(`tb ticket status add`)・外す(`tb ticket status rm`。チケットが残っていれば移し先を選ぶ)フォーム |
 | `/board` | スプリントのボード(状態ごとの列)とスプリント一覧。スプリントを作る(`tb sprint-add`)・始める(`tb sprint-start`)・閉じる(`tb sprint-close`。残りは次の planned かバックログへ) |
 | `/inbox` | 要対応(question・blocked・pending-human・blocked の agent)を上に、直近の報告を下に。`tb reminder publish` の結果があれば一番上に「忘れているかも」(優先度順。項目は既存の画面へリンク)、保留した送信(`inbox` 表)があれば「保留した送信」(本文は出さず、「本文を見る」で 1 件ずつ `/inbox?held=<n>`)。どちらも読むだけ |
+| `/approvals` | Q チケット(`requests` 表の `Q-<n>`。tb が判定した allow / ask / deny のどれも 1 行)。誰が依頼し(依頼者)、何が・誰が決めたか(判定・当たった policy・決めた人)を新しい順に最大 200 件。表示は「一覧」と「ボード」(状態ごとの列。`?view=board`)。allow は tb を叩くたびに残るので既定では畳む(`?tier=all` で全部、`?tier=allow` / `ask` / `deny` で絞る)。`?status=` `?requester=` `?by=`(決めた人。`policy` / `human` / agent 名) `?id=Q-<n>` でも絞り込み。送信・agent の操作は元の依頼(outbox・agent_ops)の状態を出す。読むだけ(承認・却下は手元で `tb approval approve` / `reject`) |
 | `/docs` | agent が成果物として報告したドキュメント(ローカルのファイル)の一覧。新しい順、`?q=` で絞り込み |
 | `/docs/view?ref=<参照>` | そのドキュメントを読む。Markdown は整形して表示(Mermaid は図に。「元のテキストを表示」で切り替え)、フォルダなら中のファイル一覧 |
 | `/docs/view?path=<絶対パス>` | パスを指定して読む(agent の作業ディレクトリ配下だけ。`/docs` の入力欄から) |

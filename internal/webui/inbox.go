@@ -222,6 +222,7 @@ func (s *Server) pageInbox(q *rq, pc pageCtx) (string, string) {
 	body += table([]string{"種別", "何が・中身・どう対応するか", "時刻"}, appr)
 	body += "<p class=note>「手元で tb …」は、人の端末(agent の pane ではない)で実行するコマンドです。" +
 		"承認待ち(Q-&lt;n&gt;。送信・agent の操作・ask で止まったコマンド)の一覧は、手元の <code>tb approval list</code> でも見られます。" +
+		"決まったものも含む Q チケットの記録は <a href=\"/approvals\">承認(Q)</a>。" +
 		"agent の操作の承認だけは Web UI の agent 一覧からもできます。</p>"
 	body += "<h2>要対応の報告 (needs-human)</h2>"
 	var rows [][]string

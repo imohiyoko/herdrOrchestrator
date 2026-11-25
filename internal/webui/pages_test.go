@@ -57,6 +57,13 @@ INSERT INTO requests (herdr_session, source, requester, op, target, priority, de
  ('default', 'cmd', 'alpha', 'cmd:ticket:cancel', 'T-p-1', 2, 'tb ticket cancel T-p-1 <理由>', 'pending', '2026-01-01T05:00:00Z'),
  ('default', 'cmd', 'alpha', 'cmd:ticket:cancel', 'T-p-2', 1, 'decided', 'done', '2026-01-01T05:00:00Z'),
  ('other', 'cmd', 'alpha', 'cmd:ticket:cancel', 'T-p-3', 1, 'other session', 'pending', '2026-01-01T05:00:00Z');
+INSERT INTO requests (herdr_session, source, source_id, requester, op, target, priority, detail, status, created_at, tier, rule, decided_by, decided_at, result) VALUES
+ ('default', 'cmd', NULL, 'beta', 'cmd:task:list', '*', 1, 'tb task list', 'allowed', '2026-01-01T06:00:00Z', 'allow', '* cmd:task * = allow', 'policy', '2026-01-01T06:00:00Z', NULL),
+ ('default', 'cmd', NULL, 'beta', 'cmd:git:push', 'origin', 1, 'tb git push <origin>', 'denied', '2026-01-01T06:10:00Z', 'deny', '* cmd:git:push * = deny', 'policy', '2026-01-01T06:10:00Z', NULL),
+ ('default', 'cmd', NULL, 'alpha', 'cmd:ticket:cancel', 'T-a-9', 0, 'tb ticket cancel T-a-9', 'rejected', '2026-01-01T06:20:00Z', 'ask', NULL, 'human', '2026-01-01T06:30:00Z', NULL),
+ ('default', 'cmd', NULL, 'alpha', 'cmd:ticket:cancel', 'T-a-10', 1, 'tb ticket cancel T-a-10', 'done', '2026-01-01T06:40:00Z', 'ask', NULL, 'gamma', '2026-01-01T06:50:00Z', 'ok <done>'),
+ ('default', 'outbox', 4, 'alpha', 'send:info', 'beta', 1, 'sent', 'pending', '2026-01-01T07:00:00Z', 'ask', NULL, NULL, NULL, NULL),
+ ('other', 'cmd', NULL, 'zeta', 'cmd:task:list', '*', 1, 'other allow', 'allowed', '2026-01-01T06:00:00Z', 'allow', NULL, 'policy', NULL, NULL);
 INSERT INTO agent_activity (session_id, pane_id, last_prompt_at, last_stop_at, updated_at, herdr_session) VALUES
  ('sess-b', 'p2', '2026-01-01T00:00:00Z', NULL, '2026-01-01T00:00:00Z', 'default');
 INSERT INTO notify_events (type, ref, text, hash, sinks, created_at, herdr_session) VALUES
@@ -404,6 +411,9 @@ func TestPagesGolden(t *testing.T) {
 		"/ledger?result=all", "/ledger?result=failed&kind=send", "/ledger?kind=report&target=beta&from=2026-01-02",
 		"/ledger?target=bad%20name&from=2026/01/01&to=x&kind=nope&result=weird", "/ledger?to=2026-01-02&target=&target=alpha",
 		"/ledger?kind=%E5%A0%B1+%E5%91%8A", "/ledger?result=busy&to=2026-01-01",
+		"/approvals", "/approvals?tier=all", "/approvals?view=board&tier=all", "/approvals?tier=deny", "/approvals?id=Q-1",
+		"/approvals?status=pending", "/approvals?by=policy&tier=all", "/approvals?requester=alpha&view=board",
+		"/approvals?tier=x&id=zz&requester=bad%20n&status=a%20b&by=%3Cb%3E&view=weird",
 		"/inbox", "/inbox?held=1", "/inbox?held=3", "/inbox?held=x1", "/inbox?held=999&resolved=done", "/inbox?resolved=already",
 		"/inbox?resolved=%20done",
 		"/perms", "/perms?op=send:task:worker1", "/perms?op=send:task:worker9", "/perms?op=send:task:qa1", "/perms?op=agent:new:x",
