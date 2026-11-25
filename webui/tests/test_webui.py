@@ -1344,6 +1344,35 @@ check("記録は依頼者のまま done", regdb("SELECT status, requested_by FRO
 r = cl.raw("POST", "/agent-op", {"op": "reject", "id": str(lid), "csrf": cl.csrf("/agents")})
 check("済んだものは却下できない", r[0] == 302 and r[1].get("Location") == "/agents?op=refused", str(r[:2]))
 os.remove(os.path.join(TMP, "fake", "closed"))
+# ---- Q チケットの承認・却下と deny の例外(/approvals。書き込みは本物の tb approval を人として呼ぶ)
+def _req(status, tier, requester, target):
+    regdb("INSERT INTO requests (herdr_session, source, requester, op, target, detail, payload, status, tier, created_at) VALUES "
+          "('default','cmd',?, 'cmd:ticket:cancel', ?, 'tb ticket cancel', '{\"args\":[\"ticket\",\"cancel\",\"T-1\"]}', ?, ?, '2026-11-10T00:00:00Z')",
+          (requester, target, status, tier))
+    return regdb("SELECT max(id) FROM requests")[0][0]
+_qa, _qr, _qd, _qg = _req("pending", "ask", "alpha", "T-1"), _req("pending", "ask", "alpha", "T-2"), _req("denied", "deny", "alpha", "T-3"), _req("pending", "ask", "ghost", "T-4")
+ap = cl.get("/approvals?tier=all")[2]
+check("Q チケット画面に承認・却下・例外のボタン", f'name=id value="{_qa}"><input type=hidden name=op value=approve>' in ap
+      and f'name=id value="{_qd}"><input type=hidden name=op value=exception>' in ap and 'action="/approval-op"' in ap)
+_tok = cl.csrf("/approvals")
+r = cl.raw("POST", "/approval-op", {"op": "approve", "id": str(_qa), "csrf": _tok})
+check("承認すると依頼者に知らせ、記録は human が approved", r[0] == 302 and r[1].get("Location") == f"/approvals?tier=all&id=Q-{_qa}&done=approve"
+      and regdb("SELECT status, decided_by FROM requests WHERE id=?", (_qa,)) == [("approved", "human")]
+      and f"agent prompt alpha [tb approval / Q-{_qa} / human] Q-{_qa} は human に承認されました。tb approval run Q-{_qa} で 1 回だけ実行できます" in flog(),
+      str(r[:2]) + str([x for x in flog().splitlines() if "Q-" in x]))
+r = cl.raw("POST", "/approval-op", {"op": "reject", "id": str(_qr), "csrf": _tok})
+check("却下すると rejected", r[0] == 302 and regdb("SELECT status, decided_by FROM requests WHERE id=?", (_qr,)) == [("rejected", "human")], str(r[:2]))
+r = cl.raw("POST", "/approval-op", {"op": "exception", "id": str(_qd), "csrf": _tok})
+check("例外の許可は確認のチェックが要る", r[0] == 400 and "確認のチェック" in r[2] and regdb("SELECT status FROM requests WHERE id=?", (_qd,)) == [("denied",)])
+r = cl.raw("POST", "/approval-op", {"op": "exception", "id": str(_qd), "confirm": "1", "csrf": _tok})
+check("deny を例外として許可すると approved", r[0] == 302 and r[1].get("Location") == f"/approvals?tier=all&id=Q-{_qd}&done=exception"
+      and regdb("SELECT status, decided_by FROM requests WHERE id=?", (_qd,)) == [("approved", "human")], str(r[:2]) + str(re.findall(r"<p class=err>.*?</p>", r[2])))
+r = cl.raw("POST", "/approval-op", {"op": "approve", "id": str(_qg), "csrf": _tok})
+check("依頼した agent がいなければ tb が断り、理由を出す", r[0] == 400 and "tb が断りました" in r[2]
+      and regdb("SELECT status FROM requests WHERE id=?", (_qg,)) == [("pending",)], r[2][-400:])
+r = cl.raw("POST", "/approval-op", {"op": "reject", "id": str(_qa), "csrf": _tok})
+check("決まったものは決め直せない", r[0] == 400 and "承認待ちではありません(approved)" in r[2])
+check("CSRF 無しの /approval-op は拒否", cl.raw("POST", "/approval-op", {"op": "approve", "id": str(_qg)})[0] == 403)
 # ---- ドキュメント(agent が成果物として報告したローカルのファイル)
 DOCS = os.path.join(d, "work")
 os.makedirs(os.path.join(DOCS, "out", "sub"), exist_ok=True)

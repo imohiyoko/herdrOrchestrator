@@ -9,7 +9,8 @@ agent・タスク・報告・定期実行・送信履歴・権限を、ブラウ
   Web UI のタブが開いていれば、新しく出たものを Chrome のデスクトップ通知でも出す(下の「緊急通知」)。
 - **変更できるのは定期実行のスケジュール**(`/jobs/<job>`: 間隔・時間帯・曜日・一時停止)と、**question / blocked の報告を「対応済みにする」**(`/inbox` とタスク画面。書き込みは `tb resolve` が行い、tasks.db には直接書かない)、
   **agent の停止・復活・新規作成**(`/agents` と `/agent-new`。書き込みと herdr の操作は `tb agent-stop` / `agent-revive` / `agent-new` / `agent-approve` / `agent-reject` が行う。下の「agent の操作」)、
-  **チケットの状態・状態の定義・スプリント・policy・ジョブの定義(本文)の編集**(下の「Web UI からの編集」。書き込みはどれも tb が行う)**だけ**。
+  **チケットの状態・状態の定義・スプリント・policy・ジョブの定義(本文)の編集**(下の「Web UI からの編集」。書き込みはどれも tb が行う)、
+  **承認待ち(`Q-<n>`)の承認・却下と、deny の例外の許可**(`/approvals`。書き込みは `tb approval approve` / `reject` が行う)**だけ**。
   それ以外は読み取り専用で、POST/PUT/DELETE/PATCH は 405。入力欄のある画面は自動更新しない。
   agent の承認ダイアログに答えるボタンはない(承認は人が手元の端末で行う)。
 
@@ -123,7 +124,7 @@ POST/PUT/DELETE/PATCH は 405。
 | `/statuses` | チケットの状態の定義(設定 `statuses`): 状態・分類・説明・チケットの件数と、状態を足す(`tb ticket status add`)・外す(`tb ticket status rm`。チケットが残っていれば移し先を選ぶ)フォーム |
 | `/board` | スプリントのボード(状態ごとの列)とスプリント一覧。スプリントを作る(`tb sprint-add`)・始める(`tb sprint-start`)・閉じる(`tb sprint-close`。残りは次の planned かバックログへ) |
 | `/inbox` | 要対応(question・blocked・pending-human・blocked の agent)を上に、直近の報告を下に。`tb reminder publish` の結果があれば一番上に「忘れているかも」(優先度順。項目は既存の画面へリンク)、保留した送信(`inbox` 表)があれば「保留した送信」(本文は出さず、「本文を見る」で 1 件ずつ `/inbox?held=<n>`)。どちらも読むだけ |
-| `/approvals` | Q チケット(`requests` 表の `Q-<n>`。tb が判定した allow / ask / deny のどれも 1 行)。誰が依頼し(依頼者)、何が・誰が決めたか(判定・当たった policy・決めた人)を新しい順に最大 200 件。表示は「一覧」と「ボード」(状態ごとの列。`?view=board`)。allow は tb を叩くたびに残るので既定では畳む(`?tier=all` で全部、`?tier=allow` / `ask` / `deny` で絞る)。`?status=` `?requester=` `?by=`(決めた人。`policy` / `human` / agent 名) `?id=Q-<n>` でも絞り込み。送信・agent の操作は元の依頼(outbox・agent_ops)の状態を出す。読むだけ(承認・却下は手元で `tb approval approve` / `reject`) |
+| `/approvals` | Q チケット(`requests` 表の `Q-<n>`。tb が判定した allow / ask / deny のどれも 1 行)。誰が依頼し(依頼者)、何が・誰が決めたか(判定・当たった policy・決めた人)を新しい順に最大 200 件。表示は「一覧」と「ボード」(状態ごとの列。`?view=board`)。allow は tb を叩くたびに残るので既定では畳む(`?tier=all` で全部、`?tier=allow` / `ask` / `deny` で絞る)。`?status=` `?requester=` `?by=`(決めた人。`policy` / `human` / agent 名) `?id=Q-<n>` でも絞り込み。送信・agent の操作は元の依頼(outbox・agent_ops)の状態を出す。承認待ち(pending)には「承認」「却下」、policy が拒否したもの(denied)には「例外として 1 回許可」(確認のチェックが要る)のボタン。書き込みは `tb approval approve` / `reject Q-<n>` を人として呼ぶ(依頼した agent がいない、ほかで決まったなどで tb が断れば理由を出す)。ask で止まったコマンドは承認すると依頼した agent に知らせ、その agent が 1 回だけ実行する |
 | `/docs` | agent が成果物として報告したドキュメント(ローカルのファイル)の一覧。新しい順、`?q=` で絞り込み |
 | `/docs/view?ref=<参照>` | そのドキュメントを読む。Markdown は整形して表示(Mermaid は図に。「元のテキストを表示」で切り替え)、フォルダなら中のファイル一覧 |
 | `/docs/view?path=<絶対パス>` | パスを指定して読む(agent の作業ディレクトリ配下だけ。`/docs` の入力欄から) |
@@ -191,7 +192,7 @@ agent が「ここにまとめました」と報告したファイルを、VS Co
 - 未完了タスクの `question` / `blocked` の報告
 - `pending-human` の代行依頼
 - `blocked` の agent(承認待ち)
-- 承認待ち `Q-<n>`(policy で ask になった送信・agent の操作・コマンド。`tb approval list` と同じもの・同じ順。対応は手元で `tb approval approve Q-<n>` / `tb approval reject Q-<n>`)
+- 承認待ち `Q-<n>`(policy で ask になった送信・agent の操作・コマンド。`tb approval list` と同じもの・同じ順。対応は `/approvals` のボタンか、手元で `tb approval approve Q-<n>` / `tb approval reject Q-<n>`。リンク先は `/approvals?tier=all&id=Q-<n>`(agent の操作は `/agents#ops`))
 - 滞留している agent
 - 最後の実行(`ran`/`failed`/`sent`)が `failed` の定期実行(次に成功すると消える)
 

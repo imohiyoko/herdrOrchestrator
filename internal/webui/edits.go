@@ -15,7 +15,7 @@ import (
 // 書き込みはどれも tb が行い(tasks.db にも config にも直接書かない)、検査と認可も tb のものを通る。
 // Web UI からの tb は人の操作として動く(HERDR_PANE_ID を外す。runTB)。policy はさらにログインのパスワードを求める。
 
-var editPaths = map[string]bool{"/task-status": true, "/statuses": true, "/sprint-op": true, "/policy": true}
+var editPaths = map[string]bool{"/task-status": true, "/statuses": true, "/sprint-op": true, "/policy": true, "/approval-op": true}
 
 var (
 	reTaskID     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
@@ -38,6 +38,9 @@ var doneMsg = map[string]string{
 	"sprint-close": "スプリントを閉じました。",
 	"policy":       "policy を保存しました。次の判定から効きます。",
 	"conf":         "ジョブの定義を保存しました。次の分から反映されます。",
+	"approve":      "承認しました。結果は一覧の状態で確かめてください(ask で止まったコマンドは、依頼した agent が 1 回だけ実行します)。",
+	"reject":       "却下しました。",
+	"exception":    "deny を例外として 1 回だけ許可しました。依頼した agent が 1 回だけ実行できます。",
 }
 
 func doneNotice(c pageCtx) string {
@@ -107,6 +110,8 @@ func (s *Server) postEdit(q *rq, path string, f form, csrf string) {
 		back, done, msg, render = s.postSprint(q, f)
 	case "/policy":
 		back, done, msg, render = s.postPolicy(q, f)
+	case "/approval-op":
+		back, done, msg, render = s.postApprovalOp(q, f)
 	}
 	if render == nil {
 		s.text(q, 404, "Not Found")

@@ -405,7 +405,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 var (
 	postPaths = map[string]bool{"/login": true, "/setup": true, "/logout": true, "/reset": true, "/resolve": true, "/agent-op": true, "/agent-new": true,
-		"/task-status": true, "/statuses": true, "/sprint-op": true, "/policy": true}
+		"/task-status": true, "/statuses": true, "/sprint-op": true, "/policy": true, "/approval-op": true}
 	reJobPost = regexp.MustCompile(`^/jobs/[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
 )
 

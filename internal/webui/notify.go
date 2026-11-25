@@ -337,7 +337,7 @@ func (v *sv) urgentItems() []item {
 		// 承認待ちは 1 種類(Q-<n>。送信・agent の操作・ask で止まったコマンド)。tb approval list と同じ順
 		for _, r := range v.pendingRequests(notifyMax) {
 			id := pyStr(r["id"])
-			label, how, href := "承認待ち", "承認するなら手元で tb approval approve Q-"+id, "/inbox#approvals"
+			label, how, href := "承認待ち", "承認するなら手元で tb approval approve Q-"+id, "/approvals?tier=all&id=Q-"+id
 			if p := priorityLabel(r["priority"]); p != "normal" {
 				label += "(優先度 " + p + ")"
 			}
@@ -345,9 +345,9 @@ func (v *sv) urgentItems() []item {
 			case "outbox", "agent_ops":
 				how += "(今後も許可なら --always)"
 			}
-			how += "、却下は tb approval reject Q-" + id
+			how += "、却下は tb approval reject Q-" + id + "。Web UI の承認(Q)の画面からも決められる"
 			if r["source"] == "agent_ops" {
-				how += "。agent の操作は Web UI の agent 一覧の「承認待ちの操作」からも決められる"
+				how += "(agent の操作は agent 一覧の「承認待ちの操作」からも)"
 				href = "/agents#ops"
 			}
 			add(item{"q:" + id, "approval_pending", label,
