@@ -655,14 +655,15 @@ exit 0
 		loc  string
 		has  string
 	}{
-		{url.Values{"op": {"approve"}, "id": {"3"}}, 302, "/s/default/approvals?tier=all&id=Q-3&done=approve", ""},
-		{url.Values{"op": {"reject"}, "id": {"2"}}, 302, "/s/default/approvals?tier=all&id=Q-2&done=reject", ""},
-		{url.Values{"op": {"exception"}, "id": {"7"}, "confirm": {"1"}}, 302, "/s/default/approvals?tier=all&id=Q-7&done=exception", ""},
+		{url.Values{"op": {"approve"}, "id": {"3"}}, 302, "/s/default/approvals?decided=Q-3&done=approve", ""},
+		{url.Values{"op": {"reject"}, "id": {"2"}, "back": {"/approvals?view=board&tier=all"}}, 302, "/s/default/approvals?view=board&tier=all&decided=Q-2&done=reject", ""}, // 押した画面の絞り込みのまま戻る
+		{url.Values{"op": {"approve"}, "id": {"12"}, "back": {"https://evil/approvals?x"}}, 302, "/s/default/approvals?decided=Q-12&done=approve", ""},
+		{url.Values{"op": {"exception"}, "id": {"7"}, "confirm": {"1"}}, 302, "/s/default/approvals?decided=Q-7&done=exception", ""},
 		{url.Values{"op": {"exception"}, "id": {"7"}}, 400, "", "確認のチェック"},
 		{url.Values{"op": {"approve"}, "id": {"7"}}, 400, "", "Q-7 は承認待ちではありません(denied)"},
 		{url.Values{"op": {"exception"}, "id": {"3"}}, 400, "", "Q-3 は policy が拒否したもの(denied)ではありません(pending)"},
 		{url.Values{"op": {"reject"}, "id": {"4"}}, 400, "", "Q-4 は承認待ちではありません(done)"},
-		{url.Values{"op": {"approve"}, "id": {"10"}}, 400, "", "Q-10 は承認待ちではありません(sent)"},
+		{url.Values{"op": {"approve"}, "id": {"10"}}, 400, "", "Q-10 は承認待ちではありません(approved)"},
 		{url.Values{"op": {"approve"}, "id": {"5"}}, 400, "", "Q-5 が見つかりません"}, // ほかのセッションのもの
 		{url.Values{"op": {"approve"}, "id": {"1"}}, 400, "", "tb が断りました(終了コード 1): tb: 依頼した agent &lt;alpha&gt; がいません"},
 		{url.Values{"op": {"approve"}, "id": {"x"}}, 400, "", "番号が不正です"},
@@ -676,12 +677,13 @@ exit 0
 	got, _ := os.ReadFile(log)
 	want := "tb approval approve Q-3 | pane=unset\n" +
 		"tb approval reject Q-2 | pane=unset\n" +
+		"tb approval approve Q-12 | pane=unset\n" +
 		"tb approval approve Q-7 | pane=unset\n" +
 		"tb approval approve Q-1 | pane=unset\n"
 	if string(got) != want {
 		t.Errorf("tb に渡したもの:\n%s\nwant:\n%s", got, want)
 	}
-	if r := do(t, ts, "GET", "/s/default/approvals?tier=all&id=Q-3&done=approve", ck, nil); !strings.Contains(r.body, "承認しました。") {
+	if r := do(t, ts, "GET", "/s/default/approvals?decided=Q-3&done=approve", ck, nil); !strings.Contains(r.body, "Q-3: 承認しました。") {
 		t.Errorf("done の知らせ: %s", r.body[:min(len(r.body), 300)])
 	}
 	if r := do(t, ts, "POST", "/s/default/approval-op", "", url.Values{"csrf": {tok}, "op": {"approve"}, "id": {"3"}}); r.code != 302 || r.loc != "/s/default/login" {

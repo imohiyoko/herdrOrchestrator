@@ -103,8 +103,8 @@ func agentOpAction(db *store.DB, o opRow) string {
 	return "agent:" + o.op + ":" + o.target
 }
 
-// opClaim は op_claim: 同時に承認しても実行は 1 回。
-func opClaim(db *store.DB, id int64) error {
+// opClaim は op_claim: 同時に承認しても実行は 1 回。取れたら Q-<n> の記録に、誰が承認したかを残す。
+func opClaim(db *store.DB, id int64, by string) error {
 	res, err := db.Exec(`UPDATE main.agent_ops SET decided_at=? WHERE herdr_session=? AND id=? AND status='pending' AND decided_at IS NULL`, nowTS(), db.Session, id)
 	if err != nil {
 		return err
@@ -112,6 +112,7 @@ func opClaim(db *store.DB, id int64) error {
 	if n, _ := res.RowsAffected(); n != 1 {
 		return die("L-%d はほかの承認者が処理中か、すでに決まっています(途中で止まった行なら、人が tb agent-reject L-%d で片付ける)", id, id)
 	}
+	recordDecision(db, "agent_ops", id, "approved", by)
 	return nil
 }
 
@@ -187,7 +188,7 @@ func agentApproveImpl(args []string, w, stderr io.Writer) error {
 			return die("L-%d: %s(tb agent-reject L-%d で却下)", id, why, id)
 		}
 	}
-	if err := opClaim(db, id); err != nil {
+	if err := opClaim(db, id, ap.name); err != nil {
 		return err
 	}
 	if always {
@@ -211,7 +212,7 @@ func slashApprove(db *store.DB, o opRow, always bool, ap approver, w, stderr io.
 	if always && o.target == "*" {
 		return die("L-%d: --all の承認に --always は使えません", id)
 	}
-	if err := opClaim(db, id); err != nil { // 同時に承認しても送るのは 1 回
+	if err := opClaim(db, id, ap.name); err != nil { // 同時に承認しても送るのは 1 回
 		return err
 	}
 	// 承認待ちの間に許可リストが変わっていたら、今の行に従う(外された・deny になったら送らない)
@@ -321,6 +322,7 @@ func agentRejectImpl(args []string, w, stderr io.Writer) error {
 	if n, _ := res.RowsAffected(); n != 1 {
 		return die("L-%d はほかの承認者が処理中か、すでに決まっています", id)
 	}
+	recordDecision(db, "agent_ops", id, "rejected", ap.name)
 	fmt.Fprintf(w, "L-%d rejected\n", id)
 	return nil
 }

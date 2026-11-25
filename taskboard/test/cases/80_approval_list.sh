@@ -28,6 +28,7 @@ eq "approval reject Q- (agent op): the agent-reject entry gate still applies" "$
 : >"$TB_POLICY"
 eq "approval reject Q- (agent op): the person rejects it" "$($TB approval reject "$lq" >/dev/null; alsql "SELECT status FROM agent_ops WHERE target='w2';")" "rejected"
 eq "approval reject Q- (send): the person rejects it" "$($TB approval reject "$oq" >/dev/null 2>&1; alsql "SELECT status FROM outbox WHERE text='please review';")" "denied"
+eq "record: rejecting a send or an agent op via Q- also records who decided on the Q- (not only on the outbox / agent_ops row)" "$(alsql "SELECT group_concat(status||' '||decided_by||' '||(decided_at IS NOT NULL), ',') FROM requests WHERE id IN (${oq#Q-}, ${lq#Q-}) ORDER BY id;")" "rejected human 1,rejected human 1"
 eq "approval list: decided rows drop out" "$($TB approval list)" ""
 
 # --- ask で止まったコマンドも Q- に積む(引数と標準入力ごと)。承認されると依頼した agent に知らせ、依頼者が tb approval run で 1 回だけ実行する
@@ -114,6 +115,7 @@ alsql "INSERT INTO outbox (herdr_session, from_name, from_pane, from_session, ta
 oid=$(alsql "SELECT id FROM outbox WHERE text='direct path 2';"); oq2=Q-$(alsql "SELECT id FROM requests WHERE source='outbox' AND source_id=$oid;")
 eq "notice: tb approve O-<n> (not via Q-) tells the requester once, with the real outcome" "$(TB_DELIVERY=$TMP/al.delivery $TB approve "O-$oid" >/dev/null 2>&1; grep -c "^prompt worker1	\[tb approval / $oq2 / human\] $oq2(送信 send:task lead1)は human に承認され、届けました" "$FAKE_LOG")" "1"
 eq "notice: tb agent-reject L-<n> (not via Q-) tells the requester once" "$($TB agent-reject "L-$lid" >/dev/null 2>&1; grep -c "^prompt worker1	\[tb approval / $lq2 / human\] $lq2(agent の操作 agent:stop w9)は human に却下されました" "$FAKE_LOG")" "1"
+eq "record: tb approve O-<n> / tb agent-reject L-<n> (not via Q-) also record the decision on the Q-" "$(alsql "SELECT status||' '||decided_by FROM requests WHERE id=${oq2#Q-};") $(alsql "SELECT status||' '||decided_by FROM requests WHERE id=${lq2#Q-};")" "approved human rejected human"
 eq "notice: deciding again does not tell again" "$(TB_DELIVERY=$TMP/al.delivery $TB approve "O-$oid" >/dev/null 2>&1; grep -c "tb approval / $oq2 /" "$FAKE_LOG")" "1"
 eq "history: bad args" "$(rc $TB approval history --limit 0 2>/dev/null) $(rc $TB approval history --bogus 2>/dev/null)" "2 2"
 unset -f alsql; unset oq lq cq cq2 cq3 cq4 dq cv cvq oid oq2 lid lq2 TB_DB TB_POLICY HERDR_PANE_ID FAKE_AGENTS; eval "$_al_saved"; unset _al_saved

@@ -2,6 +2,7 @@ package webui
 
 import (
 	"fmt"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -17,7 +18,7 @@ import (
 const approvalsMax = 200 // 1 画面に出す最大件数
 
 // approvalStatuses はボードの列の順(決まっていない → 決まった → 実行の結果 → 止めた・記録だけ)。
-// 送信・agent の操作は元の行(outbox・agent_ops)の状態を出すので、ここに無い値は後ろに足す。
+// ここに無い値(古い行など)は後ろに足す。
 var approvalStatuses = []string{"pending", "approved", "running", "done", "failed", "rejected", "denied", "allowed"}
 
 var approvalTiers = []string{"allow", "ask", "deny"}
@@ -26,11 +27,27 @@ var (
 	reQID = regexp.MustCompile(`^Q-?([0-9]{1,12})$`)
 )
 
-// approvalStatusSQL は Q-<n> の今の状態(tb approval history と同じ: 送信・agent の操作は元の行の状態)。
+// approvalStatusSQL は Q-<n> の決まり方(pending / approved / rejected / running / done / failed / allowed / denied)。
+// 送信・agent の操作は、元の行(outbox・agent_ops)がまだ承認待ちなら pending。決めた記録が Q にあればそれ(tb が承認・却下のときに残す)、
+// 無い古い行は元の行から読む(却下なら rejected、それ以外は approved)。届いたか・実行できたかは approvalResultSQL。
 const approvalStatusSQL = `CASE r.source
-  WHEN 'outbox' THEN COALESCE((SELECT o.status FROM outbox o WHERE o.id=r.source_id), r.status)
-  WHEN 'agent_ops' THEN COALESCE((SELECT a.status FROM agent_ops a WHERE a.id=r.source_id), r.status)
+  WHEN 'outbox' THEN CASE COALESCE((SELECT o.status FROM outbox o WHERE o.id=r.source_id), '')
+    WHEN 'pending' THEN 'pending' WHEN '' THEN r.status
+    ELSE CASE WHEN r.status IN ('approved','rejected') THEN r.status
+      WHEN (SELECT o.status FROM outbox o WHERE o.id=r.source_id)='denied' THEN 'rejected' ELSE 'approved' END END
+  WHEN 'agent_ops' THEN CASE COALESCE((SELECT a.status FROM agent_ops a WHERE a.id=r.source_id), '')
+    WHEN 'pending' THEN 'pending' WHEN '' THEN r.status
+    ELSE CASE WHEN r.status IN ('approved','rejected') THEN r.status
+      WHEN (SELECT a.status FROM agent_ops a WHERE a.id=r.source_id)='rejected' THEN 'rejected' ELSE 'approved' END END
   ELSE r.status END`
+
+// approvalResultSQL は承認のあとどうなったか(送信: queued / sent / denied(届けられなかった)、agent の操作: done / failed)。
+// 却下されたもの・まだ決まっていないもの・コマンド(状態がそのまま結果)は空。
+const approvalResultSQL = `CASE r.source
+  WHEN 'outbox' THEN COALESCE((SELECT o.status FROM outbox o WHERE o.id=r.source_id AND o.status<>'pending'
+    AND (o.status<>'denied' OR r.status='approved')), '')
+  WHEN 'agent_ops' THEN COALESCE((SELECT a.status FROM agent_ops a WHERE a.id=r.source_id AND a.status NOT IN ('pending','rejected')), '')
+  ELSE '' END`
 
 type approvalFilter struct {
 	view, tier, status, requester, by, id string
@@ -119,7 +136,7 @@ func (s *Server) pageApprovals(q *rq, c pageCtx) (string, string) {
 		}
 		return "/approvals?" + pyURLEncode(kv)
 	}
-	body := doneNotice(c) + editErr(c)
+	body := approvalDone(c) + editErr(c)
 	if len(errs) > 0 {
 		body += errHTML(strings.Join(errs, "。"))
 	}
@@ -201,7 +218,7 @@ func (s *Server) pageApprovals(q *rq, c pageCtx) (string, string) {
 	w, a := f.where(true)
 	rows := v.q("SELECT r.id, r.source, r.source_id, r.tier, "+approvalStatusSQL+" AS status, r.requester, r.op, r.target, r.priority, "+
 		"COALESCE(r.decided_by,'') AS decided_by, COALESCE(r.rule,'') AS rule, r.created_at, COALESCE(r.decided_at,'') AS decided_at, "+
-		"r.detail, COALESCE(r.result,'') AS result FROM requests r"+w+" ORDER BY r.id DESC LIMIT ?", append(a, approvalsMax)...)
+		"r.detail, COALESCE(r.result,'') AS result, "+approvalResultSQL+" AS outcome FROM requests r"+w+" ORDER BY r.id DESC LIMIT ?", append(a, approvalsMax)...)
 	qlink := func(r row) string {
 		id := pyStr(r["id"])
 		return `<a href="` + E(link(func(d *approvalFilter) { *d = approvalFilter{view: f.view, tier: "all", id: id} })) + `">Q-` + E(id) + `</a>`
@@ -226,6 +243,24 @@ func (s *Server) pageApprovals(q *rq, c pageCtx) (string, string) {
 		}
 		return E(st)
 	}
+	// outcome は承認のあとどうなったか(送信: sent など)。無ければ ""
+	outcome := func(r row) string {
+		o := pyStr(r["outcome"])
+		if o == "" {
+			return ""
+		}
+		what := "実行"
+		if pyStr(r["source"]) == "outbox" {
+			what = "送信"
+		}
+		if o == "denied" {
+			o += "(届け方の規則で止まった)"
+		}
+		return `<span class=note>` + what + `: ` + E(o) + `</span>`
+	}
+	stCell := func(r row) string {
+		return stHTML(pyStr(r["status"])) + ifs(outcome(r) != "", `<br>`+outcome(r))
+	}
 	more := func(r row) string {
 		var parts []string
 		if d := pyStr(r["detail"]); d != "" {
@@ -242,12 +277,14 @@ func (s *Server) pageApprovals(q *rq, c pageCtx) (string, string) {
 		}
 		return `<details><summary>中身</summary>` + strings.Join(parts, "") + `</details>`
 	}
+	here := link(func(d *approvalFilter) {}) // 決めたあとに戻る先(いま見ている絞り込みのまま)
 	decide := func(r row) string {
 		if c.csrf == "" {
 			return ""
 		}
 		id := strconv.FormatInt(intOf(r["id"]), 10)
-		hid := `<input type=hidden name=csrf value="` + E(c.csrf) + `"><input type=hidden name=id value="` + id + `">`
+		hid := `<input type=hidden name=csrf value="` + E(c.csrf) + `"><input type=hidden name=id value="` + id + `">` +
+			`<input type=hidden name=back value="` + E(here) + `">`
 		form := func(op, label, extra string) string {
 			return `<form method=post action="/approval-op" style="display:inline">` + hid + `<input type=hidden name=op value=` + op + `>` +
 				extra + `<button type=submit>` + label + `</button></form> `
@@ -274,7 +311,7 @@ func (s *Server) pageApprovals(q *rq, c pageCtx) (string, string) {
 					d := decide(r)
 					cs = append(cs, `<div class=card>`+qlink(r)+` <span class=note>`+E(pyStr(r["tier"])+" / "+priorityLabel(r["priority"]))+`</span><br>`+
 						E(short(pyStr(r["op"])+" "+pyStr(r["target"]), 60))+`<br><span class=note>`+E(pyStr(r["requester"]))+` → `+
-						E(orStr(pyStr(r["decided_by"]), "-"))+`</span>`+ifs(d != "", `<br>`+d)+`</div>`)
+						E(orStr(pyStr(r["decided_by"]), "-"))+`</span>`+ifs(outcome(r) != "", `<br>`+outcome(r))+ifs(d != "", `<br>`+d)+`</div>`)
 				}
 			}
 			if len(cs) == 0 && scount[col] == 0 {
@@ -291,7 +328,7 @@ func (s *Server) pageApprovals(q *rq, c pageCtx) (string, string) {
 	} else {
 		var out [][]string
 		for _, r := range rows {
-			out = append(out, []string{qlink(r), E(pyStr(r["tier"])), stHTML(pyStr(r["status"])), req(pyStr(r["requester"])),
+			out = append(out, []string{qlink(r), E(pyStr(r["tier"])), stCell(r), req(pyStr(r["requester"])),
 				E(short(pyStr(r["op"])+" "+pyStr(r["target"]), 80)), who(pyStr(r["decided_by"])),
 				E(pyStr(r["created_at"])), E(orStr(pyStr(r["decided_at"]), "-")), more(r), decide(r)})
 		}
@@ -309,18 +346,29 @@ func (s *Server) pageApprovals(q *rq, c pageCtx) (string, string) {
 // postApprovalOp は POST /approval-op(Q-<n> の承認・却下と、deny の例外の許可)。書き込みは tb approval が行う。
 func (s *Server) postApprovalOp(q *rq, f form) (string, string, string, func(pageCtx) (string, string, string)) {
 	id := f["id"]
-	back := "/approvals?" + pyURLEncode([][2]string{{"tier", "all"}, {"id", "Q-" + id}})
+	// 戻り先はボタンを押した画面(絞り込みのまま)。/approvals の中だけ受ける
+	back, qs := "/approvals", url.Values{}
+	if b := f["back"]; strings.HasPrefix(b, "/approvals?") && !strings.ContainsAny(b, "\r\n#") {
+		if v, err := url.ParseQuery(strings.TrimPrefix(b, "/approvals?")); err == nil {
+			back, qs = b, v
+		}
+	}
 	render := func(c pageCtx) (string, string, string) {
-		c.qs = map[string][]string{"tier": {"all"}}
-		if reOpID.MatchString(id) {
-			c.qs["id"] = []string{"Q-" + id}
+		c.qs = map[string][]string{}
+		for k, v := range qs {
+			c.qs[k] = v
 		}
 		t, b := s.pageApprovals(q, c)
 		return t, b, "/approvals"
 	}
 	if !reOpID.MatchString(id) {
-		return "/approvals", "", "番号が不正です", render
+		return back, "", "番号が不正です", render
 	}
+	sep := "?"
+	if strings.Contains(back, "?") {
+		sep = "&"
+	}
+	decided := back + sep + pyURLEncode([][2]string{{"decided", "Q-" + id}})
 	if op := f["op"]; op != "approve" && op != "reject" && op != "exception" {
 		return "", "", "", nil
 	}
@@ -349,5 +397,17 @@ func (s *Server) postApprovalOp(q *rq, f form) (string, string, string, func(pag
 	if rc, out := runTB(q.name, 60*time.Second, args...); rc != 0 {
 		return back, "", tbFail(rc, out), render
 	}
-	return back, f["op"], "", render
+	return decided, f["op"], "", render
+}
+
+// approvalDone は決めたあとの知らせ(?done=approve|reject|exception&decided=Q-<n>)。
+func approvalDone(c pageCtx) string {
+	m, ok := doneMsg[c.one("done")]
+	if !ok {
+		return ""
+	}
+	if d := c.one("decided"); reQID.MatchString(d) {
+		m = d + ": " + m
+	}
+	return "<p class=note>" + E(m) + "</p>"
 }

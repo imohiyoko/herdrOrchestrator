@@ -383,6 +383,7 @@ func approveImpl(db *store.DB, args []string, w, stderr io.Writer) error {
 	if n, _ := res.RowsAffected(); n != 1 {
 		return die("%s は承認待ちではありません(ほかで決まりました)", id)
 	}
+	recordDecision(db, "outbox", oid, "approved", ap.name)
 	if always {
 		if err := setApproval(db, "allow", act, io.Discard, stderr); err != nil {
 			return err
@@ -449,6 +450,7 @@ func rejectImpl(db *store.DB, args []string, w io.Writer) error {
 	if n, _ := res.RowsAffected(); n != 1 {
 		return die("%s は承認待ちではありません(ほかで決まりました)", id)
 	}
+	recordDecision(db, "outbox", oid, "rejected", ap.name)
 	fmt.Fprintf(w, "%s rejected\n", id)
 	return nil
 }
