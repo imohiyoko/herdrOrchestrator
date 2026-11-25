@@ -42,7 +42,7 @@ printf 'coordinator -> assistant : info=hold answer=hold task=now\n@worker -> as
 # 承認待ち → 承認したあとで delivery が決まる
 printf '* send:info assistant = ask\n* * * = allow\n' >"$TB_POLICY_A"
 eq "delivery: approvals before delivery (pending first)" "$(C send assistant --kind info --text wait 2>/dev/null | tail -1 | sed -E 's/Q-[0-9]+/Q-n/g') $(dsql "SELECT COUNT(*) FROM inbox WHERE outbox_id=10;")" "O-10 pending-approval Q-n 0"
-eq "delivery: approved message is held, not typed" "$(n=$(prompts); $TB approve O-10; echo "$(($(prompts) - n))")" "$(printf 'O-10 approved and held for assistant (I-7)\n0')"
+eq "delivery: approved message is held, not typed into the target" "$(n=$(grep -c '^prompt assistant' "$FAKE_LOG"); $TB approve O-10; echo "$(($(grep -c '^prompt assistant' "$FAKE_LOG") - n))")" "$(printf 'O-10 approved and held for assistant (I-7)\n0')"
 printf '* * * = allow\n' >"$TB_POLICY_A"
 # routes が先(拒否は保留しない)
 eq "delivery: routes before delivery (denied is not held)" "$(HERDR_PANE_ID=wother:p1 rc $TB send assistant --kind info --text x) $(dsql "SELECT COUNT(*) FROM inbox WHERE outbox_id=(SELECT MAX(id) FROM outbox);")" "4 0"

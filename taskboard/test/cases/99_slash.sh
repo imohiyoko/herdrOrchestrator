@@ -8,7 +8,7 @@ unset FAKE_DYNAMIC FAKE_STATUS FAKE_READ_TEXT FAKE_PROMPT_MODE
 slsql() { sqlite3 "$TB_DB" "$@"; }
 sl_ag() { printf '{"pane_id":"%s","name":"%s","agent_status":"%s","agent_session":{"value":"s-%s"},"cwd":"%s"}' "$2" "$1" "${3:-idle}" "$1" "$TMP"; }
 sl_sent() { grep -c "^prompt $1	$2\$" "$FAKE_LOG"; }   # $1=宛先 $2=本文
-sl_all() { grep -c "^prompt " "$FAKE_LOG"; }
+sl_all() { grep "^prompt " "$FAKE_LOG" | grep -vc $'\t\\[tb approval /'; }   # 依頼者への承認の知らせ(tb approval)は数えない
 cat >"$TB_SLASH_CONF" <<'CONF'
 # 名前 | 固定の引数 | 方針 | 確認 | 成功の印 | 説明
 compact |  | allow | busy |  | 圧縮

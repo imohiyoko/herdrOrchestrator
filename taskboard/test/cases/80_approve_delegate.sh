@@ -26,7 +26,7 @@ eq "approve: the refusal names the missing grant" "$(as rev1 $TB approve O-1 2>&
 eq "approve: the requester cannot approve its own ask (even with a grant)" "$(as w1 rc $TB approve O-1 2>/dev/null) $(dsql "SELECT status FROM outbox WHERE id=1;")" "1 pending"
 eq "approve: --always is for the human only" "$(as lead1 rc $TB approve O-1 --always 2>/dev/null) $(dsql "SELECT status FROM outbox WHERE id=1;") $($TB approval send:task:w2 | head -1)" "1 pending ask"
 eq "approve: the parent with @lead approve:send:task:* ~child delivers it" "$(as lead1 $TB approve O-1)" "O-1 approved and sent to w2"
-eq "approve: delivered to the target" "$(grep '^prompt' "$FAKE_LOG" | tail -1 | grep -c 'please do X')" "1"
+eq "approve: delivered to the target" "$(grep '^prompt' "$FAKE_LOG" | grep -v '	\[tb approval /' | tail -1 | grep -c 'please do X')" "1"
 eq "approve: the approver and its rule are recorded" "$(dsql "SELECT reason LIKE '%agent lead1(policy: @lead approve:send:task:* ~child = allow)が承認%' FROM outbox WHERE id=1;")" "1"
 eq "approve: twice → error" "$(as lead1 rc $TB approve O-1 2>/dev/null)" "1"
 # 操作で絞る: lead の許可は send:task だけ(info は承認できない)

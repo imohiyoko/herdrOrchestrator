@@ -346,7 +346,7 @@ func oidOf(s string) int64 {
 	return n
 }
 
-func approve(db *store.DB, args []string, w, stderr io.Writer) error {
+func approveImpl(db *store.DB, args []string, w, stderr io.Writer) error {
 	if len(args) < 1 || !reOID.MatchString(args[0]) {
 		return usage("approve O-<n> [--always]")
 	}
@@ -415,7 +415,7 @@ func approve(db *store.DB, args []string, w, stderr io.Writer) error {
 	return nil
 }
 
-func reject(db *store.DB, args []string, w io.Writer) error {
+func rejectImpl(db *store.DB, args []string, w io.Writer) error {
 	if len(args) != 1 || !reOID.MatchString(args[0]) {
 		return usage("reject O-<n>")
 	}

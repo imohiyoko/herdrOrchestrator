@@ -87,5 +87,27 @@ eq "history --json: rule and result are there" "$($TB approval history --json --
 eq "history --json: another agent does not see the requester's command output" "$(HERDR_PANE_ID=wW:p2 $TB approval history --json --limit 1000 | jq -r "select(.id==\"$dq\") | .result")" ""
 eq "history --json: the requester sees its own command output" "$(HERDR_PANE_ID=wW:p1 $TB approval history --json --limit 1000 | jq -r "select(.id==\"$dq\") | (.result|startswith(\"exit 0\"))")" "true"
 eq "allow: scheduler (system:) allows are not recorded" "$(TB_SYSTEM=sched $TB list >/dev/null 2>&1; alsql "SELECT count(*) FROM requests WHERE requester LIKE 'system:%';")" "0"
+# --- 会話(tb conv)の文面は、allow / deny の記録にも残さない
+printf 'worker1 cmd:conv:voice-check * = deny\n' >"$TB_POLICY"
+cv=CANARYCONV$$
+eq "conv: a denied voice-check stops (1) and is recorded" "$(printf -- '- %s\n' "$cv" | HERDR_PANE_ID=wW:p1 rc $TB conv-voice-check direct 2>/dev/null) $(alsql "SELECT count(*) FROM requests WHERE op='cmd:conv:voice-check' AND tier='deny';")" "1 1"
+HERDR_PANE_ID=wW:p1 $TB conv-route --text "$cv" >/dev/null 2>&1
+eq "conv: neither the args nor stdin are in the records (allow and deny)" "$(alsql "SELECT count(*) FROM requests WHERE detail LIKE '%$cv%' OR payload LIKE '%$cv%';") $(alsql "SELECT count(*) FROM requests WHERE requester='worker1' AND detail LIKE 'tb conv-%(会話の文面を含みうるため%';" | awk '{print ($1>=2)}')" "0 1"
+cvq=Q-$(alsql "SELECT max(id) FROM requests WHERE op='cmd:conv:voice-check';")
+eq "conv: approving a redacted record is refused (nothing to run)" "$($TB approval approve "$cvq" 2>&1 >/dev/null | grep -c '中身を残していません') $(alsql "SELECT status FROM requests WHERE id=${cvq#Q-};")" "1 denied"
+: >"$TB_POLICY"
+
+# --- 送信・agent の操作も、どの入口(Q- / O- / L- / tb agent-approve)で決めても、依頼者に 1 回だけ知らせる
+alsql "INSERT INTO outbox (herdr_session, from_name, from_pane, from_session, target, kind, text, status, created_at) VALUES ('default','worker1','wW:p1','s1','lead1','task','direct path','pending','2026-01-01T00:00:05.000Z');
+INSERT INTO agent_ops (herdr_session, op, target, args, requested_by, status, created_at) VALUES ('default','stop','w9','{}','worker1','pending','2026-01-01T00:00:06.000Z');"
+oid=$(alsql "SELECT id FROM outbox WHERE text='direct path';"); oq2=Q-$(alsql "SELECT id FROM requests WHERE source='outbox' AND source_id=$oid;")
+lid=$(alsql "SELECT id FROM agent_ops WHERE target='w9';"); lq2=Q-$(alsql "SELECT id FROM requests WHERE source='agent_ops' AND source_id=$lid;")
+eq "notice: tb approve O-<n> stopped by the default delivery → only the existing block notice, no second notice" "$($TB approve "O-$oid" >/dev/null 2>&1; grep -c "tb approval / $oq2 /" "$FAKE_LOG") $(grep -c "^prompt worker1	\[tb: blocked / O-$oid\]" "$FAKE_LOG")" "0 1"
+printf 'worker1 -> lead1 : task=now\n' >"$TMP/al.delivery"
+alsql "INSERT INTO outbox (herdr_session, from_name, from_pane, from_session, target, kind, text, status, created_at) VALUES ('default','worker1','wW:p1','s1','lead1','task','direct path 2','pending','2026-01-01T00:00:07.000Z');"
+oid=$(alsql "SELECT id FROM outbox WHERE text='direct path 2';"); oq2=Q-$(alsql "SELECT id FROM requests WHERE source='outbox' AND source_id=$oid;")
+eq "notice: tb approve O-<n> (not via Q-) tells the requester once, with the real outcome" "$(TB_DELIVERY=$TMP/al.delivery $TB approve "O-$oid" >/dev/null 2>&1; grep -c "^prompt worker1	\[tb approval / $oq2 / human\] $oq2(送信 send:task lead1)は human に承認され、届けました" "$FAKE_LOG")" "1"
+eq "notice: tb agent-reject L-<n> (not via Q-) tells the requester once" "$($TB agent-reject "L-$lid" >/dev/null 2>&1; grep -c "^prompt worker1	\[tb approval / $lq2 / human\] $lq2(agent の操作 agent:stop w9)は human に却下されました" "$FAKE_LOG")" "1"
+eq "notice: deciding again does not tell again" "$(TB_DELIVERY=$TMP/al.delivery $TB approve "O-$oid" >/dev/null 2>&1; grep -c "tb approval / $oq2 /" "$FAKE_LOG")" "1"
 eq "history: bad args" "$(rc $TB approval history --limit 0 2>/dev/null) $(rc $TB approval history --bogus 2>/dev/null)" "2 2"
-unset -f alsql; unset oq lq cq cq2 cq3 cq4 dq TB_DB TB_POLICY HERDR_PANE_ID FAKE_AGENTS; eval "$_al_saved"; unset _al_saved
+unset -f alsql; unset oq lq cq cq2 cq3 cq4 dq cv cvq oid oq2 lid lq2 TB_DB TB_POLICY HERDR_PANE_ID FAKE_AGENTS; eval "$_al_saved"; unset _al_saved

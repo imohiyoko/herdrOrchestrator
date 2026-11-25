@@ -216,9 +216,15 @@ func insertCmd(tier, op, target, rule string, withStdin bool) (string, error) {
 	if withStdin {
 		pl["stdin"] = string(stdin)
 	}
+	detail := "tb " + strings.Join(runArgs, " ")
+	if words, ok := convWords(runArgs); ok {
+		// 会話(tb conv)の文面は DB・記録に書かない約束(README)。引数と標準入力は残さず、コマンドの語だけ残す(承認しても実行できない)
+		pl = map[string]any{"args": []string{}, "redacted": true}
+		detail = "tb " + strings.Join(words, " ") + "(会話の文面を含みうるため、引数と標準入力は残していません)"
+	}
 	payload, _ := json.Marshal(pl)
 	res, err := db.Exec(`INSERT INTO main.requests (herdr_session, source, requester, op, target, priority, detail, payload, status, tier, rule, decided_by, decided_at, created_at)
-	  VALUES (?, 'cmd', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, session, who, op, target, p, "tb "+strings.Join(runArgs, " "), string(payload),
+	  VALUES (?, 'cmd', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, session, who, op, target, p, detail, string(payload),
 		status, tier, rule, decidedBy, decidedAt, nowTS())
 	if err != nil {
 		return "", err
@@ -284,14 +290,12 @@ func requestDecide(sub string, args []string, w, stderr io.Writer) error {
 		defer db.Close()
 		a := append([]string{"O-" + strconv.FormatInt(r.sourceID.Int64, 10)}, rest...)
 		if sub == "approve" {
-			err = approve(db, a, w, stderr)
-		} else if len(rest) > 0 {
-			return usage("reject Q-<n>")
-		} else {
-			err = reject(db, a, w)
+			return approve(db, a, w, stderr)
 		}
-		decidedNotice(db, r, sub, err)
-		return err
+		if len(rest) > 0 {
+			return usage("reject Q-<n>")
+		}
+		return reject(db, a, w)
 	case "agent_ops":
 		db.Close()
 		a := append([]string{"L-" + strconv.FormatInt(r.sourceID.Int64, 10)}, rest...)
@@ -299,15 +303,9 @@ func requestDecide(sub string, args []string, w, stderr io.Writer) error {
 			return err
 		}
 		if sub == "approve" {
-			err = cmdAgentApprove(a, w, stderr)
-		} else {
-			err = cmdAgentReject(a, w, stderr)
+			return cmdAgentApprove(a, w, stderr)
 		}
-		if ndb, _, oerr := openCmd(io.Discard); oerr == nil {
-			decidedNotice(ndb, r, sub, err)
-			ndb.Close()
-		}
-		return err
+		return cmdAgentReject(a, w, stderr)
 	}
 	defer db.Close()
 	if len(rest) > 0 {
@@ -384,30 +382,98 @@ func requestDecide(sub string, args []string, w, stderr io.Writer) error {
 	return runApproved(db, r, pl, w, stderr)
 }
 
-// decidedNotice は送信・agent の操作の承認待ちが決まったことを、依頼した agent に知らせる(決まらなかったら送らない)。
-func decidedNotice(db *store.DB, r request, sub string, err error) {
+// 送信(O-<n>)と agent の操作(L-<n>)の承認・却下は、どの入口(Q-<n> / O-<n> / L-<n> / tb agent-approve)から決めても、
+// 決まったら 1 回だけ依頼者に知らせる(下の 4 つが入口。中身は approveImpl などのまま)。
+
+func approve(db *store.DB, args []string, w, stderr io.Writer) error {
+	err := approveImpl(db, args, w, stderr)
+	decidedNotice(db, "outbox", args, "approve", err)
+	return err
+}
+
+func reject(db *store.DB, args []string, w io.Writer) error {
+	err := rejectImpl(db, args, w)
+	decidedNotice(db, "outbox", args, "reject", err)
+	return err
+}
+
+func cmdAgentApprove(args []string, w, stderr io.Writer) error {
+	err := agentApproveImpl(args, w, stderr)
+	agentDecidedNotice(args, "approve", err)
+	return err
+}
+
+func cmdAgentReject(args []string, w, stderr io.Writer) error {
+	err := agentRejectImpl(args, w, stderr)
+	agentDecidedNotice(args, "reject", err)
+	return err
+}
+
+func agentDecidedNotice(args []string, sub string, err error) {
+	db, _, oerr := openCmd(io.Discard)
+	if oerr != nil {
+		return
+	}
+	defer db.Close()
+	decidedNotice(db, "agent_ops", args, sub, err)
+}
+
+// decidedNotice は、この呼び出しで決まった送信・agent の操作の承認待ちを、依頼した agent に知らせる(決まらなかったら送らない)。
+// 文面は元の行の今の状態から作る(届いた・使用中で未送・経路で止めた・inbox に置いた、を言い分ける)。
+func decidedNotice(db *store.DB, source string, args []string, sub string, err error) {
 	var ex *exit
-	if err != nil && !(r.source == "outbox" && sub == "approve" && errors.As(err, &ex) && (ex.code == 11 || ex.code == 12)) {
+	if err != nil && !(source == "outbox" && sub == "approve" && errors.As(err, &ex) && (ex.code == 11 || ex.code == 12)) {
 		return // 承認・却下そのものが通らなかった(送信の承認の 11 / 12 は、承認済みで届けるところだけ失敗)
+	}
+	if len(args) == 0 {
+		return
+	}
+	sid, perr := strconv.ParseInt(strings.TrimLeft(args[0], "OL-"), 10, 64)
+	if perr != nil {
+		return
+	}
+	var qid int64
+	if db.QueryRow(`SELECT id FROM requests WHERE source=? AND source_id=?`, source, sid).Scan(&qid) != nil {
+		return // 承認待ちの記録が無い(古い行)。知らせる相手が分からない
+	}
+	r, ok, lerr := loadRequest(db.DB, qid)
+	if lerr != nil || !ok {
+		return
 	}
 	who, cerr := callerName()
 	if cerr != nil {
 		who = "?"
 	}
-	what := "送信"
-	if r.source == "agent_ops" {
-		what = "agent の操作"
+	what, state := "agent の操作", ""
+	if source == "outbox" {
+		what = "送信"
+		var st, reason string
+		_ = db.QueryRow(`SELECT status, COALESCE(reason, '') FROM outbox WHERE id=?`, sid).Scan(&st, &reason)
+		switch {
+		case sub == "reject":
+			state = "却下されました(送っていません)"
+		case st == "sent" && strings.Contains(reason, "→ inbox I-"):
+			state = "承認され、宛先の inbox に置かれました(宛先が受け取るまで待ちます)"
+		case st == "sent":
+			state = "承認され、届けました"
+		case st == "denied":
+			return // 承認のあと送信の経路(delivery)で止めた。送信者には止めた知らせ(tb: blocked)が届くので、重ねて送らない
+		default:
+			state = "承認されましたが、まだ届けていません(宛先が使用中か届けられませんでした。queued のまま、届けられるようになれば tb flush で届きます)"
+		}
+	} else {
+		var st string
+		_ = db.QueryRow(`SELECT status FROM agent_ops WHERE id=?`, sid).Scan(&st)
+		switch {
+		case sub == "reject":
+			state = "却下されました(実行していません)"
+		case st == "done":
+			state = "承認され、実行されました"
+		default:
+			state = "承認されましたが、実行に失敗しました(" + st + ")"
+		}
 	}
-	done := "承認され、実行されました"
-	switch {
-	case sub == "reject":
-		done = "却下されました"
-	case err != nil:
-		done = "承認されました(届けるところで止まっています。queued のまま、直れば tb flush で届きます)"
-	case r.source == "outbox":
-		done = "承認され、届けました"
-	}
-	notifyRequester(db, r, approver{name: who}, fmt.Sprintf("%s(%s %s %s)は %s に%s", r.qid(), what, r.op, r.target, who, done))
+	notifyRequester(db, r, approver{name: who}, fmt.Sprintf("%s(%s %s %s)は %s に%s", r.qid(), what, r.op, r.target, who, state))
 }
 
 type cmdPayload struct {
@@ -415,8 +481,31 @@ type cmdPayload struct {
 	Stdin string   `json:"stdin"`
 }
 
+// convWords は tb conv の呼び出しなら、文面を含まないコマンドの語(conv <サブコマンド> / conv-<名前>)を返す。
+func convWords(args []string) ([]string, bool) {
+	if len(args) == 0 {
+		return nil, false
+	}
+	if strings.HasPrefix(args[0], "conv-") {
+		return args[:1], true
+	}
+	if args[0] == "conv" {
+		if len(args) > 1 && !strings.HasPrefix(args[1], "-") {
+			return args[:2], true
+		}
+		return args[:1], true
+	}
+	return nil, false
+}
+
 func (r request) cmdPayload() (cmdPayload, error) {
 	var pl cmdPayload
+	var red struct {
+		Redacted bool `json:"redacted"`
+	}
+	if r.payload.Valid && json.Unmarshal([]byte(r.payload.String), &red) == nil && red.Redacted {
+		return pl, die("%s は会話の文面を含みうるため中身を残していません(承認しても実行できません。人が自分の端末で実行するか、却下してください)", r.qid())
+	}
 	if !r.payload.Valid || json.Unmarshal([]byte(r.payload.String), &pl) != nil || len(pl.Args) == 0 {
 		return pl, die("%s の中身を読めません", r.qid())
 	}
