@@ -75,7 +75,7 @@ _cat_problems() {
   _need "role:change" active
   _need "alert:analyze" active
   _need "recipe:example:example" active
-  for op in read comment review approve; do _need "gh:$op:example/repo" active; done
+  for op in read comment review approve merge; do _need "gh:$op:example/repo" active; done
 
   # (a) コードが承認判定に渡す操作名が、カタログのどれかと重なる(双方向の glob)
   while IFS= read -r op; do

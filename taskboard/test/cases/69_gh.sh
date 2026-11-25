@@ -36,8 +36,10 @@ eq "gh: relative command → fails closed (1)" "$(rc $TB gh review list o/r 1 2>
 printf 'gh = %s   # wrapper\n' "$TMP/gh-fake" >"$TB_GITHUB_CONF"
 
 # ---- 使い方
-eq "gh: tb gh alone lists the subcommands (2)" "$($TB gh 2>/dev/null | grep -c '^tb gh '; rc $TB gh)" "5
+eq "gh: tb gh alone lists the subcommands (2)" "$($TB gh 2>/dev/null | grep -c '^tb gh '; rc $TB gh)" "6
 2"
+eq "gh: pr merge needs a method (2)" "$(rc $TB gh pr merge o/r 1 2>/dev/null)" "2"
+eq "gh: pr merge --head must be a SHA (2)" "$(rc $TB gh pr merge o/r 1 --squash --head main 2>/dev/null)" "2"
 eq "gh: bad repo (2)" "$(rc $TB gh review list 'o/r;x' 1 2>/dev/null)" "2"
 eq "gh: bad PR number (2)" "$(rc $TB gh review list o/r 0 2>/dev/null)" "2"
 eq "gh: review add needs --comment or --request-changes (2)" "$(rc $TB gh review add o/r 1 --body x 2>/dev/null)" "2"
@@ -66,6 +68,10 @@ eq "gh: review approve without a body" "$($TB gh review approve o/r 7; cat "$GH_
 eq "gh: review add --request-changes from stdin" "$(printf 'fix it\n' | $TB gh review add o/r 7 --request-changes --body-file -; cat "$GH_FAKE_LOG")" "pr review 7 --repo o/r --request-changes --body-file -
 stdin=fix it"
 
+: >"$GH_FAKE_LOG"
+sha=0123456789abcdef0123456789abcdef01234567
+eq "gh: pr merge passes the method, the head SHA and --delete-branch" "$($TB gh pr merge o/r 7 --squash --head $sha --delete-branch; cat "$GH_FAKE_LOG")" "pr merge 7 --repo o/r --squash --match-head-commit $sha --delete-branch"
+
 # ---- 操作ごとにコマンドを分ける(gh_<操作> → gh_write → gh。GitHub App の token を操作ごとに切り替えるラッパー向け)
 printf 'gh = %s\ngh_write = %s --as-writer\ngh_approve = %s --as-approver\n' "$TMP/gh-fake" "$TMP/gh-fake" "$TMP/gh-fake" >"$TB_GITHUB_CONF"
 : >"$GH_FAKE_LOG"
@@ -75,6 +81,10 @@ $TB gh review approve o/r 7 >/dev/null
 eq "gh: per-op command (with fixed args): read → gh, comment → gh_write, approve → gh_approve" "$(grep -v '^stdin' "$GH_FAKE_LOG" | cut -d' ' -f1-3)" "pr view 7
 --as-writer pr comment
 --as-approver pr review"
+printf 'gh = %s\n' "$TMP/gh-fake" >"$TB_GITHUB_CONF"
+printf 'gh = %s exec -e GH_TOKEN:{owner}/pr-approve -- as-{actor}\n' "$TMP/gh-fake" >"$TB_GITHUB_CONF"
+: >"$GH_FAKE_LOG"
+eq "gh: {owner} / {actor} in the fixed args are filled in" "$($TB gh review approve my-org/app 7 >/dev/null; cat "$GH_FAKE_LOG")" "exec -e GH_TOKEN:my-org/pr-approve -- as-human pr review 7 --repo my-org/app --approve"
 printf 'gh = %s\n' "$TMP/gh-fake" >"$TB_GITHUB_CONF"
 : >"$GH_FAKE_LOG"
 GH_FAKE_ENV=1 GH_TOKEN=ambient TB_GH_OP=spoof $TB gh review approve o/r 7 >/dev/null
@@ -90,15 +100,17 @@ eq "gh: other wrapper failure → 1" "$(GH_FAKE_RC=3 rc $TB gh review list o/r 7
 eq "gh agent: read is allowed by default; the actor is the agent" "$(HERDR_PANE_ID=wG:p1 GH_FAKE_ENV=1 $TB gh review list o/r 7 >/dev/null 2>&1; echo $?) $(grep '^env=' "$GH_FAKE_LOG")" "0 env=gh:read o/r rev1 token=none"
 : >"$GH_FAKE_LOG"
 eq "gh agent: approve is denied by default (4), nothing called" "$(HERDR_PANE_ID=wG:p1 rc $TB gh review approve o/r 7 2>/dev/null) $(grep -c 'pr review' "$GH_FAKE_LOG")" "4 0"
+eq "gh agent: merge is denied by default (4), nothing called" "$(HERDR_PANE_ID=wG:p1 rc $TB gh pr merge o/r 7 --squash 2>/dev/null) $(grep -c 'pr merge' "$GH_FAKE_LOG")" "4 0"
 eq "gh agent: comment asks (20) and queues a Q-" "$(echo 'queued body' | HERDR_PANE_ID=wG:p1 $TB gh comment add o/r 7 --body-file - >/dev/null 2>"$TMP/gh.err"; echo $?) $(grep -c '承認待ち Q-[0-9]* に積みました' "$TMP/gh.err") $(grep -c 'pr comment' "$GH_FAKE_LOG")" "20 1 0"
 gq=$(grep -o 'Q-[0-9]*' "$TMP/gh.err" | head -1)
 eq "gh agent: the Q- names gh:comment and the repo" "$($TB approval list | cut -f1,3-5)" "$gq	gh:comment	rev1	o/r"
 eq "gh agent: a person approves → posted once with the queued body" "$($TB approval approve "$gq" >/dev/null 2>&1; echo $?) $(grep -c 'pr comment 7 --repo o/r' "$GH_FAKE_LOG") $(grep -c '^stdin=queued body$' "$GH_FAKE_LOG")" "0 1 1"
 
 # ---- policy で渡す・締める(対象は owner/repo の glob。@役割・組織図の主体も書ける)
-printf 'rev1 gh:approve o/* = allow\nrev1 gh:comment * = allow\n* gh:read secret/* = deny\n' >"$TB_POLICY"
+printf 'rev1 gh:approve o/* = allow\nrev1 gh:comment * = allow\nrev1 gh:merge o/r = ask\n* gh:read secret/* = deny\n' >"$TB_POLICY"
 : >"$GH_FAKE_LOG"
 eq "gh policy: approve granted for o/* → runs" "$(HERDR_PANE_ID=wG:p1 $TB gh review approve o/r 7 >/dev/null 2>&1; echo $?) $(grep -c -- '--approve' "$GH_FAKE_LOG")" "0 1"
+eq "gh policy: merge set to ask → queued as a Q-, not run" "$(HERDR_PANE_ID=wG:p1 rc $TB gh pr merge o/r 7 --squash --head $sha 2>/dev/null) $(grep -c 'pr merge' "$GH_FAKE_LOG")" "20 0"
 eq "gh policy: the grant does not reach another owner" "$(HERDR_PANE_ID=wG:p1 rc $TB gh review approve x/r 7 2>/dev/null)" "4"
 eq "gh policy: another agent is still denied" "$(HERDR_PANE_ID=wG:p2 rc $TB gh review approve o/r 7 2>/dev/null)" "4"
 eq "gh policy: comment granted → runs without a Q-" "$(HERDR_PANE_ID=wG:p1 $TB gh comment add o/r 7 --body ok >/dev/null 2>&1; echo $?)" "0"
@@ -107,4 +119,4 @@ eq "gh policy: tb agent can gives the same answer" "$($TB agent can rev1 gh:appr
 eq "gh: a person is not limited by agent rows" "$($TB gh comment list secret/r 1 >/dev/null 2>&1; echo $?)" "0"
 
 rm -f "$TMP/gh-fake"
-unset gq GH_FAKE_LOG TB_DB TB_POLICY TB_GITHUB_CONF HERDR_PANE_ID FAKE_AGENTS; eval "$_gh_saved"; unset _gh_saved
+unset gq sha GH_FAKE_LOG TB_DB TB_POLICY TB_GITHUB_CONF HERDR_PANE_ID FAKE_AGENTS; eval "$_gh_saved"; unset _gh_saved

@@ -259,6 +259,8 @@ gh.comment.add           cmd:gh:comment-add           allow       allow       en
 gh.review.list           cmd:gh:review-list           allow       allow       entry
 gh.review.add            cmd:gh:review-add            allow       allow       entry
 gh.review.approve        cmd:gh:review-approve        allow       allow       entry
+gh.pr                    cmd:gh:pr-help               allow       allow       entry
+gh.pr.merge              cmd:gh:pr-merge              allow       allow       entry
 
 # --- pr
 pr                       cmd:pr:help                  allow       allow       entry

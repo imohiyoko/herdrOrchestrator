@@ -55,8 +55,10 @@ func keysOf(op string) []string {
 // Command は操作 op に使うコマンド(実行ファイルと、前に付ける固定の引数)と、使ったキー。
 // 引く順は keysOf(gh_<操作> → gh_write → gh。読みは gh_read → gh)。
 // 値は「絶対パスの実行ファイル [固定の引数...]」(空白で区切る。空白を含む引数はラッパーのスクリプトに書く)。
+// 固定の引数には {owner}(所有者)・{repo}(owner/repo)・{actor}(呼び出し元)を書ける(例: ghtkn exec -e GH_TOKEN:{owner}/pr-approve -- gh)。
+// 置き換えるのは固定の引数だけで、実行ファイルのパスは置き換えない。値は tb が確かめた形(リポジトリは英数字と . _ -、呼び出し元は台帳の名前)。
 // 未指定・絶対パスでない・実行できないときは、理由を返す(PATH 上の gh には落とさない)。
-func Command(op string) (argv []string, key, problem string) {
+func Command(op, repo, actor string) (argv []string, key, problem string) {
 	f := ConfPath()
 	b, err := os.ReadFile(f)
 	if err != nil {
@@ -75,6 +77,11 @@ func Command(op string) (argv []string, key, problem string) {
 	argv = strings.Fields(v)
 	if !executable(argv[0]) {
 		return nil, "", "設定 " + f + " の " + key + " を使えません。絶対パスの実行ファイルを指定してください: " + argv[0]
+	}
+	owner, _, _ := strings.Cut(repo, "/")
+	r := strings.NewReplacer("{owner}", owner, "{repo}", repo, "{actor}", actor)
+	for i := 1; i < len(argv); i++ {
+		argv[i] = r.Replace(argv[i])
 	}
 	return argv, key, ""
 }

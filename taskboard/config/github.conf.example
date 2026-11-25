@@ -5,10 +5,13 @@
 #
 # 操作ごとに引く順: gh_<操作> → gh_write(書く操作だけ)→ gh。読み(gh:read)は gh_read → gh。
 # GitHub App の token を操作ごとに分けるなら、操作ごとのキーに別のラッパー(か別の固定の引数)を書く。
+# 固定の引数には {owner}(所有者)・{repo}(owner/repo)・{actor}(呼び出し元: human / agent 名 / system:<名前>)を書ける。例:
+#   gh_approve = /opt/homebrew/bin/ghtkn exec -e GH_TOKEN:{owner}/pr-approve -- /opt/homebrew/bin/gh
 
 gh =                 # 共通(例: /usr/local/bin/tb-gh-wrapper)
 gh_read =            # コメント・レビューを読む(gh:read。pull_requests: read の app など)
-gh_write =           # 書く操作の共通(gh_comment / gh_review / gh_approve が空のとき)
+gh_write =           # 書く操作の共通(gh_comment / gh_review / gh_approve / gh_merge が空のとき)
 gh_comment =         # tb gh comment add(gh:comment)
 gh_review =          # tb gh review add(gh:review)
 gh_approve =         # tb gh review approve(gh:approve。approve だけ別の app にするなど)
+gh_merge =           # tb gh pr merge(gh:merge。contents: write の app など)

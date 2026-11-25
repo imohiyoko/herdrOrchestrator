@@ -34,6 +34,7 @@ const (
 	OpComment = "gh:comment" // PR にコメントを書く
 	OpReview  = "gh:review"  // コメントだけ・変更依頼のレビューを出す
 	OpApprove = "gh:approve" // approve のレビューを出す
+	OpMerge   = "gh:merge"   // PR をマージする
 )
 
 // Svc は tb gh の 1 回の実行。
@@ -54,6 +55,7 @@ tb gh comment add <owner/repo> <PR 番号> (--body B | --body-file -)   PR に�
 tb gh review list <owner/repo> <PR 番号> [--json]   PR のレビュー(状態・本文)を読む(gh:read)
 tb gh review add <owner/repo> <PR 番号> --comment|--request-changes (--body B | --body-file -)   レビューを出す(gh:review)
 tb gh review approve <owner/repo> <PR 番号> [--body B | --body-file -]   approve する(gh:approve)
+tb gh pr merge <owner/repo> <PR 番号> --merge|--squash|--rebase [--head <SHA>] [--delete-branch]   マージする(gh:merge。--head は先頭のコミットが違えば止める)
 GitHub へ出るコマンドは config/github.conf の gh_<操作> → gh_write → gh(読みは gh_read → gh。絶対パス。PATH 上の gh には落とさない)。taskboard/docs/gh.md
 `
 
@@ -97,8 +99,13 @@ func (s *Svc) Run(args []string) error {
 			return s.write(OpApprove, "tb gh review approve", args[2:])
 		}
 		return usage("gh review: 不明なサブコマンド %s(list / add / approve)", or(verb))
+	case "pr":
+		if verb == "merge" {
+			return s.merge(args[2:])
+		}
+		return usage("gh pr: 不明なサブコマンド %s(merge)", or(verb))
 	}
-	return usage("gh: 不明なサブコマンド %s(comment / review。tb gh で一覧)", obj)
+	return usage("gh: 不明なサブコマンド %s(comment / review / pr。tb gh で一覧)", obj)
 }
 
 func or(v string) string {
@@ -140,7 +147,7 @@ var tokenEnv = map[string]bool{"GH_TOKEN": true, "GITHUB_TOKEN": true, "GH_ENTER
 // call は操作 op のコマンドを実行して標準出力を返す。標準エラーはそのまま s.Err に流す。
 // 子には TB_GH_OP(操作)・TB_GH_REPO(owner/repo)・TB_GH_ACTOR(呼び出し元)を渡す。ラッパーはこれで GitHub App(token)を選べる。
 func (s *Svc) call(op, repo, stdin string, args ...string) ([]byte, error) {
-	argv, _, problem := Command(op)
+	argv, _, problem := Command(op, repo, s.Actor)
 	if problem != "" {
 		return nil, die("gh: %s", problem)
 	}
@@ -388,6 +395,57 @@ func (s *Svc) write(op, what string, args []string) error {
 		}
 	}
 	b, err := s.call(op, repo, body, ghArgs...)
+	if err != nil {
+		return err
+	}
+	_, _ = s.W.Write(b)
+	return nil
+}
+
+var reSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+// merge は tb gh pr merge。方法(--merge / --squash / --rebase)は必須(gh の対話に落とさない)。
+// --head <SHA> は gh の --match-head-commit(承認待ちのあいだにブランチが進んだら、マージせずに止まる)。
+func (s *Svc) merge(args []string) error {
+	what := "tb gh pr merge"
+	repo, num, rest, err := target(what, args)
+	if err != nil {
+		return err
+	}
+	method, head, del := "", "", false
+	for i := 0; i < len(rest); i++ {
+		switch a := rest[i]; a {
+		case "--merge", "--squash", "--rebase":
+			if method != "" {
+				return usage("%s: --merge / --squash / --rebase は 1 つだけ", what)
+			}
+			method = a
+		case "--head":
+			if i+1 >= len(rest) || !reSHA.MatchString(rest[i+1]) {
+				return usage("%s: --head はコミットの SHA(40 桁の 16 進)", what)
+			}
+			i++
+			head = rest[i]
+		case "--delete-branch":
+			del = true
+		default:
+			return usage("%s: 不明な引数 %s", what, a)
+		}
+	}
+	if method == "" {
+		return usage("%s: --merge / --squash / --rebase のどれかが必要です", what)
+	}
+	if err := s.Authorize(OpMerge, repo, what); err != nil {
+		return err
+	}
+	ghArgs := []string{"pr", "merge", num, "--repo", repo, method}
+	if head != "" {
+		ghArgs = append(ghArgs, "--match-head-commit", head)
+	}
+	if del {
+		ghArgs = append(ghArgs, "--delete-branch")
+	}
+	b, err := s.call(OpMerge, repo, "", ghArgs...)
 	if err != nil {
 		return err
 	}

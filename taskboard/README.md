@@ -916,6 +916,7 @@ agent が PR のコメントとレビューを読み、コメント・レビュ�
 ```
 tb gh comment list|add <owner/repo> <PR 番号> ...       # gh:read(既定 allow)/ gh:comment(既定 ask)
 tb gh review list|add|approve <owner/repo> <PR 番号> ...  # gh:read / gh:review(既定 ask)/ gh:approve(既定 deny)
+tb gh pr merge <owner/repo> <PR 番号> --squash ...         # gh:merge(既定 deny。--head <SHA> で先頭のコミットを固定)
 ```
 
 - 権限は policy の `<主体> gh:<操作> <owner/repo の glob> = allow|ask|deny`(例: `@reviewer gh:approve my-org/* = allow`)
