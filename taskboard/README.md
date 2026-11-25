@@ -922,6 +922,8 @@ agent が PR のコメントとレビューを読み、コメント・レビュ�
 tb gh comment list|add <owner/repo> <PR 番号> ...       # gh:read(既定 allow)/ gh:comment(既定 ask)
 tb gh review list|add|approve <owner/repo> <PR 番号> ...  # gh:read / gh:review(既定 ask)/ gh:approve(既定 deny)
 tb gh pr merge <owner/repo> <PR 番号> --squash ...         # gh:merge(既定 deny。--head <SHA> で先頭のコミットを固定)
+tb gh <gh のコマンド> ... -R <owner/repo>                   # そのまま渡す。gh:<コマンド>-<サブコマンド>(読みは allow、ほかは ask、auth・api などは deny)
+tb git fetch|pull|push|clone|ls-remote <リモート> ...      # GitHub のリモート。git:<サブコマンド>(push は ask、force・削除は deny)
 ```
 
 - 権限は policy の `<主体> gh:<操作> <owner/repo の glob> = allow|ask|deny`(例: `@reviewer gh:approve my-org/* = allow`)

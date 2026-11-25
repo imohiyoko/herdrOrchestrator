@@ -41,7 +41,7 @@ _cat_problems() {
     f_allow=$(_ct "$f_allow"); f_state=$(_ct "$f_state"); f_desc=$(_ct "$f_desc")
     why=""
     [[ $f_pat =~ ^[A-Za-z0-9._:*?-]{1,128}$ ]] || why="パターンの文字集合"
-    case $f_kind in send|agent|alert|proxy|role|gate|setup|recipe|gh) ;; *) why="種別";; esac
+    case $f_kind in send|agent|alert|proxy|role|gate|setup|recipe|gh|git) ;; *) why="種別";; esac
     [[ ${f_pat%%:*} == "$f_kind" ]] || why="種別がパターンの先頭と違う"
     case $f_side in none|local-write|external-send|external-write) ;; *) why="副作用";; esac
     case $f_risk in low|mid|high|human-only) ;; *) why="リスク階層";; esac
@@ -75,7 +75,13 @@ _cat_problems() {
   _need "role:change" active
   _need "alert:analyze" active
   _need "recipe:example:example" active
-  for op in read comment review approve merge; do _need "gh:$op:example/repo" active; done
+  for op in read comment review approve merge api auth-token pr-list; do _need "gh:$op:example/repo" active; done
+  for op in fetch pull ls-remote clone push push-force; do _need "git:$op:example/repo" active; done
+  # tb gh / tb git の既定の表の行(gh:<…> / git:<…>。最後の gh:* を除く)は、それぞれ同じ名前の行(<操作>:*)がカタログにある
+  local k
+  while read -r k; do
+    [[ " ${pats[*]} " == *" $k:* "* ]] || echo "カタログに無い(perms/ops.tbl の行): $k:*"
+  done < <(sed 's/#.*//' "$TBROOT/perms/ops.tbl" | awk 'NF == 2 && $1 ~ /^(gh|git):/ && $1 != "gh:*" {print $1}')
 
   # (a) コードが承認判定に渡す操作名が、カタログのどれかと重なる(双方向の glob)
   while IFS= read -r op; do
@@ -96,6 +102,8 @@ _cat_problems() {
         if [[ $p == send:*:* ]]; then   # send:<kind>:* の kind は SEND_KINDS にある
           op=${p#send:}; op=${op%%:*}
           [[ " $SEND_KINDS_CODE " == *" $op "* ]] || echo "実在しない(send の kind): $p"
+        elif [[ $p == gh:* || $p == git:* ]]; then   # tb gh / tb git の操作名は gh・git のサブコマンドから作る。既定の表 ops.tbl の行と対応する
+          awk -v k="${p%:\*}" '$1 == k {f=1} END {exit !f}' "$TBROOT/perms/ops.tbl" || echo "実在しない(perms/ops.tbl に無い gh / git の操作): $p"
         else
           lit=${p%:\*}   # agent:new:* → agent:new
           # internal/webui は Web UI の例(SAMPLE_OPS)に操作名を持つので、実在の確かめには数えない

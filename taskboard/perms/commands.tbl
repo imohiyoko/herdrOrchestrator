@@ -256,7 +256,7 @@ notify.flush             cmd:notify:flush             deny        allow       in
 notify.event             cmd:notify:event             deny        allow       inner
 
 # --- gh(GitHub の PR のコメント・レビュー。中で gh:<操作> <owner/repo> を判定するので入口は allow)
-gh                       cmd:gh:help                  allow       allow       entry
+gh                       cmd:gh:run                   allow       allow       entry
 gh.comment.list          cmd:gh:comment-list          allow       allow       entry
 gh.comment.add           cmd:gh:comment-add           allow       allow       entry
 gh.review.list           cmd:gh:review-list           allow       allow       entry
@@ -272,6 +272,9 @@ herdr.workspace.list     cmd:herdr:workspace-list     allow       allow       en
 herdr.workspace.close    cmd:herdr:workspace-close    allow       allow       entry
 herdr.pane               cmd:herdr:pane-help          allow       allow       entry
 herdr.pane.close         cmd:herdr:pane-close         allow       allow       entry
+
+# --- git(GitHub のリモート。中で git:<サブコマンド> <owner/repo> を判定するので入口は allow)
+git                      cmd:git:run                  allow       allow       entry
 
 # --- pr
 pr                       cmd:pr:help                  allow       allow       entry
