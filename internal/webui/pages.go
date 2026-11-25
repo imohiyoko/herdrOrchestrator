@@ -11,7 +11,7 @@ import (
 const refreshSec = 30 // 自動更新の間隔(見ていないタブでは止まる。static/refresh.js)
 
 var nav = [][2]string{{"/", "概要"}, {"/notifications", "緊急通知"}, {"/agents", "agent"}, {"/tasks", "タスク"}, {"/board", "ボード"},
-	{"/inbox", "報告・承認待ち"}, {"/outbox", "送信"}, {"/docs", "ドキュメント"}, {"/jobs", "定期実行"}, {"/ledger", "送信履歴"}, {"/perms", "権限"},
+	{"/inbox", "報告・承認待ち"}, {"/approvals", "承認(Q)"}, {"/outbox", "送信"}, {"/docs", "ドキュメント"}, {"/jobs", "定期実行"}, {"/ledger", "送信履歴"}, {"/perms", "権限"},
 	{"/sessions", "セッション"}}
 
 // pageOpts は views.page の引数(ページごとの指定)。
@@ -254,6 +254,7 @@ var pages = map[string]pageFn{
 	"/sessions":      (*Server).pageSessions,
 	"/ledger":        (*Server).pageLedger,
 	"/inbox":         (*Server).pageInbox,
+	"/approvals":     (*Server).pageApprovals,
 	"/perms":         (*Server).pagePerms,
 	"/jobs":          (*Server).pageJobs,
 	"/tasks":         (*Server).pageTasks,
