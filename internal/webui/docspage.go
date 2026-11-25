@@ -451,6 +451,7 @@ func (s *Server) pageTask(q *rq, tid string, c pageCtx) (string, string, bool) {
 		rs = append(rs, []string{ev(p["id"]), ev(p["status"]), ev(p["effect"]), `<pre>` + ev(p["cmd"]) + `</pre>`, ev(p["why"]), ev(p["result"])})
 	}
 	b.WriteString("<h2>代行依頼</h2>" + table([]string{"id", "状態", "effect", "コマンド", "理由", "結果"}, rs))
+	b.WriteString(taskRmForm(pyStr(t["id"]), c))
 	return "タスク " + Clean(pyStr(t["id"])), b.String(), true
 }
 

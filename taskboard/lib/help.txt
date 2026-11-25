@@ -29,6 +29,8 @@ tb ticket move <id> <状態> [-m メモ] [-d 成果物 ...]   状態を変える
 tb ticket status [list] [--json]   状態・分類・チケットの件数・説明
 tb ticket status add <状態> <分類> [-m 説明] [--after <状態>]   状態を足す(設定 statuses に書き足す。人だけ)
 tb ticket status rm <状態> [--to <状態>]   状態を外す(残っているチケットは --to の状態へ移す。人だけ)
+tb ticket rm <id> [<id> ...]   チケットを消す(記録の整理)。コメント・履歴・リンクも消す(相手のチケットの履歴には unlink が残る)。
+                    子チケットがあれば子も一緒に指定する。アラート・提案のチケットは消さない。agent からは ask(人の承認が要る)
 tb ticket add|list|show|update|claim|done|block|cancel ...   tb <それ> と同じ
 tb claim <id> --owner <name> [--session S] [--account A]    todo → in_progress(分類 todo → 分類 active の先頭。todo の分類以外、別の担当に割り当て済みの todo は失敗。担当が空か --owner と同じなら通る。付け替えは tb update --owner)
 tb update <id> [--status 状態(どの状態へも。tb ticket move と同じ扱い)] [--title T] [--owner N] [--session S] [--account A] [--parent ID]
@@ -200,6 +202,7 @@ tb job [list | show <job> [--settings]]   scheduler のジョブ定義・上書�
 tb job set|edit|unset <job> [--settings] [--shared]   DB に書く / 消す(人だけ。scheduler が読めるか確かめてから書く。履歴は history)
 tb job import [--dry-run] [--shared] [<job> ...]     jobs/*.conf と settings/*.settings を DB に取り込み、ファイルを退かす(人だけ)
 tb job history <job> [--settings]                    変更の履歴
+tb job rm <job> [--shared] [--keep-log]              ジョブを消す(定義と上書き設定の DB の行。どのセッションにも残らなければ logs/<job>.log も消す。人だけ)
   別名(古い名前。同じに動く。サブコマンドが無ければ list): tb sched-job
 
 会計役(定期レビュー)→ 設定役(projects の proposal=<名前>、無ければ * の名前):

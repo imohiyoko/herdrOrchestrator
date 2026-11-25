@@ -214,6 +214,7 @@ job.set                  cmd:job:set                  deny        allow       in
 job.edit                 cmd:job:edit                 deny        allow       inner
 job.unset                cmd:job:unset                deny        allow       inner
 job.import               cmd:job:import               deny        allow       inner
+job.rm                   cmd:job:rm                   deny        allow       inner
 sched-job                cmd:job:list                 allow       allow       entry
 sched-job.list           cmd:job:list                 allow       allow       entry
 sched-job.show           cmd:job:show                 allow       allow       entry
@@ -380,6 +381,7 @@ link                     cmd:ticket:link              allow       allow       en
 ticket.link              cmd:ticket:link              allow       allow       entry
 unlink                   cmd:ticket:unlink            allow       allow       entry
 ticket.unlink            cmd:ticket:unlink            allow       allow       entry
+ticket.rm                cmd:ticket:rm                ask         allow       entry
 labels                   cmd:ticket:labels            allow       allow       entry
 sprint-add               cmd:ticket:sprint-add        allow       allow       entry
 sprint-start             cmd:ticket:sprint-start      allow       allow       entry

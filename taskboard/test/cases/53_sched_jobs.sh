@@ -87,4 +87,22 @@ eq "job unset: no row message" "$(SJA job unset j1 2>&1)" "tb: sched-job:j1 の 
 eq "job set: refused body message" "$(printf 'TARGET=x\nWINDOW=bad\nINTERVAL_MIN=5\nPROMPT=y\n' | SJA job set j1 2>&1 | tail -1)" "tb: sched-job:j1 は書きませんでした"
 eq "job set from an agent pane: message" "$(printf '%s\n' "$J1" | FAKE_AGENTS='[{"pane_id":"wW:p1","name":"worker1","agent_session":{"value":"s"}}]' HERDR_PANE_ID=wW:p1 SJA job set j1 2>&1)" "tb: tb job set は人が自分の端末で実行します(agent 'worker1' の pane からは実行できません)。記録 Q-3(例外は人が tb approval approve Q-3 で許可できます)"
 eq "job set: herdr fails → refused" "$(printf '%s\n' "$J1" | FAKE_AGENTS='not json' HERDR_PANE_ID=wW:p1 rc SJA job set j1)" "1"
+# job rm: 定義と上書き設定の行を消す。どのセッションにも定義が残らなければログも消す
+printf '%s\n' "$J1" | SJA job set jr >/dev/null; printf 'ENABLED=0\n' | SJA job set jr --settings >/dev/null
+printf '%s\n' "$J1" | SJA job set jr --shared >/dev/null
+printf '{}\n' >"$TB_SCHED_DIR/logs/jr.log"
+eq "job rm: this session's rows, shared row still runs" "$(SJA job rm jr)" "jr: sched-job:jr と sched-settings:jr を消しました(このセッション sja の行)
+jr: まだ db:* の定義で動きます(共通の行は tb job rm jr --shared で消す)"
+eq "job rm: log kept while a definition remains" "$(ls "$TB_SCHED_DIR/logs" | grep -c '^jr.log$')" "1"
+eq "job rm --shared: removes the log too" "$(SJA job rm jr --shared)" "jr: sched-job:jr を消しました(共通の行)
+jr: ログ $TB_SCHED_DIR/logs/jr.log を消しました"
+eq "job rm: gone from the list, history kept" "$(SJA job list | grep -c '^jr') $(SJA job history jr | cut -f2,3 | tr '\t\n' ': ')" "0 *:unset sja:unset *:set sja:set "
+eq "job rm: no rows → 1" "$(rc SJA job rm jr)" "1"
+eq "job rm --settings → 2" "$(rc SJA job rm jr --settings)" "2"
+printf '%s\n' "$J1" | SJA job set jr >/dev/null; printf '{}\n' >"$TB_SCHED_DIR/logs/jr.log"
+eq "job rm --keep-log" "$(SJA job rm jr --keep-log >/dev/null; ls "$TB_SCHED_DIR/logs" | grep -c '^jr.log$')" "1"
+rm -f "$TB_SCHED_DIR/logs/jr.log"
+eq "sched-job rm: not a legacy verb → 2" "$(rc SJA sched-job rm j1)" "2"
+printf '%s\n' "$J1" | SJA job set jr >/dev/null
+eq "job rm from an agent pane → refused" "$(FAKE_AGENTS='[{"pane_id":"wW:p1","name":"worker1","agent_session":{"value":"s"}}]' HERDR_PANE_ID=wW:p1 rc SJA job rm jr) $(SJA job list | grep -c '^jr')" "1 1"
 unset TB_SCHED_DIR; export HERDR_PANE_ID=$_saved_pane

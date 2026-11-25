@@ -137,6 +137,7 @@ tb ticket move T-web-012 in_progress            # done から戻す。成果物�
 tb ticket status                                # 状態・分類・チケットの件数・説明(--json も)
 tb ticket status add 検証待ち review -m "QA が確認" --after review   # 状態を足す(人だけ)
 tb ticket status rm 検証待ち --to review          # 外す。残っているチケットは --to の状態へ移す(人だけ)
+tb ticket rm T-web-012 T-web-013                # チケットを消す(記録の整理。agent からは ask)
 ```
 
 - `-m` は閉じた分類(done / cancelled)へ動かすときは要約(`summary`)、それ以外はメモ(`note`)に入る。`-d` は done の分類へ動かすときだけ。
@@ -145,6 +146,9 @@ tb ticket status rm 検証待ち --to review          # 外す。残っている
 - `tb ticket status add` / `rm` は設定 `statuses` を書き換えるだけ(別の置き場は無い)。書く先は今読んでいる行(このセッションの行 / 共通の行 / 環境変数で明示したファイル)で、設定が無ければ組み込みの 6 つから始めて共通の行に書く。`todo` / `active` / `done` の分類の最後の 1 つは外せない。
 - `tb ticket add|list|show|update|claim|done|block|cancel ...` は `tb <それ>` と同じ。
 - アラート・提案のチケットは今までどおり専用のコマンドだけで動かす(DB のトリガーが状態を書くため)。
+- `tb ticket rm <id> [<id> ...]` はチケットを消す(記録が貯まったときの整理)。そのチケットのコメント・履歴・リンクも消し、リンクの相手の履歴には `unlink` を残す。
+  子チケットがあれば、子も一緒に指定しないと断る(親を指したまま残さない)。アラート・提案のチケットは消さない。送信・inbox・PR キューなど、ほかのサービスの記録はそのまま残る。
+  ID は「その PJ の最大の番号 + 1」で振るので、最後の番号を消すと同じ ID がまた使われうる。権限の既定は agent に `ask`(Q チケットになり、人が承認するまで消さない)。
 
 tb 自身が付ける・探すラベルの名前は設定 `system-labels` で変えられる(1 行 1 つ `<用途> = <ラベル>`。例は [config/system-labels.conf.example](config/system-labels.conf.example))。`deadline`(`tb deadlines-import` が付ける。既定 `deadline`)と `team`(`tb reminder nudge --pool` が探す team のラベルの形。`{team}` が team の名前。既定 `team:{team}`)。アラート・提案のラベル(`alert` / `proposal` / `rejected` / `role:*`)は DB のトリガーが付けるので固定。
 

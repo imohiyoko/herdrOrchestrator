@@ -121,6 +121,8 @@ PROMPT='新しい bug の issue です。優先度をつけてください:
 - `SCHED_FILE_FALLBACK=1` のときだけ、DB に無いジョブ・設定をファイルから読む(`tb job` が書く前の検査とテスト用。普段は付けない)
 - セッションごとに別の定義を持てる(`HERDR_SESSION`、checkout の `herdr-session` ファイル。tb と同じ決まり方)
 - 書くのは人だけ: `tb job set <job> < 本文` / `edit` / `unset`(`--settings` で上書き設定、`--shared` で共通の行)。
+- ジョブを消す: `tb job rm <job> [--shared] [--keep-log]`(人だけ)。定義と上書き設定の行をまとめて消す(履歴は残る)。
+  どのセッションにも定義が残らなければ `logs/<job>.log` も消す(Web UI の一覧から外れる)。共通の行が残っていれば、まだその定義で動くと知らせる。Web UI の `/jobs/<job>` の「ジョブを消す」も同じ
   書く前に、scheduler 自身(`bin/show.sh`)がその本文を読めるかを一時のディレクトリで確かめる(読めなければ書かない)
 - 取り込み: `tb job import --dry-run` で確かめてから `tb job import [<job> ...]`。`jobs/*.conf` と `settings/*.settings` を
   このセッションの行(`--shared` なら共通の行)に取り込み、取り込んだファイルは `$HERDR_STATE_DIR/sched-imported/<日時>/` へ退かす。

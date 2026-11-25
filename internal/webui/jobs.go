@@ -180,12 +180,15 @@ func runTBInput(sess string, args []string, text string) (int, string) {
 	}
 	var env []string
 	for _, kv := range childEnv(sess) {
-		if k, _, _ := strings.Cut(kv, "="); k == "HERDR_PANE_ID" || k == "TB_DB" || (k == "TB_SCHED_DIR" && schedDir != "") {
+		if k, _, _ := strings.Cut(kv, "="); k == "HERDR_PANE_ID" || k == "TB_DB" || k == "LOG_DIR" || (k == "TB_SCHED_DIR" && schedDir != "") {
 			continue
 		}
 		env = append(env, kv)
 	}
 	env = append(env, "TB_DB="+TBDB())
+	if logs, err := filepath.Abs(SchedLogs()); err == nil { // tb job rm が消すログを、Web UI が読んでいるものに揃える
+		env = append(env, "LOG_DIR="+logs)
+	}
 	if schedDir != "" {
 		env = append(env, "TB_SCHED_DIR="+schedDir)
 	}

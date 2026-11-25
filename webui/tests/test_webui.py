@@ -967,7 +967,7 @@ check("ジョブ詳細: 次回の予定が出る", re.search(r"次回の予定\(
 check("ジョブ詳細: 承認の扱い(scheduler は policy を見ない)", "policy を見ず" in _pjh and "send:task:alpha" in _pjh)
 check("ジョブ詳細: 副作用は推測せず「不明」", "分かりません(不明)" in _pjh)
 check("ジョブ詳細: 送信履歴へのリンク", 'href="/ledger?kind=scheduler&amp;target=alpha"' in _pjh)
-check("ジョブ詳細: 編集フォームは増えていない(保存と戻すの 2 つだけ)", _pjh.count('<form method=post action="/jobs/pj"') == 2 and "name=prompt" not in _pjh and "name=command" not in _pjh and "name=target" not in _pjh)
+check("ジョブ詳細: 編集フォームは増えていない(保存と戻すと消すの 3 つだけ)", _pjh.count('<form method=post action="/jobs/pj"') == 3 and "name=prompt" not in _pjh and "name=command" not in _pjh and "name=target" not in _pjh)
 _pcm = cl.get("/jobs/pcomment")[2]
 check("ジョブ詳細: コメントアウトされた PROMPT は読まない", "REAL-PROMPT" in _pcm and "ignored-line" not in _pcm)
 for _n, _body in (("pdeny1", "DENIED-KEY-BODY"), ("pdeny2", "DENIED-ENV-BODY"), ("pdeny3", "DENIED-KEY-BODY")):
@@ -1160,6 +1160,34 @@ _c = sqlite3.connect(env["WEBUI_TB_DB"])
 _left = _c.execute("SELECT COUNT(*) FROM config WHERE key='sched-settings:dbjob'").fetchone()[0]
 _c.close()
 check("DB の定義: 戻すと DB の上書き設定を消す", r[0] == 302 and _left == 0 and "20 分おき" in cl.get("/jobs")[2])
+# ジョブを消す(tb job rm)。印を付けないと消さない。消すと定義・上書き設定の行とログが消え、一覧から外れる(履歴は残る)
+_c = sqlite3.connect(env["WEBUI_TB_DB"])
+_c.execute("INSERT INTO config (herdr_session, key, body, updated_by, updated_at) VALUES (?, 'sched-job:rmjob', ?, 'human', 'x')",
+           (_sess, "COMMAND='echo rm'\nWINDOW=09:00-21:00\nINTERVAL_MIN=30\n"))
+_c.execute("INSERT INTO config (herdr_session, key, body, updated_by, updated_at) VALUES (?, 'sched-settings:rmjob', 'ENABLED=0', 'human', 'x')", (_sess,))
+_c.commit(); _c.close()
+_rmlog = os.path.join(env["WEBUI_SCHED_LOGS"], "rmjob.log")
+open(_rmlog, "w").write('{"ts":"2026-11-01T10:00:00+0900","job":"rmjob","action":"ran"}\n')
+def _rmrows():
+    c = sqlite3.connect(env["WEBUI_TB_DB"])
+    try:
+        return c.execute("SELECT key FROM config WHERE key IN ('sched-job:rmjob', 'sched-settings:rmjob') ORDER BY key").fetchall()
+    finally:
+        c.close()
+_rj = cl.get("/jobs/rmjob")[2]
+check("ジョブを消す: 詳細に消すフォーム(印が要る)", 'value=rm>' in _rj and "name=confirm value=1 required" in _rj)
+r = cl.raw("POST", "/jobs/rmjob", {"action": "rm", "csrf": cl.csrf("/jobs/rmjob")})
+check("ジョブを消す: 印が無ければ 400 で消さない", r[0] == 400 and "元に戻せないことを確かめた" in r[2] and len(_rmrows()) == 2 and os.path.exists(_rmlog))
+check("ジョブを消す: CSRF 無しは拒否", cl.raw("POST", "/jobs/rmjob", {"action": "rm", "confirm": "1"})[0] == 403 and len(_rmrows()) == 2)
+r = cl.raw("POST", "/jobs/rmjob", {"action": "rm", "confirm": "1", "csrf": cl.csrf("/jobs/rmjob")})
+_c = sqlite3.connect(env["WEBUI_TB_DB"])
+_rh = _c.execute("SELECT key, how FROM config_changes WHERE key LIKE '%:rmjob' ORDER BY id").fetchall()
+_c.close()
+check("ジョブを消す: tb job rm で行とログを消し、一覧へ戻る(履歴は残る)", r[0] == 302 and r[1].get("Location") == "/jobs?done=job-rm"
+      and _rmrows() == [] and not os.path.exists(_rmlog) and _rh == [("sched-job:rmjob", "unset"), ("sched-settings:rmjob", "unset")], str((r[:2], _rmrows(), _rh)))
+_jl = cl.get("/jobs?done=job-rm")[2]
+check("ジョブを消す: 一覧から外れ、消したと知らせる", "rmjob" not in _jl and "ジョブを消しました" in _jl)
+check("ジョブを消す: 消したジョブは 404", cl.get("/jobs/rmjob")[0] == 404)
 # 定義はファイル(job1)でも、DB に settings の行があると scheduler は DB を読む。Web UI も DB に書く(ファイルに書くと隠れて効かない)
 _c = sqlite3.connect(env["WEBUI_TB_DB"])
 _c.execute("INSERT INTO config (herdr_session, key, body, updated_by, updated_at) VALUES (?, 'sched-settings:job1', ?, 'human', 'x')",
@@ -1657,6 +1685,26 @@ check("状態の定義: チケットが残る状態は、移し先なしでは�
 r = ec.raw("POST", "/statuses", {"action": "rm", "name": "qa", "to": "in_progress", "csrf": ec.csrf("/statuses")})
 check("状態の定義: 移し先を選ぶと移してから外す", r[0] == 302 and edb("SELECT status FROM tasks WHERE id='T-pj-001'") == [("in_progress",)]
       and "qa" not in edb("SELECT body FROM config WHERE key='statuses'")[0][0], str((r[0], re.findall(r"<p class=err>(.*?)</p>", r[2], re.S))))
+
+# ---- チケットを消す(/task-rm。tb ticket rm)
+edb("INSERT INTO tasks (id, project, title, status, parent_id, created_at, updated_at, herdr_session) VALUES "
+    "('T-pj-002', 'pj', '親', 'done', NULL, '2026-11-06T00:00:00Z', '2026-11-06T00:00:00Z', 'default'), "
+    "('T-pj-003', 'pj', '子', 'done', 'T-pj-002', '2026-11-06T00:00:00Z', '2026-11-06T00:00:00Z', 'default')")
+edb("INSERT INTO comments (task_id, kind, text, from_name, from_pane, from_session, created_at, herdr_session) VALUES "
+    "('T-pj-003', 'progress', 'x', 'w', 'p', 's', '2026-11-06T00:00:00Z', 'default')")
+tp = ec.get("/tasks/T-pj-003")[2]
+check("チケットを消す: タスク画面に消すフォーム(印が要る)", 'action="/task-rm"' in tp and "name=confirm value=1 required" in tp)
+check("チケットを消す: CSRF 無しは拒否", ec.raw("POST", "/task-rm", {"id": "T-pj-003", "confirm": "1"})[0] == 403)
+check("チケットを消す: 未ログインは /login へ", Client(port).raw("POST", "/task-rm", {"id": "T-pj-003", "confirm": "1"})[0] == 302)
+check("チケットを消す: 無いタスクは 404", ec.raw("POST", "/task-rm", {"id": "T-404", "confirm": "1", "csrf": ec.csrf("/tasks/T-pj-003")})[0] == 404)
+r = ec.raw("POST", "/task-rm", {"id": "T-pj-003", "csrf": ec.csrf("/tasks/T-pj-003")})
+check("チケットを消す: 印が無ければ 400 で消さない", r[0] == 400 and "元に戻せないことを確かめた" in r[2] and edb("SELECT 1 FROM tasks WHERE id='T-pj-003'"))
+r = ec.raw("POST", "/task-rm", {"id": "T-pj-002", "confirm": "1", "csrf": ec.csrf("/tasks/T-pj-002")})
+check("チケットを消す: 子があれば tb が断り、理由を見せる", r[0] == 400 and "子チケット" in r[2] and edb("SELECT 1 FROM tasks WHERE id='T-pj-002'"), r[2][-300:])
+r = ec.raw("POST", "/task-rm", {"id": "T-pj-003", "confirm": "1", "csrf": ec.csrf("/tasks/T-pj-003")})
+check("チケットを消す: tb ticket rm で消し、一覧へ戻る(コメントも消える)", r[0] == 302 and r[1].get("Location") == "/tasks?done=task-rm"
+      and not edb("SELECT 1 FROM tasks WHERE id='T-pj-003'") and not edb("SELECT 1 FROM comments WHERE task_id='T-pj-003'"), str(r[:2]))
+check("チケットを消す: 消したと知らせ、画面は 404", "チケットを消しました" in ec.get("/tasks?done=task-rm")[2] and ec.get("/tasks/T-pj-003")[0] == 404)
 
 # ---- スプリント(/sprint-op。tb sprint-add / sprint-start / sprint-close)
 bp = ec.get("/board")

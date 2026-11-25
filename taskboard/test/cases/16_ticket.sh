@@ -49,3 +49,20 @@ eq "ticket status rm: moved" "$($TB show "$d" | jq -r .status)" "review"
 eq "ticket status rm: gone" "$($TB ticket status 2>/dev/null | cut -f1 | grep -c '^qa$')" "0"
 eq "ticket status rm: can't remove the last done" "$(rc $TB ticket status rm done --to review)" "1"
 $TB config unset statuses --shared >/dev/null
+
+# --- チケットを消す(ticket rm)。コメント・履歴・リンクも消え、相手の履歴には unlink が残る。子があれば一緒に指定する
+r1=$($TB add -p tk -t 消す親); r2=$($TB add -p tk -t 消す子 --parent "$r1"); r3=$($TB add -p tk -t 残す)
+$TB link "$r1" blocks "$r3" >/dev/null; sqlite3 "$TB_DB" "INSERT INTO comments (task_id, kind, text, from_name, from_pane, from_session, created_at, herdr_session) SELECT id, 'progress', '途中', 'w1', 'wW:p1', 's', created_at, herdr_session FROM tasks WHERE id='$r2';"
+eq "ticket rm: refuses while a child remains" "$($TB ticket rm "$r1" 2>&1; echo "rc=$?")" "tb: $r1 には子チケットがあります: $r2(子も一緒に tb ticket rm するか、先に tb update で親を外す)
+rc=1"
+eq "ticket rm: nothing removed on refusal" "$($TB show "$r1" | jq -r .id)" "$r1"
+eq "ticket rm: parent and child together" "$($TB ticket rm "$r1" "$r2")" "$r1 を消しました(コメント 0 件・履歴 3 件・リンク 1 件)
+$r2 を消しました(コメント 1 件・履歴 1 件・リンク 0 件)"
+eq "ticket rm: rows are gone" "$(sqlite3 "$TB_DB" "SELECT (SELECT COUNT(*) FROM tasks WHERE id IN ('$r1','$r2')) || ' ' || (SELECT COUNT(*) FROM comments WHERE task_id IN ('$r1','$r2')) || ' ' || (SELECT COUNT(*) FROM task_events WHERE task_id IN ('$r1','$r2')) || ' ' || (SELECT COUNT(*) FROM task_links WHERE '$r1' IN (from_id, to_id))")" "0 0 0 0"
+eq "ticket rm: the other side keeps an unlink event" "$($TB history "$r3" | cut -f4,5 | tail -1)" "unlink	blocked_by $r1"
+eq "ticket rm: missing ticket → 1" "$(rc $TB ticket rm "$r1")" "1"
+eq "ticket rm: no id → 2" "$(rc $TB ticket rm)" "2"
+eq "ticket rm: bad id → 2" "$(rc $TB ticket rm nope)" "2"
+eq "ticket rm: alert ticket guarded" "$(rc $TB ticket rm "$al")" "1"
+# agent からは ask(Q チケットになり、人が承認するまで消さない)
+eq "ticket rm from an agent pane → ask" "$(FAKE_AGENTS='[{"pane_id":"wW:p1","name":"worker1","agent_session":{"value":"s"}}]' HERDR_PANE_ID=wW:p1 rc $TB ticket rm "$r3") $($TB show "$r3" | jq -r .id)" "20 $r3"

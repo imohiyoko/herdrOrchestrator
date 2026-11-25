@@ -10,12 +10,12 @@ import (
 	"unicode/utf8"
 )
 
-// edits.go は Web UI からの編集: チケットの状態(/task-status)、状態の定義(/statuses)、スプリント(/sprint-op)、
+// edits.go は Web UI からの編集: チケットの状態(/task-status)、チケットの削除(/task-rm)、状態の定義(/statuses)、スプリント(/sprint-op)、
 // 設定 policy(/policy)。ジョブの定義(/jobs/<job> の action=conf)は jobspage.go。
 // 書き込みはどれも tb が行い(tasks.db にも config にも直接書かない)、検査と認可も tb のものを通る。
 // Web UI からの tb は人の操作として動く(HERDR_PANE_ID を外す。runTB)。policy はさらにログインのパスワードを求める。
 
-var editPaths = map[string]bool{"/task-status": true, "/statuses": true, "/sprint-op": true, "/policy": true, "/approval-op": true}
+var editPaths = map[string]bool{"/task-status": true, "/statuses": true, "/sprint-op": true, "/policy": true, "/approval-op": true, "/task-rm": true}
 
 var (
 	reTaskID     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
@@ -31,6 +31,8 @@ const (
 // doneMsg は書き込みのあとの ?done=<キー> の知らせ(値はこの表のものだけ出す)。
 var doneMsg = map[string]string{
 	"status":       "状態を変えました。",
+	"task-rm":      "チケットを消しました(コメント・履歴・リンクも)。",
+	"job-rm":       "ジョブを消しました(定義と上書き設定)。",
 	"status-add":   "状態を足しました。",
 	"status-rm":    "状態を外しました。",
 	"sprint-add":   "スプリントを作りました(planned)。",
@@ -104,6 +106,8 @@ func (s *Server) postEdit(q *rq, path string, f form, csrf string) {
 	switch path {
 	case "/task-status":
 		back, done, msg, render = s.postTaskStatus(q, f)
+	case "/task-rm":
+		back, done, msg, render = s.postTaskRm(q, f)
 	case "/statuses":
 		back, done, msg, render = s.postStatuses(q, f)
 	case "/sprint-op":
@@ -204,6 +208,39 @@ func (v *sv) taskStatusForm(id, cur string, c pageCtx) string {
 		`<button type=submit>変える</button></p></form>` +
 		`<p class=note><code>tb ticket move</code> と同じ扱いです(どの状態へも動かせる。メモは閉じた分類なら要約になる)。` +
 		`状態の定義は <a href="/statuses">状態の定義</a> で変えます。</p>`
+}
+
+// ---- チケットの削除(tb ticket rm)
+
+func (s *Server) postTaskRm(q *rq, f form) (string, string, string, func(pageCtx) (string, string, string)) {
+	v := q.data()
+	id := f["id"]
+	if !v.taskExists(id) {
+		return "", "", "", nil
+	}
+	render := func(c pageCtx) (string, string, string) {
+		t, b, _ := s.pageTask(q, id, c)
+		return t, b, "/tasks/" + pyQuote(id, "")
+	}
+	if f["confirm"] != "1" {
+		return "", "", "消すときは「元に戻せないことを確かめた」に印を付けてください", render
+	}
+	if rc, out := runTB(q.name, 15*time.Second, "ticket", "rm", id); rc != 0 {
+		return "", "", tbFail(rc, out), render
+	}
+	return "/tasks", "task-rm", "", render
+}
+
+// taskRmForm はタスク画面の「チケットを消す」(元に戻せないので、印を付けないと送れない)。
+func taskRmForm(id string, c pageCtx) string {
+	if c.csrf == "" {
+		return ""
+	}
+	return `<h2>チケットを消す</h2><form method=post action="/task-rm"><input type=hidden name=csrf value="` + E(c.csrf) + `">` +
+		`<input type=hidden name=id value="` + E(id) + `"><p><label><input type=checkbox name=confirm value=1 required> 元に戻せないことを確かめた</label> ` +
+		`<button type=submit>消す</button></p></form>` +
+		`<p class=note><code>tb ticket rm</code> と同じ扱いです(コメント・履歴・リンクも消え、相手のチケットの履歴には unlink が残る)。` +
+		`子チケットがあると消せません。アラート・提案のチケットは消せません。</p>`
 }
 
 // ---- 状態の定義(tb ticket status add / rm)
