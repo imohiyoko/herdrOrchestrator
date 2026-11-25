@@ -310,6 +310,14 @@ tb gh comment add <owner/repo> <PR 番号> (--body B | --body-file -)   PR に�
 tb gh review list <owner/repo> <PR 番号> [--json]   レビューの状態と本文を読む(gh:read)
 tb gh review add <owner/repo> <PR 番号> --comment|--request-changes (--body B | --body-file -)   レビューを出す(gh:review。既定 ask)
 tb gh review approve <owner/repo> <PR 番号> [--body B | --body-file -]   approve する(gh:approve。既定 deny。policy で渡す)
+tb gh <gh のコマンド> ... -R <owner/repo>   ほかの gh のコマンドをそのまま渡す(例: tb gh issue create -R o/r ...、tb gh run list -R o/r)。
+                              権限は gh:<コマンド>-<サブコマンド>(例: gh:issue-create)。既定: list / view / status / diff / checks / watch / search は allow、
+                              auth / secret / variable / config / extension / alias / ssh-key / gpg-key / repo delete / api は deny、ほかは ask。
+                              pr review / pr comment は専用のコマンドを使う。対象は -R(api はパスの repos/<owner>/<repo>)
+tb git fetch|pull|ls-remote <リモート名|URL> [引数...] / tb git clone <URL> ... / tb git push <リモート名> [引数...]
+                              GitHub のリモートへの git の操作(git:<サブコマンド>。既定は push が ask、force・削除を含む push は git:push-force で deny、ほかは allow)。
+                              対象はリモートの owner/repo(設定したコマンドに URL を聞いて決める)。ローカルの操作は git を直接使う。
+                              コマンドは config/github.conf の git_<サブコマンド> → git_read / git_write → git。フックと fsmonitor を切り、GIT_* と token の環境変数を外して呼ぶ
 tb gh pr merge <owner/repo> <PR 番号> --merge|--squash|--rebase [--head <SHA>] [--delete-branch]   マージする(gh:merge。既定 deny。--head は先頭のコミットが違えば止める)
                               権限は policy の <主体> gh:<操作> <owner/repo の glob> = allow|ask|deny(例: @reviewer gh:approve my-org/* = allow)。
                               GitHub へ出るコマンドは config/github.conf の gh_<操作> → gh_write → gh(読みは gh_read → gh。絶対パス。必須)。

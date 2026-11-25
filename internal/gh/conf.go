@@ -44,10 +44,20 @@ func confValue(body, key string) string {
 
 // keysOf は操作 op に使うコマンドのキー(先に当たったもの)。
 // GitHub App の token を操作ごとに切り替えるラッパー(ghtkn など)のために、操作ごと → 読み / 書き → 共通 の順に引く。
+// tb git の操作(git:<サブコマンド>)は git_<サブコマンド> → git_read / git_write → git。
 func keysOf(op string) []string {
+	if sub, ok := strings.CutPrefix(op, "git:"); ok {
+		if gitRead[sub] {
+			return []string{"git_" + sub, "git_read", "git"}
+		}
+		return []string{"git_" + strings.TrimSuffix(sub, "-force"), "git_write", "git"}
+	}
 	name := strings.TrimPrefix(op, "gh:")
-	if op == OpRead {
+	switch {
+	case op == OpRead:
 		return []string{"gh_read", "gh"}
+	case isReadOp(op):
+		return []string{"gh_" + name, "gh_read", "gh"}
 	}
 	return []string{"gh_" + name, "gh_write", "gh"}
 }

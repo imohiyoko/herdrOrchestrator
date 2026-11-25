@@ -14,15 +14,27 @@ import (
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/util"
 )
 
-// cmdGh は tb gh <対象> <動詞>(GitHub の PR のコメント・レビュー。internal/gh)。
+// cmdGh は tb gh <対象> <動詞>(GitHub の PR のコメント・レビューと、ほかの gh のコマンド。internal/gh)。
 func cmdGh(args []string, w, stderr io.Writer) error {
+	return ghRun(w, stderr, func(s *gh.Svc) error { return s.Run(args) })
+}
+
+// cmdGit は tb git fetch|pull|push|clone|ls-remote(GitHub のリモート。internal/gh)。
+func cmdGit(args []string, w, stderr io.Writer) error {
+	return ghRun(w, stderr, func(s *gh.Svc) error { return s.Git(args) })
+}
+
+func ghRun(w, stderr io.Writer, run func(*gh.Svc) error) error {
+	if f, ok := w.(interface{ Flush() error }); ok {
+		defer f.Flush()
+	}
 	s := &gh.Svc{W: w, Err: stderr, Stdin: os.Stdin}
 	s.Authorize = func(op, repo, what string) error {
 		by, err := ghAuthorize(op, repo, what)
 		s.Actor = by
 		return err
 	}
-	err := s.Run(args)
+	err := run(s)
 	var ge *gh.Err
 	if errors.As(err, &ge) {
 		switch {

@@ -20,7 +20,7 @@ var (
 	sampleOps = []string{"send:task:worker1", "send:info:worker1", "send:answer:worker1", "role:change", "proxy:read-only",
 		"proxy:write", "proxy:external", "alert:analyze", "setup:hooks", "setup:scheduler", "setup:webui",
 		"setup:launchctl", "agent:new:worker1", "agent:stop:worker1", "agent:revive:worker1"}
-	catKinds   = []string{"send", "agent", "alert", "proxy", "role", "gate", "setup", "recipe", "gh"}
+	catKinds   = []string{"send", "agent", "alert", "proxy", "role", "gate", "setup", "recipe", "gh", "git"}
 	catSide    = []string{"none", "local-write", "external-send", "external-write"}
 	catRisk    = []string{"low", "mid", "high", "human-only"}
 	catAllowOK = []string{"yes", "no", "conditional"}

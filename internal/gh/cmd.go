@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"regexp"
 	"sort"
@@ -55,6 +54,7 @@ tb gh comment add <owner/repo> <PR 番号> (--body B | --body-file -)   PR に�
 tb gh review list <owner/repo> <PR 番号> [--json]   PR のレビュー(状態・本文)を読む(gh:read)
 tb gh review add <owner/repo> <PR 番号> --comment|--request-changes (--body B | --body-file -)   レビューを出す(gh:review)
 tb gh review approve <owner/repo> <PR 番号> [--body B | --body-file -]   approve する(gh:approve)
+tb gh <gh のコマンド> ... -R <owner/repo>   ほかの gh のコマンドをそのまま渡す(gh:<コマンド>-<サブコマンド>。例: tb gh issue create -R o/r ...)
 tb gh pr merge <owner/repo> <PR 番号> --merge|--squash|--rebase [--head <SHA>] [--delete-branch]   マージする(gh:merge。--head は先頭のコミットが違えば止める)
 GitHub へ出るコマンドは config/github.conf の gh_<操作> → gh_write → gh(読みは gh_read → gh。絶対パス。PATH 上の gh には落とさない)。taskboard/docs/gh.md
 `
@@ -83,6 +83,8 @@ func (s *Svc) Run(args []string) error {
 	case "help", "-h", "--help":
 		fmt.Fprint(s.W, Usage)
 		return nil
+	case "git":
+		return usage("gh git: git は tb git を使ってください")
 	case "comment":
 		switch verb {
 		case "list":
@@ -105,9 +107,8 @@ func (s *Svc) Run(args []string) error {
 		if verb == "merge" {
 			return s.merge(args[2:])
 		}
-		return usage("gh pr: 不明なサブコマンド %s(merge)", or(verb))
 	}
-	return usage("gh: 不明なサブコマンド %s(comment / review / pr。tb gh で一覧)", obj)
+	return s.passthrough(args)
 }
 
 func or(v string) string {
@@ -154,15 +155,7 @@ func (s *Svc) call(op, repo, stdin string, args ...string) ([]byte, error) {
 		return nil, die("gh: %s", problem)
 	}
 	c := exec.Command(argv[0], append(append([]string{}, argv[1:]...), args...)...)
-	var env []string
-	for _, kv := range os.Environ() {
-		k, _, _ := strings.Cut(kv, "=")
-		if tokenEnv[k] || strings.HasPrefix(k, "TB_GH_") {
-			continue
-		}
-		env = append(env, kv)
-	}
-	c.Env = append(env, "TB_GH_OP="+op, "TB_GH_REPO="+repo, "TB_GH_ACTOR="+s.Actor)
+	c.Env = childEnv(op, repo, s.Actor, false)
 	if stdin != "" {
 		c.Stdin = strings.NewReader(stdin)
 	}

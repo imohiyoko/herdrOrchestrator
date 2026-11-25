@@ -15,3 +15,11 @@ gh_comment =         # tb gh comment add(gh:comment)
 gh_review =          # tb gh review add(gh:review)
 gh_approve =         # tb gh review approve(gh:approve。approve だけ別の app にするなど)
 gh_merge =           # tb gh pr merge(gh:merge。contents: write の app など)
+# tb gh <gh のコマンド>(そのまま渡すもの)は gh_<コマンド>-<サブコマンド>(例: gh_issue-create)→ 読み(既定 allow のもの)は gh_read、ほかは gh_write → gh
+
+# tb git(GitHub のリモート): git_<サブコマンド> → git_read(fetch / pull / ls-remote / clone)/ git_write(push)→ git
+# git には gh と違い token を環境変数で渡すだけでは足りない(認証の helper が要る)。ラッパーの例は docs/gh.md
+git =                # 例: /usr/local/libexec/tb-git
+git_read =
+git_write =
+git_push =

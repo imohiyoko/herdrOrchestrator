@@ -36,7 +36,7 @@ eq "gh: relative command → fails closed (1)" "$(rc $TB gh review list o/r 1 2>
 printf 'gh = %s   # wrapper\n' "$TMP/gh-fake" >"$TB_GITHUB_CONF"
 
 # ---- 使い方
-eq "gh: tb gh alone lists the subcommands (2)" "$($TB gh 2>/dev/null | grep -c '^tb gh '; rc $TB gh)" "6
+eq "gh: tb gh alone lists the subcommands (2)" "$($TB gh 2>/dev/null | grep -c '^tb gh '; rc $TB gh)" "7
 2"
 eq "gh: pr merge needs a method (2)" "$(rc $TB gh pr merge o/r 1 2>/dev/null)" "2"
 eq "gh: pr merge --head must be a SHA (2)" "$(rc $TB gh pr merge o/r 1 --squash --head main 2>/dev/null)" "2"
@@ -125,5 +125,76 @@ eq "gh policy: read denied for a repo" "$(HERDR_PANE_ID=wG:p2 rc $TB gh comment 
 eq "gh policy: tb agent can gives the same answer" "$($TB agent can rev1 gh:approve o/r | head -1) / $($TB agent can dev1 gh:approve o/r | head -1)" "allow / deny"
 eq "gh: a person is not limited by agent rows" "$($TB gh comment list secret/r 1 >/dev/null 2>&1; echo $?)" "0"
 
-rm -f "$TMP/gh-fake"
+# ---- tb gh <gh のコマンド>(そのまま渡す。操作は gh:<コマンド>-<サブコマンド>)
+printf 'gh = %s\n' "$TMP/gh-fake" >"$TB_GITHUB_CONF"
+: >"$TB_POLICY"
+: >"$GH_FAKE_LOG"
+eq "gh pass: a person runs any gh command; args go through unchanged" "$($TB gh issue create -R o/r --title 't x' --body b; echo "rc=$?"; cat "$GH_FAKE_LOG")" "rc=0
+issue create -R o/r --title t x --body b"
+eq "gh pass: no -R → usage (2), nothing called" "$(rc $TB gh issue list 2>/dev/null) $(wc -l <"$GH_FAKE_LOG" | tr -d ' ')" "2 1"
+eq "gh pass: -R with a host → usage (2)" "$(rc $TB gh issue list -R github.com/o/r 2>/dev/null)" "2"
+eq "gh pass: an alias or extension name is refused (2)" "$(rc $TB gh co list -R o/r 2>/dev/null) $(rc $TB gh my-ext run -R o/r 2>/dev/null)" "2 2"
+eq "gh pass: pr review goes to the dedicated command (2)" "$(rc $TB gh pr review 1 -R o/r -a 2>/dev/null)" "2"
+eq "gh pass: pr comment goes to the dedicated command (2)" "$(rc $TB gh pr comment 1 -R o/r -b x 2>/dev/null)" "2"
+eq "gh pass: the wrapper's exit code comes back" "$(GH_FAKE_RC=3 rc $TB gh issue list -R o/r 2>/dev/null)" "3"
+: >"$GH_FAKE_LOG"
+eq "gh pass agent: list is allowed (gh:issue-list)" "$(HERDR_PANE_ID=wG:p2 rc $TB gh issue list --repo=o/r 2>/dev/null) $(cat "$GH_FAKE_LOG")" "0 issue list --repo=o/r"
+eq "gh pass agent: create asks (gh:issue-create), queued with the op and repo" "$(HERDR_PANE_ID=wG:p2 rc $TB gh issue create -R o/r --title x 2>/dev/null) $($TB approval list | cut -f3,4,5 | tail -1)" "20 gh:issue-create	dev1	o/r"
+eq "gh pass agent: auth is denied (gh:auth-token)" "$(HERDR_PANE_ID=wG:p2 rc $TB gh auth token 2>/dev/null)" "4"
+eq "gh pass agent: api is denied; its repo comes from the path" "$(HERDR_PANE_ID=wG:p2 rc $TB gh api repos/o/r/pulls 2>/dev/null) $($TB agent can dev1 gh:api o/r | head -1)" "4 deny"
+eq "gh pass agent: repo delete is denied" "$(HERDR_PANE_ID=wG:p2 rc $TB gh repo delete o/r --yes 2>/dev/null)" "4"
+eq "gh pass agent: secret list is denied (deny rows come before *-list)" "$(HERDR_PANE_ID=wG:p2 rc $TB gh secret list -R o/r 2>/dev/null)" "4"
+printf 'dev1 gh:issue-* o/* = allow\n' >"$TB_POLICY"
+: >"$GH_FAKE_LOG"
+eq "gh pass policy: gh:issue-* o/* = allow → create runs" "$(HERDR_PANE_ID=wG:p2 rc $TB gh issue create -R O/R --title x 2>/dev/null) $(grep -c 'issue create' "$GH_FAKE_LOG")" "0 1"
+eq "gh pass policy: not for another owner" "$(HERDR_PANE_ID=wG:p2 rc $TB gh issue create -R x/r --title x 2>/dev/null)" "20"
+printf 'gh = %s\ngh_read = %s --reader\ngh_issue-create = %s --issue-app\n' "$TMP/gh-fake" "$TMP/gh-fake" "$TMP/gh-fake" >"$TB_GITHUB_CONF"
+: >"$GH_FAKE_LOG"
+$TB gh run list -R o/r >/dev/null; $TB gh issue create -R o/r --title x >/dev/null; $TB gh release create v1 -R o/r >/dev/null
+eq "gh pass: command keys gh_<cmd>-<sub> → gh_read (reads) / gh" "$(cut -d' ' -f1-3 "$GH_FAKE_LOG")" "--reader run list
+--issue-app issue create
+release create v1"
+printf 'gh = %s\n' "$TMP/gh-fake" >"$TB_GITHUB_CONF"
+: >"$TB_POLICY"
+
+# ---- tb git(GitHub のリモート)
+cat >"$TMP/git-fake" <<'EOF2'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$GH_FAKE_LOG"
+printf 'env=%s %s hook=%s\n' "$TB_GH_OP" "$TB_GH_REPO" "${GIT_SSH_COMMAND:-none}" >>"$GH_FAKE_LOG"
+case "$*" in
+  *"remote get-url --push --all"*) printf '%s\n' ${FAKE_PUSH_URLS:-https://github.com/o/r.git} ;;
+  *"ls-remote --get-url"*) echo "${FAKE_FETCH_URL:-git@github.com:o/r.git}" ;;
+esac
+EOF2
+chmod +x "$TMP/git-fake"
+printf 'git = %s\n' "$TMP/git-fake" >>"$TB_GITHUB_CONF"
+: >"$GH_FAKE_LOG"
+eq "git: pull resolves the remote through the configured git, then pulls with hooks off and GIT_* removed" \
+  "$(GIT_SSH_COMMAND=evil $TB git pull origin main; echo "rc=$?"; cat "$GH_FAKE_LOG")" "rc=0
+-c core.hooksPath=/dev/null -c core.fsmonitor=false ls-remote --get-url origin
+env=git:pull  hook=none
+-c core.hooksPath=/dev/null -c core.fsmonitor=false pull origin main
+env=git:pull o/r hook=none"
+eq "git: local subcommands are not handled (2)" "$(rc $TB git commit -m x 2>/dev/null)" "2"
+eq "git: the remote must come first (2)" "$(rc $TB git pull --rebase 2>/dev/null)" "2"
+eq "git: push takes a remote name, not a URL (2)" "$(rc $TB git push https://github.com/o/r main 2>/dev/null)" "2"
+eq "git: --upload-pack / --receive-pack / clone -c are refused (2)" "$(rc $TB git fetch origin --upload-pack=x 2>/dev/null) $(rc $TB git push origin --receive-pack x 2>/dev/null) $(rc $TB git clone https://github.com/o/r -c core.x=y 2>/dev/null)" "2 2 2"
+eq "git: a non-GitHub remote is refused (1)" "$(FAKE_FETCH_URL=https://gitlab.com/o/r.git rc $TB git fetch origin 2>/dev/null)" "1"
+eq "git: push URLs to two repos are refused (1)" "$(FAKE_PUSH_URLS='https://github.com/o/r https://github.com/x/y' rc $TB git push origin main 2>/dev/null)" "1"
+eq "git agent: fetch / pull are allowed" "$(HERDR_PANE_ID=wG:p2 rc $TB git fetch origin 2>/dev/null)" "0"
+eq "git agent: push asks (git:push, the repo from the push URL)" "$(HERDR_PANE_ID=wG:p2 rc $TB git push origin main 2>/dev/null) $($TB approval list | cut -f3,4,5 | tail -1)" "20 git:push	dev1	o/r"
+eq "git agent: force / delete / +refspec / --mirror push is denied (git:push-force)" \
+  "$(for a in --force -fu --force-with-lease=main --delete :old +main --mirror; do HERDR_PANE_ID=wG:p2 rc $TB git push origin $a 2>/dev/null; done | tr '\n' ' ')" "4 4 4 4 4 4 4 "
+printf 'dev1 git:push o/r = allow\n' >"$TB_POLICY"
+: >"$GH_FAKE_LOG"
+eq "git policy: git:push o/r = allow → push runs" "$(HERDR_PANE_ID=wG:p2 rc $TB git push origin main 2>/dev/null) $(grep -c ' push origin main' "$GH_FAKE_LOG")" "0 1"
+eq "git policy: a push URL for another repo is not covered" "$(FAKE_PUSH_URLS=https://github.com/x/y HERDR_PANE_ID=wG:p2 rc $TB git push origin main 2>/dev/null)" "20"
+printf 'git = %s\ngit_push = %s --pusher\n' "$TMP/git-fake" "$TMP/git-fake" >>"$TB_GITHUB_CONF"
+: >"$GH_FAKE_LOG"
+$TB git push origin main >/dev/null
+eq "git: git_push is used for push (and for resolving its URL)" "$(grep -c '^--pusher' "$GH_FAKE_LOG")" "2"
+: >"$TB_POLICY"
+
+rm -f "$TMP/gh-fake" "$TMP/git-fake"
 unset gq sha GH_FAKE_LOG TB_DB TB_POLICY TB_GITHUB_CONF HERDR_PANE_ID FAKE_AGENTS; eval "$_gh_saved"; unset _gh_saved

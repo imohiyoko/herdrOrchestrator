@@ -20,6 +20,33 @@ gh:comment         ask      # tb gh comment add
 gh:review          ask      # tb gh review add(--comment / --request-changes)
 gh:approve         deny     # tb gh review approve(人が policy で渡すまで agent はできない)
 gh:merge           deny     # tb gh pr merge(人が policy で渡すまで agent はできない)
+# tb gh <gh のコマンド>(そのまま渡す。操作は gh:<コマンド>-<サブコマンド>、対象は owner/repo。上から最初に当たった行)
+gh:auth-*          deny     # token を出せる(gh auth token)・認証を変える
+gh:secret-*        deny
+gh:variable-*      deny
+gh:config-*        deny
+gh:extension-*     deny     # 任意のコードを入れて動かせる
+gh:alias-*         deny
+gh:ssh-key-*       deny
+gh:gpg-key-*       deny
+gh:repo-delete     deny
+gh:api             deny     # どの API も呼べる(approve・マージも)。渡すならリポジトリと主体を絞る
+gh:*-list          allow
+gh:*-view          allow
+gh:*-status        allow
+gh:*-diff          allow
+gh:*-checks        allow
+gh:*-watch         allow
+gh:search-*        allow
+gh:status          allow
+gh:*               ask
+# tb git(GitHub のリモート。対象は owner/repo)
+git:fetch          allow
+git:pull           allow
+git:ls-remote      allow
+git:clone          allow
+git:push           ask
+git:push-force     deny     # --force・削除・+refspec・--mirror・--prune
 approve:*          deny
 policy:*           deny     # 権限の変更(対象は変える行の主体。例: worker1 policy:send:* worker2 = allow)
 *                  ask
