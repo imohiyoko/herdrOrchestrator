@@ -264,13 +264,13 @@ gh.review.approve        cmd:gh:review-approve        allow       allow       en
 gh.pr                    cmd:gh:pr-help               allow       allow       entry
 gh.pr.merge              cmd:gh:pr-merge              allow       allow       entry
 
-# --- herdr(workspace / pane を閉じる。agent の居る所は中で断る。閉じるのは agent には承認待ち)
+# --- herdr(workspace / pane を閉じる。agent が動いている所は中で必ず断る)
 herdr                    cmd:herdr:help               allow       allow       entry
 herdr.workspace          cmd:herdr:workspace-help     allow       allow       entry
 herdr.workspace.list     cmd:herdr:workspace-list     allow       allow       entry
-herdr.workspace.close    cmd:herdr:workspace-close    ask         allow       entry
+herdr.workspace.close    cmd:herdr:workspace-close    allow       allow       entry
 herdr.pane               cmd:herdr:pane-help          allow       allow       entry
-herdr.pane.close         cmd:herdr:pane-close         ask         allow       entry
+herdr.pane.close         cmd:herdr:pane-close         allow       allow       entry
 
 # --- pr
 pr                       cmd:pr:help                  allow       allow       entry

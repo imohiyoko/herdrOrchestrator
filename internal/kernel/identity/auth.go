@@ -184,3 +184,33 @@ func Authenticate() (state, errMsg string) {
 	}
 	return "outside", ""
 }
+
+// Descendants は pid の子孫のプロセス(pid と comm)。ps を読めなければ ok=false(Windows も false。確かめられない)。
+// tb herdr の close が、pane のシェルの下で動いているもの(背景のジョブなど)を見つけるのに使う。
+func Descendants(pid int) (out []string, ok bool) {
+	if runtime.GOOS == "windows" {
+		return nil, false
+	}
+	p, ok := snapshot()
+	if !ok {
+		return nil, false
+	}
+	kids := map[int][]int{}
+	for c, pp := range p.ppid {
+		kids[pp] = append(kids[pp], c)
+	}
+	seen := map[int]bool{pid: true}
+	q := []int{pid}
+	for len(q) > 0 {
+		x := q[0]
+		q = q[1:]
+		for _, c := range kids[x] {
+			if !seen[c] {
+				seen[c] = true
+				q = append(q, c)
+				out = append(out, strconv.Itoa(c)+" "+p.comm[c])
+			}
+		}
+	}
+	return out, true
+}

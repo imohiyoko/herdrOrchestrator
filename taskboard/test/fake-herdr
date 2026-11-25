@@ -65,7 +65,18 @@ case "$1 $2" in
     if [[ -n ${FAKE_SHELL_PID:-} ]]; then sp=$FAKE_SHELL_PID
     elif [[ $3 == --pane && $4 == "${HERDR_PANE_ID:-}" && -n ${TB_TEST_SHELL_PID:-} ]]; then sp=$TB_TEST_SHELL_PID
     else sp=999999; fi
-    printf '{"result":{"process_info":{"pane_id":"%s","shell_pid":%s,"foreground_processes":[]},"type":"pane_process_info"}}\n' "$4" "$sp";;
+    # tb herdr close の確かめ用: FAKE_BG_PANE の pane はシェルの下に子がいる(テストのプロセスを shell_pid にする)、
+    # FAKE_FG_PANE の pane は前面のプロセス FAKE_FG(JSON 配列)を返す。FAKE_PINFO_BAD_PANE の pane は読めない形
+    [[ -n ${FAKE_BG_PANE:-} && $4 == "$FAKE_BG_PANE" ]] && sp=$TB_TEST_SHELL_PID
+    fg='[]'; [[ -n ${FAKE_FG_PANE:-} && $4 == "$FAKE_FG_PANE" ]] && fg=${FAKE_FG:-[]}
+    [[ -n ${FAKE_PINFO_BAD_PANE:-} && $4 == "$FAKE_PINFO_BAD_PANE" ]] && { echo '{"result":{}}'; exit 0; }
+    printf '{"result":{"process_info":{"pane_id":"%s","shell_pid":%s,"foreground_processes":%s},"type":"pane_process_info"}}\n' "$4" "$sp" "$fg";;
+  "pane list")
+    # FAKE_PANES(JSON 配列。例 [{"pane_id":"wC:p1","workspace_id":"wC"}])を --workspace で絞る。FAKE_PANE_LIST_FAIL=1 で失敗
+    echo "pane-list ${*:3}" >>"${FAKE_LOG:?}"
+    [[ ${FAKE_PANE_LIST_FAIL:-0} == 1 ]] && { echo '{"error":{"code":"x"}}'; exit 1; }
+    ws=""; [[ ${3:-} == --workspace ]] && ws=$4
+    printf '{"result":{"panes":%s},"type":"pane_list"}\n' "$(jq -c --arg w "$ws" '[.[] | select($w == "" or .workspace_id == $w)]' <<<"${FAKE_PANES:-[]}")";;
   "pane close")
     echo "pane-close $3" >>"${FAKE_LOG:?}"
     [[ ${FAKE_CLOSE_RC:-0} == 0 ]] && echo "$3" >>"$FAKE_LOG.closed"

@@ -315,11 +315,12 @@ tb gh pr merge <owner/repo> <PR 番号> --merge|--squash|--rebase [--head <SHA>]
                               GitHub へ出るコマンドは config/github.conf の gh_<操作> → gh_write → gh(読みは gh_read → gh。絶対パス。必須)。
                               子には TB_GH_OP / TB_GH_REPO / TB_GH_ACTOR を渡し、GH_TOKEN などは渡さない。ラッパーが 75 を返したら 75(auth-locked)。taskboard/docs/gh.md
 tb herdr workspace list [--json]   herdr の workspace(id・ラベル)と、その中の agent
-tb herdr workspace close <workspace_id> [--force]   workspace を閉じる。agent が居れば閉じない(agent は tb agent stop で止める)
-tb herdr pane close <pane_id> [--force]   pane を閉じる。agent が居れば閉じない。自分の pane は閉じない
-                              名前のある agent は --force でも閉じない。--force(人だけ)は名前の無い agent(台帳に無い)が居ても閉じる。
-                              agent からの close は既定 ask(承認待ち Q-<n>)。緩めるのは policy(例: @lead cmd:herdr:pane-close * = allow)。
-                              終了コード: 0 閉じた 1 拒否・対象なし 2 使い方 11 herdr の失敗 20 承認待ち
+tb herdr workspace close <workspace_id>   workspace を閉じる。どの pane でも agent やほかのプロセスが動いていれば閉じない
+tb herdr pane close <pane_id>   pane を閉じる。agent やほかのプロセスが動いていれば閉じない。自分の pane は閉じない
+                              閉じるのは、agent が居ない(herdr agent list と台帳)うえに、pane の前面がシェルだけで(herdr pane process-info)
+                              シェルの下に子プロセスも無い(ps)と確かめられたときだけ。どれかを確かめられなければ閉じない(--force は無い)。
+                              agent からも既定 allow(締めるのは policy。例: @worker cmd:herdr:pane-close * = ask)。
+                              終了コード: 0 閉じた 1 拒否・対象なし 2 使い方 11 herdr の失敗
 tb pr queue add --branch <接頭辞>/<名> --body-file <本文> --title <題> [--repo <org/repo>] [--task T-…] [--base <ブランチ> | --depends-on PQ-<n>]   draft PR の依頼を置く(agent)。pending。base は既定 main(conf の base_mode / base_allow)。--depends-on は下の PQ のブランチの上に積む
 tb pr queue list [--status S] [--json] / show <PQ-n>   キューを見る
 tb pr queue approve <PQ-n> / reject <PQ-n> [-m 理由]   人だけ。approve は本文・題・差分のガードも通ったときだけ

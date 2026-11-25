@@ -6,17 +6,20 @@ import (
 	"io"
 	"os"
 	"slices"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/agents"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/herdr"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/identity"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/util"
 )
 
 // tb herdr <対象> <動詞>: herdr の workspace と pane を見る・閉じる(サービス herdr。herdr を呼ぶのは internal/kernel/herdr だけ)。
-// 閉じるのは agent の居ない workspace / pane だけ。agent は tb agent stop(保護・killable・未完了タスクを確かめる)で止める。
-// 権限は入口(commands.tbl の herdr.workspace.close / herdr.pane.close。agent への既定 ask = 承認待ち Q-<n>)。
+// 閉じるのは agent も、シェル以外のプロセスも動いていない workspace / pane だけ(--force は無い)。agent は tb agent stop(保護・killable・未完了タスクを確かめる)で止める。
+// 権限は入口(commands.tbl の herdr.workspace.close / herdr.pane.close。agent への既定 allow。agent が居ないことはここで必ず確かめる)。
 
 var herdrVerbs2 = map[string]map[string]cmdFunc{
 	"workspace": {"list": cmdHerdrWorkspaceList, "close": cmdHerdrWorkspaceClose},
@@ -33,8 +36,8 @@ func cmdHerdr(args []string, w, stderr io.Writer) error {
 }
 
 const herdrUsageText = `tb herdr workspace list [--json]   herdr の workspace と、その中の agent
-tb herdr workspace close <workspace_id> [--force]   workspace を閉じる(agent が居れば閉じない)
-tb herdr pane close <pane_id> [--force]   pane を閉じる(agent が居れば閉じない)
+tb herdr workspace close <workspace_id>   workspace を閉じる(どの pane でも agent・プロセスが動いていれば閉じない)
+tb herdr pane close <pane_id>   pane を閉じる(agent・プロセスが動いていれば閉じない)
 `
 
 // herdrAgent は herdr agent list の 1 件(閉じる前の確かめに使う項目)。
@@ -139,64 +142,39 @@ func cmdHerdrWorkspaceList(args []string, w, stderr io.Writer) error {
 	return nil
 }
 
-// closeArgs は <id> [--force] を読む。--force は人だけ(名前の無い agent が居ても閉じる。名前のある agent は --force でも閉じない)。
-func closeArgs(what string, args []string) (id string, force bool, err error) {
-	if len(args) < 1 || strings.HasPrefix(args[0], "-") {
-		return "", false, usage("herdr %s close <%s_id> [--force]", what, what)
+// closeArgs は <id> を読む(--force は無い。agent が居る所は誰が実行しても閉じない)。
+func closeArgs(what string, args []string) (string, error) {
+	if len(args) != 1 || strings.HasPrefix(args[0], "-") {
+		return "", usage("herdr %s close <%s_id>", what, what)
 	}
-	id = args[0]
+	id := args[0]
 	if strings.ContainsAny(id, " \t\r\n") || len(id) > 128 {
-		return "", false, usage("herdr %s close: id に使えない文字があります: %s", what, id)
+		return "", usage("herdr %s close: id に使えない文字があります: %s", what, id)
 	}
-	for _, a := range args[1:] {
-		if a != "--force" {
-			return "", false, usage("herdr %s close: 不明な引数 %s", what, a)
-		}
-		force = true
-	}
-	return id, force, nil
+	return id, nil
 }
 
-// refuseAgents は、閉じる先に agent が居るなら理由を返す。名前のある agent は常に止める(tb agent stop へ)。
-// 名前の無い agent(tb の台帳に無い)は --force のときだけ通す。
-func refuseAgents(where string, in []herdrAgent, force bool) error {
-	var named, unnamed []string
+// refuseAgents は、閉じる先に agent が 1 つでも居れば理由を返す(名前の有無に関わらず)。
+func refuseAgents(where string, in []herdrAgent) error {
+	if len(in) == 0 {
+		return nil
+	}
+	var names []string
 	for _, a := range in {
-		if a.name != "" {
-			named = append(named, a.name)
-		} else {
-			unnamed = append(unnamed, a.pane)
-		}
+		names = append(names, agentLabel(a))
 	}
-	if len(named) > 0 {
-		return &exit{1, where + " には agent " + strings.Join(named, ",") + " が居るので閉じません。agent は tb agent stop <名前> で止めます(保護・killable・未完了タスクを確かめる)"}
-	}
-	if len(unnamed) > 0 && !force {
-		return &exit{1, where + " には名前の無い agent(pane " + strings.Join(unnamed, ",") + ")が居るので閉じません。閉じるなら人が --force を付けます"}
-	}
-	return nil
-}
-
-func closePrep(force bool) (*store.DB, error) {
-	by, err := requester()
-	if err != nil {
-		return nil, err
-	}
-	if force && by != "human" {
-		return nil, die("--force は人が自分の端末で使います(agent '%s' の pane からは使えません)", by)
-	}
-	return openDB()
+	return &exit{1, where + " では agent " + strings.Join(names, ",") + " が動いているので閉じません。agent は tb agent stop <名前> で止めてから閉じます"}
 }
 
 func cmdHerdrPaneClose(args []string, w, stderr io.Writer) error {
-	pane, force, err := closeArgs("pane", args)
+	pane, err := closeArgs("pane", args)
 	if err != nil {
 		return err
 	}
 	if pane == os.Getenv("HERDR_PANE_ID") {
 		return die("自分の pane(%s)は閉じません", pane)
 	}
-	db, err := closePrep(force)
+	db, err := openDB()
 	if err != nil {
 		return err
 	}
@@ -207,16 +185,23 @@ func cmdHerdrPaneClose(args []string, w, stderr io.Writer) error {
 	}
 	var in []herdrAgent
 	for _, a := range live {
+		if a.pane == "" {
+			// どの pane に居るか分からない agent が居ると、閉じる先に居ないと言い切れない
+			return &exit{1, "herdr agent list に pane_id の無い agent(" + agentLabel(a) + ")が居るため、pane " + pane + " に agent が居ないと確かめられません。閉じません"}
+		}
 		if a.pane == pane {
 			in = append(in, a)
 		}
 	}
-	var reg string // 台帳で動作中の agent の pane(herdr の一覧に出ていなくても守る)
+	var reg string // 台帳で動作中の agent の pane(同期の後も running なら守る)
 	_ = db.QueryRow(`SELECT COALESCE(group_concat(name, ','),'') FROM agents WHERE herdr_session=? AND pane_id=? AND state='running'`, db.Session, pane).Scan(&reg)
-	if reg != "" && !slices.ContainsFunc(in, func(a herdrAgent) bool { return a.name != "" }) {
+	if reg != "" && len(in) == 0 {
 		in = append(in, herdrAgent{name: reg, pane: pane})
 	}
-	if err := refuseAgents("pane "+pane, in, force); err != nil {
+	if err := refuseAgents("pane "+pane, in); err != nil {
+		return err
+	}
+	if err := paneBusy(pane); err != nil {
 		return err
 	}
 	if out, err := herdr.CallCombined("pane", "close", pane); err != nil {
@@ -227,11 +212,11 @@ func cmdHerdrPaneClose(args []string, w, stderr io.Writer) error {
 }
 
 func cmdHerdrWorkspaceClose(args []string, w, stderr io.Writer) error {
-	id, force, err := closeArgs("workspace", args)
+	id, err := closeArgs("workspace", args)
 	if err != nil {
 		return err
 	}
-	db, err := closePrep(force)
+	db, err := openDB()
 	if err != nil {
 		return err
 	}
@@ -250,7 +235,7 @@ func cmdHerdrWorkspaceClose(args []string, w, stderr io.Writer) error {
 	self := os.Getenv("HERDR_PANE_ID")
 	var in []herdrAgent
 	for _, a := range live {
-		if a.ws == "" && (a.name != "" || !force) {
+		if a.ws == "" {
 			// どの workspace に居るか分からない agent が居ると、閉じる先に居ないと言い切れない
 			return &exit{1, "herdr agent list に workspace_id の無い agent(" + agentLabel(a) + ")が居るため、workspace " + id + " に agent が居ないと確かめられません。閉じません"}
 		}
@@ -261,12 +246,115 @@ func cmdHerdrWorkspaceClose(args []string, w, stderr io.Writer) error {
 			in = append(in, a)
 		}
 	}
-	if err := refuseAgents("workspace "+id, in, force); err != nil {
+	if err := refuseAgents("workspace "+id, in); err != nil {
 		return err
+	}
+	panes, err := workspacePanes(id)
+	if err != nil {
+		return err
+	}
+	for _, p := range panes {
+		if self != "" && p == self {
+			return die("自分の pane(%s)がある workspace %s は閉じません", self, id)
+		}
+		if err := paneBusy(p); err != nil {
+			return err
+		}
 	}
 	if out, err := herdr.CallCombined("workspace", "close", id); err != nil {
 		return &exit{11, "workspace " + id + " を閉じられません(" + util.Oneline(string(out), 200) + ")"}
 	}
 	fmt.Fprintf(w, "workspace %s closed\n", id)
 	return nil
+}
+
+// workspacePanes は herdr pane list --workspace の pane_id。読めなければ閉じない。
+func workspacePanes(id string) ([]string, error) {
+	out, err := herdr.Call("pane", "list", "--workspace", id)
+	if err != nil {
+		return nil, &exit{11, "herdr pane list に失敗しました(workspace " + id + " の pane で何か動いているか確かめられないので閉じません)"}
+	}
+	var r struct {
+		Result struct {
+			Panes []map[string]any `json:"panes"`
+		} `json:"result"`
+	}
+	if json.Unmarshal(out, &r) != nil || r.Result.Panes == nil {
+		return nil, &exit{11, "herdr pane list を読めません(workspace " + id + " の pane で何か動いているか確かめられないので閉じません)"}
+	}
+	var ps []string
+	for _, p := range r.Result.Panes {
+		pid, _ := p["pane_id"].(string)
+		if pid == "" {
+			return nil, &exit{11, "herdr pane list に pane_id の無い pane があります(確かめられないので閉じません)"}
+		}
+		if w, ok := p["workspace_id"].(string); ok && w != id {
+			continue
+		}
+		ps = append(ps, pid)
+	}
+	return ps, nil
+}
+
+// paneBusy は、pane でシェル以外のものが動いていれば理由を返す(agent でなくても。ビルド・サーバ・エディタ・背景のジョブなど)。
+// 見るのは herdr pane process-info の前面のプロセスと、ps で見たシェル(shell_pid)の子孫。どちらかを確かめられなければ閉じない。
+func paneBusy(pane string) error {
+	out, err := herdr.Call("pane", "process-info", "--pane", pane)
+	if err != nil {
+		return &exit{11, "herdr pane process-info に失敗しました(pane " + pane + " で何か動いているか確かめられないので閉じません)"}
+	}
+	var r struct {
+		Result struct {
+			ProcessInfo struct {
+				ShellPID *int               `json:"shell_pid"`
+				FG       *[]json.RawMessage `json:"foreground_processes"`
+			} `json:"process_info"`
+		} `json:"result"`
+	}
+	if json.Unmarshal(out, &r) != nil || r.Result.ProcessInfo.ShellPID == nil || r.Result.ProcessInfo.FG == nil {
+		return &exit{1, "pane " + pane + " のプロセスの情報を読めません(何か動いているか確かめられないので閉じません)"}
+	}
+	shell := *r.Result.ProcessInfo.ShellPID
+	var busy []string
+	for _, raw := range *r.Result.ProcessInfo.FG {
+		pid, name := fgProc(raw)
+		if pid != 0 && pid == shell {
+			continue // 前面がシェル自身 = 何も動いていない
+		}
+		busy = append(busy, name)
+	}
+	kids, ok := identity.Descendants(shell)
+	if !ok {
+		return &exit{1, "プロセスの一覧(ps)を読めないため、pane " + pane + " のシェルの下で何か動いているか確かめられません。閉じません"}
+	}
+	sort.Strings(kids)
+	busy = append(busy, kids...)
+	if len(busy) > 0 {
+		return &exit{1, "pane " + pane + " ではプロセスが動いているので閉じません(" + util.Oneline(strings.Join(busy, ", "), 200) + ")。終わらせてから閉じます"}
+	}
+	return nil
+}
+
+// fgProc は foreground_processes の 1 件(数か、pid と name / command を持つ形)から pid と表示名。
+func fgProc(raw json.RawMessage) (int, string) {
+	var n int
+	if json.Unmarshal(raw, &n) == nil {
+		return n, strconv.Itoa(n)
+	}
+	var o map[string]any
+	if json.Unmarshal(raw, &o) != nil {
+		return 0, util.Oneline(string(raw), 60)
+	}
+	pid := 0
+	if f, ok := o["pid"].(float64); ok {
+		pid = int(f)
+	}
+	name := ""
+	for _, k := range []string{"name", "command", "comm", "cmdline"} {
+		if v, ok := o[k].(string); ok && v != "" {
+			name = v
+			break
+		}
+	}
+	return pid, strings.TrimSpace(strconv.Itoa(pid) + " " + name)
 }
