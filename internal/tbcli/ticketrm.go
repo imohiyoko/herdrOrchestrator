@@ -79,9 +79,10 @@ func rmTickets(db *store.DB, ids []string, ifCreated string, hasIf bool) ([][3]i
 	if _, err := tx.Exec(`UPDATE main.tasks SET id=id WHERE 0`); err != nil { // 書き込みのロックを先に取る
 		return nil, err
 	}
-	for _, id := range ids {
+	projects := make([]string, len(ids))
+	for i, id := range ids {
 		var created string
-		if err := tx.QueryRow(`SELECT created_at FROM main.tasks WHERE herdr_session=? AND id=?`, s, id).Scan(&created); err != nil {
+		if err := tx.QueryRow(`SELECT created_at, project FROM main.tasks WHERE herdr_session=? AND id=?`, s, id).Scan(&created, &projects[i]); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return nil, die("タスクが見つかりません: %s", id)
 			}
@@ -120,6 +121,15 @@ func rmTickets(db *store.DB, ids []string, ifCreated string, hasIf bool) ([][3]i
 			return nil, err
 		}
 		if _, err = del(`DELETE FROM main.tasks WHERE herdr_session=? AND id=?`, s, id); err != nil {
+			return nil, err
+		}
+	}
+	// 消した番号は使い直さない(tb add は「残っている最大の番号」と、ここに残した「消した最大の番号」の大きいほう + 1 を振る)。
+	// 番号は全セッションで 1 つなので、tb add はどのセッションの行も見る(書くのはこのセッションの行)
+	for i, id := range ids {
+		if _, err := tx.Exec(`INSERT INTO main.tb_flags (herdr_session, key, value, set_by, set_at) VALUES (?4, 'ticket-rm-max:'||?1, CAST(substr(?2, length(?1)+4) AS INTEGER), 'tb ticket rm', ?3)
+			ON CONFLICT (herdr_session, key) DO UPDATE SET value=MAX(CAST(value AS INTEGER), CAST(excluded.value AS INTEGER)), set_by=excluded.set_by, set_at=excluded.set_at`,
+			projects[i], id, now(), s); err != nil {
 			return nil, err
 		}
 	}

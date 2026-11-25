@@ -380,7 +380,8 @@ func cmdAdd(args []string, w, stderr io.Writer) error {
 		}
 	}()
 	r, err := conn.ExecContext(ctx, `INSERT INTO main.tasks (id, project, title, status, owner_agent, session_id, account, parent_id, type, priority, labels, description, refs, due, sprint_id, points, created_at, updated_at, herdr_session)
-		SELECT 'T-'||?1||'-'||printf('%03d', COALESCE(MAX(CAST(substr(id, length(?1)+4) AS INTEGER)),0)+1),
+		SELECT 'T-'||?1||'-'||printf('%03d', MAX(COALESCE(MAX(CAST(substr(id, length(?1)+4) AS INTEGER)),0),
+		         COALESCE((SELECT MAX(CAST(value AS INTEGER)) FROM main.tb_flags WHERE key='ticket-rm-max:'||?1),0))+1),
 		       ?1, ?2, ?3, NULLIF(?4,''), NULLIF(?5,''), NULLIF(?6,''), NULLIF(?7,''), ?8, ?9, ?10, NULLIF(?11,''), ?12, NULLIF(?13,''),
 		       CAST(NULLIF(?14,'') AS INTEGER), CAST(NULLIF(?15,'') AS INTEGER), ?16, ?16, ?17
 		FROM main.tasks WHERE project=?1 HAVING `+cond,
