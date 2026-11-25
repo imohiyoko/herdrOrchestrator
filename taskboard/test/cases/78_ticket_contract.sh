@@ -58,7 +58,7 @@ eq "add: no args" "$(tkerr $TB ticket status add)" $'tb: ticket status add <状�
 eq "add: one arg" "$(tkerr $TB ticket status add x)" $'tb: ticket status add <状態> <分類> [-m 説明] [--after <状態>]\n(tb help で使い方)\nrc=2'
 eq "add: unknown" "$(tkerr $TB ticket status add x todo --bogus)" $'tb: ticket status add: 不明な引数 --bogus\n(tb help で使い方)\nrc=2'
 eq "add: --after needs a value" "$(tkerr $TB ticket status add x todo --after)" $'tb: --after に値が必要です\n(tb help で使い方)\nrc=2'
-eq "add: agent pane" "$(HERDR_PANE_ID=w1:p1 FAKE_AGENTS='[{"pane_id":"w1:p1","name":"w1","agent_status":"idle","agent_session":{"value":"s1"}}]' tkerr $TB ticket status add x todo)" $'tb: tb ticket status add は人が自分の端末で実行します(agent \'w1\' の pane からは実行できません)\nrc=1'
+eq "add: agent pane" "$(HERDR_PANE_ID=w1:p1 FAKE_AGENTS='[{"pane_id":"w1:p1","name":"w1","agent_status":"idle","agent_session":{"value":"s1"}}]' tkerr $TB ticket status add x todo)" $'tb: tb ticket status add は人が自分の端末で実行します(agent \'w1\' の pane からは実行できません)。記録 Q-1(例外は人が tb approval approve Q-1 で許可できます)\nrc=1'
 eq "add: bad category" "$(tkerr $TB ticket status add x nope)" $'tb: ticket status add: 分類は todo active review blocked done cancelled のどれか: nope\n(tb help で使い方)\nrc=2'
 eq "add: newline in desc" "$(tkerr $TB ticket status add x todo -m $'a\nb')" $'tb: ticket status add: 説明に改行と # は使えません\n(tb help で使い方)\nrc=2'
 eq "add: # in desc" "$(tkerr $TB ticket status add x todo -m 'a#b')" $'tb: ticket status add: 説明に改行と # は使えません\n(tb help で使い方)\nrc=2'
@@ -75,7 +75,7 @@ eq "add: move to new" "$(tkerr $TB ticket move "$b" qa)" $'T-tkc-002 todo → qa
 # ---- status rm
 eq "rm: no args" "$(tkerr $TB ticket status rm)" $'tb: ticket status rm <状態> [--to <状態>]\n(tb help で使い方)\nrc=2'
 eq "rm: unknown" "$(tkerr $TB ticket status rm qa --bogus)" $'tb: ticket status rm: 不明な引数 --bogus\n(tb help で使い方)\nrc=2'
-eq "rm: agent pane" "$(HERDR_PANE_ID=w1:p1 FAKE_AGENTS='[{"pane_id":"w1:p1","name":"w1","agent_status":"idle","agent_session":{"value":"s1"}}]' tkerr $TB ticket status rm qa)" $'tb: tb ticket status rm は人が自分の端末で実行します(agent \'w1\' の pane からは実行できません)\nrc=1'
+eq "rm: agent pane" "$(HERDR_PANE_ID=w1:p1 FAKE_AGENTS='[{"pane_id":"w1:p1","name":"w1","agent_status":"idle","agent_session":{"value":"s1"}}]' tkerr $TB ticket status rm qa)" $'tb: tb ticket status rm は人が自分の端末で実行します(agent \'w1\' の pane からは実行できません)。記録 Q-2(例外は人が tb approval approve Q-2 で許可できます)\nrc=1'
 eq "rm: not configured" "$(tkerr $TB ticket status rm nope)" $'tb: 状態 nope は設定にありません(tb ticket status で一覧)\nrc=1'
 eq "rm: to itself" "$(tkerr $TB ticket status rm qa --to qa)" $'tb: ticket status rm: --to に外す状態そのものは指定できません\n(tb help で使い方)\nrc=2'
 eq "rm: bad to" "$(tkerr $TB ticket status rm qa --to nope)" $'tb: status は todo in_progress review qa done blocked cancelled backlog のどれか: nope\n(tb help で使い方)\nrc=2'

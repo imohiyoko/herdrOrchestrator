@@ -104,7 +104,9 @@ eq "gh agent: merge is denied by default (4), nothing called" "$(HERDR_PANE_ID=w
 eq "gh agent: comment asks (20) and queues a Q-" "$(echo 'queued body' | HERDR_PANE_ID=wG:p1 $TB gh comment add o/r 7 --body-file - >/dev/null 2>"$TMP/gh.err"; echo $?) $(grep -c '承認待ち Q-[0-9]* に積みました' "$TMP/gh.err") $(grep -c 'pr comment' "$GH_FAKE_LOG")" "20 1 0"
 gq=$(grep -o 'Q-[0-9]*' "$TMP/gh.err" | head -1)
 eq "gh agent: the Q- names gh:comment and the repo" "$($TB approval list | cut -f1,3-5)" "$gq	gh:comment	rev1	o/r"
-eq "gh agent: a person approves → posted once with the queued body" "$($TB approval approve "$gq" >/dev/null 2>&1; echo $?) $(grep -c 'pr comment 7 --repo o/r' "$GH_FAKE_LOG") $(grep -c '^stdin=queued body$' "$GH_FAKE_LOG")" "0 1 1"
+eq "gh agent: a person approves → not run yet; the requester is told how to run it" "$($TB approval approve "$gq" >/dev/null 2>&1; echo $?) $(grep -c 'pr comment 7 --repo o/r' "$GH_FAKE_LOG") $(sqlite3 "$TB_DB" "SELECT count(*) FROM messages WHERE kind='approval' AND ref='$gq' AND target='rev1' AND result='sent' AND body LIKE '%tb approval run $gq%';")" "0 0 1"
+eq "gh agent: the requester runs it → posted once with the queued body" "$(HERDR_PANE_ID=wG:p1 $TB approval run "$gq" >/dev/null 2>&1; echo $?) $(grep -c 'pr comment 7 --repo o/r' "$GH_FAKE_LOG") $(grep -c '^stdin=queued body$' "$GH_FAKE_LOG")" "0 1 1"
+eq "gh agent: the one-time run cannot be repeated" "$(HERDR_PANE_ID=wG:p1 $TB approval run "$gq" 2>&1 >/dev/null | grep -c 'もう実行しました') $(grep -c 'pr comment 7 --repo o/r' "$GH_FAKE_LOG")" "1 1"
 
 # ---- policy で渡す・締める(対象は owner/repo の glob。@役割・組織図の主体も書ける)
 printf 'rev1 gh:approve o/* = allow\nrev1 gh:comment * = allow\nrev1 gh:merge o/r = ask\n* gh:read secret/* = deny\n' >"$TB_POLICY"

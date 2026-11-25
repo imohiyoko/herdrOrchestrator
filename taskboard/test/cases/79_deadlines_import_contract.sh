@@ -10,7 +10,7 @@ dlrows() { sqlite3 "$TB_DB" "SELECT id, project, title, type, due, labels, IFNUL
 eq "deadlines-import: unknown" "$(dlerr $TB deadlines-import --bogus)" $'tb: deadlines-import [-p project(既定 deadline)] [--dry-run]\n(tb help で使い方)\nrc=2'
 eq "deadlines-import: -p needs a value" "$(dlerr $TB deadlines-import -p)" $'tb: -p に値が必要です\n(tb help で使い方)\nrc=2'
 eq "deadlines-import: bad project" "$(dlerr $TB deadlines-import -p 'a-b')" $'tb: project は英数字と _ のみ: a-b\n(tb help で使い方)\nrc=2'
-eq "deadlines-import: agent pane" "$(HERDR_PANE_ID=w1:p1 FAKE_AGENTS='[{"pane_id":"w1:p1","name":"w1","agent_status":"idle","agent_session":{"value":"s1"}}]' dlerr $TB deadlines-import -p dlc)" $'tb: tb deadlines-import は人が自分の端末で実行します(agent \'w1\' の pane からは実行できません)\nrc=1'
+eq "deadlines-import: agent pane" "$(HERDR_PANE_ID=w1:p1 FAKE_AGENTS='[{"pane_id":"w1:p1","name":"w1","agent_status":"idle","agent_session":{"value":"s1"}}]' dlerr $TB deadlines-import -p dlc)" $'tb: tb deadlines-import は人が自分の端末で実行します(agent \'w1\' の pane からは実行できません)。記録 Q-1(例外は人が tb approval approve Q-1 で許可できます)\nrc=1'
 eq "deadlines-import: no file" "$(dlerr $TB deadlines-import -p dlc | sed "s|$TMP|TMP|")" $'期限ファイルがありません: TMP/dl-deadlines.conf\nrc=0'
 printf '%s\n' '# 期限' 'deadline = 2026-04-01 | 申請  # 書類' 'deadline=2026-04-02|更新' 'deadline = 2026-02-30 | 存在しない日' 'deadline = 2026-04-03 |   ' 'other = 2026-04-04 | 別のキー' 'deadline = 2026-04-01 | 申請' '  deadline =  2026-04-05 |  前後の空白  ' >"$TB_REMINDERS_DEADLINES"
 eq "deadlines-import: dry-run" "$(dlerr $TB deadlines-import -p dlc --dry-run)" $'add(dry-run): 2026-04-01 | 申請\nadd(dry-run): 2026-04-02 | 更新\nskip(日付が正しくない): 2026-02-30 | 存在しない日\nadd(dry-run): 2026-04-01 | 申請\nadd(dry-run): 2026-04-05 | 前後の空白\n作成 4 件 / 取り込み済み 0 件(dry-run: 何も書いていません)\nrc=0'

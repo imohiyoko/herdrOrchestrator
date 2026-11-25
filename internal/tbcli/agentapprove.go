@@ -133,7 +133,7 @@ func runOp(db *store.DB, st tickets.StatusSet, o opRow, stderr io.Writer) opResu
 	return opResult{code: 1, out: "不明な操作: " + o.op}
 }
 
-func cmdAgentApprove(args []string, w, stderr io.Writer) error {
+func agentApproveImpl(args []string, w, stderr io.Writer) error {
 	if len(args) < 1 {
 		return usage("agent-approve L-<n> [--always]")
 	}
@@ -280,7 +280,7 @@ func slashApprove(db *store.DB, o opRow, always bool, ap approver, w, stderr io.
 	return nil
 }
 
-func cmdAgentReject(args []string, w, stderr io.Writer) error {
+func agentRejectImpl(args []string, w, stderr io.Writer) error {
 	if len(args) != 1 {
 		return usage("agent-reject L-<n>")
 	}
