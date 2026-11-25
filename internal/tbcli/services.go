@@ -47,6 +47,7 @@ func serviceCommands() []string {
 	}
 	add("agent", agentVerbs, agentVerbs2)
 	add("recipe", recipeVerbs, recipeVerbs2)
+	add("herdr", nil, herdrVerbs2)
 	return out
 }
 

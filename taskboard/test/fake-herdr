@@ -28,6 +28,7 @@ case "$1 $2" in
   "agent list")
     echo "list" >>"${FAKE_LOG:?}"
     [[ ${FAKE_LIST_FAIL:-0} == 1 ]] && { echo '{"error":{"code":"x"}}'; exit 1; }
+    [[ ${FAKE_LIST_BAD:-0} == 1 ]] && { echo '{"result":{}}'; exit 0; }   # 形の違う一覧(agents が無い)
     # FAKE_AGENTS(JSON 配列)で差し替え可。既定は worker1(wW:p1) と名前なし(wW:p2)
     default='[{"pane_id":"wW:p1","name":"worker1","agent_session":{"value":"sess-w1"}},{"pane_id":"wW:p2","agent_session":{"value":"sess-w2"}}]'
     list=${FAKE_AGENTS:-$default}
@@ -55,7 +56,8 @@ case "$1 $2" in
     # FAKE_WORKSPACES(JSON 配列。例 [{"label":"inc-001"}])。既定は空
     printf '{"result":{"workspaces":%s},"type":"workspace_list"}\n' "${FAKE_WORKSPACES:-[]}";;
   "workspace close")
-    echo "workspace-close $3" >>"${FAKE_LOG:?}";;
+    echo "workspace-close $3" >>"${FAKE_LOG:?}"
+    exit "${FAKE_WS_CLOSE_RC:-0}";;
   "pane process-info")
     # 呼び出し元の確かめ(ADR 0007 段 1a)用。呼んだ tb の HERDR_PANE_ID の pane だけ、テストのプロセス(TB_TEST_SHELL_PID)を最初のプロセスとして返す
     # (テストの tb はその子孫なので「その pane の中」になる)。ほかの pane は誰の祖先でもない pid。FAKE_SHELL_PID で差し替え、FAKE_PINFO_FAIL=1 で失敗
@@ -64,7 +66,18 @@ case "$1 $2" in
     if [[ -n ${FAKE_SHELL_PID:-} ]]; then sp=$FAKE_SHELL_PID
     elif [[ $3 == --pane && $4 == "${HERDR_PANE_ID:-}" && -n ${TB_TEST_SHELL_PID:-} ]]; then sp=$TB_TEST_SHELL_PID
     else sp=999999; fi
-    printf '{"result":{"process_info":{"pane_id":"%s","shell_pid":%s,"foreground_processes":[]},"type":"pane_process_info"}}\n' "$4" "$sp";;
+    # tb herdr close の確かめ用: FAKE_BG_PANE の pane はシェルの下に子がいる(テストのプロセスを shell_pid にする)、
+    # FAKE_FG_PANE の pane は前面のプロセス FAKE_FG(JSON 配列)を返す。FAKE_PINFO_BAD_PANE の pane は読めない形
+    [[ -n ${FAKE_BG_PANE:-} && $4 == "$FAKE_BG_PANE" ]] && sp=$TB_TEST_SHELL_PID
+    fg='[]'; [[ -n ${FAKE_FG_PANE:-} && $4 == "$FAKE_FG_PANE" ]] && fg=${FAKE_FG:-[]}
+    [[ -n ${FAKE_PINFO_BAD_PANE:-} && $4 == "$FAKE_PINFO_BAD_PANE" ]] && { echo '{"result":{}}'; exit 0; }
+    printf '{"result":{"process_info":{"pane_id":"%s","shell_pid":%s,"foreground_processes":%s},"type":"pane_process_info"}}\n' "$4" "$sp" "$fg";;
+  "pane list")
+    # FAKE_PANES(JSON 配列。例 [{"pane_id":"wC:p1","workspace_id":"wC"}])を --workspace で絞る。FAKE_PANE_LIST_FAIL=1 で失敗
+    echo "pane-list ${*:3}" >>"${FAKE_LOG:?}"
+    [[ ${FAKE_PANE_LIST_FAIL:-0} == 1 ]] && { echo '{"error":{"code":"x"}}'; exit 1; }
+    ws=""; [[ ${3:-} == --workspace ]] && ws=$4
+    printf '{"result":{"panes":%s},"type":"pane_list"}\n' "$(jq -c --arg w "$ws" '[.[] | select($w == "" or .workspace_id == $w)]' <<<"${FAKE_PANES:-[]}")";;
   "pane close")
     echo "pane-close $3" >>"${FAKE_LOG:?}"
     [[ ${FAKE_CLOSE_RC:-0} == 0 ]] && echo "$3" >>"$FAKE_LOG.closed"
