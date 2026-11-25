@@ -25,6 +25,7 @@ taskboard/config/notify.conf
 taskboard/config/notify-rules.conf
 taskboard/config/repos.md
 taskboard/config/pr-queue.conf
+taskboard/config/github.conf
 taskboard/config/risk-rules.conf
 taskboard/config/gate.conf
 taskboard/config/gate-paths.conf

@@ -15,6 +15,10 @@ role:change        ask
 proxy:read-only    allow
 alert:analyze      allow
 agent:flag         deny
+gh:read            allow    # tb gh comment list / review list(対象は owner/repo。例: @reviewer gh:approve imohiyoko/* = allow)
+gh:comment         ask      # tb gh comment add
+gh:review          ask      # tb gh review add(--comment / --request-changes)
+gh:approve         deny     # tb gh review approve(人が policy で渡すまで agent はできない)
 approve:*          deny
 policy:*           deny     # 権限の変更(対象は変える行の主体。例: worker1 policy:send:* worker2 = allow)
 *                  ask

@@ -2,6 +2,7 @@ package tbcli
 
 import (
 	"fmt"
+	"github.com/imohiyoko/herdrorchestrator/internal/gh"
 	"io"
 	"os"
 	"regexp"
@@ -73,7 +74,11 @@ func cmdCan(args []string, w, stderr io.Writer) error {
 			return err
 		}
 	}
-	if err := validAgentName(target); err != nil {
+	if strings.HasPrefix(op, "gh:") { // tb gh の操作の対象はリポジトリ(owner/repo)
+		if !gh.ValidRepo(target) {
+			return usage("can: gh:<操作> の対象は <owner>/<repo>: %s", target)
+		}
+	} else if err := validAgentName(target); err != nil {
 		return err
 	}
 	if err := validAction(op); err != nil {

@@ -1,0 +1,14 @@
+# tb gh の設定(<キー> = <値>)。編集するのは人だけ(agent が書けると、認証の迂回に使える)。tb は毎回読む。
+# 実際に読むのは github.conf(git 管理外)。使い始めるには: cp github.conf.example github.conf
+# 値は「絶対パスの実行ファイル [固定の引数...]」。gh と同じ引数を受けるもの(gh そのもの、ghtkn を通すラッパーなど)。
+# PATH 上の gh には落とさない。未指定・不正なら tb gh は何もせず止まる。値の中に # は書けない。docs/gh.md
+#
+# 操作ごとに引く順: gh_<操作> → gh_write(書く操作だけ)→ gh。読み(gh:read)は gh_read → gh。
+# GitHub App の token を操作ごとに分けるなら、操作ごとのキーに別のラッパー(か別の固定の引数)を書く。
+
+gh =                 # 共通(例: /usr/local/bin/tb-gh-wrapper)
+gh_read =            # コメント・レビューを読む(gh:read。pull_requests: read の app など)
+gh_write =           # 書く操作の共通(gh_comment / gh_review / gh_approve が空のとき)
+gh_comment =         # tb gh comment add(gh:comment)
+gh_review =          # tb gh review add(gh:review)
+gh_approve =         # tb gh review approve(gh:approve。approve だけ別の app にするなど)

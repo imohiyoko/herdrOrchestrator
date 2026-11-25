@@ -22,7 +22,7 @@ eq "perms: a path appears once" "$(pm_rows | awk '{print $1}' | sort | uniq -d)"
 eq "perms: the same operation has the same default and floor on every row" \
   "$(pm_rows | awk '{k=$2; v=$3" "$4; if (k in seen && seen[k] != v) print k; seen[k]=v}')" ""
 eq "perms: service names come from the naming skill" \
-  "$(pm_rows | awk '{split($2, a, ":"); print a[2]}' | sort -u | grep -vxE 'ticket|team|notify|message|digest|agent|alert|review|proposal|pr|gate|approval|recipe|conv|reminder|job|proxy|activity|handoff|config|policy')" ""
+  "$(pm_rows | awk '{split($2, a, ":"); print a[2]}' | sort -u | grep -vxE 'ticket|team|notify|message|digest|agent|alert|review|proposal|pr|gh|gate|approval|recipe|conv|reminder|job|proxy|activity|handoff|config|policy')" ""
 
 # requireHuman の文面("tb <語...>")は、表の inner の行に当たる。"tb config " + sub の + 変数 は * とみなす(例: config.*)
 pm_labels=$( (grep -rhoE --include='*.go' --exclude='*_test.go' '[rR]equireHuman\([^"]*"tb [^"]+"( *\+ *[A-Za-z_.]+)?' "$PM_ROOT/../internal" \

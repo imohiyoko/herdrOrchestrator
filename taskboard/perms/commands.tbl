@@ -252,6 +252,14 @@ notify.test              cmd:notify:test              deny        allow       in
 notify.flush             cmd:notify:flush             deny        allow       inner
 notify.event             cmd:notify:event             deny        allow       inner
 
+# --- gh(GitHub の PR のコメント・レビュー。中で gh:<操作> <owner/repo> を判定するので入口は allow)
+gh                       cmd:gh:help                  allow       allow       entry
+gh.comment.list          cmd:gh:comment-list          allow       allow       entry
+gh.comment.add           cmd:gh:comment-add           allow       allow       entry
+gh.review.list           cmd:gh:review-list           allow       allow       entry
+gh.review.add            cmd:gh:review-add            allow       allow       entry
+gh.review.approve        cmd:gh:review-approve        allow       allow       entry
+
 # --- pr
 pr                       cmd:pr:help                  allow       allow       entry
 pr.watch                 cmd:pr:watch                 allow       allow       entry
