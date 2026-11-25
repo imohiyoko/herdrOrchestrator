@@ -36,3 +36,43 @@ func TestRawEnv(t *testing.T) {
 		t.Errorf("default = %q", got)
 	}
 }
+
+func TestUnlimited(t *testing.T) {
+	for _, k := range []string{"max_running_agents", "max_working_agents", "incident_max_open", "analyst_max", "spawn_max_per_parent", "spawn_max_total"} {
+		for _, in := range []string{"unlimited", "Unlimited", " UNLIMITED "} {
+			if got, err := Norm(k, in); err != nil || got != Unlimited {
+				t.Errorf("Norm(%s, %q) = %q %v", k, in, got, err)
+			}
+		}
+	}
+	for _, k := range []string{"incident_roles", "human_handoff"} { // 数でないキーでは上限なしの意味にならない
+		if got, err := Norm(k, "unlimited"); err == nil {
+			t.Errorf("Norm(%s, unlimited) accepted: %q", k, got)
+		}
+	}
+	t.Setenv("TB_LIMIT_MAX_RUNNING_AGENTS", "unlimited")
+	if n, lim := (Set{}).Max("max_running_agents"); lim {
+		t.Errorf("env unlimited = %d limited", n)
+	}
+	t.Setenv("TB_LIMIT_MAX_RUNNING_AGENTS", "")
+	s := Set{conf: map[string]string{"incident_max_open": Unlimited, "analyst_max": "0", "max_working_agents": "0"}}
+	if _, lim := s.Max("incident_max_open"); lim {
+		t.Error("conf unlimited is limited")
+	}
+	if n, lim := s.Max("analyst_max"); !lim || n != 0 { // 0 は「許さない」のまま
+		t.Errorf("analyst_max 0 = %d %v", n, lim)
+	}
+	if _, lim := s.Max("max_working_agents"); lim { // max_working_agents の 0 は前から無制限
+		t.Error("max_working_agents 0 is limited")
+	}
+	if n, lim := s.Max("max_running_agents"); !lim || n != 30 { // 既定は変えない
+		t.Errorf("default running = %d %v", n, lim)
+	}
+	t.Setenv("TB_ANALYST_MAX", "unlimited")
+	if _, lim := (Set{}).Max("analyst_max"); lim {
+		t.Error("TB_ANALYST_MAX=unlimited is limited")
+	}
+	if Exceeds(1<<30, 0, false) || !Exceeds(3, 2, true) || Exceeds(2, 2, true) || Show(0, false) != "無制限" || Show(5, true) != "5" {
+		t.Error("Exceeds / Show")
+	}
+}

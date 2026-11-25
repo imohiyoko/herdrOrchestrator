@@ -49,21 +49,55 @@ var (
 
 func trim(s string) string { return strings.Trim(s, " \t\n\v\f\r") }
 
+// Unlimited は数の上限のキーで「上限なし」を表す値。
+const Unlimited = "unlimited"
+
+// IsUnlimited は v が「上限なし」の書き方か(unlimited。大文字小文字は問わない)。
+func IsUnlimited(v string) bool { return strings.EqualFold(trim(v), Unlimited) }
+
+// Cap は数の上限の値を読む。limited=false なら上限なし(unlimited)。
+// 数でない値は 0(上限 0)とみなす。max_working_agents の 0 = 無制限は呼ぶ側(Set.Max)が決める。
+func Cap(v string) (n int, limited bool) {
+	if IsUnlimited(v) {
+		return 0, false
+	}
+	n, _ = strconv.Atoi(trim(v))
+	return n, true
+}
+
+// Exceeds は n が上限 max(limited=false なら上限なし)を超えるか。
+func Exceeds(n, max int, limited bool) bool { return limited && n > max }
+
+// Show は上限を表示用の文字列にする(上限なしは「無制限」)。
+func Show(max int, limited bool) string {
+	if !limited {
+		return "無制限"
+	}
+	return strconv.Itoa(max)
+}
+
 // Norm は limit_norm: 値を検査して正規化する。通らなければ理由を err に入れる。
+// 数の上限のキーは unlimited(上限なし)も受け付ける。
 func Norm(k, v string) (string, error) {
 	switch k {
 	case "max_running_agents":
+		if IsUnlimited(v) {
+			return Unlimited, nil
+		}
 		if !reInt.MatchString(v) {
-			return "", fmt.Errorf("%s は 1 以上の整数: %s", k, v)
+			return "", fmt.Errorf("%s は 1 以上の整数か unlimited: %s", k, v)
 		}
 		n, _ := strconv.Atoi(v)
 		if n < 1 {
-			return "", fmt.Errorf("%s は 1 以上の整数: %s", k, v)
+			return "", fmt.Errorf("%s は 1 以上の整数か unlimited: %s", k, v)
 		}
 		return strconv.Itoa(n), nil
 	case "max_working_agents", "incident_max_open", "analyst_max", "spawn_max_per_parent", "spawn_max_total":
+		if IsUnlimited(v) {
+			return Unlimited, nil
+		}
 		if !reInt.MatchString(v) {
-			return "", fmt.Errorf("%s は 0 以上の整数: %s", k, v)
+			return "", fmt.Errorf("%s は 0 以上の整数か unlimited: %s", k, v)
 		}
 		n, _ := strconv.Atoi(v)
 		return strconv.Itoa(n), nil
@@ -112,7 +146,9 @@ func Load(db *sql.DB, session string) Set {
 				continue
 			}
 			k, v = trim(k), trim(v)
-			if !reDigits.MatchString(v) {
+			if IsUnlimited(v) {
+				v = Unlimited
+			} else if !reDigits.MatchString(v) {
 				continue
 			}
 			switch k {
@@ -175,10 +211,23 @@ func (s Set) Get(k string) string {
 	}
 	if k == "analyst_max" {
 		if v := os.Getenv("TB_ANALYST_MAX"); v != "" {
+			if IsUnlimited(v) {
+				return Unlimited
+			}
 			return v
 		}
 	}
 	return Default(k)
+}
+
+// Max は数の上限のキーの値。limited=false なら上限なし。
+// max_working_agents は 0 も上限なし(前からの約束)。
+func (s Set) Max(k string) (n int, limited bool) {
+	n, limited = Cap(s.Get(k))
+	if k == "max_working_agents" && n <= 0 {
+		return 0, false
+	}
+	return n, limited
 }
 
 // ModeKeys は LIMIT_MODE_KEYS: tb limits mode が触るキー。

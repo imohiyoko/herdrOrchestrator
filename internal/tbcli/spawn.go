@@ -25,7 +25,7 @@ import (
 
 const briefMax = 2000
 
-// spawnPolicy は load_spawn_policy の結果。
+// spawnPolicy は load_spawn_policy の結果。per / total / depth が負なら上限なし(unlimited)。
 type spawnPolicy struct {
 	roles       []string
 	per, total  int
@@ -48,7 +48,9 @@ func loadSpawnPolicy(db *store.DB) spawnPolicy {
 			case "allowed_roles":
 				p.roles = strings.Fields(strings.ReplaceAll(v, ",", " "))
 			case "max_depth":
-				if reDigits.MatchString(v) {
+				if limits.IsUnlimited(v) {
+					p.depth = -1
+				} else if reDigits.MatchString(v) {
 					p.depth, _ = strconv.Atoi(v)
 				}
 			case "model":
@@ -62,8 +64,16 @@ func loadSpawnPolicy(db *store.DB) spawnPolicy {
 	}
 	// max_children_* は limits の spawn_max_per_parent / spawn_max_total が優先(limits_override_spawn)
 	set := limits.Load(db.DB, db.Session)
-	p.per, p.total = atoi(set.Get("spawn_max_per_parent")), atoi(set.Get("spawn_max_total"))
+	p.per, p.total = spawnCap(set.Get("spawn_max_per_parent")), spawnCap(set.Get("spawn_max_total"))
 	return p
+}
+
+// spawnCap は spawn の数の上限を読む。unlimited は -1(上限なし)。
+func spawnCap(v string) int {
+	if n, lim := limits.Cap(v); lim {
+		return n
+	}
+	return -1
 }
 
 func spawnFrozen(db *store.DB) bool {
@@ -72,15 +82,16 @@ func spawnFrozen(db *store.DB) bool {
 	return v == "1"
 }
 
-// spawnDepthOf は spawn_depth_of: 0 = 人が立てた agent、1 = 子。台帳の spawned_by を辿る。
+// spawnDepthOf は spawn_depth_of: 0 = 人が立てた agent、1 = 子。台帳の spawned_by を辿る(輪になっていたらそこで止める)。
 func spawnDepthOf(db *store.DB, n string) int {
-	d := 0
-	for d < 20 {
+	d, seen := 0, map[string]bool{n: true}
+	for {
 		var p string
 		_ = db.QueryRow(`SELECT COALESCE(spawned_by,'') FROM agents WHERE name=?`, n).Scan(&p)
-		if p == "" {
+		if p == "" || seen[p] {
 			break
 		}
+		seen[p] = true
 		d++
 		n = p
 	}
@@ -111,7 +122,7 @@ func spawnCountChildren(db *store.DB, parent string, exclude int64) int {
 
 // spawnNextName は spawn_next_name: <親>-s<N>。N は台帳・承認待ち・herdr のどれにも無い最小の番号。
 func spawnNextName(db *store.DB, live []herdr.Agent, parent string) (string, bool) {
-	for n := 1; n < 1000; n++ {
+	for n := 1; n < 1000000; n++ { // 子の数の上限を外しても名前が尽きないように大きく取る
 		name := parent + "-s" + strconv.Itoa(n)
 		var one int
 		if db.QueryRow(`SELECT 1 FROM agents WHERE name=? UNION ALL SELECT 1 FROM agent_ops WHERE op='new' AND status='pending' AND target=?`, name, name).Scan(&one) == nil {
@@ -179,7 +190,7 @@ func spawnCheck(db *store.DB, st tickets.StatusSet, p spawnPolicy, parent, role,
 	if _, ok := liveOf(live, parent); !ok {
 		return "親 " + parent + " は herdr で動いていません", live
 	}
-	if spawnDepthOf(db, parent)+1 > p.depth {
+	if p.depth >= 0 && spawnDepthOf(db, parent)+1 > p.depth {
 		return "深さの上限(" + strconv.Itoa(p.depth) + ")を超えます(子は子を立てられません)", live
 	}
 	allowed := false
@@ -202,15 +213,15 @@ func spawnCheck(db *store.DB, st tickets.StatusSet, p spawnPolicy, parent, role,
 	if own == 0 {
 		return "--task " + task + " は " + parent + " が持つ " + st.Main("active") + " のタスクではありません", live
 	}
-	if spawnCountChildren(db, parent, exclude) >= p.per {
+	if p.per >= 0 && spawnCountChildren(db, parent, exclude) >= p.per {
 		return parent + " の子の数が上限(" + strconv.Itoa(p.per) + ")です", live
 	}
-	if spawnCountChildren(db, "", exclude) >= p.total {
+	if p.total >= 0 && spawnCountChildren(db, "", exclude) >= p.total {
 		return "全体の子の数が上限(" + strconv.Itoa(p.total) + ")です", live
 	}
 	var running int
 	_ = db.QueryRow(`SELECT COUNT(*) FROM agents WHERE state='running'`).Scan(&running)
-	if max := atoi(limits.Load(db.DB, db.Session).Get("max_running_agents")); running >= max {
+	if max, lim := limits.Load(db.DB, db.Session).Max("max_running_agents"); lim && running >= max {
 		return fmt.Sprintf("動作中の agent が上限です(動作中 %d、max_running_agents=%d)。人が tb agent-shed の候補を止めるか、tb limits set max_running_agents <数>", running, max), live
 	}
 	return "", live

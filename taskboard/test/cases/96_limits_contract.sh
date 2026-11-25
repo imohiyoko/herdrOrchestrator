@@ -19,7 +19,7 @@ eq "get: spawn policy fallback" "$(TB_SPAWN_POLICY=$TMP/lc-spawn.conf $TB limits
 eq "get: env wins" "$(TB_LIMIT_MAX_RUNNING_AGENTS=05 $TB limits get max_running_agents; TB_LIMIT_MAX_RUNNING_AGENTS=0 $TB limits get max_running_agents; TB_ANALYST_MAX=9 $TB limits get analyst_max)" $'5\n30\n9'
 
 eq "set: wrong args" "$(lcerr $TB limits set max_running_agents)" $'tb: limits set <キー> <値>(キー: max_running_agents max_working_agents incident_max_open incident_roles analyst_max spawn_max_per_parent spawn_max_total watchers human_handoff。空にする値は \'\')\n(tb help で使い方)\nrc=2'
-eq "set: bad value" "$(lcerr $TB limits set max_running_agents 0)" $'tb: limits set: max_running_agents は 1 以上の整数: 0\n(tb help で使い方)\nrc=2'
+eq "set: bad value" "$(lcerr $TB limits set max_running_agents 0)" $'tb: limits set: max_running_agents は 1 以上の整数か unlimited: 0\n(tb help で使い方)\nrc=2'
 eq "set: bad role" "$(lcerr $TB limits set incident_roles boss)" $'tb: limits set: incident_roles に使えない役: boss(使えるのは investigator containment fixer lateral verifier)\n(tb help で使い方)\nrc=2'
 eq "set: no roles" "$(lcerr $TB limits set incident_roles ' , ')" $'tb: limits set: incident_roles は 1 つ以上の役が要ります\n(tb help で使い方)\nrc=2'
 eq "set: bad watcher" "$(lcerr $TB limits set watchers '-x')" $'tb: limits set: watchers に使えない名前: -x\n(tb help で使い方)\nrc=2'
@@ -68,6 +68,17 @@ eq "check incident-open: ok" "$(lcerr $TB limits check incident-open)" $'ok(動�
 eq "check incident-open: open incidents" "$(FAKE_WORKSPACES='[{"label":"inc-001"},{"label":"inc-002"}]' lcerr $TB limits check incident-open)" $'tb: 障害 workspace を開けません(開いている障害 2、上限 incident_max_open=1)。何も作りません。上限を変えるのは人(tb limits set incident_max_open)\nrc=4'
 eq "check incident-open: agent list fails" "$(FAKE_LIST_FAIL=1 lcerr $TB limits check incident-open)" $'tb: herdr agent list に失敗したため、動作中の agent の数を確かめられません\nrc=1'
 eq "check incident-open: workspace list fails" "$(FAKE_WS_LIST_FAIL=1 lcerr $TB limits check incident-open)" $'tb: herdr workspace list に失敗したため、開いている障害の数を確かめられません\nrc=1'
+
+# ---- unlimited: 数の上限を外す(既定は変えない)
+eq "unlimited: set accepts it (any case) for every count key" "$(for k in max_running_agents max_working_agents incident_max_open analyst_max spawn_max_per_parent spawn_max_total; do lcerr $TB limits set $k Unlimited; done | tr '\n' ,)" "max_running_agents = unlimited,rc=0,max_working_agents = unlimited,rc=0,incident_max_open = unlimited,rc=0,analyst_max = unlimited,rc=0,spawn_max_per_parent = unlimited,rc=0,spawn_max_total = unlimited,rc=0,"
+eq "unlimited: show / --json" "$(FAKE_WORKSPACES='[{"label":"inc-001"},{"label":"inc-002"},{"label":"inc-003"}]' $TB limits show --line; FAKE_WORKSPACES='[{"label":"inc-001"}]' $TB limits show --json | jq -c '[.running.max, .working.max, .incidents.max, .analysts.max, .spawn.max, .over, .limits.max_running_agents.value]')" $'running 3/無制限  working 2/無制限  incidents 3/無制限  analysts 0/無制限  spawn 0/無制限  mode custom\n[null,null,null,null,null,[],"unlimited"]'
+eq "unlimited: check running / incident-open pass" "$(lcerr $TB limits check running; FAKE_WORKSPACES='[{"label":"inc-001"},{"label":"inc-002"},{"label":"inc-003"}]' lcerr $TB limits check incident-open)" $'ok\nrc=0\nok(動作中 3 + 5 <= 無制限、障害 3 < 無制限)\nrc=0'
+$TB limits set max_running_agents 2 >/dev/null
+eq "unlimited: env TB_LIMIT_<KEY>=unlimited wins over a number in the conf" "$(TB_LIMIT_MAX_RUNNING_AGENTS=unlimited lcerr $TB limits check running; TB_LIMIT_MAX_RUNNING_AGENTS=unlimited $TB limits get max_running_agents)" $'ok\nrc=0\nunlimited'
+eq "unlimited: a non-word value is still refused" "$(lcerr $TB limits set max_running_agents infinite)" $'tb: limits set: max_running_agents は 1 以上の整数か unlimited: infinite\n(tb help で使い方)\nrc=2'
+$TB limits set max_running_agents 30 >/dev/null; $TB limits set max_working_agents 1 >/dev/null
+for k in incident_max_open analyst_max spawn_max_per_parent spawn_max_total; do $TB limits unset $k >/dev/null; done
+$TB limits set incident_max_open 1 >/dev/null
 
 unset TB_LIMITS
 eq "db: set writes this session's row" "$(lcerr $TB limits set analyst_max 1; sqlite3 "$TB_DB" "SELECT herdr_session, body FROM config WHERE key='limits';"; sqlite3 "$TB_DB" "SELECT changed_by, how FROM config_changes WHERE key='limits' ORDER BY id DESC LIMIT 1;")" $'analyst_max = 1\nrc=0\ndefault|# tb limits が書いた制限の設定。編集するのは人だけ(項目は limits.conf.example)。環境変数 TB_LIMIT_<キー大文字> が優先。\nanalyst_max = 1\nmode = custom\nhuman|limits'

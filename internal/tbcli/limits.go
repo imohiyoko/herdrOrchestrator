@@ -178,7 +178,7 @@ func cmdLimits(args []string, w, stderr io.Writer) error {
 		switch args[0] {
 		case "running":
 			if running, _, ok := limitsCounts(db); ok { // 同期に失敗したら通す(起動側が失敗を報告する)
-				if max := atoi(set.Get("max_running_agents")); running+1 > max {
+				if max, lim := set.Max("max_running_agents"); limits.Exceeds(running+1, max, lim) {
 					fmt.Fprintf(stderr, "tb: 動作中の agent が上限です(動作中 %d、上限 max_running_agents=%d)。何も作りません。 止める候補は tb agent-shed、上限を変えるのは人(tb limits set max_running_agents <数>)\n", running, max)
 					return &exit{4, ""}
 				}
@@ -212,13 +212,14 @@ func limitsEdit(db *store.DB, kvs []limits.KV) error {
 
 func limitsCheckIncidentOpen(db *store.DB, set limits.Set, w, stderr io.Writer) error {
 	n := len(strings.Fields(set.Get("incident_roles")))
-	max, imax := atoi(set.Get("max_running_agents")), atoi(set.Get("incident_max_open"))
+	max, mlim := set.Max("max_running_agents")
+	imax, ilim := set.Max("incident_max_open")
 	running, _, ok := limitsCounts(db)
 	if !ok {
 		fmt.Fprintln(stderr, "tb: herdr agent list に失敗したため、動作中の agent の数を確かめられません")
 		return &exit{exitErr, ""}
 	}
-	if running+n > max {
+	if limits.Exceeds(running+n, max, mlim) {
 		fmt.Fprintf(stderr, "tb: 障害 workspace を開けません(動作中 %d + 起動する役 %d > 上限 max_running_agents=%d)。何も作りません。 止める候補は tb agent-shed、起動する役を減らす・上限を変えるのは人(tb limits set incident_roles / max_running_agents)\n", running, n, max)
 		return &exit{4, ""}
 	}
@@ -227,11 +228,11 @@ func limitsCheckIncidentOpen(db *store.DB, set limits.Set, w, stderr io.Writer) 
 		fmt.Fprintln(stderr, "tb: herdr workspace list に失敗したため、開いている障害の数を確かめられません")
 		return &exit{exitErr, ""}
 	}
-	if open >= imax {
+	if ilim && open >= imax {
 		fmt.Fprintf(stderr, "tb: 障害 workspace を開けません(開いている障害 %d、上限 incident_max_open=%d)。何も作りません。上限を変えるのは人(tb limits set incident_max_open)\n", open, imax)
 		return &exit{4, ""}
 	}
-	fmt.Fprintf(w, "ok(動作中 %d + %d <= %d、障害 %d < %d)\n", running, n, max, open, imax)
+	fmt.Fprintf(w, "ok(動作中 %d + %d <= %s、障害 %d < %s)\n", running, n, limits.Show(max, mlim), open, limits.Show(imax, ilim))
 	return nil
 }
 
@@ -248,31 +249,47 @@ func limitsShow(db *store.DB, set limits.Set, args []string, w, stderr io.Writer
 		}
 	}
 	running, working, synced := limitsCounts(db)
-	rmax, wmax := atoi(set.Get("max_running_agents")), atoi(set.Get("max_working_agents"))
-	imax, amax, smax := atoi(set.Get("incident_max_open")), atoi(set.Get("analyst_max")), atoi(set.Get("spawn_max_total"))
+	rmax, rlim := set.Max("max_running_agents")
+	wmax, wlim := set.Max("max_working_agents")
+	imax, ilim := set.Max("incident_max_open")
+	amax, alim := set.Max("analyst_max")
+	smax, slim := set.Max("spawn_max_total")
 	inc, incOK := openIncidents()
 	var an, sp int
 	_ = db.QueryRow(`SELECT COUNT(*) FROM alerts WHERE status='analyzing'`).Scan(&an)
 	_ = db.QueryRow(`SELECT COUNT(*) FROM agents WHERE state='running' AND spawned_by IS NOT NULL`).Scan(&sp)
 	var over []string
-	if running > rmax {
+	if limits.Exceeds(running, rmax, rlim) {
 		over = append(over, "running")
 	}
-	if wmax > 0 && working > wmax {
+	if limits.Exceeds(working, wmax, wlim) {
 		over = append(over, "working")
 	}
-	if incOK && inc > imax {
+	if incOK && limits.Exceeds(inc, imax, ilim) {
 		over = append(over, "incidents")
 	}
-	if an > amax {
+	if limits.Exceeds(an, amax, alim) {
 		over = append(over, "analysts")
 	}
-	if sp > smax {
+	if limits.Exceeds(sp, smax, slim) {
 		over = append(over, "spawn")
 	}
 	if js {
 		num := func(n int) any { return jv.Number(strconv.Itoa(n)) }
-		pair := func(n any, max int) jv.Obj { return jv.Obj{{K: "n", V: n}, {K: "max", V: num(max)}} }
+		// 上限なしの max は null(max_working_agents の 0 は前からの約束どおり 0)
+		pair := func(n any, max int, lim bool) jv.Obj {
+			var m any
+			if lim {
+				m = num(max)
+			}
+			return jv.Obj{{K: "n", V: n}, {K: "max", V: m}}
+		}
+		wpair := func(n any) jv.Obj {
+			if set.Get("max_working_agents") == "0" {
+				return jv.Obj{{K: "n", V: n}, {K: "max", V: num(0)}}
+			}
+			return pair(n, wmax, wlim)
+		}
 		var incN any
 		if incOK {
 			incN = num(inc)
@@ -286,19 +303,17 @@ func limitsShow(db *store.DB, set limits.Set, args []string, w, stderr io.Writer
 		for _, o := range over {
 			ov = append(ov, o)
 		}
-		fmt.Fprintln(w, jv.Compact(jv.Obj{{K: "running", V: pair(num(running), rmax)}, {K: "working", V: pair(num(working), wmax)},
-			{K: "incidents", V: pair(incN, imax)}, {K: "analysts", V: pair(num(an), amax)}, {K: "spawn", V: pair(num(sp), smax)},
+		fmt.Fprintln(w, jv.Compact(jv.Obj{{K: "running", V: pair(num(running), rmax, rlim)}, {K: "working", V: wpair(num(working))},
+			{K: "incidents", V: pair(incN, imax, ilim)}, {K: "analysts", V: pair(num(an), amax, alim)}, {K: "spawn", V: pair(num(sp), smax, slim)},
 			{K: "mode", V: set.Mode}, {K: "over", V: ov}, {K: "limits", V: keys}}))
 		return nil
 	}
-	ws, is := strconv.Itoa(wmax), "?"
-	if wmax == 0 {
-		ws = "無制限"
-	}
+	is := "?"
 	if incOK {
 		is = strconv.Itoa(inc)
 	}
-	fmt.Fprintf(w, "running %d/%d  working %d/%s  incidents %s/%d  analysts %d/%d  spawn %d/%d  mode %s\n", running, rmax, working, ws, is, imax, an, amax, sp, smax, set.Mode)
+	fmt.Fprintf(w, "running %d/%s  working %d/%s  incidents %s/%s  analysts %d/%s  spawn %d/%s  mode %s\n", running, limits.Show(rmax, rlim), working, limits.Show(wmax, wlim),
+		is, limits.Show(imax, ilim), an, limits.Show(amax, alim), sp, limits.Show(smax, slim), set.Mode)
 	if line {
 		return nil
 	}

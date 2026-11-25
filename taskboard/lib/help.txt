@@ -280,7 +280,8 @@ tb agent unfreeze   解除する(人の端末からだけ)
 制限(動作 agent 数など。config/limits.conf は人だけが編集。優先は 環境変数 TB_LIMIT_<キー大文字> > limits.conf > 既定):
 tb limits [show] [--json|--line]   1 行の現況(例: running 17/30  working 6/無制限  incidents 1/2  analysts 1/2  spawn 1/4  mode normal)と、各キーの値と出どころ
 tb limits set <キー> <値>          検査して limits.conf に書く(人の端末からだけ)。キー: max_running_agents max_working_agents incident_max_open
-                                   incident_roles analyst_max spawn_max_per_parent spawn_max_total watchers human_handoff。リストは空白かカンマ区切り
+                                   incident_roles analyst_max spawn_max_per_parent spawn_max_total watchers human_handoff。リストは空白かカンマ区切り。
+                                   数の上限のキーは unlimited で上限なし(例: tb limits set max_running_agents unlimited)
 tb limits unset <キー>             limits.conf から消す(既定に戻る。人だけ)
 tb limits mode normal|lean|minimal   まとめて絞る・戻す(人だけ。値の表は lib/limits.sh の先頭)
 tb limits get <キー>               今の値だけを出す

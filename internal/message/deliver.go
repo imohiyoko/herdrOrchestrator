@@ -247,8 +247,8 @@ func deliveryRules(j *approval.Judge, rules []string, from, to, kind string, exa
 
 // SendGate は limits_send_gate: 作業中の agent が上限なら理由を stderr に出して false。
 func SendGate(db *sql.DB, session, target string, stderr io.Writer) bool {
-	max, _ := strconv.Atoi(limits.Load(db, session).Get("max_working_agents"))
-	if max <= 0 {
+	max, lim := limits.Load(db, session).Max("max_working_agents")
+	if !lim {
 		return true
 	}
 	as, err := herdr.Agents()

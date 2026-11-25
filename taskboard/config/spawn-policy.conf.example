@@ -8,6 +8,6 @@
 allowed_roles = -           # 子に使える役割(roles/<名前>.md)。空白かカンマ区切り。- は役割なしの子(tb agent-spawn -)。役割の利用例を入れたら worker などを足す。止血・修正・障害 workspace の役は入れない
 max_children_per_parent = 2 # 1 体の親が同時に持てる子の数
 max_children_total = 6      # 全体の子の数
-max_depth = 1               # 1 = 子は子を立てられない
+max_depth = 1               # 1 = 子は子を立てられない。数の 3 つ(max_children_* / max_depth)は unlimited で上限なし
 model = sonnet              # 子のモデル(呼び出し側は選べない)
 denied_parents =            # 子を立てられない親の名前(glob。空白区切り。@<役割> なら役割で)。例: inc*-*(障害対応の workspace の agent など)、@watcher
