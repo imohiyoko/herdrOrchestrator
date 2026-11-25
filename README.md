@@ -36,6 +36,7 @@ bash tests/run-all.sh          # 全部(Go のテストは go test ./...。webui
 bash tests/run-all.sh -j 4     # 全部を 4 本ずつ並列に
 bash tests/run-all.sh --list   # 組の一覧(GitHub Actions は組ごとに別のジョブで並列に流す)
 bash tests/run-all.sh webui    # 組を選んで流す
+bash tests/run-all.sh --affected   # origin/main から変えたファイルに関わる組だけ(PR の CI と同じ決め方。tests/affected.sh)
 bash taskboard/test/run.sh     # ケースを並列に(-j N で本数、ケース名を渡すとそれだけ)
 bash webui/tests/run.sh
 bash scheduler/tests/run.sh

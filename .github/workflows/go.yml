@@ -3,17 +3,44 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
+  # 流す Go のパッケージと、配布物のビルドをするかは tests/affected.sh が変えたファイルから決める
+  # (PR だけ。main への push と手で流すときは全部)。決め方は tests/affected.sh の頭
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.plan.outputs.go }}
+      snapshot: ${{ steps.plan.outputs.snapshot }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2    # PR はマージ後のコミット。1 つ目の親(main)との差が PR の変更
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+        run: bash tests/affected.sh --ci "$EVENT"
   # herdrctl(ADR 0002)を 3 つの OS の上でテストする。Windows でも毎回動くことを確かめる
   test:
+    needs: plan
+    if: needs.plan.outputs.go != ''
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     name: go test (${{ matrix.os }})
+    env:
+      PKGS: ${{ needs.plan.outputs.go }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
         with:
@@ -21,11 +48,13 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - run: go vet ./...
-      - run: go test ./...
+      - run: go vet $PKGS
+      - run: go test $PKGS
       - run: go run ./cmd/herdrctl version
   # 配布する 6 つ(darwin・windows・linux × amd64・arm64)が全部ビルドできるか。リリースと同じ設定で、公開はしない
   snapshot:
+    needs: plan
+    if: needs.plan.outputs.snapshot == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,10 +67,12 @@ jobs:
         with:
           version: "~> v2"
           args: release --snapshot --clean
-  # ブランチ保護で必須にする 1 つのチェック
+  # ブランチ保護で必須にする 1 つのチェック。変えたファイルに関わらず飛ばしたジョブは通す(plan が通っていることは確かめる)
   go-all:
     if: always()
-    needs: [test, snapshot]
+    needs: [plan, test, snapshot]
     runs-on: ubuntu-latest
     steps:
-      - run: '[ "${{ needs.test.result }}" = success ] && [ "${{ needs.snapshot.result }}" = success ]'
+      - run: |
+          ok() { case "$1" in success|skipped) ;; *) return 1;; esac; }
+          [ "${{ needs.plan.result }}" = success ] && ok "${{ needs.test.result }}" && ok "${{ needs.snapshot.result }}"
