@@ -24,7 +24,7 @@ import (
 const approvalUsage = `tb approval check <操作> [--by A] [--to 宛先 --text 本文 [--kind K]]   1 行目 allow|ask|deny、2 行目 rule:(終了コード 0=allow 20=ask 4=deny)
 tb approval allow <操作のパターン>    今後は許可する(人だけ。設定 policy に * <操作> <対象> = allow の行を書く)
 tb approval ask <操作のパターン>      承認制に戻す(人だけ。設定 policy に * <操作> <対象> = ask の行を書く)
-tb approval list [--json]             承認待ちの一覧(Q-<n>。送信・agent の操作・ask で止まったコマンド。優先度の高い順、同じなら古い順)
+tb approval list [--mine] [--json]    承認待ちの一覧(Q-<n>。送信・agent の操作・ask で止まったコマンド。優先度の高い順、同じなら古い順。--mine は自分が決められるものだけ)
 tb approval history [--mine|--by A] [--limit N] [--json]   allow / ask / deny の記録(新しい順。判定・状態・依頼者・決めた人・当たった行)
 tb approval approve Q-<n> [--always]  承認する(送信は届け、agent の操作は実行する。コマンドは依頼した agent に知らせ、依頼者が run で実行する。
                                       deny の記録 Q-<n> は人だけが例外として承認できる。前の O-<n> / L-<n> も受ける)

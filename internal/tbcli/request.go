@@ -119,9 +119,17 @@ func setSourcePriority(db *sql.DB, source string, sid int64) {
 }
 
 // pendingQ は今積んだ送信・agent の操作の承認待ちの ID(TB_PRIORITY があれば優先度も付ける)。
+// 決められる agent にも知らせる(同じ Q-<n> は 1 度だけ)。
 func pendingQ(db *sql.DB, source string, sid int64) string {
 	setSourcePriority(db, source, sid)
-	return qidOf(db, source, sid)
+	q := qidOf(db, source, sid)
+	if q != "" {
+		var session string
+		if db.QueryRow(`SELECT herdr_session FROM requests WHERE id=?`, qidNum(q)).Scan(&session) == nil {
+			notifyApprovers(db, session, qidNum(q))
+		}
+	}
+	return q
 }
 
 // queueCmd は perms.Queue: ask で止まったコマンドを、引数と標準入力ごと積む。
@@ -230,21 +238,57 @@ func insertCmd(tier, op, target, rule string, withStdin bool) (string, error) {
 		return "", err
 	}
 	id, _ := res.LastInsertId()
+	if tier == "ask" {
+		notifyApprovers(db, session, id)
+	}
 	return "Q-" + strconv.FormatInt(id, 10), nil
 }
 
 // approvalList は tb approval list(承認待ち Q-<n>。優先度の高い順、同じなら古い順)。
 func approvalList(db *store.DB, args []string, w io.Writer) error {
-	asJSON := false
+	asJSON, mine := false, false
 	for _, a := range args {
-		if a != "--json" {
+		switch a {
+		case "--json":
+			asJSON = true
+		case "--mine":
+			mine = true
+		default:
 			return usage("approval list: 不明な引数 %s", a)
 		}
-		asJSON = true
+	}
+	filter := ""
+	if mine {
+		// 呼んだ agent が approve: で決められるものだけ(人は全部)
+		who, err := callerName()
+		if err != nil {
+			return die("herdr agent list に失敗したため、実行者を特定できません")
+		}
+		var all []int64
+		err = qrows(db.DB, `SELECT r.id FROM requests r WHERE `+reqPending, nil, func(_ []string, vals []any) error {
+			id, _ := strconv.ParseInt(fmt.Sprint(vals[0]), 10, 64)
+			all = append(all, id)
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		// 行を読み終えてから 1 件ずつ見る(読みかけのまま同じ DB に問い合わせると、接続が 1 本のとき止まる)
+		var ids []string
+		j := approval.NewJudge(db.DB, db.Session)
+		for _, id := range all {
+			if r, ok, _ := loadRequest(db.DB, id); ok && canDecide(db, j, r, who) {
+				ids = append(ids, strconv.FormatInt(id, 10))
+			}
+		}
+		if len(ids) == 0 {
+			ids = []string{"-1"}
+		}
+		filter = ` AND r.id IN (` + strings.Join(ids, ",") + `)`
 	}
 	q := `SELECT 'Q-'||r.id AS id, CASE r.priority WHEN 2 THEN 'high' WHEN 0 THEN 'low' ELSE 'normal' END AS priority,
 	  r.op, r.requester AS requested_by, r.target, r.created_at, r.detail
-	  FROM requests r WHERE ` + reqPending + ` ORDER BY r.priority DESC, r.id`
+	  FROM requests r WHERE ` + reqPending + filter + ` ORDER BY r.priority DESC, r.id`
 	if asJSON {
 		rows, err := sqlObjs(db.DB, nil, q)
 		if err != nil {
