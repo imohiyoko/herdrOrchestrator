@@ -5,12 +5,14 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
-// approvals.go は Q チケット(requests の Q-<n>)の一覧(/approvals)。読み取りのみ。
+// approvals.go は Q チケット(requests の Q-<n>)の一覧(/approvals)と、その承認・却下(POST /approval-op)。
 // allow / ask / deny のどれも 1 行の記録なので、誰が依頼し(requester)、何が・誰が決めたか(tier・rule・decided_by)をここで追う。
 // 表示は 2 つ: 一覧(新しい順)とボード(状態ごとの列。スプリントのボードと同じ見た目)。
-// 承認・却下のボタンはない(承認は人が手元で tb approval approve Q-<n>)。
+// 承認待ち(pending)には承認・却下、policy が拒否したもの(denied)には「例外として 1 回許可」のボタンを出す。
+// 書き込みは tb approval approve / reject Q-<n> が行う(Web UI からは人の操作。deny の例外は tb の側でも人だけ)。
 
 const approvalsMax = 200 // 1 画面に出す最大件数
 
@@ -117,7 +119,7 @@ func (s *Server) pageApprovals(q *rq, c pageCtx) (string, string) {
 		}
 		return "/approvals?" + pyURLEncode(kv)
 	}
-	body := ""
+	body := doneNotice(c) + editErr(c)
 	if len(errs) > 0 {
 		body += errHTML(strings.Join(errs, "。"))
 	}
@@ -240,6 +242,26 @@ func (s *Server) pageApprovals(q *rq, c pageCtx) (string, string) {
 		}
 		return `<details><summary>中身</summary>` + strings.Join(parts, "") + `</details>`
 	}
+	decide := func(r row) string {
+		if c.csrf == "" {
+			return ""
+		}
+		id := strconv.FormatInt(intOf(r["id"]), 10)
+		hid := `<input type=hidden name=csrf value="` + E(c.csrf) + `"><input type=hidden name=id value="` + id + `">`
+		form := func(op, label, extra string) string {
+			return `<form method=post action="/approval-op" style="display:inline">` + hid + `<input type=hidden name=op value=` + op + `>` +
+				extra + `<button type=submit>` + label + `</button></form> `
+		}
+		switch pyStr(r["status"]) {
+		case "pending":
+			return form("approve", "承認", "") + form("reject", "却下", "")
+		case "denied":
+			if pyStr(r["tier"]) == "deny" {
+				return form("exception", "例外として 1 回許可", `<label class=note><input type=checkbox name=confirm value=1 required>policy の拒否を越えて許可する</label> `)
+			}
+		}
+		return ""
+	}
 	if f.view == "board" {
 		var heads, cells []string
 		for _, col := range cols {
@@ -249,9 +271,10 @@ func (s *Server) pageApprovals(q *rq, c pageCtx) (string, string) {
 			var cs []string
 			for _, r := range rows {
 				if pyStr(r["status"]) == col {
+					d := decide(r)
 					cs = append(cs, `<div class=card>`+qlink(r)+` <span class=note>`+E(pyStr(r["tier"])+" / "+priorityLabel(r["priority"]))+`</span><br>`+
 						E(short(pyStr(r["op"])+" "+pyStr(r["target"]), 60))+`<br><span class=note>`+E(pyStr(r["requester"]))+` → `+
-						E(orStr(pyStr(r["decided_by"]), "-"))+`</span></div>`)
+						E(orStr(pyStr(r["decided_by"]), "-"))+`</span>`+ifs(d != "", `<br>`+d)+`</div>`)
 				}
 			}
 			if len(cs) == 0 && scount[col] == 0 {
@@ -270,13 +293,61 @@ func (s *Server) pageApprovals(q *rq, c pageCtx) (string, string) {
 		for _, r := range rows {
 			out = append(out, []string{qlink(r), E(pyStr(r["tier"])), stHTML(pyStr(r["status"])), req(pyStr(r["requester"])),
 				E(short(pyStr(r["op"])+" "+pyStr(r["target"]), 80)), who(pyStr(r["decided_by"])),
-				E(pyStr(r["created_at"])), E(orStr(pyStr(r["decided_at"]), "-")), more(r)})
+				E(pyStr(r["created_at"])), E(orStr(pyStr(r["decided_at"]), "-")), more(r), decide(r)})
 		}
-		body += `<div class=tscroll>` + table([]string{"Q", "判定", "状態", "依頼者", "何を", "決めた人", "依頼(UTC)", "決定(UTC)", ""}, out) + `</div>`
+		body += `<div class=tscroll>` + table([]string{"Q", "判定", "状態", "依頼者", "何を", "決めた人", "依頼(UTC)", "決定(UTC)", "", "操作"}, out) + `</div>`
 	}
 	body += fmt.Sprintf("<p class=note>tb が判定したもの(allow / ask / deny)はどれも Q-&lt;n&gt; として残ります。新しい順に最大 %d 件。"+
 		"allow は policy が許可した記録(決めた人は policy)で、既定では畳んでいます。"+
-		"送信・agent の操作は元の依頼の状態を出します。承認・却下は手元で <code>tb approval approve Q-&lt;n&gt;</code> / "+
-		"<code>tb approval reject Q-&lt;n&gt;</code>(手元では <code>tb approval history</code> でも見られます)。この画面からは操作できません。</p>", approvalsMax)
+		"送信・agent の操作は元の依頼の状態を出します。承認・却下はこの画面のボタンか、手元で <code>tb approval approve Q-&lt;n&gt;</code> / "+
+		"<code>tb approval reject Q-&lt;n&gt;</code>(手元では <code>tb approval history</code> でも見られます)。"+
+		"ask で止まったコマンドは、承認すると依頼した agent に知らせ、その agent が 1 回だけ実行します(依頼した agent がいなければ承認できません)。"+
+		"deny は人だけが例外として 1 回だけ許可できます。今後も許可するときは policy を変えてください(<a href=\"/perms\">権限</a>)。</p>", approvalsMax)
 	return "承認(Q チケット)", body
+}
+
+// postApprovalOp は POST /approval-op(Q-<n> の承認・却下と、deny の例外の許可)。書き込みは tb approval が行う。
+func (s *Server) postApprovalOp(q *rq, f form) (string, string, string, func(pageCtx) (string, string, string)) {
+	id := f["id"]
+	back := "/approvals?" + pyURLEncode([][2]string{{"tier", "all"}, {"id", "Q-" + id}})
+	render := func(c pageCtx) (string, string, string) {
+		c.qs = map[string][]string{"tier": {"all"}}
+		if reOpID.MatchString(id) {
+			c.qs["id"] = []string{"Q-" + id}
+		}
+		t, b := s.pageApprovals(q, c)
+		return t, b, "/approvals"
+	}
+	if !reOpID.MatchString(id) {
+		return "/approvals", "", "番号が不正です", render
+	}
+	if op := f["op"]; op != "approve" && op != "reject" && op != "exception" {
+		return "", "", "", nil
+	}
+	cur := ""
+	if r := q.data().q("SELECT "+approvalStatusSQL+" AS st FROM requests r WHERE r.id=?", id); len(r) > 0 {
+		cur = pyStr(r[0]["st"])
+	}
+	switch {
+	case cur == "":
+		return back, "", "Q-" + id + " が見つかりません", render
+	case f["op"] == "exception" && cur != "denied":
+		return back, "", "Q-" + id + " は policy が拒否したもの(denied)ではありません(" + cur + ")", render
+	case (f["op"] == "approve" || f["op"] == "reject") && cur != "pending":
+		return back, "", "Q-" + id + " は承認待ちではありません(" + cur + ")", render
+	}
+	if f["op"] == "exception" && f["confirm"] != "1" {
+		return back, "", "例外として許可するには、確認のチェックを入れてください", render
+	}
+	q.v.close() // tb が書き込むので、読んだ接続は閉じて描き直しで開き直す
+	q.v = nil
+	args := []string{"approval", "approve", "Q-" + id} // deny の例外も approve(tb の側で人だけに限る)
+	if f["op"] == "reject" {
+		args[1] = "reject"
+	}
+	// 依頼者が知らせる相手でないとき(scheduler など)は承認した側(ここ)で実行するので、長めに待つ
+	if rc, out := runTB(q.name, 60*time.Second, args...); rc != 0 {
+		return back, "", tbFail(rc, out), render
+	}
+	return back, f["op"], "", render
 }

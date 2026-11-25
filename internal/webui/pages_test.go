@@ -623,6 +623,72 @@ exit 0
 	}
 }
 
+// Q チケットの承認・却下と deny の例外(POST /approval-op)。書き込みは tb approval が行い、Web UI は人として呼ぶ(pane を渡さない)。
+func TestApprovalOpPost(t *testing.T) {
+	pagesFixture(t)
+	dir := t.TempDir()
+	log := filepath.Join(dir, "args")
+	hc := filepath.Join(dir, "herdrctl")
+	os.WriteFile(hc, []byte(`#!/bin/sh
+[ "$1 $2" = "tb --features" ] && { echo "policy-ops auth"; exit 0; }
+echo "$* | pane=${HERDR_PANE_ID-unset}" >>"`+log+`"
+case "$4" in Q-1) echo "tb: 依頼した agent <alpha> がいません" >&2; exit 1;; esac
+exit 0
+`), 0o755)
+	t.Setenv("TB_HERDRCTL", hc)
+	t.Setenv("HERDR_PANE_ID", "%9")
+	ts, srv := testServer(t)
+	srv.Auth.Setup("alice", "correcthorse12")
+	ck, _ := srv.Auth.CreateSession()
+	r := do(t, ts, "GET", "/s/default/approvals?tier=all", ck, nil)
+	if r.code != 200 || !strings.Contains(r.body, `action="/s/default/approval-op"`) || !strings.Contains(r.body, `value=exception`) {
+		t.Fatalf("approvals: %d", r.code)
+	}
+	tok := csrf(t, r.body)
+	post := func(f url.Values) resp {
+		f.Set("csrf", tok)
+		return do(t, ts, "POST", "/s/default/approval-op", ck, f)
+	}
+	for _, c := range []struct {
+		form url.Values
+		code int
+		loc  string
+		has  string
+	}{
+		{url.Values{"op": {"approve"}, "id": {"3"}}, 302, "/s/default/approvals?tier=all&id=Q-3&done=approve", ""},
+		{url.Values{"op": {"reject"}, "id": {"2"}}, 302, "/s/default/approvals?tier=all&id=Q-2&done=reject", ""},
+		{url.Values{"op": {"exception"}, "id": {"7"}, "confirm": {"1"}}, 302, "/s/default/approvals?tier=all&id=Q-7&done=exception", ""},
+		{url.Values{"op": {"exception"}, "id": {"7"}}, 400, "", "確認のチェック"},
+		{url.Values{"op": {"approve"}, "id": {"7"}}, 400, "", "Q-7 は承認待ちではありません(denied)"},
+		{url.Values{"op": {"exception"}, "id": {"3"}}, 400, "", "Q-3 は policy が拒否したもの(denied)ではありません(pending)"},
+		{url.Values{"op": {"reject"}, "id": {"4"}}, 400, "", "Q-4 は承認待ちではありません(done)"},
+		{url.Values{"op": {"approve"}, "id": {"10"}}, 400, "", "Q-10 は承認待ちではありません(sent)"},
+		{url.Values{"op": {"approve"}, "id": {"5"}}, 400, "", "Q-5 が見つかりません"}, // ほかのセッションのもの
+		{url.Values{"op": {"approve"}, "id": {"1"}}, 400, "", "tb が断りました(終了コード 1): tb: 依頼した agent &lt;alpha&gt; がいません"},
+		{url.Values{"op": {"approve"}, "id": {"x"}}, 400, "", "番号が不正です"},
+		{url.Values{"op": {"bogus"}, "id": {"3"}}, 404, "", ""},
+	} {
+		r := post(c.form)
+		if r.code != c.code || r.loc != c.loc || !strings.Contains(r.body, c.has) {
+			t.Errorf("%v: %d %s %s", c.form, r.code, r.loc, r.body[:min(len(r.body), 300)])
+		}
+	}
+	got, _ := os.ReadFile(log)
+	want := "tb approval approve Q-3 | pane=unset\n" +
+		"tb approval reject Q-2 | pane=unset\n" +
+		"tb approval approve Q-7 | pane=unset\n" +
+		"tb approval approve Q-1 | pane=unset\n"
+	if string(got) != want {
+		t.Errorf("tb に渡したもの:\n%s\nwant:\n%s", got, want)
+	}
+	if r := do(t, ts, "GET", "/s/default/approvals?tier=all&id=Q-3&done=approve", ck, nil); !strings.Contains(r.body, "承認しました。") {
+		t.Errorf("done の知らせ: %s", r.body[:min(len(r.body), 300)])
+	}
+	if r := do(t, ts, "POST", "/s/default/approval-op", "", url.Values{"csrf": {tok}, "op": {"approve"}, "id": {"3"}}); r.code != 302 || r.loc != "/s/default/login" {
+		t.Errorf("未ログイン: %d %s", r.code, r.loc)
+	}
+}
+
 var (
 	herdrctlOnce sync.Once
 	herdrctlBin  string

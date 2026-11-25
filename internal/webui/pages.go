@@ -66,7 +66,7 @@ func (s *Server) page(q *rq, title, body, path, logout string, o pageOpts) strin
 	if !o.norefresh {
 		note = fmt.Sprintf("自動更新 %d 秒(見ていないタブでは止まる)", refreshSec)
 	}
-	h.WriteString("<p class=note>" + note + " / 変更できるのは定期実行の設定と定義・報告の「対応済み」・agent の停止 / 復活 / 作成・チケットの状態と状態の定義・スプリント・policy だけ(書き込みは tb が行う。送信履歴は読み取りのみ) / 機密を含みうる画面です / Chrome 通知は「緊急通知」で設定</p></main></body></html>")
+	h.WriteString("<p class=note>" + note + " / 変更できるのは定期実行の設定と定義・報告の「対応済み」・agent の停止 / 復活 / 作成・チケットの状態と状態の定義・スプリント・policy・承認待ち(Q-n)の承認 / 却下だけ(書き込みは tb が行う。送信履歴は読み取りのみ) / 機密を含みうる画面です / Chrome 通知は「緊急通知」で設定</p></main></body></html>")
 	return h.String()
 }
 
