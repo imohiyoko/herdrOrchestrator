@@ -43,6 +43,7 @@ $TB list >/dev/null 2>&1
 eq "herdr workspace close: an agent without workspace_id makes it refuse (cannot tell)" "$(FAKE_AGENTS='[{"pane_id":"wQ:p1","name":"q1","agent_session":{"value":"s"}}]' rc $TB herdr workspace close wC)" "1"
 eq "herdr pane close: an agent without pane_id makes it refuse (cannot tell)" "$(FAKE_AGENTS='[{"name":"q1","workspace_id":"wQ","agent_session":{"value":"s"}}]' rc $TB herdr pane close wC:p8) $(hd_closed pane-close wC:p8)" "1 0"
 eq "herdr close: agent list failure → 11, nothing closed" "$(FAKE_LIST_FAIL=1 rc $TB herdr workspace close wC) $(FAKE_LIST_FAIL=1 rc $TB herdr pane close wC:p9) $(hd_closed pane-close wC:p9)" "11 11 0"
+eq "herdr close: an agent list without .result.agents is not taken as 'no agents'" "$(FAKE_LIST_BAD=1 rc $TB herdr pane close wC:p9) $(FAKE_LIST_BAD=1 rc $TB herdr workspace close wC) $(hd_closed pane-close wC:p9)" "11 11 0"
 eq "herdr close: herdr close failure → 11" "$(FAKE_WS_CLOSE_RC=1 rc $TB herdr workspace close wC) $(FAKE_CLOSE_RC=1 rc $TB herdr pane close wC:p2)" "11 11"
 
 # ---- agent 以外のプロセスも中断しない(前面のプロセス・シェルの下の子)

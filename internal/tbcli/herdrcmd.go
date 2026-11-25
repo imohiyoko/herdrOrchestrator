@@ -59,7 +59,7 @@ func herdrLive(db *store.DB) ([]herdrAgent, error) {
 			Agents []map[string]any `json:"agents"`
 		} `json:"result"`
 	}
-	if json.Unmarshal(out, &r) != nil {
+	if json.Unmarshal(out, &r) != nil || r.Result.Agents == nil { // 読めない一覧を「agent はいない」と取らない
 		return nil, &exit{11, "herdr agent list を読めません(agent が居るか確かめられないので閉じません)"}
 	}
 	var as []herdrAgent
