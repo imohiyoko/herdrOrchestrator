@@ -206,3 +206,22 @@ func TestRiskLoosenStrict(t *testing.T) {
 	eqs(t, "strict", rs(rk(t, strict, "conductor", "worker", "running", "", "hi"))+"|"+line(rkOK(t, strict, "hi"), 2),
 		"unknown:sender.model +ask sender.model が不明(設定 ask)|risk-score: 0 / threshold 1")
 }
+
+func TestRiskRelax(t *testing.T) {
+	relax := sp("[threshold]\nask-at = 5\nrelax = on\n[unknown]\ntarget.role = allow\n")
+	var warns []string
+	for _, l := range strings.Split(rkOK(t, relax, "hi"), "\n") {
+		if w, ok := strings.CutPrefix(l, "risk-warn: 緩め設定が有効(relax = on): "); ok {
+			warns = append(warns, w)
+		}
+	}
+	eqs(t, "relax: the looser values are used and always named", strings.Join(warns, "|"), "[threshold] ask-at = 5(既定 2)|[unknown] target.role = allow(既定 ask)")
+	eqs(t, "relax: threshold 5", line(rkOK(t, relax, "hi"), 2), "risk-score: 0 / threshold 5")
+	eqs(t, "relax: target.role=allow is no longer ask", head1(rk(t, relax, "conductor", "", "running", "opus", "hi")), "risk: allow")
+	off := sp("[threshold]\nask-at = 5\nrelax = off\n")
+	eqs(t, "relax = off: same as the default", line(rkOK(t, off, "hi"), 2), "risk-score: 0 / threshold 2")
+	bad := sp("[threshold]\nrelax = yes\n")
+	if !strings.Contains(rkOK(t, bad, "hi"), "relax は on | off です") {
+		t.Error("relax: bad value is not fail-closed")
+	}
+}

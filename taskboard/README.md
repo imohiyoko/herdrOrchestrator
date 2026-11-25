@@ -806,7 +806,8 @@ tb agent-shed [--count N] [--json]        # 絞る候補の一覧。何も止め
 | 環境変数 | `TB_ANALYST_MAX` / `TB_NUDGE_MAX`(`tb nudge --max` も) / `TB_SEND_MAX` / `TB_ROLE_MAX` / `TB_DIGEST_ITEM_MAX` / `TB_DIGEST_MSG_MAX` / `TB_SPAWN_ERR_MAX` | 2 / 3 / 4000 / 12000 / 160 / 1800 / 200 |
 
 `0` の意味は各キーのまま(多くは「許さない」。`max_working_agents` は前から 0 も無制限。`max_running_agents` は 0 を拒否する)。
-外せないもの: 入力の検査(名前・本文の長さ、Web UI が受け取る大きさ)、画面の 1 ページの件数、時間切れの秒数、承認の評価で緩める方向の設定を第 3 段まで効かせない決まり(`docs/risk-based-approvals.md`)とレビュー取り込みの重大度を下げない決まり。これらは数の上限ではなく、守りの決まりとして残す。
+外せないもの: 入力の検査(名前・本文の長さ、Web UI が受け取る大きさ)、画面の 1 ページの件数、時間切れの秒数、レビュー取り込みの重大度を下げない決まり。これらは数の上限ではなく、守りの決まりとして残す。
+承認の評価(`risk-rules.conf`)で緩める方向の設定を第 3 段まで効かせない決まりは、`[threshold]` の `relax = on` で外せる(`docs/risk-based-approvals.md`)。
 
 ## 会計役(定期レビュー)と改善提案
 
