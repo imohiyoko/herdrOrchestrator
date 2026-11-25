@@ -256,20 +256,29 @@ func HasRow(db *sql.DB, session, key string, shared bool) (bool, error) {
 
 // Unset は config_unset と同じ: DB の行だけを消し、消したときだけ履歴を残す。
 func Unset(db *sql.DB, session, key string, shared bool) error {
-	hs := rowSession(session, shared)
 	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	r, err := tx.Exec(`DELETE FROM main.config WHERE herdr_session=? AND key=?`, hs, key)
-	if err != nil {
+	if _, err := UnsetTx(tx, session, key, shared); err != nil {
 		return err
 	}
-	if c, _ := r.RowsAffected(); c > 0 {
+	return tx.Commit()
+}
+
+// UnsetTx は Unset を呼び出し側のトランザクションの中で行う(いくつかのキーをまとめて消すとき)。消したか を返す。
+func UnsetTx(tx *sql.Tx, session, key string, shared bool) (bool, error) {
+	hs := rowSession(session, shared)
+	r, err := tx.Exec(`DELETE FROM main.config WHERE herdr_session=? AND key=?`, hs, key)
+	if err != nil {
+		return false, err
+	}
+	c, _ := r.RowsAffected()
+	if c > 0 {
 		if _, err := tx.Exec(`INSERT INTO main.config_changes (herdr_session, key, body, changed_by, how, changed_at) VALUES (?, ?, NULL, 'human', 'unset', ?)`, hs, key, now()); err != nil {
-			return err
+			return false, err
 		}
 	}
-	return tx.Commit()
+	return c > 0, nil
 }

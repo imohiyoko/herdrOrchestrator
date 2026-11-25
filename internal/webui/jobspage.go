@@ -26,7 +26,7 @@ func ranText(lr map[string]any) string {
 	return s
 }
 
-func (s *Server) pageJobs(q *rq, _ pageCtx) (string, string) {
+func (s *Server) pageJobs(q *rq, c pageCtx) (string, string) {
 	v := q.data()
 	names := v.jobNames()
 	inNames := map[string]bool{}
@@ -105,7 +105,7 @@ func (s *Server) pageJobs(q *rq, _ pageCtx) (string, string) {
 	}
 	note += "<p class=note>「何をする」の 2 行目は conf の先頭のコメント(無ければコマンドから推した説明)です。job 名を開くと、型(agent に送る / コマンドを実行)・宛先と今の状態・送られる本文やコマンド・次回の予定・承認の扱いを読めます。" +
 		"スケジュール(間隔・時間帯・曜日・一時停止)だけ変更できます(次の分から反映)。</p>"
-	return "定期実行", note + table([]string{"job", "何をする(宛先)", "間隔 / 時間帯 / 曜日", "状態", "最終記録", "最後の実行"}, rows)
+	return "定期実行", doneNotice(c) + note + table([]string{"job", "何をする(宛先)", "間隔 / 時間帯 / 曜日", "状態", "最終記録", "最後の実行"}, rows)
 }
 
 // fold は長い本文を折りたたむ(全文は details の中)。text は無害化・マスク済み。
@@ -314,8 +314,9 @@ func (s *Server) pageJob(q *rq, name, csrf, errMsg string, saved bool) (string, 
 func (s *Server) pageJobDraft(q *rq, name, csrf, errMsg string, saved bool, done string, draft form) (string, string) {
 	v := q.data()
 	info, err := v.jobInfo(name)
-	if info == nil {
-		return "定期実行: " + name, errHTML(orStr(err, errMsg)) + `<p><a href="/jobs">一覧へ</a></p>`
+	if info == nil { // scheduler が読めない定義でも、消すことはできる(tb job rm は本文を読まない)
+		hid := `<input type=hidden name=csrf value="` + E(csrf) + `">`
+		return "定期実行: " + name, errHTML(orStr(err, errMsg)) + jobRmForm(pyQuote(name, "/"), hid) + `<p><a href="/jobs">一覧へ</a></p>`
 	}
 	days := info.days
 	preset := ""
@@ -367,14 +368,40 @@ func (s *Server) pageJobDraft(q *rq, name, csrf, errMsg string, saved bool, done
 		ifs(done == "conf", `<p class=note>`+E(doneMsg["conf"])+`</p>`) +
 		"<p>" + what + "ジョブ。" + ifs(info.overridden, "Web UI で変更済み。") + "</p>" + v.jobOverview(name, info) + "<h2>スケジュールの変更</h2>" + form +
 		"<p class=note>スケジュールの保存先: DB の <code>sched-settings:" + E(name) + `</code>(セッション <code>` + E(v.sess) + `</code>)</p>` +
-		v.jobConfForm(name, csrf, draft) + `<p><a href="/jobs">一覧へ</a></p>`
+		v.jobConfForm(name, csrf, draft) + jobRmForm(qn, hid) + `<p><a href="/jobs">一覧へ</a></p>`
 }
 
-// postJob は POST /jobs/<job>: スケジュールの上書き設定を保存する・conf の値に戻す。
+// jobRmForm はジョブ画面の「ジョブを消す」(元に戻せないので、印を付けないと送れない)。
+func jobRmForm(qn, hid string) string {
+	return `<h2>ジョブを消す</h2><form method=post action="/jobs/` + qn + `">` + hid + `<input type=hidden name=action value=rm>` +
+		`<p><label><input type=checkbox name=confirm value=1 required> 元に戻せないことを確かめた</label> <button type=submit>消す</button></p></form>` +
+		`<p class=note><code>tb job rm</code> と同じ扱いです(このセッションの定義と上書き設定の DB の行を消す。` +
+		`どのセッションにも定義が残らなければ実行のログも消す。変更の履歴は残る)。共通の行(*)は手元で <code>tb job rm &lt;job&gt; --shared</code>。</p>`
+}
+
+// postJob は POST /jobs/<job>: スケジュールの上書き設定を保存する・conf の値に戻す・ジョブを消す。
 func (s *Server) postJob(q *rq, path, name string, f map[string]string, csrf string) {
 	v := q.data()
 	if !JobRE.MatchString(name) || !contains(v.jobNames(), name) {
 		s.text(q, 404, "Not Found")
+		return
+	}
+	if f["action"] == "rm" { // ジョブを消す(tb job rm)
+		msg := ""
+		if f["confirm"] != "1" {
+			msg = "消すときは「元に戻せないことを確かめた」に印を付けてください"
+		} else if rc, out := runTBInput(v.sess, []string{"job", "rm", name}, ""); rc != 0 {
+			msg = tbFail(rc, out)
+		}
+		if msg != "" {
+			q.v.close()
+			q.v = nil
+			title, body := s.pageJob(q, name, csrf, msg, false)
+			s.html(q, 400, s.page(q, title, body, path, "", pageOpts{norefresh: true}))
+			return
+		}
+		s.logf("jobs: removed %s\n", name)
+		s.redirect(q, "/jobs?done=job-rm")
 		return
 	}
 	if f["action"] == "conf" { // 定義(本文)の保存

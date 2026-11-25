@@ -17,7 +17,7 @@ import (
 // - 取り込むのは写し。元の DB は読むだけ
 // - 写しを最新のスキーマまで移行し(012 で行の herdr_session が取り込み先のセッションになる)、1 つのトランザクションで共有の DB に足す
 // - 整数の ID は共有の DB の最大値の後ろへずらし、ずらした番号を指す列と ref も直す
-// - タスク ID がぶつかれば次の空き番号に付け替え、参照も直す
+// - タスク ID がぶつかれば次の空き番号に付け替え、参照も直す(tb ticket rm で消した番号もぶつかるものとして扱う)
 // - 名前やキーが主キーの表は共有の DB の行を優先する(agents は空の値だけ旧 DB で埋める)
 // - 同じファイルを 2 回取り込まない(tb_flags の db-import:<実体のパス>)
 
@@ -213,10 +213,13 @@ func runImport(cp *store.DB, dstPath, session, mark string, dry bool) (string, e
 	stmts = append(stmts,
 		`CREATE TEMP TABLE _ren (old TEXT PRIMARY KEY, new TEXT)`,
 		`CREATE TEMP TABLE _next (project TEXT PRIMARY KEY, n INTEGER)`,
-		`INSERT INTO _next SELECT project, MAX(CAST(substr(id, length(project) + 4) AS INTEGER))
-         FROM (SELECT id, project FROM dst.tasks UNION ALL SELECT id, project FROM main.tasks) GROUP BY project`,
+		// 消したチケットの番号(tb ticket rm が残す ticket-rm-max:<PJ>)も使い直さない: その番号以下は、ぶつかるものとして付け替える
+		`INSERT INTO _next SELECT project, MAX(n)
+         FROM (SELECT project, CAST(substr(id, length(project) + 4) AS INTEGER) AS n FROM (SELECT id, project FROM dst.tasks UNION ALL SELECT id, project FROM main.tasks)
+               UNION ALL SELECT substr(key, 15), CAST(value AS INTEGER) FROM dst.tb_flags WHERE key LIKE 'ticket-rm-max:%') GROUP BY project`,
 		`CREATE TEMP TABLE _clash AS SELECT m.id, m.project, ROW_NUMBER() OVER (PARTITION BY m.project ORDER BY m.id) AS k
-         FROM main.tasks m WHERE EXISTS (SELECT 1 FROM dst.tasks d WHERE d.id = m.id)`,
+         FROM main.tasks m WHERE EXISTS (SELECT 1 FROM dst.tasks d WHERE d.id = m.id)
+           OR CAST(substr(m.id, length(m.project) + 4) AS INTEGER) <= COALESCE((SELECT MAX(CAST(value AS INTEGER)) FROM dst.tb_flags WHERE key = 'ticket-rm-max:' || m.project), 0)`,
 		`INSERT INTO _ren SELECT c.id, 'T-' || c.project || '-' || printf('%03d', (SELECT n FROM _next x WHERE x.project = c.project) + c.k) FROM _clash c`,
 		`UPDATE main.tasks SET id = (SELECT new FROM _ren WHERE old = id) WHERE id IN (SELECT old FROM _ren)`)
 	for _, col := range importTaskRefs {

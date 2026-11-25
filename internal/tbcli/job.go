@@ -25,6 +25,7 @@ tb job edit <job> [--settings] [--shared]   $VISUAL / $EDITOR で書き換える
 tb job unset <job> [--settings] [--shared]   DB の行を消す(人だけ)
 tb job import [--dry-run] [--shared] [<job> ...]   jobs/*.conf(と settings/*.settings)を DB に取り込み、ファイルを退かす(人だけ)
 tb job history <job> [--settings]   変更の履歴
+tb job rm <job> [--shared] [--keep-log]   ジョブを消す: 定義と上書き設定の DB の行(人だけ。どのセッションにも残らなければ logs/<job>.log も消す)
 (古い名前 tb sched-job も同じに使える。tb sched-job だけなら list)
 `
 
@@ -82,6 +83,10 @@ func cmdJob(args []string, w, stderr io.Writer, legacy bool) error {
 		return jobImport(db, e, args, w, stderr)
 	case "history":
 		return jobHistory(db, args, w)
+	case "rm":
+		if !legacy { // 新しい動詞は新しい名前だけ(tb sched-job には足さない)
+			return jobRm(db, e, args, w)
+		}
 	case "", "-h", "--help", "help":
 		if !legacy {
 			fmt.Fprint(w, jobUsage)
@@ -94,7 +99,7 @@ func cmdJob(args []string, w, stderr io.Writer, legacy bool) error {
 	if legacy {
 		return usage("sched-job [list | show <job> [--settings] | set <job> [--settings] [--shared] < 本文 | edit <job> [--settings] [--shared] | unset <job> [--settings] [--shared] | import [--dry-run] [--shared] [<job> ...] | history <job> [--settings]]")
 	}
-	return usage("job: 不明なサブコマンド %s(list / show / set / edit / unset / import / history)", sub)
+	return usage("job: 不明なサブコマンド %s(list / show / set / edit / unset / rm / import / history)", sub)
 }
 
 func validJob(j string) error {
@@ -423,4 +428,88 @@ func jobHistory(db *store.DB, args []string, w io.Writer) error {
 	return jobs.History(db.DB, db.Session, jobs.Key(a.job, a.settings), func(cols []string, vals []any) error {
 		return emitRow(w, false, cols, vals, "")
 	})
+}
+
+// jobRm は tb job rm: ジョブの定義(sched-job:<job>)と上書き設定(sched-settings:<job>)の行を消す。
+// どのセッションにも行が残らなければ、scheduler のログ(logs/<job>.log)も消す(--keep-log で残す)。履歴(config_changes)は残す。
+func jobRm(db *store.DB, e jobs.Env, args []string, w io.Writer) error {
+	keepLog := false
+	var rest []string
+	for _, s := range args {
+		if s == "--keep-log" {
+			keepLog = true
+		} else {
+			rest = append(rest, s)
+		}
+	}
+	a, err := parseJobArgs(rest)
+	if err != nil {
+		return err
+	}
+	if a.settings {
+		return usage("job rm: --settings は使えません(上書き設定だけ消すなら tb job unset %s --settings)", a.job)
+	}
+	if err := requireHuman("tb job rm"); err != nil {
+		return err
+	}
+	which := "このセッション " + db.Session + " の行"
+	if a.shared {
+		which = "共通の行"
+	}
+	// 定義と上書き設定は 1 つのトランザクションで消す(片方だけ残さない)
+	var gone []string
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, st := range []bool{false, true} {
+		key := jobs.Key(a.job, st)
+		ok, err := config.UnsetTx(tx, db.Session, key, a.shared)
+		if err != nil {
+			return err
+		}
+		if ok {
+			gone = append(gone, key)
+		}
+	}
+	if len(gone) == 0 {
+		return die("ジョブ %s の DB の行はありません(%s)", a.job, which)
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	fmt.Fprintf(w, "%s: %s を消しました(%s)\n", a.job, strings.Join(gone, " と "), which)
+	if _, src, ok := e.Lookup(db.DB, db.Session, a.job, false); ok {
+		hint := ""
+		if strings.HasPrefix(src, "db:") && !a.shared {
+			hint = "(共通の行は tb job rm " + a.job + " --shared で消す)"
+		}
+		fmt.Fprintf(w, "%s: まだ %s の定義で動きます%s\n", a.job, src, hint)
+	} else if jobs.IsRegular(e.JobFile(a.job)) {
+		fmt.Fprintf(w, "%s: jobs/%s.conf は残しています(SCHED_FILE_FALLBACK=1 のときだけ読まれる)\n", a.job, a.job)
+	}
+	var left int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM main.config WHERE key=?`, jobs.Key(a.job, false)).Scan(&left); err != nil {
+		return err
+	}
+	if keepLog || left > 0 {
+		return nil
+	}
+	log := filepath.Join(jobLogDir(e), a.job+".log")
+	if jobs.IsRegular(log) && !jobs.IsLink(log) {
+		if err := os.Remove(log); err != nil {
+			return die("%s を消せません(DB の行は消しました)", log)
+		}
+		fmt.Fprintf(w, "%s: ログ %s を消しました\n", a.job, log)
+	}
+	return nil
+}
+
+// jobLogDir は scheduler がログを書く所(tick と同じく LOG_DIR > <scheduler>/logs)。
+func jobLogDir(e jobs.Env) string {
+	if d := os.Getenv("LOG_DIR"); d != "" {
+		return d
+	}
+	return filepath.Join(e.Dir, "logs")
 }

@@ -21,6 +21,7 @@ const ticketUsage = `tb ticket move <id> <状態> [-m メモ] [-d 成果物 ...]
 tb ticket status [list] [--json]                      状態・分類・説明・チケットの件数
 tb ticket status add <状態> <分類> [-m 説明] [--after <状態>]   状態を足す(設定 statuses に書き足す。人だけ)
 tb ticket status rm <状態> [--to <状態>]              状態を外す(その状態のチケットが残っていれば --to で移すまで外さない。人だけ)
+tb ticket rm <id> [<id> ...]                         チケットを消す(コメント・履歴・リンクも。子があれば子も一緒に指定する。agent からは ask)
 tb ticket add|list|show|update|claim|done|block|cancel ...   従来の tb <それ> と同じ
 `
 
@@ -61,6 +62,8 @@ func cmdTicket(args []string, w, stderr io.Writer) error {
 		return cmdLink(args, w, stderr)
 	case "unlink":
 		return cmdUnlink(args, w, stderr)
+	case "rm":
+		return ticketRm(args, w, stderr)
 	case "", "-h", "--help", "help":
 		fmt.Fprint(w, ticketUsage)
 		if sub == "" {
@@ -68,7 +71,7 @@ func cmdTicket(args []string, w, stderr io.Writer) error {
 		}
 		return nil
 	}
-	return usage("ticket: 不明なサブコマンド %s(move / status / add / list / show / update / claim / done / block / cancel)", sub)
+	return usage("ticket: 不明なサブコマンド %s(move / status / rm / add / list / show / update / claim / done / block / cancel)", sub)
 }
 
 // ticketMove は ticket_move。

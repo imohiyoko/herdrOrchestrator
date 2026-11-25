@@ -9,7 +9,7 @@ agent・タスク・報告・定期実行・送信履歴・権限を、ブラウ
   Web UI のタブが開いていれば、新しく出たものを Chrome のデスクトップ通知でも出す(下の「緊急通知」)。
 - **変更できるのは定期実行のスケジュール**(`/jobs/<job>`: 間隔・時間帯・曜日・一時停止)と、**question / blocked の報告を「対応済みにする」**(`/inbox` とタスク画面。書き込みは `tb resolve` が行い、tasks.db には直接書かない)、
   **agent の停止・復活・新規作成**(`/agents` と `/agent-new`。書き込みと herdr の操作は `tb agent-stop` / `agent-revive` / `agent-new` / `agent-approve` / `agent-reject` が行う。下の「agent の操作」)、
-  **チケットの状態・状態の定義・スプリント・policy・ジョブの定義(本文)の編集**(下の「Web UI からの編集」。書き込みはどれも tb が行う)、
+  **チケットの状態・状態の定義・スプリント・policy・ジョブの定義(本文)の編集と、チケット・ジョブの削除**(下の「Web UI からの編集」。書き込みはどれも tb が行う)、
   **承認待ち(`Q-<n>`)の承認・却下と、deny の例外の許可**(`/approvals`。書き込みは `tb approval approve` / `reject` が行う)**だけ**。
   それ以外は読み取り専用で、POST/PUT/DELETE/PATCH は 405。入力欄のある画面は自動更新しない。
   agent の承認ダイアログに答えるボタンはない(承認は人が手元の端末で行う)。
@@ -147,6 +147,8 @@ Web UI から呼ぶ tb は `HERDR_PANE_ID` を外して動かすので、人の�
 | 状態の定義 | `/statuses` | `tb ticket status add <状態> <分類> [-m 説明] [--after 状態]` / `tb ticket status rm <状態> [--to 状態]`。名前を変えるには、足してから古い方を移して外す |
 | スプリント | `/board` | `tb sprint-add -p <PJ> -n <名前> [--start] [--end] [--goal]`、`tb sprint-start S-n`、`tb sprint-close S-n [--carry S-m]` |
 | ジョブの定義(本文) | `/jobs/<job>` の「定義(本文)を編集する」 | `tb job set <job>`(scheduler が読めることを確かめてから書く。共通の行から読んでいれば `--shared`) |
+| チケットを消す | `/tasks/<id>` の「チケットを消す」(「元に戻せないことを確かめた」に印が要る) | `tb ticket rm <id>`(コメント・履歴・リンクも。子があれば断る) |
+| ジョブを消す | `/jobs/<job>` の「ジョブを消す」(印が要る) | `tb job rm <job>`(このセッションの定義と上書き設定の行。定義がどこにも残らなければログも。共通の行は手元で `--shared`) |
 | policy | `/perms` の「policy を編集する」 | `tb config set policy`(tb と同じ検査。共通の行から読んでいれば `--shared`) |
 
 - **policy は人だけが変える**: 保存のたびにログインのパスワードを求める(失敗はログインの失敗と同じく数え、続けばロック)。

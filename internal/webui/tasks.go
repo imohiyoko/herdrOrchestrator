@@ -789,7 +789,7 @@ func (s *Server) pageTasks(q *rq, c pageCtx) (string, string) {
 		"「報告済み」は tb report で指揮官に届いたもの。未対応は人がまだ「対応済み」にしていない question / blocked。" +
 		"ラベルを押すとそのラベルで絞り込みます。期日は tb add / update --due で付けます(期日なしは期限切れになりません)。" +
 		"題は先頭だけ、本文と session_id は詳細画面で見られます。</p>"
-	return "タスク", body
+	return "タスク", doneNotice(c) + body
 }
 
 func (v *sv) hasSprints() bool {
