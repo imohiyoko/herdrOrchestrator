@@ -176,6 +176,17 @@ var New = define.Command[NewReq, NewResult]("agent.new",
 | `define.Errorf(Code…)` | `app.Error` の代わり。tb の入口がコードを今の終了コードと文言に写す |
 | マニフェスト・OpenAPI の生成 | Web UI・agent セットの契約として生成し、CI で差分を見る |
 
+#### imohiyoko/API との分担(2026-11-26 の main で確認)
+
+| 足りないもの | どこで解くか | 理由 |
+|---|---|---|
+| **プロセス内の呼び出しが無い**: 口は REST の `http.Handler` と gRPC だけ。tb の CLI は短命のコマンドなので、毎回 HTTP の口を立てるのは重い | **imohiyoko/API に足す**: 認証・レートリミット・入力の検証・認可・絞り込みの流れ(`runtime/call.go` の `opCall.run`)を、プロセス内から呼べる口(例: `srv.Invoke(ctx, audience, "agent.new", token, in)`)にする。公開範囲は引数で明示する | 操作が単位(imohiyoko/API の ADR 0001)なので、REST・gRPC と並ぶ口として収まる。テスト、操作の組み合わせ、バッチ、CLI の入口など herdr 以外でも使える。Web UI も同じ口で HTTP が要らない |
+| **主体はトークンからしか作れない**: herdr の主体は呼び出したプロセスと pane で決まる(ADR 0007) | **herdr のアダプタ**: `port.Authenticator` の実装が、pane の確かめ・Web UI のログインのセッション・scheduler の印を「トークン」として受け取り、主体に変える | 確かめ済みの主体をそのまま渡す口を imohiyoko/API に足すと、認証を飛ばす道になる。広げるなら「トークン以外の資格情報も受け取れる」が汎用の形だが、今は要らない |
+| **承認待ち(`ask`)の形が無い**: 認可の結果は許可か拒否だけ | **herdr の中**: 認可(`port.Authorizer`)は許可・拒否のまま。`ask` に当たる操作はハンドラーが承認待ちに積み、`Pending`(`L-<n>` / `Q-<n>`)を結果として返す | 承認待ちは herdr の業務。imohiyoko/API に入れると iam との契約まで変わる |
+| **依存が増える**: grpc-go・protobuf・yaml を必ず含む(README)。herdrctl は 1 バイナリ(ADR 0002) | **imohiyoko/API で分ける**: gRPC を使う利用者だけが含めるパッケージに分ける | REST だけの利用者すべてに効く汎用の改善 |
+
+imohiyoko/API への提案は、プロセス内の呼び出し([imohiyoko/API#11](https://github.com/imohiyoko/API/issues/11))と依存の分割([imohiyoko/API#12](https://github.com/imohiyoko/API/issues/12))の 2 つ。この ADR は、それが入る前提で段 1 に進む。
+
 ### 3. Web UI
 
 - `runTB` / `runTBInput` を API の呼び出しに置き換える。主体はログインした人(`human`)。今 `HERDR_PANE_ID` を外して人として呼んでいるのと同じ意味になる。
