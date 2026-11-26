@@ -16,6 +16,7 @@
   2. API(`internal/app/<サービス>`)は **型のある要求と結果** を受け渡し、**主体を引数で受け取り**、権限の判定・承認待ち・上限の検査・イベントの記録を必ず通す。出力・終了コード・環境変数(`HERDR_PANE_ID` など)は扱わない。
   3. Web UI は API を同じプロセスで呼ぶ(`runTB` をなくす)。読み込みも API の読み取り関数を通す。policy と役割の自前の実装は API の関数に置き換える。
   4. tb のコマンド・引数・出力・終了コードは変えない(既存のテストがそのまま通ることを各段の条件にする)。
+  5. 操作は [imohiyoko/API](https://github.com/imohiyoko/API) の `define.Query` / `define.Command` で定義し、認証・認可は herdr のアダプタ(ADR 0007 の主体と policy)を差し込む。imohiyoko/API に足りないプロセス内の呼び出しと確かめ済みの主体の渡し方は、imohiyoko/API 側に足す(決定 2a)。
 - **段階**: 段 0(雛形と依存の検査)→ 段 1(agent)→ 段 2(チケット)→ 段 3(job・recipe・承認)→ 段 4(残り)→ 段 5(許容リストを空にして固定)。agent セットは段 1 のあとに、API を呼ぶ入口として作る。
 
 ## 状況(Context)
@@ -147,6 +148,43 @@ func New(ctx context.Context, by app.Principal, r NewReq) (NewResult, error)
 - **環境は注入**: DB、セッション、herdr のアダプタ、時計は `app.Env`(または各サービスの構造体)で渡す。テストでは疑似の herdr と一時 DB を入れる。
 - **読み取りも API**: 一覧・詳細は `app/<サービス>` の読み取り関数(`ticket.List(ctx, by, Filter)` など)。画面向けの集計(Web UI の一覧の JOIN など)も、その表を持つサービスの読み取り関数に置く。
 
+### 2a. 操作の定義は imohiyoko/API で書く
+
+人の提案(2026-11-26): API まわりは [imohiyoko/API](https://github.com/imohiyoko/API) を使うときれいに書けるはず。
+
+imohiyoko/API は「操作を 1 回定義すると、公開範囲(internal / partner / public)とプロトコル(REST / gRPC など)ごとの口が作られる」ライブラリ(設計段階。M1・M2 の大半ができている。2026-11-26 の main で確認)。操作は `define.Query` / `define.Command` で、型のある入力と出力、認可の宣言(`define.Authz`)、公開の許可(`define.Expose`)を 1 か所に持つ。認証と認可は `port.Authenticator` / `port.Authorizer` に差し替えられる。上の 2 の決まり(型のある要求と結果、主体は文脈、門は操作の側、出力しない、エラーは型)とほぼ同じ形なので、`internal/app/<サービス>` の操作はこれで書く。
+
+```go
+// internal/app/agent
+var New = define.Command[NewReq, NewResult]("agent.new",
+    define.Doc("agent を作って起動する"),
+    define.Authz("agent:new", define.Resource("agent", "Name")), // policy の操作名と対象
+    define.Expose(define.Internal, define.REST),                 // Web UI・agent セット向け(127.0.0.1)
+).Handle(func(ctx context.Context, in NewReq) (NewResult, error) {
+    by := define.PrincipalFrom(ctx) // 主体は文脈から(環境変数から決めない)
+    ...
+})
+```
+
+| imohiyoko/API の部品 | herdr での中身 |
+|---|---|
+| 操作(`define.Query` / `Command`) | `app/<サービス>` の各操作。名前は `<サービス>.<動詞>`(tb のサービス名に合わせる) |
+| `define.Authz("<操作>", Resource(...))` | 設定 policy の操作名と対象(ADR 0007)。`agent:new:<名前>` など |
+| `port.Authorizer` | herdr のアダプタ: `perms` / `approval` の判定(主体を引数で受け取る `GateFor`。上の 2)。`ask` は承認待ちに積んだ結果として返す |
+| `port.Authenticator` | herdr のアダプタ: Web UI のログインのセッション → `human`、agent の pane → `agent:<名前>`(ADR 0007 の確かめ方)、scheduler → `system:<名前>` |
+| 公開範囲 | 当面は internal だけ(127.0.0.1 の Web UI・agent セット)。外へ出す口は作らない |
+| `define.Errorf(Code…)` | `app.Error` の代わり。tb の入口がコードを今の終了コードと文言に写す |
+| マニフェスト・OpenAPI の生成 | Web UI・agent セットの契約として生成し、CI で差分を見る |
+
+#### imohiyoko/API に足りないもの(2026-11-26 の main で確認)
+
+1. **プロセス内の呼び出しが無い**: 口は REST の `http.Handler` と gRPC だけ。tb の CLI は別プロセスの短い命令なので、毎回 HTTP の口を立てるのは重い。認証・レートリミット・入力の検証・認可・絞り込みの流れ(`runtime/call.go` の `opCall.run`)を、プロセス内から呼べる入口(例: `srv.Invoke(ctx, audience, "agent.new", principal, in)`)として API に足す必要がある。Web UI は同じプロセスなので、これを使えば HTTP も要らない。
+2. **主体はトークンからしか作れない**: `Authenticator.Authenticate(ctx, token)` の形。herdr の主体は、トークンではなく呼び出したプロセスと pane から決める(ADR 0007)。上の 1 の入口で、確かめ済みの主体を渡せる形(信頼できる入口だけが使える)にするか、pane の情報を「トークン」として渡すアダプタにするかを決める。
+3. **承認待ち(`ask`)の形が無い**: `Authorizer.Check` の結果は許可か拒否だけ。herdr の `ask`(承認待ちに積んで `L-<n>` / `Q-<n>` を返す)は、アダプタが拒否の理由に番号を載せるか、操作の結果として返すかを決める。
+4. **依存が増える**: imohiyoko/API は grpc-go・protobuf・yaml を必ず含む(README)。herdrctl は 1 バイナリ(ADR 0002)なので、サイズが増える。REST だけ使うときに gRPC を外せるか、API 側で分けられるかを確かめる。
+
+1〜3 は imohiyoko/API 側の変更なので、そちらのリポジトリの ADR として提案する(この ADR は、それが入る前提で段 1 に進む)。
+
 ### 3. Web UI
 
 - `runTB` / `runTBInput` を API の呼び出しに置き換える。主体はログインした人(`human`)。今 `HERDR_PANE_ID` を外して人として呼んでいるのと同じ意味になる。
@@ -172,7 +210,7 @@ ADR 0004 の依存の検査に次を足す。今ある違反は許容リスト�
 
 | 段 | 中身 | 主に動かすもの | 終わりの条件 |
 |---|---|---|---|
-| 0 | 雛形: `internal/app`(Principal・Error・Env・Pending)、依存の検査と許容リスト | 新規 + CI | 検査が CI で動き、今の違反が許容リストに載る |
+| 0 | 雛形: imohiyoko/API への依存と herdr のアダプタ(Authenticator・Authorizer)、`internal/app`(Env・Pending)、依存の検査と許容リスト。imohiyoko/API にプロセス内の呼び出しと確かめ済みの主体を足す(2a) | 新規 + CI + imohiyoko/API | 検査が CI で動き、今の違反が許容リストに載る。1 つの操作を tb と Web UI の両方から呼べる |
 | 1 | agent: 起動・停止・再開・再起動・spawn・承認・却下・一覧、親の付け替え(新規) | agentlife.go、spawn.go、agentapprove.go、agentlist.go → `app/agent`。Web UI の agentspage.go(`runTB` 3)、agents.go の読み込み | tbcli の agent の動詞が引数の読み取りと表示だけになる |
 | 2 | ticket: 作成・編集・状態・コメント・リンク・削除・読み取り | ticket*.go → `app/ticket`。Web UI の edits.go(`runTB` 9)、tasks.go(`SELECT` 18) | 同上 |
 | 3 | job・recipe・承認・policy の説明 | job.go、recipe*.go、approval.go、policy.go。Web UI の jobs.go・jobspage.go・approvals.go・perms.go・roles.go | Web UI の自前の照合が無くなる |
@@ -201,6 +239,7 @@ ADR 0004 の依存の検査に次を足す。今ある違反は許容リスト�
 
 ## 人が決めること
 
+- imohiyoko/API に足りないもの(2a の 1〜3)を、imohiyoko/API 側に足してよいか(案: 足す。プロセス内の呼び出しはほかの利用者にも役に立つ)。
 - パッケージの名前: `internal/app/<サービス>`(案)か `internal/service/<サービス>` か。
 - Web UI の画面向けの集計(一覧の JOIN など)も API に置くか、`app/<サービス>/query` のように読み取り専用の場所を分けるか(案: 分ける。書き込みの関数と同じパッケージの別ファイル)。
 - 段 1 を agent セットの段 1・2(親の付け替え、pane に置く起動)と一緒に進めてよいか(案: 一緒に。同じファイルを触るので)。
