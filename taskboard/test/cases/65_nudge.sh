@@ -70,7 +70,7 @@ w3c "$t3" blocked '低い方も止まっている'; c3=$(nsql "SELECT 'C-'||id F
 eq "nudge: 全部が返事待ちなら以前どおり agent ごと skip" "$($TB nudge --dry-run | grep "^w3${TAB}" | cut -f2-4 | tr '\t' ' ')" "$t4 skip 人の返事待ち($c4 $c3)"
 $TB resolve "$c3" >/dev/null; : >"$FAKE_LOG"
 $TB nudge w3 >/dev/null
-eq "nudge: 返事待ちのチケットは催促の文面の「ほかのチケット」に出さない" "$(nsql "SELECT task_id FROM outbox WHERE target='w3' AND from_pane='nudge' ORDER BY id DESC LIMIT 1;") $(grep '^prompt w3' "$FAKE_LOG" | grep -c 'ほかにも持っています')" "$t3 0"
+eq "nudge: 返事待ちのチケットは催促の文面の「ほかのチケット」に出さない" "$(nsql "SELECT task_id||' '||status FROM outbox WHERE target='w3' AND from_pane='nudge' ORDER BY id DESC LIMIT 1;") $(grep -c '^prompt w3' "$FAKE_LOG") $(grep '^prompt w3' "$FAKE_LOG" | grep -c 'ほかにも持っています')" "$t3 sent 1 0"
 $TB resolve "$c4" >/dev/null; nsql "DELETE FROM outbox WHERE target='w3';"; nsql "DELETE FROM messages WHERE target='w3';"; unset -f w3c
 # 保護の設定(protect)は nudge の対象を変えない(固定の skip は無い。除外は設定 nudge の ignore)
 printf 'w1 = 定期実行の受け口\n' >"$TB_PROTECT"
