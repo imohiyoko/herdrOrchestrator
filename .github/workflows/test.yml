@@ -22,10 +22,22 @@ jobs:
       - uses: actions/setup-go@v5    # affected.sh が go list で Go のパッケージの依存を見る
         with:
           go-version-file: go.mod
+      # tb のユニットごとに通った関数の記録(下の covmap が main のコミットごとに作る)。PR の元(HEAD^1)のものだけ使う。無ければ tb の組は全部
+      - id: base
+        if: github.event_name == 'pull_request'
+        run: echo "sha=$(git rev-parse HEAD^1)" >> "$GITHUB_OUTPUT"
+      - if: github.event_name == 'pull_request'
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/tb-covmap.json
+          key: tb-covmap-${{ steps.base.outputs.sha }}
       - id: plan
         env:
           EVENT: ${{ github.event_name }}
-        run: bash tests/affected.sh --ci "$EVENT"
+          COVMAP: ${{ runner.temp }}/tb-covmap.json
+        run: |
+          [[ -f $COVMAP ]] && export TB_COVMAP=$COVMAP
+          bash tests/affected.sh --ci "$EVENT"
   test:
     needs: plan
     if: needs.plan.outputs.suites != '[]'
@@ -48,6 +60,24 @@ jobs:
       - run: bash tests/run-all.sh "$SUITE"
         env:
           SUITE: ${{ matrix.suite }}
+  # tb のユニットごとに、通った herdrctl の関数を記録してキャッシュに置く(tests/covmap.sh)。PR の plan が、Go の関数を変えたときに
+  # tb のケースを選ぶのに使う。main への push と手で流すときだけ。PR の必須のチェックには入れない(失敗しても PR は tb の組を全部流すだけ)
+  covmap:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: sudo apt-get update && sudo apt-get install -y sqlite3 jq
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: bash tests/covmap.sh run "$RUNNER_TEMP/tb-covmap.json"
+      - uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/tb-covmap.json
+          key: tb-covmap-${{ github.sha }}
   # ブランチ保護で必須にする 1 つのチェック(matrix の名前が変わっても、これだけ見ればよい)。
   # 流す組が無くて test を飛ばしたときも通す(plan が通っていることは確かめる)
   test-all:

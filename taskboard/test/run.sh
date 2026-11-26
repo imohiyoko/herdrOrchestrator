@@ -23,6 +23,8 @@ SWEEP=99_zzz_session_sweep.sh
 if [[ ${1-} == --unit ]]; then
   shift
   TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+  # TB_TEST_COVER_DIR: -cover で作った herdrctl の通った場所を、ユニットごとに <ここ>/<先頭のケース> にためる(tests/covmap.sh が使う)
+  if [[ -n ${TB_TEST_COVER_DIR-} ]]; then export GOCOVERDIR=$TB_TEST_COVER_DIR/$1; mkdir -p "$GOCOVERDIR"; fi
   # tb の中身は herdrctl(TB_HERDRCTL > PATH)。無ければ流さない
   command -v "${TB_HERDRCTL:-herdrctl}" >/dev/null || { echo "herdrctl がありません(go build -o <場所> ./cmd/herdrctl して TB_HERDRCTL で渡す)"; echo "pass=0 fail=1"; exit 1; }
   export HERDR_SESSION_FILE=$TMP/no-herdr-session   # 手元の checkout の herdr-session に左右されない
