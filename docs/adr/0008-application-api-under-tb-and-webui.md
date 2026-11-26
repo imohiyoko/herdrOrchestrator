@@ -141,9 +141,9 @@ func New(ctx context.Context, by app.Principal, r NewReq) (NewResult, error)
 ```
 
 - **主体は引数**: `app.Principal`(ADR 0007 の `human` / `agent:<名前>` / `system:<名前>` / `unknown`)。確かめるのは入口の責任: tb は今の `kernel/identity`(プロセスと pane)、Web UI はログイン、scheduler は `system:sched`。API の中で環境変数から主体を決めない。
-- **門は API の側**: ADR 0006・0007 の権限段階と policy の判定は、API の関数の最初で必ず通す。今 tb の入口(`tbcli.Run` の `perms.Gate`)にある門は、API へ移すか、API からも同じ関数を呼ぶ。Web UI が API を直接呼んでも、判定を迂回しない。
+- **門は API の側**: ADR 0006・0007 の権限段階と policy の判定は、API の関数の最初で必ず通す。API の門は主体を `app.Principal` の引数で受け取り、pane や `perms.HumanPane()` から決めない。今の `perms.Gate` / `perms.EnforceTarget` は、pane が無く `identity.System` も空のプロセスを人として扱い policy を見ずに通す(perms.go の `HumanPane`)。そのまま API から呼ぶと、pane の無い Web UI のプロセスが agent を主体として呼んだときに agent の policy が効かない。そのため段 0 で、主体を引数で受け取る判定の関数(例: `perms.GateFor(by Principal, op, target)`)を足し、API はそれだけを呼ぶ。tb の入口は、今の `Gate` を「pane から主体を決めて `GateFor` を呼ぶ」薄い関数にする。Web UI が API を直接呼んでも、判定を迂回しない。
 - **出力しない**: `io.Writer`・終了コード・`os.Exit` を使わない。エラーは型(`app.Error{Code, Msg, Hint}`)。tb の入口が `Code` を今の終了コードに、`Msg` を今の文言に写す(文言は今と同じにする)。
-- **承認待ちは結果の 1 つ**: 「承認待ちに積んだ」は失敗ではなく `Pending` を持つ結果として返す。tb は今どおり終了コード 20 と `L-<n> pending` を出す。
+- **承認待ちは結果の 1 つ**: 「承認待ちに積んだ」は失敗ではなく `Pending` を持つ結果として返す。`Pending` は経路(agent の操作の待ち `L-<n>` か、コマンドの入口の `ask` の `Q-<n>` か)と番号を持ち、tb の入口は経路ごとに今の文言を再現する: agent の操作は今どおり終了コード 20 と `L-<n> pending …`、コマンドの入口の `ask` は今どおり `Q-<n>` を含む説明。2 つを共通の文言にまとめない。
 - **環境は注入**: DB、セッション、herdr のアダプタ、時計は `app.Env`(または各サービスの構造体)で渡す。テストでは疑似の herdr と一時 DB を入れる。
 - **読み取りも API**: 一覧・詳細は `app/<サービス>` の読み取り関数(`ticket.List(ctx, by, Filter)` など)。画面向けの集計(Web UI の一覧の JOIN など)も、その表を持つサービスの読み取り関数に置く。
 
