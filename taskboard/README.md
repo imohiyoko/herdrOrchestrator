@@ -339,7 +339,7 @@ tb reminder nudge [--wake <分類|状態>[,...]] [--idle-min 15] [--max 3] [--js
 
 - **握っている**: 担当(`owner_agent`)が自分で、状態が `wake` のどれか(既定は active の分類 = `in_progress`)のチケット。既定では割り当てだけの `todo`、`review`・`blocked` は催促しない
 - **休んでいる**: herdr の状態が `idle` / `done` で、最後の turn の終わり(hook の活動記録)から `--idle-min` 分(`TB_NUDGE_IDLE_MIN`、既定 15)たっている
-- **催促しない**(理由つきで出す): herdr にいない・`working`・`blocked`(承認ダイアログなど人の操作待ち)/ 設定 `nudge` の ignore(宛先を明示したときは適用しない)/ 人の返事待ち(自分が出した `question`・`blocked` の報告が未対応)/ 握っているチケットがすべて先行チケット(`blocks`)待ち / 活動記録が無い / delivery の規則で指示役 → その agent の `task` が `now` にならない(`hold` は inbox に置かれるだけで催促にならず、`block` は送ってはいけない宛先)
+- **催促しない**(理由つきで出す): herdr にいない・`working`・`blocked`(承認ダイアログなど人の操作待ち)/ 設定 `nudge` の ignore(宛先を明示したときは適用しない)/ 人の返事待ち(自分が出した `question`・`blocked` の報告が未対応。そのチケットだけを外し、残りがあれば最優先の 1 枚を催促する。残りが無ければ agent ごと飛ばす)/ 握っているチケットがすべて先行チケット(`blocks`)待ち / 活動記録が無い / delivery の規則で指示役 → その agent の `task` が `now` にならない(`hold` は inbox に置かれるだけで催促にならず、`block` は送ってはいけない宛先)
 - **しつこくしない**: 1 回の休みに 1 通。同じチケットで `--max` 回(`TB_NUDGE_MAX`、既定 3)送ったら止める(その先は `tb digest` の観測で指示役が見る)。届かなかった催促は outbox に `queued` で残さず `denied`(取り下げ)にする(あとで `tb message flush` が古い催促を届けないように)
 - **複数のチケット**: タスク agent は 1 枚が原則。複数を握っていれば、先行チケット待ちでない中で active の分類を先に、優先度が高い(同じなら古い)1 枚を名指しし、ほかの active のチケットは `tb update <ID> --status todo` で戻すか指示役に相談するよう文面に書く。指示役には `tb digest` が「複数チケット」の観測として 1 度だけ知らせる(組み合わせが変わればまた出す。epic と完了していない子を持つ親は数えない)
 - 催促だけを止めたい agent は、設定 `nudge` の `ignore` に書く(人だけが `tb config edit nudge`)。通常の `task` の配送も止めたいときは、delivery で `<指示役> -> <agent> : task=hold`(か `block`)を書く(催促もその規則で届かなくなる)。

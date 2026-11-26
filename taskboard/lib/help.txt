@@ -90,7 +90,7 @@ tb reminder nudge [<宛先> ...] [--pool] [--dry-run] [--wake <分類|状態>[,.
          <宛先>: agent 名の glob か @役割の glob(複数は和集合)。明示した宛先には ignore を適用しない。当たる agent がいなければ skip の行を出す
          --wake: この実行で催促するチケットの状態(分類 todo/active/review/blocked か状態の名前。カンマ区切り・複数回は足し合わせる)。設定 nudge の wake の代わりに使い、ignore は設定のまま。scheduler のジョブごとに状態と --idle-min を分けるときに使う
          --pool: チケットを握っておらず、担当の todo/active/review/blocked も無い agent に、自分の team ラベル(team:<x>。役割 domain-<x> → 名前の -lead → 組織図の上司の順で決める)の担当なし todo を優先度順に 1 件取りに行かせる(同じ回で同じ候補は 1 人だけ)
-         飛ばす: working / blocked・設定 nudge の ignore(設定 nudge が無いあいだは以前どおり指揮役・保護 protect)・人の返事待ち(未対応の question/blocked)・先行チケット待ち・delivery が now でない・この休みで催促済み・同じチケットで --max 回催促済み
+         飛ばす: working / blocked・設定 nudge の ignore(設定 nudge が無いあいだは以前どおり指揮役・保護 protect)・人の返事待ち(未対応の question/blocked。そのチケットだけ外し、残りが無ければ agent ごと)・先行チケット待ち・delivery が now でない・この休みで催促済み・同じチケットで --max 回催促済み
          複数を握っていれば active を先に、優先度の高い 1 枚を名指しし、ほかの active は todo に戻すよう書く。出力は agent チケット 結果(sent|would|skip|held|blocked) 理由
   別名(古い名前): tb nudge 
 tb message outbox [--status pending|queued|sent|denied] [--json]

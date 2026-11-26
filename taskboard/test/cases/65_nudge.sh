@@ -60,6 +60,18 @@ HERDR_PANE_ID=w1:p1 FAKE_AGENTS="[$(ag w1:p1 w1 idle s1),$(ag wC:p1 coord workin
 eq "nudge: 未対応の question → skip" "$($TB nudge --dry-run | grep "^w1${TAB}" | grep -c '人の返事待ち')" "1"
 $TB resolve "$(nsql "SELECT 'C-'||id FROM comments WHERE task_id='$t1';")" >/dev/null
 eq "nudge: 対応済みにしたら → would" "$(out=$($TB nudge --dry-run); row w1)" "$t1 would"
+# 人の返事待ちはチケットごと: 待ちのチケットだけを外し、残りの最優先 1 枚を催促する(w3 は高 $t4・低 $t3 を握る)
+w3c() { HERDR_PANE_ID=w3:p1 FAKE_AGENTS="[$(ag w3:p1 w3 idle s3),$(ag wC:p1 coord working sc)]" $TB comment "$1" --kind "$2" --text "$3" >/dev/null 2>&1; }
+w3c "$t4" question '高い方の方針は?'; c4=$(nsql "SELECT 'C-'||id FROM comments WHERE task_id='$t4';")
+nsql "DELETE FROM outbox WHERE target='w3';"; out=$($TB nudge --dry-run)
+eq "nudge: 返事待ちのチケットだけ外し、残りの 1 枚を催促" "$(row w3)" "$t3 would"
+eq "nudge: 外した返事待ちのチケットを理由に出す" "$(grep "^w3${TAB}" <<<"$out" | grep -c "人の返事待ちで外した $t4($c4)")" "1"
+w3c "$t3" blocked '低い方も止まっている'; c3=$(nsql "SELECT 'C-'||id FROM comments WHERE task_id='$t3';")
+eq "nudge: 全部が返事待ちなら以前どおり agent ごと skip" "$($TB nudge --dry-run | grep "^w3${TAB}" | cut -f2-4 | tr '\t' ' ')" "$t4 skip 人の返事待ち($c4 $c3)"
+$TB resolve "$c3" >/dev/null; : >"$FAKE_LOG"
+$TB nudge w3 >/dev/null
+eq "nudge: 返事待ちのチケットは催促の文面の「ほかのチケット」に出さない" "$(nsql "SELECT task_id FROM outbox WHERE target='w3' AND from_pane='nudge' ORDER BY id DESC LIMIT 1;") $(grep '^prompt w3' "$FAKE_LOG" | grep -c 'ほかにも持っています')" "$t3 0"
+$TB resolve "$c4" >/dev/null; nsql "DELETE FROM outbox WHERE target='w3';"; nsql "DELETE FROM messages WHERE target='w3';"; unset -f w3c
 # 保護の設定(protect)は nudge の対象を変えない(固定の skip は無い。除外は設定 nudge の ignore)
 printf 'w1 = 定期実行の受け口\n' >"$TB_PROTECT"
 eq "nudge: protect だけでは除外されない" "$(out=$($TB nudge --dry-run); row w1)" "$t1 would"
