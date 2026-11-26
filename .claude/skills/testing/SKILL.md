@@ -84,9 +84,10 @@ PR の CI は、変えたファイルに関わる組と Go のパッケージだ
 - 組は `suite_paths`(組が読むファイル)に当たるか、`suite_go`(組が動かす herdrctl の Go パッケージとその依存)のコードが変わったら流す
 - Go のテストは `go list -test -deps` で、変わったパッケージに依存するものだけ。`*_test.go`・`testdata/` だけの変更はそのパッケージだけ。自分のディレクトリの外を読む Go のテストは `GO_EXTRA` に書く
 - tb のケースだけの変更はそのケースだけ(`taskboard-only:<ケース>,...` の組)
+- tb の組を Go のコードの変更だけで流すときは、**変えた関数を通るユニットだけ**流す。main への push ごとに CI の `covmap` ジョブが `tests/covmap.sh` で「ユニットごとに通った herdrctl の関数」を記録してキャッシュに置き、PR の plan は元のコミット(HEAD^1)の記録と `tests/funcdiff`(前と今で中身の変わった関数を出す。const・var・type の変更は、その名前を使う関数に広げる)で選ぶ。init・型引数・埋め込むファイルなど関数で言い切れない変更や、記録が無い・古いときは tb の組全部。`taskboard/lib/help.txt` も記録(`tb help` で読んだユニットと、ケースに名前を書いたユニット)で選ぶ
 - CI・go.mod・この仕組み自身(`GLOBAL`)が変わった、**どの規則にも当たらないファイルがある**、go list が失敗した、のどれかなら全部
 
-**テストが新しいファイルを読むようになったら、`tests/affected.sh` の規則に足す**(足さないと PR では流れず、main で初めて落ちる)。新しい部品のディレクトリは規則に足すまで「規則に無いファイル」で全部流れる。決め方を変えたら `tests/test_affected.sh` に例を足す。手元では `bash tests/run-all.sh --affected` で同じ組を流せる。
+**テストが新しいファイルを読むようになったら、`tests/affected.sh` の規則に足す**(足さないと PR では流れず、main で初めて落ちる)。新しい部品のディレクトリは規則に足すまで「規則に無いファイル」で全部流れる。決め方を変えたら `tests/test_affected.sh` に例を足す。手元では `bash tests/run-all.sh --affected` で同じ組を流せる(記録は `bash tests/covmap.sh run <ファイル>` で作り、`TB_COVMAP=<ファイル>` で渡す)。
 
 ### CI の組と weights
 

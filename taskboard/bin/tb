@@ -21,7 +21,10 @@ HC=${TB_HERDRCTL:-herdrctl}
 
 cmd=${1:-help}
 case $cmd in
-  help|-h|--help) cat "$TB_ROOT/lib/help.txt"; exit 0;;
+  help|-h|--help)
+    # tests/covmap.sh がユニットごとの記録を作るときだけ: help.txt を読んだユニットに印を付ける
+    [[ -n ${TB_TEST_COVER_DIR-} && -n ${GOCOVERDIR-} ]] && : >"$GOCOVERDIR/read-help.txt"
+    cat "$TB_ROOT/lib/help.txt"; exit 0;;
 esac
 
 # Go に渡す。TB_ROOT: checkout の taskboard(scheduler の場所・roles など)。TB_CONFIG_DIR: checkout の設定ファイル(statuses.conf など)

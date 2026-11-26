@@ -54,6 +54,35 @@ eq "scheduler のジョブの例 → tb の組も(ケースが読む)" "$(q .sui
 eq "配布の設定 → 配布物のビルドだけ" "$(q '[.suites, .go, .snapshot]' .goreleaser.yaml)" '[[],[],true]'
 eq "改行 CRLF のファイル名一覧も読む" "$(printf 'webui/static/app.js\r\n' | bash "$HERE/affected.sh" | jq -c .suites)" '["webui"]'
 
+# --- tb のケースを関数の記録(TB_COVMAP)で選ぶ。tests/funcdiff は差し替える(出す行を FD_OUT で渡す)
+TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$FD_OUT"\n' >"$TMP/fd.sh"
+UNITS=$(bash "$HERE/../taskboard/test/run.sh" --units | awk '{print $1}' | jq -Rnc '[inputs]')
+jq -n --argjson u "$UNITS" '{version: 1, commit: "c0ffee", units: $u,
+  funcs: {"internal/reminder/nudge.go:*Nudge.Run": ["65_nudge.sh", "03_perms.sh"], "internal/tbcli/tbcli.go:Run": $u},
+  files: {"taskboard/lib/help.txt": ["99_layout.sh"]}}' >"$TMP/map.json"
+jq '.units |= .[1:]' "$TMP/map.json" >"$TMP/map-old.json"
+cm() { local o=$1 m=$2 f=$3; shift 3; printf '%s\n' "$@" | FD_OUT=$o TB_FUNCDIFF="bash $TMP/fd.sh" TB_COVMAP=$m bash "$HERE/affected.sh" | jq -c "$f"; }
+TBS='map(select(startswith("taskboard")))'
+eq "記録: 変えた関数を通るユニットだけ(Go を文字で読むケースも)" "$(cm $'internal/reminder/nudge.go\t*Nudge.Run' "$TMP/map.json" "[(.suites | $TBS), (.notes | length)]" internal/reminder/nudge.go)" \
+  '[["taskboard-only:03_perms.sh,65_nudge.sh,69_pr_contract.sh,83_parts.sh,93_prqueue.sh,99_layout.sh"],1]'
+eq "記録: 記録に無い関数(どのユニットも通らない)→ tb は Go を文字で読むケースだけ" "$(cm $'internal/reminder/nudge.go\tnope' "$TMP/map.json" ".suites | $TBS" internal/reminder/nudge.go)" \
+  '["taskboard-only:69_pr_contract.sh,83_parts.sh,93_prqueue.sh,99_layout.sh"]'
+eq "記録: 関数を変えていない(tests/funcdiff が何も出さない)" "$(cm '' "$TMP/map.json" ".suites | $TBS" internal/reminder/nudge.go)" \
+  '["taskboard-only:69_pr_contract.sh,83_parts.sh,93_prqueue.sh,99_layout.sh"]'
+eq "記録: どのユニットも通る関数 → tb の組全部と同じユニット" "$(cm $'internal/tbcli/tbcli.go\tRun' "$TMP/map.json" ".suites | $TBS | .[0] | split(\",\") | length" internal/tbcli/tbcli.go)" "$(jq '.units | length' "$TMP/map.json")"
+eq "記録: 関数で言い切れない変更 → tb の組全部" "$(cm $'internal/reminder/nudge.go\t*' "$TMP/map.json" "[(.suites | $TBS), (.notes[0] | test(\"言い切れない\"))]" internal/reminder/nudge.go)" "[[$TB4],true]"
+eq "記録: Go のパッケージの .go でないファイル(埋め込み)→ tb の組全部" "$(cm '' "$TMP/map.json" ".suites | $TBS" internal/reminder/nudge.go taskboard/schema/999_x.sql)" "[$TB4]"
+eq "記録: ユニットの分け方が違う記録は使わない" "$(cm $'internal/reminder/nudge.go\t*Nudge.Run' "$TMP/map-old.json" "[(.suites | $TBS), (.notes[0] | test(\"分け方\"))]" internal/reminder/nudge.go)" "[[$TB4],true]"
+eq "記録: 読めない記録は使わない" "$(echo '{}' >"$TMP/bad.json"; cm '' "$TMP/bad.json" ".suites | $TBS" internal/reminder/nudge.go)" "[$TB4]"
+eq "記録: tests/funcdiff が失敗 → tb の組全部" "$(printf 'internal/reminder/nudge.go\n' | TB_FUNCDIFF=false TB_COVMAP=$TMP/map.json bash "$HERE/affected.sh" | jq -c ".suites | $TBS")" "[$TB4]"
+eq "記録: tb の組をファイルの規則でも流すとき(bin/tb など)は、記録で絞らない" "$(cm $'internal/reminder/nudge.go\t*Nudge.Run' "$TMP/map.json" ".suites | $TBS" internal/reminder/nudge.go taskboard/bin/tb)" "[$TB4]"
+eq "記録: help.txt → 読むユニットだけ(Web UI は流さない)" "$(cm '' "$TMP/map.json" '[.suites, .go]' taskboard/lib/help.txt)" '[["taskboard-only:99_layout.sh"],[]]'
+eq "記録なし: help.txt → tb の組全部" "$(q '.suites' taskboard/lib/help.txt)" "[$TB4]"
+eq "記録に help.txt が無い → tb の組全部" "$(jq 'del(.files)' "$TMP/map.json" >"$TMP/nofiles.json"; cm '' "$TMP/nofiles.json" ".suites | $TBS" taskboard/lib/help.txt)" "[$TB4]"
+eq "記録なし → tb の組全部と、その理由" "$(q '.notes' internal/reminder/nudge.go)" '["関数の記録なしなので tb の組は全部"]'
+eq "全部: tests/funcdiff・tests/covmap.sh" "$(q '[.full]' tests/funcdiff/main.go tests/covmap.sh)" '[true]'
+
 # --- run-all.sh が taskboard-only の組を受ける
 eq "run-all.sh: 無いケースの taskboard-only は使い方の誤り" "$(bash "$HERE/run-all.sh" taskboard-only:00_gone.sh >/dev/null 2>&1; echo $?)" "2"
 eq "run-all.sh: ケースの名前に余計なものがあれば使い方の誤り" "$(bash "$HERE/run-all.sh" 'taskboard-only:14_cancel.sh;x' >/dev/null 2>&1; echo $?)" "2"
