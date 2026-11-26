@@ -382,13 +382,41 @@ func (n *Nudge) Run() ([]NudgeRow, error) {
 			}
 		}
 		trs.Close()
-		pick := ""
-		for _, t := range rows {
-			if t.blockers == 0 {
-				pick = t.id
-				break
+		pickOf := func(rows []nudgeTask) string {
+			for _, t := range rows {
+				if t.blockers == 0 {
+					return t.id
+				}
+			}
+			return ""
+		}
+		dash := pickOf(rows) // 全部が人の返事待ちのときの表示は、以前どおり外す前の 1 枚
+		// 人の返事待ち(自分が出した未対応の question・blocked)は、そのチケットだけを候補から外す
+		waitBy := map[string][]string{}
+		var waitAll, waitedL []string
+		wrs, err := n.DB.Query(`SELECT c.task_id, 'C-'||c.id FROM comments c LEFT JOIN tasks t ON t.id=c.task_id
+          WHERE c.from_name=? AND c.kind IN ('question','blocked') AND c.resolved_at IS NULL AND COALESCE(t.status,'') NOT IN (`+closed+`) ORDER BY c.id`, owner)
+		if err != nil {
+			return nil, err
+		}
+		for wrs.Next() {
+			var tid, cid string
+			if wrs.Scan(&tid, &cid) == nil {
+				waitBy[tid] = append(waitBy[tid], cid)
+				waitAll = append(waitAll, cid)
 			}
 		}
+		wrs.Close()
+		kept := rows[:0:0]
+		for _, t := range rows {
+			if c := waitBy[t.id]; len(c) > 0 {
+				waitedL = append(waitedL, t.id+"("+strings.Join(c, " ")+")")
+			} else {
+				kept = append(kept, t)
+			}
+		}
+		rows = kept
+		pick := pickOf(rows)
 		var othersL []string
 		nact := 0
 		for _, t := range rows {
@@ -400,7 +428,9 @@ func (n *Nudge) Run() ([]NudgeRow, error) {
 			}
 		}
 		others := strings.Join(othersL, " ")
-		dash := pick
+		if pick != "" || len(waitAll) == 0 {
+			dash = pick
+		}
 		if dash == "" {
 			dash = "-"
 		}
@@ -429,9 +459,9 @@ func (n *Nudge) Run() ([]NudgeRow, error) {
 			row(owner, dash, "skip", "herdr の状態が "+st)
 			continue
 		}
-		if w := n.str(`SELECT group_concat('C-'||c.id, ' ') FROM comments c LEFT JOIN tasks t ON t.id=c.task_id
-          WHERE c.from_name=? AND c.kind IN ('question','blocked') AND c.resolved_at IS NULL AND COALESCE(t.status,'') NOT IN (`+closed+`)`, owner); w != "" {
-			row(owner, dash, "skip", "人の返事待ち("+w+")")
+		// 返事待ちを外して催促できるチケットが残らなければ、以前どおり agent ごと飛ばす
+		if len(waitAll) > 0 && len(rows) == 0 {
+			row(owner, dash, "skip", "人の返事待ち("+strings.Join(waitAll, " ")+")")
 			continue
 		}
 		if pick == "" {
@@ -536,6 +566,9 @@ func (n *Nudge) Run() ([]NudgeRow, error) {
 		w := ""
 		if nact > 1 {
 			w = fmt.Sprintf(" / %s %d 枚", n.stMain("active"), nact)
+		}
+		if len(waitedL) > 0 {
+			w += " / 人の返事待ちで外した " + strings.Join(waitedL, " ")
 		}
 		if n.Dry {
 			row(owner, pick, "would", "休んで "+mins+" 分 / "+sender+" から"+w)
