@@ -79,7 +79,8 @@ eq "記録: tests/funcdiff が失敗 → tb の組全部" "$(printf 'internal/re
 eq "記録: tb の組をファイルの規則でも流すとき(bin/tb など)は、記録で絞らない" "$(cm $'internal/reminder/nudge.go\t*Nudge.Run' "$TMP/map.json" ".suites | $TBS" internal/reminder/nudge.go taskboard/bin/tb)" "[$TB4]"
 eq "記録: help.txt → 読むユニットだけ(Web UI は流さない)" "$(cm '' "$TMP/map.json" '[.suites, .go]' taskboard/lib/help.txt)" '[["taskboard-only:99_layout.sh"],[]]'
 eq "記録なし: help.txt → tb の組全部" "$(q '.suites' taskboard/lib/help.txt)" "[$TB4]"
-eq "記録に help.txt が無い → tb の組全部" "$(jq 'del(.files)' "$TMP/map.json" >"$TMP/nofiles.json"; cm '' "$TMP/nofiles.json" ".suites | $TBS" taskboard/lib/help.txt)" "[$TB4]"
+eq "記録に help.txt が無い → tb の組全部" "$(jq '.files = {}' "$TMP/map.json" >"$TMP/nofiles.json"; cm '' "$TMP/nofiles.json" ".suites | $TBS" taskboard/lib/help.txt)" "[$TB4]"
+eq "記録に funcs が無い → 使わない" "$(jq 'del(.funcs)' "$TMP/map.json" >"$TMP/nofuncs.json"; cm $'internal/reminder/nudge.go\t*Nudge.Run' "$TMP/nofuncs.json" ".suites | $TBS" internal/reminder/nudge.go)" "[$TB4]"
 eq "記録なし → tb の組全部と、その理由" "$(q '.notes' internal/reminder/nudge.go)" '["関数の記録なしなので tb の組は全部"]'
 eq "全部: tests/funcdiff・tests/covmap.sh" "$(q '[.full]' tests/funcdiff/main.go tests/covmap.sh)" '[true]'
 

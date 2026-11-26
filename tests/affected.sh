@@ -175,6 +175,8 @@ covmap_usable() {
   if [[ -z $covmap_ok ]]; then
     covmap_ok=yes
     if [[ -z ${TB_COVMAP-} ]]; then covmap_ok=no covmap_why="${TB_COVMAP_NOTE:-関数の記録なし}なので tb の組は全部"
+    elif ! jq -e '.version == 1 and (.funcs | type) == "object" and (.files | type) == "object"' "$TB_COVMAP" >/dev/null 2>&1; then
+      covmap_ok=no covmap_why="関数の記録が読めないので tb の組は全部"
     elif [[ $(jq -c .units "$TB_COVMAP" 2>/dev/null) != "$(bash taskboard/test/run.sh --units | awk '{print $1}' | jq -Rnc '[inputs]')" ]]; then
       covmap_ok=no covmap_why="関数の記録と tb のユニットの分け方が合わないので tb の組は全部"
     fi
