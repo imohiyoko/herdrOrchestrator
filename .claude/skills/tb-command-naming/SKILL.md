@@ -53,7 +53,7 @@ ADR 0002(サービスの境界)と ADR 0004(3 つの層とモジュール)から
 | `message` | 機能 | agent への連絡・保留・inbox・送信の履歴 | send, transport(の外向き), digest / `message send/flush/outbox/inbox/read`(古い名前 `send` `flush` `outbox` `inbox` `inbox-read`)。`report` `pending` はまだ古い名前だけ |
 | `digest` | 機能 | まとめ送り | digest / `digest` `digests` |
 | `agent` | 機能 | agent の作成・停止・復活・上限・モデル・役割 | agents, spawn, limits, models, roles, shed / `agent list/open/stop/revive/restart/flag/ops/approve/reject/kinds/shed/spawn/can/org/peek/slash`、`agent freeze/unfreeze`(子 agent の自動承認)、`agent model set`、`agent compact check`、`agent role show/list/write/edit/unset/set/log/broadcast/status`(古い名前 `agents` `agent-*` `spawn-*` `can` `org` `peek` `slash` `model-set` `compact-check` `role-*` `roles`)。`limits` はまだ古い形のまま |
-| `agentset` | 機能(外側) | agent セット: 役割・指示・親子の定義と、1 つの workspace への立ち上げ・停止(agent の API を呼ぶだけ。ADR 0008) | internal/agentset / `agentset add/rm/list/show/up/down/status/scale` |
+| `agentset` | 機能(外側) | agent セット: 役割・指示・親子の定義と、1 つの workspace への立ち上げ・停止(agent の API を呼ぶだけ。ADR 0008) | internal/agentset / `agentset add/rm/list/show/up/down/status/scale/run/reap` |
 | `alert` | 機能 | アラート | alerts / `alert` `alert-*` `alerts` |
 | `review` | 機能 | 会計役のレビュー材料・レビューの提出 | review, gate / `review pack/submit`(古い名前 `review-pack` `review-submit`) |
 | `proposal` | 機能 | 会計役 → 設定役の改善提案(project proposal のチケット) | review / `proposal add/list/show/resolve`(古い名前 `proposal --role ...` `proposals` `proposal-resolve`) |

@@ -22,6 +22,7 @@ import (
 var agentsetVerbs = map[string]cmdFunc{
 	"add": cmdAgentsetAdd, "rm": cmdAgentsetRm, "list": cmdAgentsetList, "show": cmdAgentsetShow,
 	"up": cmdAgentsetUp, "down": cmdAgentsetDown, "status": cmdAgentsetStatus, "scale": cmdAgentsetScale,
+	"run": cmdAgentsetRun, "reap": cmdAgentsetReap,
 }
 
 var agentsetService = service{name: "agentset", one: agentsetVerbs, help: agentsetUsageText}
@@ -38,6 +39,8 @@ tb agentset up <セット>   1 つの workspace に pane を分けて立ち上�
 tb agentset down <セット> [--force]   メンバーを子から順に止める(止めてよいと判定されていないメンバーは --force)
 tb agentset status <セット> [--json]   メンバーごとの状態・pane・親
 tb agentset scale <セット> <メンバー> <N|+N|-N>   数を変えられるメンバーの動いている数を変える(同じ workspace に足す・手の空いたものから止める)
+tb agentset run <セット> <メンバー> --task T [--brief B]   job 型(mode = job)のメンバーをタスク T のために 1 体立てる(人だけ)
+tb agentset reap <セット>   job 型のメンバーのうち、タスクが終わった(done / cancelled)ものを止める
 `
 
 // appCaller は agentset.Caller(同じプロセスで API を呼ぶ)。
@@ -292,5 +295,54 @@ func cmdAgentsetScale(args []string, w, stderr io.Writer) error {
 	}
 	defer db.Close()
 	lines, err := agentset.Scale(context.Background(), c, by, d, args[1], args[2])
+	return agentsetLines(lines, err, w, stderr)
+}
+
+func cmdAgentsetRun(args []string, w, stderr io.Writer) error {
+	if len(args) < 2 || strings.HasPrefix(args[1], "-") {
+		return usage("agentset run <セット> <メンバー> --task T [--brief B]")
+	}
+	task, brief := "", ""
+	for i := 2; i < len(args); i++ {
+		switch args[i] {
+		case "--task", "--brief":
+			if i+1 >= len(args) {
+				return usage("%s に値が必要です", args[i])
+			}
+			if args[i] == "--task" {
+				task = args[i+1]
+			} else {
+				brief = args[i+1]
+			}
+			i++
+		default:
+			return usage("agentset run: 不明な引数 %s", args[i])
+		}
+	}
+	if task == "" {
+		return usage("agentset run: --task が必要です")
+	}
+	db, d, c, by, err := agentsetLoad(args[:1], "run", stderr)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	lines, err := agentset.Run(context.Background(), c, by, d, args[1], task, brief)
+	return agentsetLines(lines, err, w, stderr)
+}
+
+func cmdAgentsetReap(args []string, w, stderr io.Writer) error {
+	if len(args) > 1 {
+		return usage("agentset reap: 不明な引数 %s", args[1])
+	}
+	db, d, c, by, err := agentsetLoad(args, "reap", stderr)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	lines, err := agentset.Reap(context.Background(), c, by, d)
+	if err == nil && len(lines) == 0 {
+		fmt.Fprintln(w, "止める job はありません")
+	}
 	return agentsetLines(lines, err, w, stderr)
 }

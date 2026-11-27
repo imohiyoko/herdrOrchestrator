@@ -34,11 +34,12 @@ type Member struct {
 	Prompt string
 	Count  int
 	Max    int    // scale の上限(0 は書いていない = Count まで、-1 は上限なし)
+	Mode   string // job: 1 タスクに 1 体(tb agentset run で立て、タスクが終わったら reap で止める)
 	Parent string // セットのメンバー名 / ~set / 既存の agent 名(空なら親なし)
 }
 
 // Scalable は数を変えられるメンバー(count が 2 以上か、max を書いた)。agent の名前は <セット>-<メンバー>-<N>。
-func (m Member) Scalable() bool { return m.Count > 1 || m.Max != 0 }
+func (m Member) Scalable() bool { return m.Count > 1 || m.Max != 0 || m.Mode == "job" }
 
 // Limit は scale の上限(-1 は上限なし)。
 func (m Member) Limit() int {
@@ -56,7 +57,7 @@ var (
 )
 
 // まだ入れていない項目(設計案の段 4 以降)。書いてあれば断る(黙って無視しない)。
-var later = map[string]bool{"schedule": true, "mode": true, "on_parent_exit": true, "panes_per_workspace": true}
+var later = map[string]bool{"schedule": true, "on_parent_exit": true, "panes_per_workspace": true}
 
 // Parse は定義の本文を読む。書式は「キー = 値」の行と、メンバーごとの段落 [member <名前>]。
 // # で始まる行と、空白のあとの「# 」から行末はコメント。
@@ -66,6 +67,7 @@ func Parse(name, body string) (Def, error) {
 		return d, fmt.Errorf("セットの名前は英小文字で始まり、英小文字・数字・_ の 16 字以内: %s", name)
 	}
 	var m *Member
+	countSet := map[string]bool{}
 	sc := bufio.NewScanner(strings.NewReader(body))
 	sc.Buffer(make([]byte, 64*1024), 1<<20)
 	for ln := 1; sc.Scan(); ln++ {
@@ -133,10 +135,16 @@ func Parse(name, body string) (Def, error) {
 			m.Parent = v
 		case "count":
 			n, err := strconv.Atoi(v)
-			if err != nil || n < 1 {
-				return d, fmt.Errorf("%d 行目: count は 1 以上の数: %s", ln, v)
+			if err != nil || n < 0 {
+				return d, fmt.Errorf("%d 行目: count は 1 以上の数(job 型は 0 も): %s", ln, v)
 			}
 			m.Count = n
+			countSet[m.Name] = true
+		case "mode":
+			if v != "job" {
+				return d, fmt.Errorf("%d 行目: mode は job だけ: %s", ln, v)
+			}
+			m.Mode = v
 		case "max":
 			if v == "unlimited" {
 				m.Max = -1
@@ -148,11 +156,25 @@ func Parse(name, body string) (Def, error) {
 			}
 			m.Max = n
 		default:
-			return d, fmt.Errorf("%d 行目: メンバーのキーは role / model / kind / cwd / prompt / count / max / parent: %s", ln, k)
+			return d, fmt.Errorf("%d 行目: メンバーのキーは role / model / kind / cwd / prompt / count / max / mode / parent: %s", ln, k)
 		}
 	}
 	if err := sc.Err(); err != nil {
 		return d, err
+	}
+	for i := range d.Members { // job 型は、書かなければ起動時 0 体・上限なし
+		x := &d.Members[i]
+		if x.Count == 0 && x.Mode != "job" {
+			return d, fmt.Errorf("メンバー %s: count は 1 以上の数(job 型は 0 も)", x.Name)
+		}
+		if x.Mode == "job" {
+			if !countSet[x.Name] {
+				x.Count = 0
+			}
+			if x.Max == 0 {
+				x.Max = -1
+			}
+		}
 	}
 	return d, d.check()
 }
@@ -240,9 +262,9 @@ type Instance struct {
 	Parent string // 親の agent の名前(空なら親なし)
 }
 
-// Plan は起動の順: 親が先(定義の順を保ち、親のメンバーを先に出す)。止めるのは逆の順。
-func (d Def) Plan() []Instance {
-	var out []Instance
+// Order はメンバーの順: 親が先(定義の順を保ち、親のメンバーを先に出す)。
+func (d Def) Order() []Member {
+	var out []Member
 	done := map[string]bool{}
 	var visit func(m Member)
 	visit = func(m Member) {
@@ -250,26 +272,41 @@ func (d Def) Plan() []Instance {
 			return
 		}
 		done[m.Name] = true
-		parent := ""
-		switch {
-		case m.Parent == "~set":
-			parent = d.Parent
-		case m.Parent != "":
-			if pm, ok := d.member(m.Parent); ok {
-				visit(pm)
-				parent = pm.agentNames(d.Name)[0]
-			} else {
-				parent = m.Parent
-			}
+		if pm, ok := d.member(m.Parent); ok {
+			visit(pm)
 		}
-		for _, n := range m.agentNames(d.Name) {
-			out = append(out, Instance{Name: n, Member: m, Parent: parent})
-		}
+		out = append(out, m)
 	}
 	for _, m := range d.Members {
 		visit(m)
 	}
 	return out
+}
+
+// Plan は起動の順の 1 体ずつ(Order の順。止めるのは逆の順)。
+func (d Def) Plan() []Instance {
+	var out []Instance
+	for _, m := range d.Order() {
+		parent := d.ParentAgent(m)
+		for _, n := range m.agentNames(d.Name) {
+			out = append(out, Instance{Name: n, Member: m, Parent: parent})
+		}
+	}
+	return out
+}
+
+// ParentAgent はメンバーの親の agent の名前(~set はセットの parent、メンバー名はその agent。空なら親なし)。
+func (d Def) ParentAgent(m Member) string {
+	switch {
+	case m.Parent == "~set":
+		return d.Parent
+	case m.Parent == "":
+		return ""
+	}
+	if pm, ok := d.member(m.Parent); ok {
+		return pm.agentNames(d.Name)[0]
+	}
+	return m.Parent
 }
 
 // External はセットの外の親(定義に書かれた既存の agent)。起動の前に台帳にいるか確かめる。

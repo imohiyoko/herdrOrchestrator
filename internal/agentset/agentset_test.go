@@ -14,6 +14,7 @@ import (
 	"github.com/imohiyoko/API/port"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
+	"github.com/imohiyoko/herdrorchestrator/internal/app/ticket"
 )
 
 const review = `# agentset: review
@@ -98,6 +99,7 @@ type fakeAPI struct {
 	max    int
 	fail   string // この名前の new を失敗させる
 	n      int
+	tasks  map[string]ticket.GetResult // ticket.get の答え(無ければ not_found)
 }
 
 func (f *fakeAPI) Call(_ context.Context, by port.Principal, op string, in, out any) error {
@@ -136,7 +138,7 @@ func (f *fakeAPI) Call(_ context.Context, by port.Principal, op string, in, out 
 			return &define.Error{Code: define.CodeUnavailable, Message: q.Name + " を起動できません"}
 		}
 		p := pane(q.Pane)
-		f.agents[q.Name] = agent.AgentInfo{Name: q.Name, State: "running", Live: true, Pane: p, Parent: q.Parent}
+		f.agents[q.Name] = agent.AgentInfo{Name: q.Name, State: "running", Live: true, Pane: p, Parent: q.Parent, Task: q.Task}
 		set(agent.NewResult{Name: q.Name, Out: q.Name + " started", Pane: p})
 	case "agent.revive":
 		q := in.(agent.ReviveReq)
@@ -151,6 +153,12 @@ func (f *fakeAPI) Call(_ context.Context, by port.Principal, op string, in, out 
 		a.State, a.Live = "stopped", false
 		f.agents[q.Name] = a
 		set(agent.StopResult{Name: q.Name, Out: q.Name + " stopped"})
+	case "ticket.get":
+		t, ok := f.tasks[in.(ticket.GetReq).ID]
+		if !ok {
+			return &define.Error{Code: define.CodeNotFound, Message: "チケットが見つかりません"}
+		}
+		set(t)
 	default:
 		return errors.New("unknown op " + op)
 	}
@@ -349,4 +357,87 @@ func (f *fakeAPI) running() int {
 		}
 	}
 	return n
+}
+
+func TestJob(t *testing.T) {
+	d, err := Parse("j", "[member lead]\n[member w]\nmode = job\nmax = 2\nparent = lead\nprompt = 直す\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w, _ := d.member("w"); w.Count != 0 || !w.Scalable() || len(d.Plan()) != 1 {
+		t.Fatalf("job の既定: %+v %+v", w, d.Plan())
+	}
+	for body, want := range map[string]string{
+		"[member a]\ncount = 0\n":   "count",
+		"[member a]\nmode = pool\n": "mode",
+	} {
+		if _, err := Parse("x", body); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: %v", body, err)
+		}
+	}
+	ctx, by := context.Background(), port.Principal{}
+	f := &fakeAPI{agents: map[string]agent.AgentInfo{}, max: -1, tasks: map[string]ticket.GetResult{
+		"T-p-001": {ID: "T-p-001", Status: "todo"}, "T-p-002": {ID: "T-p-002", Status: "todo"},
+		"T-p-003": {ID: "T-p-003", Status: "todo"}, "T-p-009": {ID: "T-p-009", Status: "done", Closed: true},
+	}}
+	// 親がまだいない
+	if _, err := Run(ctx, f, by, d, "w", "T-p-001", ""); err == nil || !strings.Contains(err.Error(), "親") {
+		t.Errorf("親なし: %v", err)
+	}
+	if _, err := Up(ctx, f, by, d); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := f.agents["j-w-1"]; ok {
+		t.Fatal("up は job を立てない")
+	}
+	f.calls = nil
+	lines, err := Run(ctx, f, by, d, "w", "T-p-001", "ログを見る")
+	if err != nil || len(lines) != 1 || lines[0].Name != "j-w-1" {
+		t.Fatalf("run: %v %+v", err, lines)
+	}
+	var q agent.NewReq
+	_ = json.Unmarshal([]byte(strings.TrimPrefix(ops(f)[1], "agent.new ")), &q)
+	if q.Task != "T-p-001" || q.Killable != "yes" || q.Parent != "j-lead" || q.Pane == nil || q.Pane.Split == "" ||
+		!strings.Contains(q.Prompt, "直す") || !strings.Contains(q.Prompt, "tb claim T-p-001") || !strings.Contains(q.Prompt, "ログを見る") {
+		t.Errorf("new: %+v", q)
+	}
+	for _, c := range []struct{ member, task, want string }{
+		{"lead", "T-p-002", "job 型"},
+		{"w", "T-p-001", "もう担当"},
+		{"w", "T-p-009", "終わって"},
+		{"w", "T-p-404", "見つかりません"},
+		{"x", "T-p-002", "いません"},
+	} {
+		if _, err := Run(ctx, f, by, d, c.member, c.task, ""); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%+v: %v", c, err)
+		}
+	}
+	if _, err := Run(ctx, f, by, d, "w", "T-p-002", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run(ctx, f, by, d, "w", "T-p-003", ""); err == nil || !strings.Contains(err.Error(), "max(2)") {
+		t.Errorf("max: %v", err)
+	}
+	// status は job の agent も出す
+	if rows, _ := Status(ctx, f, by, d); len(rows) != 3 {
+		t.Errorf("status: %+v", rows)
+	}
+	// reap: 終わったタスクの agent だけを止める
+	f.tasks["T-p-001"] = ticket.GetResult{ID: "T-p-001", Status: "done", Closed: true}
+	f.calls = nil
+	lines, err = Reap(ctx, f, by, d)
+	if err != nil || len(lines) != 1 || lines[0].Name != "j-w-1" || f.agents["j-w-1"].Live || !f.agents["j-w-2"].Live {
+		t.Fatalf("reap: %v %+v", err, lines)
+	}
+	// 消えたタスクも止める。止めた番号は次の run で使わず、新しい番号にする
+	delete(f.tasks, "T-p-002")
+	if lines, err := Reap(ctx, f, by, d); err != nil || len(lines) != 1 || !strings.Contains(lines[0].Out, "ありません") {
+		t.Errorf("reap 消えた: %v %+v", err, lines)
+	}
+	if lines, err := Run(ctx, f, by, d, "w", "T-p-003", ""); err != nil || lines[0].Name != "j-w-3" {
+		t.Errorf("次の番号: %v %+v", err, lines)
+	}
+	if lines, err := Reap(ctx, f, by, d); err != nil || len(lines) != 0 {
+		t.Errorf("何も止めない: %v %+v", err, lines)
+	}
 }
