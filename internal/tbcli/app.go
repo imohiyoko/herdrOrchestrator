@@ -30,6 +30,15 @@ func callApp(db *store.DB, what, op string, in, out any) error {
 	return callAppAs(db, by, op, in, out)
 }
 
+// callAppWarn は callApp に、操作の途中の警告の書き込み先(標準エラー)を足したもの。
+func callAppWarn(db *store.DB, what string, stderr io.Writer, op string, in, out any) error {
+	by, err := callerPrincipal(what)
+	if err != nil {
+		return err
+	}
+	return callAppW(db, by, stderr, op, in, out)
+}
+
 // callAppActor は callApp に、記録に残す「した者」の名前(actor_name で引いたもの)を足したもの。
 func callAppActor(db *store.DB, what, actor, op string, in, out any) error {
 	by, err := callerPrincipal(what)
