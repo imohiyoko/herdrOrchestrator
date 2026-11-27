@@ -157,3 +157,34 @@ func TestTicketRmAgentAsk(t *testing.T) {
 		t.Fatalf("EntryChecked: %+v %v %v", res, e, queued)
 	}
 }
+
+func TestTicketState(t *testing.T) {
+	env := ticketFixture(t, "")
+	if res, e := callOp[ticket.StateResult](t, env, app.Agent("w1"), "ticket.claim", ticket.ClaimReq{ID: "T-p-002", Owner: "w1"}); e != nil || res.Status != "in_progress" {
+		t.Fatalf("claim: %+v %v", res, e)
+	}
+	if _, e := callOp[ticket.StateResult](t, env, app.Agent("w2"), "ticket.claim", ticket.ClaimReq{ID: "T-p-002", Owner: "w2"}); e == nil || e.Code != define.CodeFailedPrecondition {
+		t.Errorf("todo でなければ断る: %v", e)
+	}
+	if _, e := callOp[ticket.StateResult](t, env, app.Agent("w1"), "ticket.done", ticket.DoneReq{ID: "T-p-002", Deliverables: []string{" "}, Summary: "x"}); e == nil || e.Code != define.CodeInvalidArgument {
+		t.Errorf("成果物が要る: %v", e)
+	}
+	if res, e := callOp[ticket.StateResult](t, env, app.Agent("w1"), "ticket.done", ticket.DoneReq{ID: "T-p-002", Deliverables: []string{"a.md"}, Summary: "済"}); e != nil || res.Status != "done" {
+		t.Fatalf("done: %+v %v", res, e)
+	}
+	if got := q1(t, env, `SELECT status||' '||owner_agent||' '||deliverables FROM tasks WHERE id='T-p-002'`); got != `done w1 ["a.md"]` {
+		t.Errorf("done の中身: %q", got)
+	}
+	if res, e := callOp[ticket.StateResult](t, env, app.Human(), "ticket.block", ticket.ReasonReq{ID: "T-p-003", Reason: "待ち"}); e != nil || res.Status != "blocked" {
+		t.Fatalf("block: %+v %v", res, e)
+	}
+	if res, e := callOp[ticket.StateResult](t, env, app.Human(), "ticket.cancel", ticket.ReasonReq{ID: "T-p-003"}); e != nil || res.Status != "cancelled" {
+		t.Fatalf("cancel: %+v %v", res, e)
+	}
+	if _, e := callOp[ticket.StateResult](t, env, app.Human(), "ticket.cancel", ticket.ReasonReq{ID: "T-p-003"}); e == nil || !strings.Contains(e.Message, "すでに cancelled です") {
+		t.Errorf("二度目の cancel: %v", e)
+	}
+	if got := q1(t, env, `SELECT actor FROM task_events WHERE task_id='T-p-002' AND kind='status' ORDER BY id DESC LIMIT 1`); got != "w1" {
+		t.Errorf("履歴の変えた者: %q", got)
+	}
+}

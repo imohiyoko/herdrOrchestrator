@@ -290,7 +290,8 @@ ADR 0004 の依存の検査に次を足す。今ある違反は許容リスト�
 - 入口の段の門 `app.Entry`: commands.tbl の場所が entry の行(`cmd:ticket:move` / `cmd:ticket:rm`)で、ask は承認待ち(Q-<n>)に、deny は tb と同じ文言と記録にする。tb の入口は `perms.Gate` で判定済みなので、`Env.EntryChecked` を立てて二重に判定・記録しない。Web UI や将来の API から agent として呼べば、ここで判定される(`ticket.rm` は agent からは ask)。
 - 履歴の「変えた者」は `Env.EventActor`: tb の入口は今のトリガー(pane から引いた名前か `pane:<id>`)のまま、Web UI などは主体から(agent は名前、ほかは `human`)。
 - Web UI の「状態を変える」(/task-status)と「チケットを消す」(/task-rm)は `runTB` をやめ、同じ操作を同じプロセスで人として呼ぶ(`callEdit`)。断ったときは「断りました: <理由>」と出す。
-- まだ残るもの: claim / done / block / cancel / add / update / comment / link / sprint と、Web UI の状態の定義・スプリント(edits.go の `runTB`)、tasks.go の読み込み。
+- 状態を動かす `ticket.claim` / `ticket.done` / `ticket.block` / `ticket.cancel`(`POST /v1/tickets/{id}/<動詞>`、`tb claim` / `done` / `block` / `cancel`)。中身は `internal/tickets/state.go`。
+- まだ残るもの: add / update / comment / link / sprint と、Web UI の状態の定義・スプリント(edits.go の `runTB`)、tasks.go の読み込み。
 
 ## 検討した代替案
 
