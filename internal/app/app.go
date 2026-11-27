@@ -55,6 +55,9 @@ type Env struct {
 	Out io.Writer
 	// ChildEnv は承認したコマンドを依頼者として動かす子(herdrctl tb …)の環境。nil ならこのプロセスの環境。
 	ChildEnv []string
+	// SchedJob / SchedOwner は、定期ジョブ(scheduler)から呼ばれたときのジョブ名と持ち主(tb の SCHED_JOB / SCHED_OWNER)。
+	// 人の呼び出しのレシピの実行は、ジョブの持ち主の権限で行う。入口だけが入れる(呼び手の入力では受けない)。
+	SchedJob, SchedOwner string
 	// TbCmd は、その子で tb を動かすコマンド(nil ならこのプロセスの herdrctl tb)。Web UI は checkout の tb を入れる。
 	TbCmd []string
 }

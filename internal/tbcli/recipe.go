@@ -13,7 +13,7 @@ import (
 )
 
 // レシピの登録・一覧・中身・履歴(taskboard/lib/recipes.sh の cmd_recipe-set / rm / list / show / history)。
-// 実行(recipe-run / queue / runner / cancel)は bash に残る。
+// 実行(recipe-run / runner)と取り消しはアプリケーション API(internal/app/recipe)。一覧の recipe-queue は reciperun.go。
 
 func validRecipeName(n string) error {
 	if !recipe.NameRE.MatchString(n) {

@@ -24,7 +24,7 @@ func cmdRecipeRun(args []string, w, stderr io.Writer) error {
 	if len(args) < 1 || strings.HasPrefix(args[0], "-") {
 		return usage("recipe-run <名前> [--target A] [--task T-..] [--dry-run] [<名前>=<値> ...]")
 	}
-	in := apprecipe.RunReq{Name: args[0], SchedJob: os.Getenv("SCHED_JOB"), SchedOwner: os.Getenv("SCHED_OWNER")}
+	in := apprecipe.RunReq{Name: args[0]}
 	if err := validRecipeName(in.Name); err != nil {
 		return err
 	}
@@ -64,9 +64,13 @@ func cmdRecipeRun(args []string, w, stderr io.Writer) error {
 	}
 	env := appEnv(db, stderr)
 	env.Out = w // 部品の出力は実行しながら出す
+	env.SchedJob, env.SchedOwner = os.Getenv("SCHED_JOB"), os.Getenv("SCHED_OWNER")
 	var r apprecipe.RunResult
 	if err := callAppEnv(env, by, "recipe.run", in, &r); err != nil {
 		return err
+	}
+	if r.Pending != nil {
+		return pendingExit(w, r.Pending)
 	}
 	fmt.Fprint(w, r.Out)
 	flush(w)
@@ -104,6 +108,9 @@ func cmdRecipeRunner(args []string, w, stderr io.Writer) error {
 	var r apprecipe.RunnerResult
 	if err := callAppWarn(db, "tb recipe-runner", stderr, "recipe.runner", apprecipe.RunnerReq{Max: max}, &r); err != nil {
 		return err
+	}
+	if r.Pending != nil {
+		return pendingExit(w, r.Pending)
 	}
 	fmt.Fprint(stderr, r.Err)
 	for _, l := range r.Lines {

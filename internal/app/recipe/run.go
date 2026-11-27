@@ -38,24 +38,26 @@ import (
 const partExec = " agent-status wait-idle task-show agent-stop agent-revive agent-restart agent-force-stop comment-resolve "
 
 // RunReq は recipe.run の入力(tb recipe run <名前> [--target A] [--task T-..] [--dry-run] [<名前>=<値> ...])。
-// SchedJob / SchedOwner は定期ジョブからの実行(SCHED_JOB / SCHED_OWNER)。人の呼び出しのときだけ見て、ジョブの持ち主の権限で実行する。
+// 定期ジョブからの実行(SCHED_JOB / SCHED_OWNER)は入口が Env.SchedJob / SchedOwner に入れる(呼び手の入力では受けない)。
 type RunReq struct {
-	Name       string   `api:"name,path"`
-	Target     string   `api:"target,optional"`
-	Task       string   `api:"task,optional"`
-	DryRun     bool     `api:"dry_run,optional"`
-	Args       []string `api:"args,optional"` // <名前>=<値>
-	SchedJob   string   `api:"sched_job,optional"`
-	SchedOwner string   `api:"sched_owner,optional"`
+	Name   string   `api:"name,path"`
+	Target string   `api:"target,optional"`
+	Task   string   `api:"task,optional"`
+	DryRun bool     `api:"dry_run,optional"`
+	Args   []string `api:"args,optional"` // <名前>=<値>
 }
 
 // RunResult は実行の結果。Out / Err は tb が標準出力・標準エラーに出す行(Env.Out があれば Out はそちらへ流し、ここは空)。
 // Code は tb の終了コード(0 = 済んだか待ち行列に置いた / 1 = 途中の部品が失敗 / 2 = 使い方 / 4 = 実行しない / 20 = 人の承認が要る)。
 type RunResult struct {
-	Out  string `api:"out,optional" json:"out,omitempty"`
-	Err  string `api:"err,optional" json:"err,omitempty"`
-	Code int    `api:"code" json:"code"`
+	Out     string       `api:"out,optional" json:"out,omitempty"`
+	Err     string       `api:"err,optional" json:"err,omitempty"`
+	Code    int          `api:"code" json:"code"`
+	Pending *app.Pending `api:"pending,optional" json:"pending,omitempty"`
 }
+
+// SetPending は app.PendingSetter。
+func (r *RunResult) SetPending(p *app.Pending) { r.Pending = p }
 
 // RunnerReq は recipe.runner の入力(tb recipe runner [--max N])。Max は 1〜999(0 なら 1)。
 type RunnerReq struct {
@@ -64,16 +66,23 @@ type RunnerReq struct {
 
 // RunnerResult は実行した依頼ごとの 1 行(R-<n> <状態>)と、途中の警告(tb の標準エラー)。
 type RunnerResult struct {
-	Lines []string `api:"lines" json:"lines"`
-	Err   string   `api:"err,optional" json:"err,omitempty"`
+	Lines   []string     `api:"lines" json:"lines"`
+	Err     string       `api:"err,optional" json:"err,omitempty"`
+	Pending *app.Pending `api:"pending,optional" json:"pending,omitempty"`
 }
+
+// SetPending は app.PendingSetter。
+func (r *RunnerResult) SetPending(p *app.Pending) { r.Pending = p }
 
 func runOps(env *app.Env) []app.Op {
 	run := app.Command(env, "recipe.run", app.Entry("cmd:recipe:run", "tb recipe-run"),
 		func(ctx context.Context, in RunReq) (RunResult, error) {
 			by := who(ctx)
-			if by == "" {
+			switch {
+			case by == "":
 				return RunResult{}, define.Errorf(define.CodePermissionDenied, "呼び手を決められません")
+			case strings.HasPrefix(by, "system:"): // scheduler などは人の端末と同じ(tb の requester と同じ。定期ジョブの持ち主は Env.SchedOwner)
+				by = "human"
 			}
 			if err := validName(in.Name); err != nil {
 				return RunResult{}, err
@@ -81,7 +90,7 @@ func runOps(env *app.Env) []app.Op {
 			if in.Task != "" && !ticket.ReID.MatchString(in.Task) {
 				return RunResult{}, define.Errorf(define.CodeInvalidArgument, "タスク ID は T-<project>-NNN 形式: %s", in.Task)
 			}
-			return withDB(env, func(db *store.DB) (RunResult, error) { return runRecipe(env, db, by, in) })
+			return withDB(env, func(db *store.DB) (RunResult, error) { return runRecipe(ctx, env, db, by, in) })
 		},
 		define.Doc("登録したレシピを実行する(tb recipe run。レシピと部品ごとに依頼者の権限で判定してから実行する。pane の外の部品は待ち行列に置く)"),
 		define.Authz("cmd:recipe:run", define.Resource("recipe", "name")),
@@ -96,7 +105,7 @@ func runOps(env *app.Env) []app.Op {
 			if in.Max < 1 || in.Max > 999 {
 				return RunnerResult{}, define.Errorf(define.CodeInvalidArgument, "recipe-runner: --max は 1〜999: %d", in.Max)
 			}
-			return withDB(env, func(db *store.DB) (RunnerResult, error) { return runner(env, db, in.Max) })
+			return withDB(env, func(db *store.DB) (RunnerResult, error) { return runner(ctx, env, db, in.Max) })
 		},
 		define.Doc("待ち行列の実行の依頼を古い順に取り出し、判定し直してから実行する(tb recipe runner。既定は人だけ)"),
 		define.Authz("cmd:recipe:runner"),
@@ -108,6 +117,7 @@ func runOps(env *app.Env) []app.Op {
 
 // recipeRun は 1 回の実行の状態(bash の RUN_* / REQ_BY / JUDGE_*)。
 type recipeRun struct {
+	ctx       context.Context
 	env       *app.Env
 	db        *store.DB
 	st        tickets.StatusSet
@@ -347,7 +357,11 @@ func (r *recipeRun) partRun(part string, val map[string]string, label string) (s
 			if int(time.Since(t0).Seconds()) >= limit {
 				return t + " は " + val["timeout"] + " 秒で idle になりませんでした(" + or(st, "状態不明") + ")", 1
 			}
-			time.Sleep(time.Duration(agent.SecEnv("TB_RECIPE_POLL_SEC", 2) * float64(time.Second)))
+			select {
+			case <-r.ctx.Done(): // 呼び手が待つのをやめた(Web UI の接続が切れたなど)
+				return t + " を待つのをやめました(呼び出しが取り消された)", 1
+			case <-time.After(time.Duration(agent.SecEnv("TB_RECIPE_POLL_SEC", 2) * float64(time.Second))):
+			}
 		}
 	case "task-show":
 		out, err := ticket.Show(r.db, val["task"])
@@ -372,7 +386,7 @@ func (r *recipeRun) partRun(part string, val map[string]string, label string) (s
 			f = 1
 		}
 		args := jv.Compact(jv.Obj{{K: "force", V: jv.Number(strconv.Itoa(f))}, {K: "recipe", V: label}})
-		res := agent.Stop(r.db, r.st, t, force, label)
+		res := agent.StopContext(r.ctx, r.db, r.st, t, force, label)
 		record("stop", args, res.Code, label+": "+res.Out)
 		return res.Out, res.Code
 	case "agent-revive":
@@ -382,7 +396,7 @@ func (r *recipeRun) partRun(part string, val map[string]string, label string) (s
 			record("revive", args, 4, label+": "+out)
 			return out, 4
 		}
-		res := agent.Revive(r.db, t, false, "", val["prompt"], label, r.errw)
+		res := agent.ReviveContext(r.ctx, r.db, t, false, "", val["prompt"], label, r.errw)
 		record("revive", args, res.Code, label+": "+res.Out)
 		return res.Out, res.Code
 	case "agent-restart":
@@ -392,7 +406,7 @@ func (r *recipeRun) partRun(part string, val map[string]string, label string) (s
 			record("revive", args, 4, label+": "+out)
 			return out, 4
 		}
-		res := agent.Restart(r.db, r.st, t, val["prompt"], label, r.errw)
+		res := agent.RestartContext(r.ctx, r.db, r.st, t, val["prompt"], label, r.errw)
 		record("revive", args, res.Code, "restart: "+label+": "+res.Out)
 		return res.Out, res.Code
 	}
@@ -451,13 +465,17 @@ func recipeBody(db *store.DB, name string) (string, bool) {
 }
 
 // runRecipe は recipe-run の中身。
-func runRecipe(env *app.Env, db *store.DB, by string, in RunReq) (RunResult, error) {
+func runRecipe(ctx context.Context, env *app.Env, db *store.DB, by string, in RunReq) (RunResult, error) {
 	var outBuf, errBuf bytes.Buffer
 	w := io.Writer(&outBuf)
 	if env.Out != nil {
 		w = env.Out
 	}
-	r := &recipeRun{env: env, db: db, st: tickets.LoadStatuses(db.DB, db.Session), by: by, target: in.Target, task: in.Task, errw: &errBuf}
+	var warn io.Writer = &errBuf // 部品の途中の警告(agent の戻しなど)。入口に Warn があればすぐ出す
+	if env.Warn != nil {
+		warn = env.Warn
+	}
+	r := &recipeRun{ctx: ctx, env: env, db: db, st: tickets.LoadStatuses(db.DB, db.Session), by: by, target: in.Target, task: in.Task, errw: warn}
 	name, dry := in.Name, in.DryRun
 	result := func(code int) RunResult { return RunResult{Out: outBuf.String(), Err: errBuf.String(), Code: code} }
 	if r.task != "" {
@@ -470,23 +488,23 @@ func runRecipe(env *app.Env, db *store.DB, by string, in RunReq) (RunResult, err
 		}
 	}
 	// 定期ジョブ(SCHED_JOB)から人の端末で呼ばれたら、ジョブの持ち主(SCHED_OWNER)の権限にする
-	if by == "human" && in.SchedJob != "" {
+	if job, owner := env.SchedJob, env.SchedOwner; by == "human" && job != "" {
 		why := ""
 		switch {
-		case in.SchedOwner == "":
-			why = fmt.Sprintf("定期ジョブ(%s)からは、ジョブに持ち主(OWNER=<agent 名>)があるときだけ実行します(人の権限では実行しない)", in.SchedJob)
-		case recipe.ValueOK("agent", in.SchedOwner) != "":
-			why = fmt.Sprintf("ジョブ %s の OWNER が agent 名ではありません: %s", in.SchedJob, in.SchedOwner)
+		case owner == "":
+			why = fmt.Sprintf("定期ジョブ(%s)からは、ジョブに持ち主(OWNER=<agent 名>)があるときだけ実行します(人の権限では実行しない)", job)
+		case recipe.ValueOK("agent", owner) != "":
+			why = fmt.Sprintf("ジョブ %s の OWNER が agent 名ではありません: %s", job, owner)
 		}
 		if why != "" {
 			fmt.Fprintln(&errBuf, "tb: recipe-run: "+why)
 			if !dry {
-				r.eid = r.event("recipe_run", "", name+" target="+or(r.target, "-")+" via=sched:"+in.SchedJob, "recipe:"+name+":"+or(r.target, "-"))
+				r.eid = r.event("recipe_run", "", name+" target="+or(r.target, "-")+" via=sched:"+job, "recipe:"+name+":"+or(r.target, "-"))
 				r.event("recipe_end", "", "定期ジョブの持ち主を確かめられないため実行しません", "E-"+r.eid)
 			}
 			return result(4), nil
 		}
-		r.by, r.via = in.SchedOwner, "sched:"+in.SchedJob
+		r.by, r.via = owner, "sched:"+job
 	}
 	if r.target == "" {
 		if r.by == "human" {
@@ -683,7 +701,7 @@ func envOr(k, def string) string {
 }
 
 // runner は recipe-runner の中身: 待ち行列の queued を古い順に max 件まで取り出し、判定し直してから実行する。
-func runner(env *app.Env, db *store.DB, max int) (RunnerResult, error) {
+func runner(ctx context.Context, env *app.Env, db *store.DB, max int) (RunnerResult, error) {
 	ttl := envOr("TB_RECIPE_QUEUE_TTL_SEC", "900")
 	if !reSec6.MatchString(ttl) {
 		return RunnerResult{}, define.Errorf(define.CodeFailedPrecondition, "TB_RECIPE_QUEUE_TTL_SEC は秒の整数: %s", ttl)
@@ -712,17 +730,16 @@ func runner(env *app.Env, db *store.DB, max int) (RunnerResult, error) {
 		}
 		id := ids[0]
 		res, err := db.Exec(`UPDATE main.recipe_runs SET status='running', started_at=? WHERE herdr_session=? AND id=? AND status='queued' AND `+fresh, env.NowString(), db.Session, id)
-		if err != nil {
-			return RunnerResult{}, ierr(err)
+		if err != nil { // 済んだ分の行は返す
+			fmt.Fprintf(&errBuf, "tb: recipe-runner: R-%d を取り出せません: %v\n", id, err)
+			break
 		}
 		if c, _ := res.RowsAffected(); c != 1 {
 			continue
 		}
 		n++
 		row, _ := runRowOf(db, id)
-		if err := runnerOne(env, db, st, row, &errBuf); err != nil {
-			return RunnerResult{}, err
-		}
+		runnerOne(ctx, env, db, st, row, &errBuf)
 		var cur string
 		_ = db.QueryRow(`SELECT status FROM recipe_runs WHERE id=?`, id).Scan(&cur)
 		out.Lines = append(out.Lines, fmt.Sprintf("R-%d %s", id, cur))
@@ -732,51 +749,52 @@ func runner(env *app.Env, db *store.DB, max int) (RunnerResult, error) {
 }
 
 // runnerOne は _runner_one: 1 件を判定し直してから実行する。
-func runnerOne(env *app.Env, db *store.DB, st tickets.StatusSet, row runRow, errw io.Writer) error {
+// 判定の途中の失敗(部品の操作名を作れないなど)も、その依頼を止めて次へ進む(済んだ依頼の行を失わない)。
+func runnerOne(ctx context.Context, env *app.Env, db *store.DB, st tickets.StatusSet, row runRow, errw io.Writer) {
 	id := row.id
 	stop := func(why string) { RunClose(env, db, id, "stopped", why, "running", "") }
-	r := &recipeRun{env: env, db: db, st: st, by: row.requester, target: row.target, task: row.task, eid: row.eid, errw: errw}
+	r := &recipeRun{ctx: ctx, env: env, db: db, st: st, by: row.requester, target: row.target, task: row.task, eid: row.eid, errw: errw}
 	if recipe.ValueOK("agent", row.requester) != "" {
 		stop("依頼者が agent 名ではありません(人の依頼は待ち行列では実行しない)")
-		return nil
+		return
 	}
 	if recipe.ValueOK("agent", row.target) != "" {
 		stop("対象が agent 名ではありません")
-		return nil
+		return
 	}
 	body, has := recipeBody(db, row.name)
 	if !has {
 		stop("レシピ " + row.name + " の登録が消えたため実行しません")
-		return nil
+		return
 	}
 	if sha256Hex(body) != row.bodySha {
 		stop("レシピ " + row.name + " の本文が変わったため実行しません(もう一度頼みます)")
-		return nil
+		return
 	}
 	if _, perr := recipe.Parse(body); perr != "" {
 		stop("レシピ " + row.name + " は今のコードでは検査を通りません")
-		return nil
+		return
 	}
 	plan, err := planOf(row.plan)
 	if err != nil {
 		stop(err.Error())
-		return nil
+		return
 	}
 	if v, rule := approval.NewJudge(db.DB, db.Session).Of("recipe:"+row.name+":"+row.target, row.requester); v != "allow" {
 		stop("recipe:" + row.name + ":" + row.target + " が実行の時点で allow ではありません(" + rule + ")")
-		return nil
+		return
 	}
 	if err := r.judge(plan, io.Discard); err != nil {
-		return err
+		stop("実行の時点の判定に失敗しました: " + errText("", err))
+		return
 	}
 	if r.stop != "" {
 		stop("実行の時点の判定で止めました: " + strings.TrimPrefix(r.stop, "step "))
-		return nil
+		return
 	}
 	if r.exec(plan, fmt.Sprintf("recipe:R-%d", id), io.Discard) {
 		RunClose(env, db, id, "done", "", "running", "")
 	} else {
 		RunClose(env, db, id, "failed", r.execStop, "running", "")
 	}
-	return nil
 }
