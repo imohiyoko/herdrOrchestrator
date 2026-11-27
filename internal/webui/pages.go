@@ -10,9 +10,20 @@ import (
 
 const refreshSec = 30 // 自動更新の間隔(見ていないタブでは止まる。static/refresh.js)
 
-var nav = [][2]string{{"/", "概要"}, {"/notifications", "緊急通知"}, {"/agents", "agent"}, {"/tasks", "タスク"}, {"/board", "ボード"},
-	{"/inbox", "報告・承認待ち"}, {"/approvals", "承認(Q)"}, {"/outbox", "送信"}, {"/docs", "ドキュメント"}, {"/jobs", "job"}, {"/ledger", "送信履歴"}, {"/perms", "権限"},
-	{"/sessions", "セッション"}}
+// navGroups は左の縦タブ。見出しごとに関係する画面をまとめる。
+var navGroups = []struct {
+	head  string
+	items [][2]string
+}{
+	{"状況", [][2]string{{"/", "概要"}, {"/notifications", "緊急通知"}}},
+	{"agent", [][2]string{{"/agents", "agent"}, {"/sessions", "セッション"}}},
+	{"作業", [][2]string{{"/tasks", "タスク"}, {"/board", "ボード"}}},
+	{"やりとり", [][2]string{{"/inbox", "報告・承認待ち"}, {"/approvals", "承認(Q)"}, {"/outbox", "送信"}, {"/ledger", "送信履歴"}}},
+	{"運用", [][2]string{{"/jobs", "job"}, {"/perms", "権限"}, {"/docs", "ドキュメント"}}},
+}
+
+// navAlias はタブを持たない画面と、そのとき光らせるタブ。
+var navAlias = map[string]string{"/agent-graph": "/agents", "/org": "/agents", "/agent-new": "/agents"}
 
 // pageOpts は views.page の引数(ページごとの指定)。
 type pageOpts struct {
@@ -32,21 +43,25 @@ func badgeSpan(id string, n int) string {
 func (s *Server) page(q *rq, title, body, path, logout string, o pageOpts) string {
 	v := q.data()
 	var links strings.Builder
-	for _, n := range nav {
-		href, label := n[0], n[1]
-		on := path == href || (href != "/" && strings.HasPrefix(path, href+"/"))
-		b := ""
-		switch href {
-		case "/inbox":
-			b = badgeSpan("", v.badgeCount())
-		case "/notifications":
-			b = badgeSpan("id=nbadge ", len(v.urgentItems()))
+	for _, g := range navGroups {
+		links.WriteString(`<div class=navg><span class=navh>` + g.head + `</span>`)
+		for _, n := range g.items {
+			href, label := n[0], n[1]
+			on := path == href || (href != "/" && strings.HasPrefix(path, href+"/")) || navAlias[path] == href
+			b := ""
+			switch href {
+			case "/inbox":
+				b = badgeSpan("", v.badgeCount())
+			case "/notifications":
+				b = badgeSpan("id=nbadge ", len(v.urgentItems()))
+			}
+			cls := ""
+			if on {
+				cls = " class=on"
+			}
+			links.WriteString(`<a href="` + href + `"` + cls + `>` + label + b + `</a>`)
 		}
-		cls := ""
-		if on {
-			cls = " class=on"
-		}
-		links.WriteString(`<a href="` + href + `"` + cls + `>` + label + b + `</a>`)
+		links.WriteString(`</div>`)
 	}
 	var h strings.Builder
 	h.WriteString("<!doctype html><html lang=ja><head><meta charset=utf-8>")
@@ -61,7 +76,7 @@ func (s *Server) page(q *rq, title, body, path, logout string, o pageOpts) strin
 	for _, src := range o.scripts {
 		h.WriteString(`<script src="` + E(src) + `" defer></script>`)
 	}
-	h.WriteString("</head><body><nav>" + instLabel(q.name) + links.String() + logout + "</nav><main><h1>" + E(title) + "</h1>" + body)
+	h.WriteString("</head><body class=side><nav>" + instLabel(q.name) + links.String() + logout + "</nav><main><h1>" + E(title) + "</h1>" + body)
 	note := "入力欄があるので自動更新なし(再読み込みで更新)"
 	if !o.norefresh {
 		note = fmt.Sprintf("自動更新 %d 秒(見ていないタブでは止まる)", refreshSec)
