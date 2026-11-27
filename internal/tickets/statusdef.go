@@ -45,7 +45,9 @@ func StatusSource(db *store.DB) string {
 // BadStatuses は、書こうとした本文が設定 statuses の検査に通らなかった(Detail は検査の文言。tb は標準エラーに出す)。
 type BadStatuses struct{ Detail string }
 
-func (e *BadStatuses) Error() string { return "statuses の本文に問題があるため書きませんでした" }
+func (e *BadStatuses) Error() string {
+	return "statuses の本文に問題があるため書きませんでした"
+}
 
 // StatusWrite は今読んでいる行(このセッション / 共通 / 明示したファイル)へ書く。設定が無ければ共通の行。how は記録に残す理由。
 func StatusWrite(db *store.DB, body, how string) error {
@@ -143,6 +145,10 @@ func StatusRmPlan(db *store.DB, st StatusSet, name, to string) (body string, mov
 			return "", nil, err
 		}
 		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return "", nil, err
 	}
 	rows.Close()
 	for _, id := range ids {

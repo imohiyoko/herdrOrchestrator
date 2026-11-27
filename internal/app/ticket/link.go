@@ -179,4 +179,3 @@ func linkOps(env *app.Env) []app.Op {
 	)
 	return []app.Op{link, unlink, sprintAdd, sprintStart, sprintClose}
 }
-

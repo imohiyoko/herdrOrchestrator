@@ -21,7 +21,9 @@ func labelsJSON(args []string) ([]string, error) {
 func strArray(ss []string) string { return tickets.StrArray(ss) }
 
 // systemLabelOf は system_label_of <用途>(team の {team} は置き換えない)。
-func systemLabelOf(db *store.DB, stderr io.Writer, use string) string { return tickets.SystemLabelOf(db, stderr, use) }
+func systemLabelOf(db *store.DB, stderr io.Writer, use string) string {
+	return tickets.SystemLabelOf(db, stderr, use)
+}
 
 // cmdAdd は tb add -p <project> -t <title> [...] → ID。
 func cmdAdd(args []string, w, stderr io.Writer) error {
