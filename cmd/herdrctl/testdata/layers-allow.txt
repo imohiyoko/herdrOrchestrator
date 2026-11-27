@@ -37,7 +37,6 @@ sql internal/tbcli/agentread.go 1
 sql internal/tbcli/agentshed.go 10
 sql internal/tbcli/alert.go 3
 sql internal/tbcli/approvers.go 1
-sql internal/tbcli/compact.go 4
 sql internal/tbcli/config.go 2
 sql internal/tbcli/dbimport.go 59
 sql internal/tbcli/deadlines.go 2
