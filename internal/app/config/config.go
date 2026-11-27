@@ -168,15 +168,22 @@ func policyCheck(db *store.DB, who, before, after, what string) error {
 }
 
 // policyBefore は設定 policy を書く前の本文。共通の行(--shared)はその行そのもの(ほかのセッションにも効くため)。
-// それ以外は今このセッションに効いている本文(書いたあとに効くものとの差分を確かめる)。
+// それ以外(と、共通の行がまだ無いとき)は今このセッションに効いている本文(書いたあとに効くものとの差分を確かめる)。
 // 読めなければ誤り(空として扱うと、消える行を確かめずに済んでしまう)。
 func policyBefore(db *store.DB, shared bool) (string, error) {
 	if shared {
-		b, err := kconfig.DBRowAt(db.DB, db.Session, "policy", true)
+		// 共通の行がまだ無ければ、その行が上書きすることになる今効いている本文と比べる(ファイルの規則が確かめなしに消えないように)
+		has, err := kconfig.HasRow(db.DB, db.Session, "policy", true)
 		if err != nil {
 			return "", refuse("設定 policy を読めないため書きません(db:%v)", err)
 		}
-		return b, nil
+		if has {
+			b, err := kconfig.DBRowAt(db.DB, db.Session, "policy", true)
+			if err != nil {
+				return "", refuse("設定 policy を読めないため書きません(db:%v)", err)
+			}
+			return b, nil
+		}
 	}
 	cur, _, _, re := kconfig.LookupStrict(db.DB, db.Session, "policy")
 	if re != "" {
