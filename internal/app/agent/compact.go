@@ -308,7 +308,7 @@ func compactCheck(env *app.Env, db *store.DB, who string, apply bool) (CompactRe
 			if r != 0 {
 				line = " (処理の開始を確認できない。pane を見てください)"
 			}
-			by := self
+			by := who // system:* はそのまま記録する(人の操作と取り違えない)
 			if by == "" {
 				by = "human"
 			}
