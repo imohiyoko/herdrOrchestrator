@@ -250,6 +250,19 @@ ADR 0004 の依存の検査に次を足す。今ある違反は許容リスト�
 - 最初の操作 `ticket.resolve`(`internal/app/ticket`)。`tb resolve` は引数を読み、呼び出し元を主体にして `Invoke` で呼び、結果を今の文言と終了コードにする。Web UI の「対応済みにする」は `runTB` をやめ、同じ操作を同じプロセスで人として呼ぶ。
 - 依存と層の検査(`cmd/herdrctl/layers_test.go`): herdrctl の依存に grpc・protobuf・YAML・imohiyoko/API の `cli` が無いこと、入口(tbcli・webui)の内部 import と SQL の数を許容リスト(`cmd/herdrctl/testdata/layers-allow.txt`)と比べる。増えても減っても落ち、減ったら `-update` で許容リストを減らす。
 
+## 段 1 で入れたもの(2026-11-27、途中)
+
+- `internal/app/agent`: `agent.stop`(#280)、`agent.revive` / `agent.restart`(#282)、`agent.new`(#283)。門は policy の `agent:<操作>:<名前>` で、ask は `agent_ops` に積んで `L-<n>` を返す(`opGate`)。作成は、まだ台帳に無い agent を要求された役割で `@<役割>` と比べる(`opGateRole`)。tb の該当の動詞は引数を読んで操作を呼び、結果を今の文言と終了コードにする。Web UI の停止・復活・作成は、同じセッションなら同じプロセスで呼ぶ(ほかのセッションは herdr の呼び出し先がプロセスの環境で決まるので、まだ tb の子プロセス)。
+- herdr の呼び出しに上限(`HERDR_CALL_TIMEOUT_SEC`、既定 60 秒)と、要求の期限(`herdr.CallContext`)を通した。期限を過ぎたら pane を閉じない・起動しない。
+- agent セット向けに、`agent.new` に親(`Parent`。台帳の `spawned_by`)と置き場所(`Pane`: 既存の pane を分ける `Split` + `Direction`、か名前を付けた新しい workspace `Workspace`)を足した。どちらも人だけが指定できる(agent からの依頼は承認待ちを通るが、承認後の実行は置き場所を持たないため)。結果に起動した pane と workspace を返す。分けるのは `herdr pane split <pane> --direction right|down --cwd <dir> --no-focus`(herdr の SKILL.md で確かめた形)。
+- 親は「立てた親」1 つだけを作成時に入れる。親を足す・外す(多対多。別スレッドで設計中)は、`spawned_by` を立てた親として残す形なので、ここと両立する。
+
+### 段 1 の残りを段 3 に回す
+
+- 承認・却下(`tb agent-approve` / `agent-reject`)と規則つきの子の作成(`tb agent-spawn`)は、承認待ちの Q-<n> の部品(`requests` の記録、承認者・依頼者への知らせ。tbcli の request.go・approvers.go)と、チケットのコメントの配達(spawn の知らせ)に依存している。`app/agent` に移すと、それらを Env のフックで渡すことになり、フックを持たない Web UI からは知らせが落ちる。
+- そこで、承認・却下・spawn は段 3 で承認の部品(`app/approval`)と一緒に移す。それまで Web UI の承認・却下は tb の子プロセスのまま。agent セットは作成・停止・復活だけを使うので、これを待たずに作れる。
+- 一覧(`tb agents` / `agent-ops`)の読み取りは、Web UI の読み込みを移す段で一緒に移す。
+
 ## 検討した代替案
 
 | 案 | 採らない理由 |
