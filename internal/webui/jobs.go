@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imohiyoko/herdrorchestrator/internal/app/job"
 	"github.com/imohiyoko/herdrorchestrator/internal/sched"
 )
 
@@ -168,6 +169,11 @@ func jobLast(name string) (map[string]any, map[string]any) {
 	return last, ran
 }
 
+// jobCall はジョブの操作(job.set / job.unset / job.rm)を人として呼ぶ。断られたら画面に出す理由(実行できたら "")。
+func (v *sv) jobCall(op string, in any, out *job.Result) string {
+	return callEdit(v.sess, op, in, out, &out.Pending)
+}
+
 // runTBInput は標準入力に本文を渡して tb を実行する(tb job set など)。(終了コード, 出力)。
 func runTBInput(sess string, args []string, text string) (int, string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -317,9 +323,9 @@ func isPreset(days string) bool {
 func (v *sv) saveJobSettings(name string, f form) string {
 	if f["action"] == "reset" {
 		if _, ok := v.dbBody("sched-settings:" + name); ok {
-			rc, _ := runTBInput(v.sess, []string{"job", "unset", name, "--settings"}, "")
+			e := v.jobCall("job.unset", job.UnsetReq{Name: name, Settings: true}, &job.Result{})
 			// 共通の行(*)は、このセッションからは消さない(ほかのセッションにも効くため)
-			if _, still := v.dbBody("sched-settings:" + name); rc != 0 || still {
+			if _, still := v.dbBody("sched-settings:" + name); e != "" || still {
 				return "上書き設定を戻せませんでした(共通の行は tb job unset " + name + " --settings --shared で人が消します)"
 			}
 		}
@@ -332,14 +338,12 @@ func (v *sv) saveJobSettings(name string, f form) string {
 	if e != "" {
 		return e
 	}
-	rc, out := runTBInput(v.sess, []string{"job", "set", name, "--settings"}, body)
-	if rc != 0 {
-		for _, ln := range pySplitlines(out) {
-			if rest, ok := strings.CutPrefix(ln, "tb: "); ok {
-				return "scheduler が設定を受け付けませんでした: " + runesUpTo(Clean(rest), 300)
-			}
-		}
-		return "scheduler が設定を受け付けませんでした"
+	var r job.Result
+	if e := v.jobCall("job.set", job.SetReq{Name: name, Body: strings.TrimRight(body, "\n"), Settings: true, How: "set"}, &r); e != "" {
+		return "scheduler が設定を受け付けませんでした: " + runesUpTo(strings.TrimPrefix(e, "断りました: "), 300)
+	}
+	if r.Rejected != "" {
+		return "scheduler が設定を受け付けませんでした: scheduler がこの本文を受け付けません: " + runesUpTo(Clean(r.Rejected), 300)
 	}
 	if e := removeSettingsFile(name); e != "" {
 		return e

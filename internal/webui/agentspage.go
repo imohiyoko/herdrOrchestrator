@@ -463,13 +463,34 @@ func agentRevive(sess, name string, fresh bool) string {
 	return appState(c.Call(ctx, app.Human(), "agent.revive", agent.ReviveReq{Name: name, Fresh: fresh}, &res), res.Pending)
 }
 
+// agentDecide は承認待ちの agent の操作 L-<lid> を承認・却下する(agent.approve / agent.reject を人として。tb agent-approve / reject と同じ)。
 func agentDecide(sess string, lid int, approve bool) string {
-	cmd := "agent-reject"
-	if approve {
-		cmd = "agent-approve"
+	id := "L-" + strconv.Itoa(lid)
+	if sess != SessionName() { // 承認すると操作(herdr を呼ぶ)を実行するので、ほかのセッションは agentOp と同じく tb の子プロセスで
+		cmd := "agent-reject"
+		if approve {
+			cmd = "agent-approve"
+		}
+		rc, _ := runTB(sess, spawnTimeout, cmd, id)
+		return rcState(rc)
 	}
-	rc, _ := runTB(sess, spawnTimeout, cmd, "L-"+strconv.Itoa(lid))
-	return rcState(rc)
+	ctx, cancel := context.WithTimeout(context.Background(), spawnTimeout)
+	defer cancel()
+	c, err := appClient(sess)
+	if err != nil {
+		return "error"
+	}
+	op := "agent.reject"
+	if approve {
+		op = "agent.approve"
+	}
+	var res agent.DecideResult
+	err = c.Call(ctx, app.Human(), op, agent.DecideReq{ID: id}, &res)
+	var e *define.Error
+	if errors.As(err, &e) && e.Code == define.CodeNotFound { // tb は見つからない L-<n> を 1 で断る
+		return "refused"
+	}
+	return appState(err, nil)
 }
 
 // agentNew は新しい agent を作る。入力の検査はここと tb の両方で行う。(結果, エラー文)。

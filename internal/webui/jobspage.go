@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/imohiyoko/herdrorchestrator/internal/app/job"
 )
 
 // jobspage.go は定期実行の画面(views.page_jobs / _job_overview / page_job)。変更できるのはスケジュールだけ。
@@ -411,8 +413,11 @@ func (s *Server) postJob(q *rq, path, name string, f map[string]string, csrf str
 		msg := ""
 		if f["confirm"] != "1" {
 			msg = "消すときは「元に戻せないことを確かめた」に印を付けてください"
-		} else if rc, out := runTBInput(v.sess, []string{"job", "rm", name}, ""); rc != 0 {
-			msg = tbFail(rc, out)
+		} else {
+			var r job.Result
+			if msg = v.jobCall("job.rm", job.RmReq{Name: name, Strict: true, RemoveLog: true}, &r); msg == "" && r.LogFailed != "" {
+				msg = "ログ " + r.LogFailed + " を消せませんでした(DB の行は消しました)"
+			}
 		}
 		if msg != "" {
 			q.v.close()

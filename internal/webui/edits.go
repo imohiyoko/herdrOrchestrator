@@ -14,6 +14,7 @@ import (
 	"github.com/imohiyoko/API/define"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/app"
+	"github.com/imohiyoko/herdrorchestrator/internal/app/job"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/ticket"
 )
 
@@ -634,7 +635,7 @@ func (v *sv) jobConfForm(name, csrf string, draft form) string {
 
 // saveJobConf はジョブの定義を保存する。エラー文を返す(成功なら "")。
 func (v *sv) saveJobConf(name string, f form) string {
-	text, _, args, why := v.jobConfEdit(name)
+	text, src, _, why := v.jobConfEdit(name)
 	if why != "" {
 		return why
 	}
@@ -651,8 +652,13 @@ func (v *sv) saveJobConf(name string, f form) string {
 	if body == text {
 		return ""
 	}
-	if rc, out := runTBInput(v.sess, args, body); rc != 0 {
-		return tbFail(rc, out)
+	// 共通の行(*)から読んでいるなら、その行を書き換える
+	var r job.Result
+	if e := v.jobCall("job.set", job.SetReq{Name: name, Body: strings.TrimRight(body, "\n"), Shared: src == "db:*", How: "set"}, &r); e != "" {
+		return e
+	}
+	if r.Rejected != "" {
+		return "断りました: scheduler がこの本文を受け付けません: " + runesUpTo(Clean(r.Rejected), editOutMax)
 	}
 	return ""
 }

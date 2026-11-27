@@ -295,7 +295,9 @@ ADR 0004 の依存の検査に次を足す。今ある違反は許容リスト�
 - 作る・変える `ticket.add`(`POST /v1/tickets`)と `ticket.update`(`PATCH /v1/tickets/{id}`)。中身(ラベル・外部リンク・親子の規則・採番)は `internal/tickets/edit.go`。update の入力は tb の引数の順の変更の並び(`tickets.Change`)で、検査の順と文言も tb と同じ。
 - 報告コメント `ticket.comment`(`POST /v1/tickets/{task_id}/comments`)と `ticket.reopen`(`POST /v1/comments/{id}/reopen`)。報告した者は `Env.Reporter`(tb は herdr から引いたもの)、すぐ届ける種類は `Env.ImmediateKinds`(tb は `TB_IMMEDIATE_KINDS`)。配送(`deliver_comment`)は `message.DeliverComment` に移し、tb の report / digest も同じものを使う。外への通知は `notify.Comment`。
 - 状態の定義 `ticket.status.add` / `ticket.status.rm`(人だけが既定の inner の行)。中身は `internal/tickets/statusdef.go`、設定のファイルの書き込みは `config.WriteFile`。Web UI の状態の定義の画面も同じプロセスで呼ぶ。
-- まだ残るもの: report / pending / comments の読み取りと、tasks.go の読み込み。
+- ジョブ `job.set` / `job.unset` / `job.rm`(`internal/app/job`)に tb の選択肢(`--settings` / `--shared`、rm の行が無ければ断る・ログを消す)を足し、tb の `job set` / `edit` / `unset` / `rm` は API を呼ぶだけにした。scheduler が本文を受け付けないときは書かずに理由(`Rejected`)を返す。置き場所は `Env.SchedDir` / `SchedShow` / `SchedLogs`(空なら tb と同じ既定。Web UI は自分の見ている所を入れる)。
+- Web UI のジョブの上書き設定・定義の保存・ジョブを消す・agent の操作の承認と却下は `runTB` をやめ、同じプロセスで人として呼ぶ(agent の承認はほかのセッションだけ tb の子プロセスのまま。herdr の呼び先がプロセスの環境で決まるため)。
+- まだ残るもの: report / pending / comments の読み取りと、tasks.go の読み込み。Web UI の承認(approval)と policy の保存の `runTB`。
 
 ## 検討した代替案
 
