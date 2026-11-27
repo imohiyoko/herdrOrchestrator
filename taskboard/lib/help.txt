@@ -329,6 +329,16 @@ tb gh pr merge <owner/repo> <PR 番号> --merge|--squash|--rebase [--head <SHA>]
                               権限は policy の <主体> gh:<操作> <owner/repo の glob> = allow|ask|deny(例: @reviewer gh:approve my-org/* = allow)。
                               GitHub へ出るコマンドは config/github.conf の gh_<操作> → gh_write → gh(読みは gh_read → gh。絶対パス。必須)。
                               子には TB_GH_OP / TB_GH_REPO / TB_GH_ACTOR を渡し、GH_TOKEN などは渡さない。ラッパーが 75 を返したら 75(auth-locked)。taskboard/docs/gh.md
+tb agentset add <セット> [--file F]   agent セットの定義を書く(人だけ。本文は省くと標準入力)。置き場所は TB_AGENTSETS か、DB と同じ所の agentsets/<セット>.conf
+                              書式: 「キー = 値」の行(workspace / cwd / parent)と [member <名前>] の段落(role / model / kind / cwd / prompt / count / parent)。
+                              メンバーの agent は <セット>-<メンバー>(count が 2 以上なら <セット>-<メンバー>-<N>)。parent はメンバー名・~set(セットの parent)・既存の agent 名
+tb agentset rm <セット>   定義を消す(人だけ。動いているメンバーは止めない)
+tb agentset list   定義のあるセットの名前
+tb agentset show <セット>   定義の本文
+tb agentset up <セット>   親から順に、1 つの workspace に pane を分けて立ち上げる(人だけ)。動いているメンバーはそのまま、止まっているメンバーは同じ workspace に戻す。
+                              外の親が台帳にいない・動作中の上限(max_running_agents)を超えるなら 1 体も立てない
+tb agentset down <セット> [--force]   メンバーを子から順に止める(人だけ。tb agent stop と同じく、止めてよいと判定されていないメンバーは --force が要る)
+tb agentset status <セット> [--json]   メンバーごとの状態(running / stopped / absent / lost)・pane・親。動いていて親が定義と違えば、定義の親を添える
 tb herdr workspace list [--json]   herdr の workspace(id・ラベル)と、その中の agent
 tb herdr workspace close <workspace_id>   workspace を閉じる。どの pane でも agent やほかのプロセスが動いていれば閉じない
 tb herdr pane close <pane_id>   pane を閉じる。agent やほかのプロセスが動いていれば閉じない。自分の pane は閉じない

@@ -1,0 +1,269 @@
+// Package agentset は agent セット: 役割・最初の指示・親子をまとめた定義を、1 つの herdr workspace に
+// pane を分けて 1 コマンドで立ち上げる・止める・状態を見る(tb agentset)。
+//
+// セットはアプリケーション API(internal/app/agent の agent.new / agent.revive / agent.stop / agent.list)を
+// 呼ぶ入口の 1 つで、台帳や store を直接触らない。承認・上限・役割の検査は API に任せる(ADR 0008)。
+package agentset
+
+import (
+	"bufio"
+	"fmt"
+	"regexp"
+	"strconv"
+	"strings"
+
+	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
+)
+
+// Def はセットの定義。
+type Def struct {
+	Name      string
+	Workspace string // workspace の label(空ならセットの名前)
+	Cwd       string // メンバーの既定の作業ディレクトリ(空なら tb の既定)
+	Parent    string // セットの上に付く既存の agent(メンバーの parent = ~set で使う)
+	Members   []Member
+}
+
+// Member はセットのメンバー(同じ役割の agent を Count 体)。
+type Member struct {
+	Name   string
+	Role   string
+	Model  string
+	Kind   string
+	Cwd    string
+	Prompt string
+	Count  int
+	Parent string // セットのメンバー名 / ~set / 既存の agent 名(空なら親なし)
+}
+
+var (
+	// ReName はセットの名前(agent の名前 <セット>-<メンバー>[-<N>] の頭になる)。
+	ReName   = regexp.MustCompile(`^[a-z][a-z0-9_]{0,15}$`)
+	reMember = regexp.MustCompile(`^[a-z][a-z0-9_]{0,11}$`)
+	reTrail  = regexp.MustCompile(`\s+#\s.*$`)
+)
+
+// まだ入れていない項目(設計案の段 4 以降)。書いてあれば断る(黙って無視しない)。
+var later = map[string]bool{"schedule": true, "max": true, "mode": true, "on_parent_exit": true, "panes_per_workspace": true}
+
+// Parse は定義の本文を読む。書式は「キー = 値」の行と、メンバーごとの段落 [member <名前>]。
+// # で始まる行と、空白のあとの「# 」から行末はコメント。
+func Parse(name, body string) (Def, error) {
+	d := Def{Name: name}
+	if !ReName.MatchString(name) {
+		return d, fmt.Errorf("セットの名前は英小文字で始まり、英小文字・数字・_ の 16 字以内: %s", name)
+	}
+	var m *Member
+	sc := bufio.NewScanner(strings.NewReader(body))
+	sc.Buffer(make([]byte, 64*1024), 1<<20)
+	for ln := 1; sc.Scan(); ln++ {
+		line := strings.TrimSpace(reTrail.ReplaceAllString(sc.Text(), ""))
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "[") {
+			sec, ok := strings.CutSuffix(line[1:], "]")
+			f := strings.Fields(sec)
+			if !ok || len(f) == 0 {
+				return d, fmt.Errorf("%d 行目: 段落の見出しは [member <名前>]: %s", ln, line)
+			}
+			if f[0] != "member" {
+				if f[0] == "adopt" {
+					return d, fmt.Errorf("%d 行目: [adopt](動いている agent をセットの子にする)はまだ使えません(親の足し・外しのあとに入れます)", ln)
+				}
+				return d, fmt.Errorf("%d 行目: 段落の見出しは [member <名前>]: %s", ln, line)
+			}
+			if len(f) != 2 || !reMember.MatchString(f[1]) {
+				return d, fmt.Errorf("%d 行目: メンバーの名前は英小文字で始まり、英小文字・数字・_ の 12 字以内: %s", ln, line)
+			}
+			for _, x := range d.Members {
+				if x.Name == f[1] {
+					return d, fmt.Errorf("%d 行目: メンバー %s が 2 回あります", ln, f[1])
+				}
+			}
+			d.Members = append(d.Members, Member{Name: f[1], Count: 1})
+			m = &d.Members[len(d.Members)-1]
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			return d, fmt.Errorf("%d 行目: 「キー = 値」の形ではありません: %s", ln, line)
+		}
+		k, v = strings.TrimSpace(k), strings.TrimSpace(v)
+		if later[k] {
+			return d, fmt.Errorf("%d 行目: %s はまだ使えません(次の段で入れます)", ln, k)
+		}
+		if m == nil {
+			switch k {
+			case "workspace":
+				d.Workspace = v
+			case "cwd":
+				d.Cwd = v
+			case "parent":
+				d.Parent = v
+			default:
+				return d, fmt.Errorf("%d 行目: セットのキーは workspace / cwd / parent: %s", ln, k)
+			}
+			continue
+		}
+		switch k {
+		case "role":
+			m.Role = v
+		case "model":
+			m.Model = v
+		case "kind":
+			m.Kind = v
+		case "cwd":
+			m.Cwd = v
+		case "prompt":
+			m.Prompt = v
+		case "parent":
+			m.Parent = v
+		case "count":
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 1 {
+				return d, fmt.Errorf("%d 行目: count は 1 以上の数: %s", ln, v)
+			}
+			m.Count = n
+		default:
+			return d, fmt.Errorf("%d 行目: メンバーのキーは role / model / kind / cwd / prompt / count / parent: %s", ln, k)
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return d, err
+	}
+	return d, d.check()
+}
+
+func (d Def) member(n string) (Member, bool) {
+	for _, m := range d.Members {
+		if m.Name == n {
+			return m, true
+		}
+	}
+	return Member{}, false
+}
+
+// check は定義全体の確かめ: メンバーがいる、親の指し先、親のメンバーは 1 体、輪が無い、agent の名前が使える。
+func (d Def) check() error {
+	if len(d.Members) == 0 {
+		return fmt.Errorf("メンバーがいません([member <名前>] の段落が要ります)")
+	}
+	if d.Parent != "" && !agent.ValidName(d.Parent) {
+		return fmt.Errorf("parent は agent の名前: %s", d.Parent)
+	}
+	for _, m := range d.Members {
+		for _, n := range m.agentNames(d.Name) {
+			if !agent.ValidName(n) {
+				return fmt.Errorf("agent の名前 %s が長すぎます(32 字まで。セットかメンバーの名前を短くする)", n)
+			}
+		}
+		switch p := m.Parent; {
+		case p == "":
+		case p == "~set":
+			if d.Parent == "" {
+				return fmt.Errorf("メンバー %s の parent = ~set には、セットの parent が要ります", m.Name)
+			}
+		default:
+			if pm, ok := d.member(p); ok {
+				if pm.Count != 1 {
+					return fmt.Errorf("メンバー %s の親 %s は count = 1 のメンバーにしてください(親が複数体だとどれの子か決まらない)", m.Name, p)
+				}
+			} else if !agent.ValidName(p) {
+				return fmt.Errorf("メンバー %s の parent はメンバー名・~set・agent の名前のどれか: %s", m.Name, p)
+			}
+		}
+	}
+	// 輪: メンバーの親をたどって、同じメンバーに戻らないこと
+	for _, m := range d.Members {
+		seen := map[string]bool{m.Name: true}
+		for p := m.Parent; ; {
+			pm, ok := d.member(p)
+			if !ok {
+				break
+			}
+			if seen[pm.Name] {
+				return fmt.Errorf("メンバー %s の親をたどると輪になります", m.Name)
+			}
+			seen[pm.Name] = true
+			p = pm.Parent
+		}
+	}
+	return nil
+}
+
+// agentNames はメンバーの agent の名前: 1 体なら <セット>-<メンバー>、複数なら <セット>-<メンバー>-<N>。
+func (m Member) agentNames(set string) []string {
+	if m.Count == 1 {
+		return []string{set + "-" + m.Name}
+	}
+	out := make([]string, m.Count)
+	for i := range out {
+		out[i] = set + "-" + m.Name + "-" + strconv.Itoa(i+1)
+	}
+	return out
+}
+
+// Instance は起動する 1 体。
+type Instance struct {
+	Name   string // agent の名前
+	Member Member
+	Parent string // 親の agent の名前(空なら親なし)
+}
+
+// Plan は起動の順: 親が先(定義の順を保ち、親のメンバーを先に出す)。止めるのは逆の順。
+func (d Def) Plan() []Instance {
+	var out []Instance
+	done := map[string]bool{}
+	var visit func(m Member)
+	visit = func(m Member) {
+		if done[m.Name] {
+			return
+		}
+		done[m.Name] = true
+		parent := ""
+		switch {
+		case m.Parent == "~set":
+			parent = d.Parent
+		case m.Parent != "":
+			if pm, ok := d.member(m.Parent); ok {
+				visit(pm)
+				parent = pm.agentNames(d.Name)[0]
+			} else {
+				parent = m.Parent
+			}
+		}
+		for _, n := range m.agentNames(d.Name) {
+			out = append(out, Instance{Name: n, Member: m, Parent: parent})
+		}
+	}
+	for _, m := range d.Members {
+		visit(m)
+	}
+	return out
+}
+
+// External はセットの外の親(定義に書かれた既存の agent)。起動の前に台帳にいるか確かめる。
+func (d Def) External() []string {
+	plan := d.Plan()
+	own := map[string]bool{}
+	for _, in := range plan {
+		own[in.Name] = true
+	}
+	var out []string
+	for _, in := range plan {
+		if in.Parent != "" && !own[in.Parent] {
+			own[in.Parent] = true
+			out = append(out, in.Parent)
+		}
+	}
+	return out
+}
+
+// WorkspaceLabel は workspace の label。
+func (d Def) WorkspaceLabel() string {
+	if d.Workspace != "" {
+		return d.Workspace
+	}
+	return d.Name
+}

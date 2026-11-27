@@ -59,11 +59,36 @@ var (
 	reLabel  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 )
 
-func (in NewReq) place() transport.Place {
-	if in.Pane == nil {
+func (in NewReq) place() transport.Place { return in.Pane.place() }
+
+func (p *PanePlacement) place() transport.Place {
+	if p == nil {
 		return transport.Place{}
 	}
-	return transport.Place{Label: in.Pane.Workspace, Split: in.Pane.Split, Direction: in.Pane.Direction}
+	return transport.Place{Label: p.Workspace, Split: p.Split, Direction: p.Direction}
+}
+
+// paneErr は置き場所の確かめ(人だけ。pane の id・workspace の名前・向き)。
+func paneErr(cmd, who string, p *PanePlacement) error {
+	if p == nil {
+		return nil
+	}
+	if who != "human" {
+		return define.Errorf(define.CodePermissionDenied, "%s: 置き場所(pane)を指定できるのは人だけです(%s)", cmd, who)
+	}
+	switch {
+	case p.Split != "" && p.Workspace != "":
+		return usageErr("%s: pane を分ける(split)と新しい workspace は同時に指定できません", cmd)
+	case p.Split != "" && !rePaneID.MatchString(p.Split):
+		return usageErr("%s: pane の id に使えない文字があります: %s", cmd, p.Split)
+	case p.Workspace != "" && !reLabel.MatchString(p.Workspace):
+		return usageErr("%s: workspace の名前は英数字で始まり、英数字・.・_・- の 64 字以内: %s", cmd, p.Workspace)
+	case p.Direction != "" && p.Direction != "right" && p.Direction != "down":
+		return usageErr("%s: 分ける向きは right|down: %s", cmd, p.Direction)
+	case p.Direction != "" && p.Split == "":
+		return usageErr("%s: 向きは pane を分けるときだけ指定できます", cmd)
+	}
+	return nil
 }
 
 // placeErr は親と置き場所の確かめ(人だけ。親は台帳にいる別の agent。pane の id と向き)。
@@ -87,21 +112,7 @@ func placeErr(db *store.DB, who string, in NewReq) error {
 			return define.Errorf(define.CodeFailedPrecondition, "agent-new: 親 %s が台帳にいません", in.Parent)
 		}
 	}
-	if p := in.Pane; p != nil {
-		switch {
-		case p.Split != "" && p.Workspace != "":
-			return usageErr("agent-new: pane を分ける(split)と新しい workspace は同時に指定できません")
-		case p.Split != "" && !rePaneID.MatchString(p.Split):
-			return usageErr("agent-new: pane の id に使えない文字があります: %s", p.Split)
-		case p.Workspace != "" && !reLabel.MatchString(p.Workspace):
-			return usageErr("agent-new: workspace の名前は英数字で始まり、英数字・.・_・- の 64 字以内: %s", p.Workspace)
-		case p.Direction != "" && p.Direction != "right" && p.Direction != "down":
-			return usageErr("agent-new: 分ける向きは right|down: %s", p.Direction)
-		case p.Direction != "" && p.Split == "":
-			return usageErr("agent-new: 向きは pane を分けるときだけ指定できます")
-		}
-	}
-	return nil
+	return paneErr("agent-new", who, in.Pane)
 }
 
 // NormalizeCwd は agent-new の --cwd を絶対パスにする: 空なら既定の場所、~ は HOME、相対パスは PWD から。

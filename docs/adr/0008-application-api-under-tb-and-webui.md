@@ -261,7 +261,14 @@ ADR 0004 の依存の検査に次を足す。今ある違反は許容リスト�
 
 - 承認・却下(`tb agent-approve` / `agent-reject`)と規則つきの子の作成(`tb agent-spawn`)は、承認待ちの Q-<n> の部品(`requests` の記録、承認者・依頼者への知らせ。tbcli の request.go・approvers.go)と、チケットのコメントの配達(spawn の知らせ)に依存している。`app/agent` に移すと、それらを Env のフックで渡すことになり、フックを持たない Web UI からは知らせが落ちる。
 - そこで、承認・却下・spawn は段 3 で承認の部品(`app/approval`)と一緒に移す。それまで Web UI の承認・却下は tb の子プロセスのまま。agent セットは作成・停止・復活だけを使うので、これを待たずに作れる。
-- 一覧(`tb agents` / `agent-ops`)の読み取りは、Web UI の読み込みを移す段で一緒に移す。
+- 一覧(`tb agents` / `agent-ops`)の読み取りは、Web UI の読み込みを移す段で一緒に移す。agent セットが使う最小の読み取り(`agent.list`: 台帳の状態・herdr で動いているか・pane・親・動作中の数と上限)だけは先に入れた。
+
+### agent セット(`internal/agentset`、`tb agentset`)
+
+- 入口の 1 つとして作った。`agent.list` / `agent.new` / `agent.revive` / `agent.stop` を呼ぶだけで、台帳や store を直接触らない(層の検査で入口として扱う)。
+- 定義は DB の設定ではなくファイル(`TB_AGENTSETS` か、DB と同じ所の `agentsets/<セット>.conf`)。書くのは人だけ(`tb agentset add` は inner の require_human)。
+- `up` は外の親と上限を先に確かめ、だめなら 1 体も立てない。親から順に、1 体目は workspace(label はセット名)、残りはその pane を分けて置く。動いているメンバーはそのまま、止まっているメンバーは同じ workspace に戻す(`agent.revive` にも置き場所を足した)。`down` は子から順に止め、外の親は止めない。止めてよい(killable)の判定は `tb agent stop` と同じで、判定の無いメンバーは `--force` が要る。
+- まだ入れていないもの: 定期実行の指示(schedule。job の部品が段 3)、`[adopt]` と親が止まったときの付け替え(親の足し・外しの設計待ち)、scale / run(job 型)。定義に書いてあれば黙って無視せず断る。
 
 ## 検討した代替案
 
