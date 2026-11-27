@@ -195,8 +195,8 @@ const jobRunTimeout = 15 * time.Minute
 func (s *Server) startTBJobRun(sess, name string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), jobRunTimeout)
 	c := jobTBCmd(ctx, sess, []string{"job", "run", name})
-	var se bytes.Buffer // scheduler に届く前に tb が断ったとき(herdrctl が無いなど)の理由。ジョブのログには残らない
-	c.Stderr = &se
+	se := &capBuf{max: 4096} // scheduler に届く前に tb が断ったとき(herdrctl が無いなど)の理由。ジョブのログには残らない
+	c.Stderr = se
 	if err := c.Start(); err != nil {
 		cancel()
 		return err
@@ -406,4 +406,17 @@ func oneLine(s string, n int) string {
 		return string(r[:n]) + "…"
 	}
 	return string(r)
+}
+
+// capBuf は最初の max バイトだけ持ち、残りは読み捨てる io.Writer(子の標準エラーで Web UI のメモリが増えないように)。
+type capBuf struct {
+	bytes.Buffer
+	max int
+}
+
+func (b *capBuf) Write(p []byte) (int, error) {
+	if room := b.max - b.Len(); room > 0 {
+		b.Buffer.Write(p[:min(len(p), room)])
+	}
+	return len(p), nil
 }
