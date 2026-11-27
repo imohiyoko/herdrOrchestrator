@@ -4,6 +4,8 @@ package reminder
 
 import (
 	"context"
+	"os"
+	"regexp"
 	"strconv"
 	"time"
 
@@ -22,7 +24,7 @@ type PublishReq struct {
 	Today string `api:"today,optional"`
 }
 
-// PublishResult はまとめ。Text は人向けの本文(秘密らしい値は伏せた)、Items / Removed は --json の項目(JSON の配列)。
+// PublishResult はまとめ。Text は人向けの本文(秘密らしい値は伏せた)、Items / Removed は --json の項目(JSON の配列を文字列のまま。tb の --json にそのまま埋める)。
 type PublishResult struct {
 	Full    bool   `api:"full" json:"full"`
 	Text    string `api:"text" json:"text"`
@@ -33,7 +35,7 @@ type PublishResult struct {
 // ScanReq は reminder.scan の入力(tb reminder scan / due-scan)。
 type ScanReq struct {
 	Project string `api:"project,optional"`
-	Within  int    `api:"within,optional"` // 期限間近とみなす日数(0〜999。既定 1)
+	Within  *int   `api:"within,optional"` // 期限間近とみなす日数(0〜999。省けば 1)
 	Today   string `api:"today,optional"`
 }
 
@@ -76,7 +78,13 @@ func withDB[T any](env *app.Env, f func(*store.DB) (T, error)) (T, error) {
 	return f(db)
 }
 
+var reProject = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+
+// day は今日の日付(空なら TB_TODAY、それも無ければ今日。tb と同じ)。
 func day(s string) (string, error) {
+	if s == "" {
+		s = os.Getenv("TB_TODAY")
+	}
 	if s == "" {
 		return time.Now().Format("2006-01-02"), nil
 	}
@@ -140,15 +148,22 @@ func seenTx(db *store.DB, ts string, kv [][2]string) error {
 
 // Scan は due-scan: 期限のイベントを残し、通知の規則を回す。
 func Scan(db *store.DB, in ScanReq) (ScanResult, error) {
-	if in.Within < 0 || in.Within > 999 {
-		return ScanResult{}, define.Errorf(define.CodeInvalidArgument, "due-scan: --within は 0〜999 の日数: %d", in.Within)
+	within := 1
+	if in.Within != nil {
+		within = *in.Within
+	}
+	if within < 0 || within > 999 {
+		return ScanResult{}, define.Errorf(define.CodeInvalidArgument, "due-scan: --within は 0〜999 の日数: %d", within)
+	}
+	if in.Project != "" && !reProject.MatchString(in.Project) {
+		return ScanResult{}, define.Errorf(define.CodeInvalidArgument, "project は英数字と _ のみ: %s", in.Project)
 	}
 	td, err := day(in.Today)
 	if err != nil {
 		return ScanResult{}, err
 	}
 	st := tickets.LoadStatuses(db.DB, db.Session)
-	over, soon, err := tickets.DueScan(db.DB, db.Session, st.SQLList("done", "cancelled"), td, in.Within, in.Project)
+	over, soon, err := tickets.DueScan(db.DB, db.Session, st.SQLList("done", "cancelled"), td, within, in.Project)
 	if err != nil {
 		return ScanResult{}, define.Errorf(define.CodeInternal, "due-scan: 履歴に書けませんでした")
 	}

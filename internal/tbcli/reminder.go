@@ -138,7 +138,7 @@ func remindersPublish(db *store.DB, js bool, w, stderr io.Writer) error {
 		return err
 	}
 	var r appreminder.PublishResult
-	if err := callAppWarn(db, "tb reminder publish", stderr, "reminder.publish", appreminder.PublishReq{Today: td}, &r); err != nil {
+	if err := callAppNoHerdr(db, "tb reminder publish", stderr, "reminder.publish", appreminder.PublishReq{Today: td}, &r); err != nil {
 		return err
 	}
 	if js {
@@ -190,7 +190,7 @@ func dueScan(args []string, w, stderr io.Writer) error {
 		return err
 	}
 	var r appreminder.ScanResult
-	if err := callAppWarn(db, "tb reminder scan", stderr, "reminder.scan", appreminder.ScanReq{Project: project, Within: within, Today: td}, &r); err != nil {
+	if err := callAppNoHerdr(db, "tb reminder scan", stderr, "reminder.scan", appreminder.ScanReq{Project: project, Within: &within, Today: td}, &r); err != nil {
 		return err
 	}
 	over, soon := r.Overdue, r.DueSoon

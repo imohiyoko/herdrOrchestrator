@@ -64,6 +64,16 @@ func callAppActor(db *store.DB, what, actor, op string, in, out any) error {
 	return appErr(c.Call(context.Background(), by, op, in, out))
 }
 
+// callAppNoHerdr は callAppWarn と同じだが、herdr に聞けず呼び手を決められなくても人として呼ぶ。
+// 入口の段を tb が判定済みで、主体で中身の変わらない操作(期限の走査・リマインダーのまとめなど。job から pane の中でも動く)にだけ使う。
+func callAppNoHerdr(db *store.DB, what string, stderr io.Writer, op string, in, out any) error {
+	by, err := callerPrincipal(what)
+	if err != nil {
+		by = app.Human()
+	}
+	return callAppW(db, by, stderr, op, in, out)
+}
+
 // callAppIO は callApp に、操作の途中の出力の先(標準出力 w と標準エラー stderr)を足したもの(承認して実行するコマンドの出力など)。
 func callAppIO(db *store.DB, what string, w, stderr io.Writer, op string, in, out any) error {
 	by, err := callerPrincipal(what)
