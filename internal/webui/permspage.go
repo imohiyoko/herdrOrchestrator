@@ -193,7 +193,7 @@ func (s *Server) pagePerms(q *rq, c pageCtx) (string, string) {
 		}
 		if sh := p.stricterOver(r); sh != nil {
 			notes = append(notes, `<span class=warn>もっと厳しい `+strconv.Itoa(sh.no)+` 行目(<code>`+E(sh.pattern)+` = `+E(sh.effect)+`</code>)が重なるため、`+
-				`そこではこの行は効きません(厳しい方が勝つ)</span>`)
+				`そこではこの行は効きません(同じ主体の行どうしは厳しい方が勝つ)</span>`)
 		}
 		if r.subject == "human" || strings.HasPrefix(r.subject, "system:") {
 			notes = append(notes, `<span class=warn>この主体の行はまだ効きません(人は常に通る。system は ADR 0007 の段 1 から)</span>`)
@@ -226,7 +226,7 @@ func (s *Server) pagePerms(q *rq, c pageCtx) (string, string) {
 		}
 		rows = append(rows, []string{strconv.Itoa(r.no), `<code` + mark + `>` + E(r.pattern) + `</code>`, val, chg, exs, strings.Join(notes, "<br>")})
 	}
-	body += "<h2>ルール一覧(当たる行のいちばん厳しい効果が勝つ。順番は関係ない)</h2>" +
+	body += "<h2>ルール一覧(主体の細かい行(agent 名 &gt; @役割・glob &gt; *)が広い行と既定を上書きし、同じ層の中は当たる行のいちばん厳しい効果が勝つ。順番は関係ない)</h2>" +
 		table([]string{"番号", "主体 操作 対象", "効果", "最後の変更", "この行で決まる操作の例", "警告"}, rows)
 	body += `<p class=note>元ファイル: <code>` + E(v.confPathLabel()) + `</code>。「最後の変更」は行末の注記と、tb が残した変更履歴(approval_changes)です。` +
 		`当たる行が無ければ既定の表(taskboard/perms/ops.tbl)。ワイルドカードは <code>*</code> と <code>?</code>。</p>`

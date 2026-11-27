@@ -17,11 +17,13 @@
 #          対象の無い操作(role:change、alert:analyze、setup:*)は * の行だけが当たる
 #   効果   allow(すぐ実行)/ ask-any(承認待ち。人か、approve: を許された agent が承認する)/ ask-human(人の承認が要る)/ deny(実行しない)
 #
-# 決め方: 主体・操作・対象が当たる行のうち、いちばん厳しい効果を採る(行の順番は関係ない)。当たる行が無ければ既定の表
+# 決め方: 主体の細かい層(agent 名 > @役割・agent 名の glob > *)の行が、広い層の行と既定の表を上書きする(ADR 0009)。
+#   同じ層の中では、主体・操作・対象が当たる行のうち、いちばん厳しい効果を採る(行の順番は関係ない)。当たる行が無ければ既定の表
 #   (コマンドは taskboard/perms/commands.tbl、コマンドの中の操作は taskboard/perms/ops.tbl。今の既定: send:info・send:answer・
 #    alert:analyze・proxy:read-only は allow、agent:flag と approve:* は deny、ほかは ask-any)
-#   - 広い行で締めて、狭い行で緩める、はできない(厳しい方が勝つ)。緩めたい相手を外すように、広い行を狭く書く
-#   - 役割・関係を確かめられない行は、締める向きにだけ効く(緩める向きには使わない)
+#   - 既定の表は一番下の層。既定の deny も、当たる行があれば上書きされる(例: @reviewer gh:api my-org/* = allow)
+#   - 広い層で締めて、細かい層で緩められる(例: * gh:* * = deny と rev1 gh:approve o/* = allow)。同じ層の中では厳しい方が勝つ
+#   - 役割・関係を確かめられない行は、締める向きにだけ効く(緩める向きには使わない。決めた層とそれより細かい層の行だけ)
 #   - 設定を読めないときは deny(fail-closed)
 #   - agent:flag と approve:* は、allow の行で明示したときだけ許す(既定は deny)
 # 判定は agent の pane からの実行だけにかかる。人の端末からは、いつでも実行できる。

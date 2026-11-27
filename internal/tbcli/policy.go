@@ -144,7 +144,7 @@ func policyConvert(ab, gb string) (rows, skip, warn string) {
 		}
 		for j := 0; j < i; j++ { // 上の allow の行が、下の ask の行に締められる
 			if es[j].v == "allow" && piOverlap(e.op, es[j].op) && piOverlap(e.t, es[j].t) {
-				fmt.Fprintf(&W, "approvals %d 行目 %s = allow は、%d 行目 %s = ask に当たる相手では ask になる(厳しい方が勝つ)\n", es[j].n, es[j].k, e.n, e.k)
+				fmt.Fprintf(&W, "approvals %d 行目 %s = allow は、%d 行目 %s = ask に当たる相手では ask になる(同じ主体 * の行どうしは厳しい方が勝つ)\n", es[j].n, es[j].k, e.n, e.k)
 			}
 		}
 	}
@@ -161,9 +161,11 @@ func policyConvert(ab, gb string) (rows, skip, warn string) {
 		}
 		s, o, t := f[0], f[1], f[2]
 		fmt.Fprintf(&R, "%s %s %s = allow   # grants %d 行目\n", s, o, t, n)
-		for _, e := range es { // grants は approvals より先に見ていた。締める行(ask)に当たる相手では許可にならない
-			if e.emit && e.v == "ask" && piOverlap(o, e.op) && piOverlap(t, e.t) {
-				fmt.Fprintf(&W, "grants %d 行目 %s %s %s は、approvals %d 行目 %s = ask に当たる相手では許可にならない(厳しい方が勝つ)\n", n, s, o, t, e.n, e.k)
+		// grants は approvals より先に見ていた。approvals の行は主体 * なので、主体を絞った grants の行はそれを上書きする(ADR 0009)。
+		// 主体 * の grants の行だけは同じ層なので、締める行(ask)に当たる相手では許可にならない
+		for _, e := range es {
+			if s == "*" && e.emit && e.v == "ask" && piOverlap(o, e.op) && piOverlap(t, e.t) {
+				fmt.Fprintf(&W, "grants %d 行目 %s %s %s は、approvals %d 行目 %s = ask に当たる相手では許可にならない(同じ主体 * の行どうしは厳しい方が勝つ)\n", n, s, o, t, e.n, e.k)
 			}
 		}
 	}
