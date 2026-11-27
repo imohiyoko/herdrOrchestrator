@@ -335,7 +335,8 @@ tb gh pr merge <owner/repo> <PR 番号> --merge|--squash|--rebase [--head <SHA>]
 tb agentset add <セット> [--file F]   agent セットの定義を書く(人だけ。本文は省くと標準入力)。置き場所は TB_AGENTSETS か、DB と同じ所の agentsets/<セット>.conf
                               書式: 「キー = 値」の行(workspace / cwd / parent / on_parent_exit / autoscale_every)と [member <名前>] の段落(role / model / kind / cwd / prompt / count / max / mode / parent / schedule / scale_out / scale_in / queue / scale_step / scale_cooldown / scale_at。mode = job はタスクごとに立てるメンバー)。
                               メンバーの agent は <セット>-<メンバー>(count が 2 以上なら <セット>-<メンバー>-<N>)。parent はメンバー名・~set(セットの parent)・既存の agent 名
-                              schedule = every <N>m|<N>h: <本文> は、up が scheduler のジョブ agentset-<セット>-<メンバー>(TARGET はその agent、終日)を書き、down で消す(count = 1 のメンバーだけ)
+                              schedule = every <N>m|<N>h: <本文> は、up が scheduler のジョブ agentset-<セット>-<メンバー>(TARGET はその agent、終日)を書き、down で消す(count = 1 のメンバーだけ)。
+                              間隔の代わりに時刻も書ける: schedule = at YYYY-MM-DD HH:MM: <本文>(1 回だけ)/ schedule = <曜日> HH:MM: <本文>(曜日は daily / weekdays / weekends / mon,wed …)
                               [adopt] の段落の「<agent> -> <親>」は、動いている agent をセットの子にする(up で親を足し、down で外す。止めない)
 tb agentset rm <セット>   定義を消す(人だけ。動いているメンバーは止めない)
 tb agentset list   定義のあるセットの名前
