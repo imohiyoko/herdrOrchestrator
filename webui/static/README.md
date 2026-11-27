@@ -3,7 +3,7 @@
 | ファイル | 出所 | 用途 |
 |---|---|---|
 | `page.css` | このリポジトリ | 画面の CSS(`<style>` に埋める。internal/webui が読む) |
-| `docs.js` / `filter.js` / `refresh.js` / `notify.js.tmpl` | このリポジトリ | 画面に配るスクリプト(Python 版は app/scripts.py、Go 版は internal/webui が同じファイルを読む。`notify.js.tmpl` は `__BASE__` と `__POLL__` を埋めて配る) |
+| `docs.js` / `filter.js` / `nav.js` / `refresh.js` / `notify.js.tmpl` | このリポジトリ | 画面に配るスクリプト(Python 版は app/scripts.py、Go 版は internal/webui が同じファイルを読む。`notify.js.tmpl` は `__BASE__` と `__POLL__` を埋めて配る) |
 | `mermaid.min.js` | npm `mermaid@11.4.1` の `dist/mermaid.min.js`(MIT、`mermaid.LICENSE`) | `/docs/view` で ```` ```mermaid ```` を図にする |
 
 CDN は使わない(`127.0.0.1` だけで完結させ、CSP も `script-src 'self'` のまま)。更新するときは `npm pack mermaid@<版>` で取り出して差し替え、上の版と sha256 を書き換える。
