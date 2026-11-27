@@ -72,11 +72,12 @@ func (s *Server) page(q *rq, title, body, path, logout string, o pageOpts) strin
 	h.WriteString(`<meta name=viewport content="width=device-width,initial-scale=1">` +
 		"<meta name=referrer content=same-origin>" +
 		"<title>" + E(title) + " - herdr" + E(titleSuffix(q.name)) + "</title><style>" + s.css() + "</style>" +
-		`<script src="/notify.js" defer></script>`)
+		`<script src="/notify.js" defer></script><script src="/nav.js"></script>`)
 	for _, src := range o.scripts {
 		h.WriteString(`<script src="` + E(src) + `" defer></script>`)
 	}
-	h.WriteString("</head><body class=side><nav>" + instLabel(q.name) + links.String() + logout + "</nav><main><h1>" + E(title) + "</h1>" + body)
+	h.WriteString("</head><body class=side><nav><div class=navtop>" + instLabel(q.name) +
+		`<button type=button id=navtoggle hidden aria-expanded=true title="タブを畳む">«</button></div>` + links.String() + logout + "</nav><main><h1>" + E(title) + "</h1>" + body)
 	note := "入力欄があるので自動更新なし(再読み込みで更新)"
 	if !o.norefresh {
 		note = fmt.Sprintf("自動更新 %d 秒(見ていないタブでは止まる)", refreshSec)

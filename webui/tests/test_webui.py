@@ -299,15 +299,16 @@ class Client:
 NOTIFY_TAG = '<script src="/notify.js" defer></script>'
 REFRESH_TAG = '<script src="/refresh.js" defer></script>'
 FILTER_TAG = '<script src="/filter.js" defer></script>'   # タスク一覧の絞り込み(選んだらすぐ反映)
+NAV_TAG = '<script src="/nav.js"></script>'   # 縦タブの開閉(全画面の枠。描く前に効かせるので defer なし)
 
 
 def no_js(b):
-    return b.replace(NOTIFY_TAG, "").replace(REFRESH_TAG, "")
+    return b.replace(NOTIFY_TAG, "").replace(REFRESH_TAG, "").replace(NAV_TAG, "")
 
 
 def script_tags(b):
-    """<script> の開始タグの一覧。自動更新の /refresh.js は除く(自動更新の有無は別に確かめる)。"""
-    return [t for t in re.findall(r"<script[^>]*>", b, re.I) if t != REFRESH_TAG[:-9]]
+    """<script> の開始タグの一覧。自動更新の /refresh.js と枠の /nav.js は除く(どちらも別に確かめる)。"""
+    return [t for t in re.findall(r"<script[^>]*>", b, re.I) if t not in (REFRESH_TAG[:-9], NAV_TAG[:-9])]
 
 
 def stop_out(p):
@@ -690,6 +691,11 @@ check("/refresh.js が 200 の JavaScript。見ていないタブでは読み直
       and "visibilitychange" in rf[2] and "location.replace(location.href)" in rf[2] and "reload(" not in rf[2]
       and "innerHTML" not in rf[2] and "eval(" not in rf[2], str(rf[:2]))
 check("未ログインの /refresh.js は /login へ", Client(port).get("/refresh.js")[0] == 302)
+nv = cl.get("/nav.js")
+check("/nav.js: 縦タブの開閉を localStorage に覚える JavaScript。どの画面の枠にも開閉ボタンと一緒に入る",
+      nv[0] == 200 and nv[1].get("Content-Type", "").startswith("text/javascript") and "localStorage" in nv[2]
+      and "innerHTML" not in nv[2] and "eval(" not in nv[2]
+      and NAV_TAG in cl.get("/")[2] and 'id=navtoggle' in cl.get("/")[2], str(nv[:2]))
 csp = r[1].get("Content-Security-Policy", "")
 check("CSP は script-src 'self' / connect-src 'self' だけを足す(インラインスクリプト不可)",
       "default-src 'none'" in csp and "script-src 'self';" in csp and "connect-src 'self';" in csp
@@ -1291,7 +1297,7 @@ idle = cl.get("/agents/w1%3Ap3")
 check("idle には承認待ちの内容が出ない", "承認待ちの内容" not in idle[2] and "Do you want to run?" not in idle[2])
 check("名前なしは pane_id で attach", "herdr agent attach w1:p3" in idle[2])
 check("フォームはログアウトだけ(承認・send-keys のボタンなし)",
-      re.findall(r"<form[^>]*action=\"([^\"]+)\"", bl[2]) == ["/logout"] and bl[2].lower().count("<button") == 1)
+      re.findall(r"<form[^>]*action=\"([^\"]+)\"", bl[2]) == ["/logout"] and "<button" not in bl[2].split("</nav>", 1)[1].lower())
 check("inbox の blocked 行から詳細へリンク", "#approval" in inbox)
 
 # ---- 報告を対応済みにする(/resolve。書き込みは tb resolve が行う)
