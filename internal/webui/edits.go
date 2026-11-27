@@ -14,6 +14,7 @@ import (
 	"github.com/imohiyoko/API/define"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/app"
+	appconfig "github.com/imohiyoko/herdrorchestrator/internal/app/config"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/job"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/ticket"
 )
@@ -22,7 +23,7 @@ import (
 // 設定 policy(/policy)。ジョブの定義(/jobs/<job> の action=conf)は jobspage.go。
 // 書き込みはどれも tb かアプリケーション API が行い(tasks.db にも config にも直接書かない)、検査と認可も同じものを通る。
 // チケットの状態・削除・スプリント・状態の定義は API(ticket.move / ticket.rm / ticket.sprint.* / ticket.status.*)を同じプロセスで人として呼ぶ(callEdit)。
-// 残りは tb を人の操作として動かす(HERDR_PANE_ID を外す。runTB)。policy はさらにログインのパスワードを求める。
+// どれもアプリケーション API を同じプロセスで人として呼ぶ(callEdit)。policy はさらにログインのパスワードを求める。
 
 var editPaths = map[string]bool{"/task-status": true, "/statuses": true, "/sprint-op": true, "/policy": true, "/approval-op": true, "/task-rm": true}
 
@@ -558,7 +559,7 @@ func (s *Server) postPolicy(q *rq, f form) (string, string, string, func(pageCtx
 		return t, b, "/perms"
 	}
 	v := q.data()
-	text, _, args, why := v.policyEdit()
+	text, src, _, why := v.policyEdit()
 	if why != "" {
 		return "/perms", "", why, render
 	}
@@ -580,8 +581,10 @@ func (s *Server) postPolicy(q *rq, f form) (string, string, string, func(pageCtx
 	if body == text {
 		return "/perms", "policy", "", render
 	}
-	if rc, out := runTBInput(q.name, args, body); rc != 0 {
-		return "/perms", "", tbFail(rc, out), render
+	// 共通の行(*)から読んでいるなら、その行を書き換える。改行の末尾は tb の set と同じく落とす
+	var r appconfig.Result
+	if msg := callEdit(q.name, "config.set", appconfig.SetReq{Key: "policy", Body: strings.TrimRight(body, "\n"), Shared: src == "db:*", How: "set"}, &r, &r.Pending); msg != "" {
+		return "/perms", "", msg, render
 	}
 	return "/perms", "policy", "", render
 }

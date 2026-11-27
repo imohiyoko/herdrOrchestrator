@@ -90,7 +90,14 @@ func ierr(err error) error { return define.Errorf(define.CodeInternal, "%s", err
 
 // Ops はジョブの操作。
 func Ops(env *app.Env) []app.Op {
-	set := app.Command(env, "job.set", app.Cmd("cmd:job:set", "tb job set"),
+	// tb job edit の入口と同じく、How が edit なら cmd:job:edit の行で判定する
+	setGate := func(ctx context.Context, env *app.Env, who string, in any) app.Decision {
+		if r, ok := in.(SetReq); ok && r.How == "edit" {
+			return app.Cmd("cmd:job:edit", "tb job edit")(ctx, env, who, in)
+		}
+		return app.Cmd("cmd:job:set", "tb job set")(ctx, env, who, in)
+	}
+	set := app.Command(env, "job.set", setGate,
 		func(_ context.Context, in SetReq) (Result, error) { return setJob(env, in) },
 		define.Doc("scheduler のジョブ定義か上書き設定を書く(tb job set / edit。人だけ)"),
 		define.Authz("cmd:job:set", define.Resource("job", "name")),

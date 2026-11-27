@@ -1811,7 +1811,7 @@ r = ec.raw("POST", "/policy", {**_pol, "password": WRONG, "csrf": ec.csrf("/perm
 check("policy: パスワードが違えば書かない(入力は残す)", r[0] == 400 and "パスワードが違います" in r[2] and "send:task:* worker2" in r[2]
       and not edb("SELECT 1 FROM config WHERE key='policy'"))
 r = ec.raw("POST", "/policy", {**_pol, "body": "worker1 send:task:* = maybe\n", "password": PW, "csrf": ec.csrf("/perms")})
-check("policy: tb の検査に通らない本文は書かない", r[0] == 400 and "tb が断りました" in r[2] and not edb("SELECT 1 FROM config WHERE key='policy'"), r[2][-400:])
+check("policy: 検査に通らない本文は書かない", r[0] == 400 and "断りました: policy の本文に問題があるため書きませんでした" in r[2] and not edb("SELECT 1 FROM config WHERE key='policy'"), r[2][-400:])
 r = ec.raw("POST", "/policy", {**_pol, "password": PW, "csrf": ec.csrf("/perms")})
 _pr = edb("SELECT body FROM config WHERE key='policy' AND herdr_session='default'")
 check("policy: 保存すると設定 policy のこのセッションの行に書く(履歴つき)", r[0] == 302 and r[1].get("Location") == "/perms?done=policy"

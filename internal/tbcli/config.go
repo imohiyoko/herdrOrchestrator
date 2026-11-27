@@ -12,33 +12,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/imohiyoko/herdrorchestrator/internal/agents"
-	"github.com/imohiyoko/herdrorchestrator/internal/approval"
+	appconfig "github.com/imohiyoko/herdrorchestrator/internal/app/config"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/config"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/env"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
-	"github.com/imohiyoko/herdrorchestrator/internal/message"
-	"github.com/imohiyoko/herdrorchestrator/internal/notify"
 	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
 )
 
 const configUsage = "config [list | show <キー> | set <キー> [--shared] < 本文 | edit <キー> [--shared] | unset <キー> [--shared] | import [--dry-run] | history <キー>]"
-
-// validators は config_validate_<キー>。検査はそのキーを持つサービスのパッケージに置く。
-func validators(st tickets.StatusSet) map[string]config.Validator {
-	return map[string]config.Validator{
-		"messages":      config.ValidateMessages,
-		"statuses":      tickets.ValidateStatuses,
-		"labels":        tickets.ValidateLabels,
-		"system-labels": tickets.ValidateSystemLabels,
-		"notify-rules":  notify.ValidateRules,
-		"nudge":         message.ValidateNudge(st),
-		"protect":       agents.ValidateProtect,
-		"role-models":   agents.ValidateRoleModels,
-		"org":           approval.ValidateOrg,
-		"policy":        perms.ValidatePolicy,
-	}
-}
 
 func cmdConfig(args []string, w, stderr io.Writer) error {
 	db, st, err := openCmd(stderr)
@@ -127,43 +108,23 @@ func configChange(db *store.DB, st tickets.StatusSet, sub string, args []string,
 	if err := requireHuman("tb config " + sub); err != nil {
 		return err
 	}
-	if key == "conv-routes" && sub != "unset" {
-		return die("conv-routes は tb conv-routes-set < 新しい表 で書きます(緩める変更は --approve-looser が要ります)")
-	}
-	if (key == "approvals" || key == "grants") && sub != "unset" {
-		return die("%s はもう読みません(ADR 0007)。権限は設定 policy に書きます(残っている古い設定は tb policy import で移します)", key)
-	}
-	info, _ := config.Info(key)
-	envFile := os.Getenv(info.Env)
-	if shared && envFile != "" {
-		return die("%s でファイルを明示しているので --shared は使えません", info.Env)
-	}
-	source := func() string { _, s, _ := config.Lookup(db.DB, db.Session, key); return s }
+	var r appconfig.Result
 	var body string
 	switch sub {
 	case "unset":
-		if envFile != "" {
-			return die("%s でファイルを明示しています(DB の行は使っていません)", info.Env)
-		}
-		if key == "policy" && !perms.HumanPane() {
-			before, err := policyBefore(db, shared)
-			if err != nil {
-				return err
-			}
-			after, re := config.LookupWithout(db.DB, db.Session, key, shared)
-			if re != "" {
-				return die("設定 policy を読めないため消しません(%s)", re)
-			}
-			if err := requirePolicyWrite(before, after, "tb config unset policy"); err != nil {
-				return err
-			}
-		}
-		if err := config.Unset(db.DB, db.Session, key, shared); err != nil {
+		if err := callApp(db, "tb config unset", "config.unset", appconfig.UnsetReq{Key: key, Shared: shared}, &r); err != nil {
 			return err
 		}
-		fmt.Fprintf(w, "%s: %s\n", key, source())
+		if r.Pending != nil {
+			return pendingExit(w, r.Pending)
+		}
+		fmt.Fprintf(w, "%s: %s\n", key, r.Source)
 		return nil
 	case "set":
+		// 書けないキー・--shared とファイルの組は、本文を読む前に断る(API の config.set でも同じ確かめをする)
+		if err := configPrecheck(key, shared); err != nil {
+			return err
+		}
 		if stdinIsTTY() {
 			return usage("config set <キー>: 本文は標準入力から渡す(例: tb config set %s < 本文のファイル)", key)
 		}
@@ -172,37 +133,27 @@ func configChange(db *store.DB, st tickets.StatusSet, sub string, args []string,
 			return err
 		}
 	case "edit":
+		if err := configPrecheck(key, shared); err != nil {
+			return err
+		}
 		cur, _, has := config.Lookup(db.DB, db.Session, key)
 		var err error
 		if body, err = editBody(cur, has && cur != ""); err != nil {
 			return err
 		}
 	}
-	if v := validators(st)[key]; v != nil {
-		if msg := v(body); msg != "" {
-			fmt.Fprint(stderr, msg)
-			return die("%s の本文に問題があるため書きませんでした", key)
-		}
-	}
-	if key == "policy" && !perms.HumanPane() {
-		before, err := policyBefore(db, shared && envFile == "")
-		if err != nil {
-			return err
-		}
-		if err := requirePolicyWrite(before, body, "tb config "+sub+" policy"); err != nil {
-			return err
-		}
-	}
-	if envFile != "" {
-		if err := writeConfigFile(envFile, body); err != nil {
-			return err
-		}
-	} else if err := config.DBPut(db.DB, db.Session, key, body, sub, shared, ""); err != nil {
+	if err := callAppWarn(db, "tb config "+sub, stderr, "config.set", appconfig.SetReq{Key: key, Body: body, Shared: shared, How: sub}, &r); err != nil {
 		return err
 	}
-	fmt.Fprintf(w, "%s: %s\n", key, source())
+	if r.Pending != nil {
+		return pendingExit(w, r.Pending)
+	}
+	fmt.Fprintf(w, "%s: %s\n", key, r.Source)
 	return nil
 }
+
+// configPrecheck は config set / edit で本文を読む前の断り(API の config の確かめと同じ)。
+func configPrecheck(key string, shared bool) error { return appErr(appconfig.Precheck(key, shared)) }
 
 // policyBefore は設定 policy を書く前の本文。共通の行(--shared)はその行そのもの(ほかのセッションにも効くため)。
 // それ以外は今このセッションに効いている本文(書いたあとに効くものとの差分を確かめる)。

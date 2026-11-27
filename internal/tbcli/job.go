@@ -246,6 +246,9 @@ func jobChange(db *store.DB, e jobs.Env, sub string, args []string, w, stderr io
 		if err := callApp(db, "tb job unset", "job.unset", job.UnsetReq{Name: a.job, Settings: a.settings, Shared: a.shared}, &r); err != nil {
 			return err
 		}
+		if r.Pending != nil {
+			return pendingExit(w, r.Pending)
+		}
 		fmt.Fprintf(w, "%s: %s\n", key, r.Source)
 		return nil
 	case "set":
@@ -264,6 +267,9 @@ func jobChange(db *store.DB, e jobs.Env, sub string, args []string, w, stderr io
 	// scheduler が読めることを確かめてから書く(API の job.set)
 	if err := callApp(db, "tb job "+sub, "job.set", job.SetReq{Name: a.job, Body: body, Settings: a.settings, Shared: a.shared, How: sub}, &r); err != nil {
 		return err
+	}
+	if r.Pending != nil {
+		return pendingExit(w, r.Pending)
 	}
 	if r.Rejected != "" {
 		fmt.Fprintf(stderr, "tb: scheduler がこの本文を受け付けません: %s\n", r.Rejected)
@@ -436,6 +442,9 @@ func jobRm(db *store.DB, e jobs.Env, args []string, w io.Writer) error {
 	var r job.Result
 	if err := callApp(db, "tb job rm", "job.rm", job.RmReq{Name: a.job, Shared: a.shared, Strict: true, RemoveLog: !keepLog}, &r); err != nil {
 		return err
+	}
+	if r.Pending != nil {
+		return pendingExit(w, r.Pending)
 	}
 	fmt.Fprintf(w, "%s: %s を消しました(%s)\n", a.job, strings.Join(r.Gone, " と "), which)
 	if r.Found {

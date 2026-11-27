@@ -174,25 +174,6 @@ func (v *sv) jobCall(op string, in any, out *job.Result) string {
 	return callEdit(v.sess, op, in, out, &out.Pending)
 }
 
-// runTBInput は標準入力に本文を渡して tb を実行する(tb job set など)。(終了コード, 出力)。
-func runTBInput(sess string, args []string, text string) (int, string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	c := jobTBCmd(ctx, sess, args)
-	c.Stdin = strings.NewReader(text)
-	var so, se bytes.Buffer
-	c.Stdout, c.Stderr = &so, &se
-	err := c.Run()
-	out := pyStrip(strings.ToValidUTF8(so.String()+se.String(), "�"))
-	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok && ctx.Err() == nil {
-			return ee.ExitCode(), out
-		}
-		return -1, ""
-	}
-	return 0, out
-}
-
 // jobRunTimeout は Web UI の「今すぐ流す」の上限(app/job の runTimeout と同じ)。
 const jobRunTimeout = 15 * time.Minute
 

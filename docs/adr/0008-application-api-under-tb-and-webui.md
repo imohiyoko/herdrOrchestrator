@@ -299,7 +299,8 @@ ADR 0004 の依存の検査に次を足す。今ある違反は許容リスト�
 - Web UI のジョブの上書き設定・定義の保存・ジョブを消す・agent の操作の承認と却下は `runTB` をやめ、同じプロセスで人として呼ぶ(agent の承認はほかのセッションだけ tb の子プロセスのまま。herdr の呼び先がプロセスの環境で決まるため)。
 - 承認 `approval.approve` / `approval.reject`(`POST /v1/requests/{id}/<動詞>`、`tb approval approve|reject Q-<n>`、前の O-<n> も)と承認制の行 `approval.allow` / `approval.ask`。中身(送信の承認と配送、ask で止まったコマンドを依頼者に返すか依頼者として実行する、policy の行の書き込み)は `internal/requests` に移した。agent の操作の承認待ちは `agent.Decide` に渡し、`--always` も agent.approve で扱う(tb の中の承認の実装は無くなった)。tb agent-approve / reject の入口の行(`cmd:agent:<動詞>`)は approval の側でも判定する。途中の出力は `Env.Out` に流すか結果に集め、承認したコマンドを動かす子は `Env.ChildEnv` / `TbCmd`(Web UI はこのチェックアウトの tb)。policy の書き込みの確かめは主体で行う `perms.RequirePolicyWriteAs`。Web UI の承認の画面も同じプロセスで呼ぶ。
 - tb はまだ `internal/requests` を直接読む(承認待ちの一覧・履歴・`approval run`・承認済みの子の確かめ)。層テストの許容リストに残している。
-- まだ残るもの: report / pending / comments の読み取りと、tasks.go の読み込み。Web UI の policy の保存の `runTB`。
+- 設定 `config.set` / `config.unset`(`internal/app/config`。`PUT` / `DELETE /v1/config/{key}`、`tb config set` / `edit` / `unset`)。キーごとの検査(`Validators`)と、policy を変える agent の行ごとの確かめも API の中。Web UI の policy の保存も同じプロセスで呼ぶ。これで Web UI の `runTB` は、herdr の呼び先をプロセスの環境で決めるためのほかのセッションの agent の操作と承認だけになった。
+- まだ残るもの: report / pending / comments の読み取りと、tasks.go の読み込み。
 
 ## 検討した代替案
 
