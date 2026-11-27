@@ -37,6 +37,8 @@ type AgentInfo struct {
 	Task   string `api:"task,optional" json:"task,omitempty"` // 台帳の spawn_task(任されたタスク)
 	// Parents は今の親(agent_parents。名前の順)。Parent は立てた親
 	Parents []string `api:"parents,optional" json:"parents,omitempty"`
+	// Status は herdr の agent_status(idle / working / blocked など。動いていなければ空)
+	Status string `api:"status,optional" json:"status,omitempty"`
 }
 
 // ListResult は agent.list の結果。Running と Max は動作中の数と上限 max_running_agents(上限なしは -1)。
@@ -80,6 +82,7 @@ func List(ctx context.Context, db *store.DB, names []string) (ListResult, error)
 		a, _ := row(n)
 		if l, ok := agents.LiveOf(live, n); ok {
 			a.Live, a.Pane = true, l.PaneID
+			a.Status, _ = l.AgentStatus.(string)
 		}
 		res.Agents = append(res.Agents, a)
 	}
