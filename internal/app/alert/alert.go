@@ -22,6 +22,7 @@ import (
 	"github.com/imohiyoko/herdrorchestrator/internal/approval"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/config"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/env"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/perms"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/transport"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/util"
@@ -121,8 +122,11 @@ func Ops(env *app.Env) []app.Op {
 					return StatusResult{}, define.Errorf(define.CodeFailedPrecondition, "A-%d は承認待ちではありません", id)
 				}
 				setStatus(db, id, "approved")
-				r := StatusResult{ID: in.ID}
-				if in.Always && requests.SetApproval(db, "allow", "alert:analyze", io.Discard, io.Discard) == nil {
+				r := StatusResult{ID: "A-" + strconv.FormatInt(id, 10)}
+				check := func(old, new string) error {
+					return perms.RequirePolicyWriteAs(db.DB, db.Session, who(ctx), old, new, "tb approval allow")
+				}
+				if in.Always && requests.SetApprovalChecked(db, "allow", "alert:analyze", io.Discard, io.Discard, check) == nil {
 					r.Always = true
 				}
 				_ = DispatchOne(db, id)
@@ -154,7 +158,7 @@ func Ops(env *app.Env) []app.Op {
 				if _, err := db.Exec(`UPDATE main.alerts SET status='closed', closed_at=? WHERE herdr_session=? AND id=?`, env.NowString(), db.Session, id); err != nil {
 					return StatusResult{}, ierr(err)
 				}
-				return StatusResult{ID: in.ID, Status: "closed"}, nil
+				return StatusResult{ID: "A-" + strconv.FormatInt(id, 10), Status: "closed"}, nil
 			})
 		},
 		define.Doc("人がアラートを閉じる(tb alert-close)"),
@@ -216,7 +220,7 @@ func aid(s string) (int64, error) {
 
 // humanAid は人だけの操作(承認・閉じる)の入口: 呼び手が人でなければ断り、A-<n> の n を返す。
 func humanAid(ctx context.Context, s, what string) (int64, error) {
-	if !requests.IsHuman(who(ctx)) {
+	if w := who(ctx); w == "" || !requests.IsHuman(w) { // 決められない主体は人とみなさない
 		return 0, define.Errorf(define.CodePermissionDenied, "%s は人だけが実行できます", what)
 	}
 	return aid(s)
@@ -239,19 +243,18 @@ func queued(db *store.DB, id int64, note string) {
 
 // row は A-<id> の列(使うものだけ)。
 type row struct {
-	ok                                                         bool
+	ok                                                        bool
 	title, body, source, severity, summary, path, analyst, st string
-	delivered                                                  bool
 }
 
 func rowOf(db *store.DB, id int64) row {
 	var r row
-	var t, b, src, sev, sum, p, an, st, del sql.NullString
-	if db.QueryRow(`SELECT title, body, source, severity, result_summary, result_path, analyst, status, result_delivered_at FROM alerts WHERE id=?`, id).
-		Scan(&t, &b, &src, &sev, &sum, &p, &an, &st, &del) != nil {
+	var t, b, src, sev, sum, p, an, st sql.NullString
+	if db.QueryRow(`SELECT title, body, source, severity, result_summary, result_path, analyst, status FROM alerts WHERE id=?`, id).
+		Scan(&t, &b, &src, &sev, &sum, &p, &an, &st) != nil {
 		return r
 	}
-	return row{true, t.String, b.String, src.String, sev.String, sum.String, p.String, an.String, st.String, del.Valid && del.String != ""}
+	return row{true, t.String, b.String, src.String, sev.String, sum.String, p.String, an.String, st.String}
 }
 
 // nullable は jq の \(.x)(null は "null")。
@@ -386,15 +389,8 @@ func startAnalyst(db *store.DB, id int64) int {
 	if model != "" {
 		extra = []string{"--model", model}
 	}
-	retry := envOr("TB_ANALYST_RETRY_SEC", "3")
-	old, had := os.LookupEnv("TB_SPAWN_RETRY_SEC")
-	_ = os.Setenv("TB_SPAWN_RETRY_SEC", retry)
-	sp, ok := transport.Spawn(env.TBDB(), agent.KindDefault, name, cwd, extra)
-	if had {
-		_ = os.Setenv("TB_SPAWN_RETRY_SEC", old)
-	} else {
-		_ = os.Unsetenv("TB_SPAWN_RETRY_SEC")
-	}
+	// 起動のやり直しの間隔は TB_ANALYST_RETRY_SEC(プロセスの環境は書き換えない。Web UI では並行して呼ばれる)
+	sp, ok := transport.SpawnAt(env.TBDB(), agent.KindDefault, name, cwd, extra, transport.Place{RetryEnv: "TB_ANALYST_RETRY_SEC"})
 	if !ok {
 		queued(db, id, sp.Err)
 		return 11
@@ -451,6 +447,8 @@ func result(env *app.Env, db *store.DB, who string, in ResultReq) (StatusResult,
 			return StatusResult{}, &define.Error{Code: define.CodeUnauthenticated, Message: "報告者を特定できません", Reasons: []string{app.ReasonNoSender}}
 		}
 		by = n
+	} else if who == "" {
+		return StatusResult{}, define.Errorf(define.CodePermissionDenied, "alert-result: 呼び手を決められません")
 	} else if !requests.IsHuman(who) {
 		by = who
 	}
@@ -470,10 +468,10 @@ func result(env *app.Env, db *store.DB, who string, in ResultReq) (StatusResult,
 	// 解析役は結果を返したら用済み: 止めてよい印を付ける(停止は tb agent-stop)
 	if by != "human" {
 		_, _ = db.Exec(`UPDATE main.agents SET killable='yes', killable_reason=?, killable_by='tb', killable_at=?,
-			killable_session=session_id WHERE herdr_session=? AND name=?`, fmt.Sprintf("A-%d の解析結果を返した", id), requests.Now(), db.Session, by)
+			killable_session=session_id WHERE herdr_session=? AND name=?`, fmt.Sprintf("A-%d の解析結果を返した", id), ts, db.Session, by)
 	}
 	DispatchAll(db) // 枠が空いたので待ちを進める
-	return StatusResult{ID: in.ID, Status: "analyzed"}, nil
+	return StatusResult{ID: "A-" + strconv.FormatInt(id, 10), Status: "analyzed"}, nil
 }
 
 // deliver は alert_deliver: 解析結果を指揮官へ(使用中なら tb digest が回収する)。

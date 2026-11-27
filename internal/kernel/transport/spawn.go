@@ -95,6 +95,7 @@ type Place struct {
 	Label     string // 新しく作る workspace の label(空なら agent の名前)
 	Split     string // この pane を分けて置く(既存の workspace に足す)。Label とは同時に使わない
 	Direction string // Split の向き: right / down(空は right)
+	RetryEnv  string // 起動をやり直すまでの秒数を読む環境変数(空なら TB_SPAWN_RETRY_SEC)
 }
 
 // Spawn は herdr_spawn: 専用の workspace(label = 名前)を作り、その root pane で agent を起動する。
@@ -133,7 +134,7 @@ func SpawnAt(dbPath, kind, name, cwd string, extra []string, at Place) (SpawnRes
 		spawnLog(dbPath, name, "workspace:"+code)
 		return SpawnResult{Err: "workspace を作れない(" + errText(code, msg) + ")"}, false
 	}
-	return start(dbPath, kind, name, extra, r)
+	return start(dbPath, kind, name, extra, r, at.RetryEnv)
 }
 
 func spawnSplit(dbPath, kind, name, cwd string, extra []string, at Place) (SpawnResult, bool) {
@@ -157,11 +158,14 @@ func spawnSplit(dbPath, kind, name, cwd string, extra []string, at Place) (Spawn
 		spawnLog(dbPath, name, "split:"+code)
 		return SpawnResult{Err: "pane " + at.Split + " を分けられない(" + errText(code, msg) + ")"}, false
 	}
-	return start(dbPath, kind, name, extra, r)
+	return start(dbPath, kind, name, extra, r, at.RetryEnv)
 }
 
 // start は用意した pane(r.Pane)で agent を起動する(人の操作待ちでなければ 3 回まで)。
-func start(dbPath, kind, name string, extra []string, r SpawnResult) (SpawnResult, bool) {
+func start(dbPath, kind, name string, extra []string, r SpawnResult, retryEnv string) (SpawnResult, bool) {
+	if retryEnv == "" {
+		retryEnv = "TB_SPAWN_RETRY_SEC"
+	}
 	args := []string{"agent", "start", name, "--kind", kind, "--pane", r.Pane}
 	if len(extra) > 0 {
 		args = append(append(args, "--"), extra...)
@@ -190,7 +194,7 @@ func start(dbPath, kind, name string, extra []string, r SpawnResult) (SpawnResul
 			return r, false
 		}
 		if i < 3 {
-			sleepSec(envSec("TB_SPAWN_RETRY_SEC", "3"))
+			sleepSec(envSec(retryEnv, "3"))
 		}
 	}
 	r.Err = "agent を起動できない(" + errText(code, msg) + ")"

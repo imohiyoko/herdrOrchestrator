@@ -5,7 +5,6 @@ package server
 import (
 	"context"
 	"encoding/json"
-	appalert "github.com/imohiyoko/herdrorchestrator/internal/app/alert"
 	"io"
 	"log/slog"
 
@@ -15,6 +14,7 @@ import (
 
 	"github.com/imohiyoko/herdrorchestrator/internal/app"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
+	appalert "github.com/imohiyoko/herdrorchestrator/internal/app/alert"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/approval"
 	appconfig "github.com/imohiyoko/herdrorchestrator/internal/app/config"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/job"
