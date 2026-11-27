@@ -1,7 +1,10 @@
 package webui
 
 import (
+	"errors"
 	"os"
+
+	"github.com/imohiyoko/API/define"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/app"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/server"
@@ -16,4 +19,20 @@ func appClient(sess string) (*server.Client, error) {
 		opt = &store.Options{Schema: os.DirFS(d)}
 	}
 	return server.New(&app.Env{DB: app.OpenStore(TBDB(), sess, opt)})
+}
+
+// appState は操作の結果 → 画面に出す結果(rcState と同じ分け方)。
+// 0 実行済み / 承認待ち / 前提違い・入力の誤りで断った / それ以外は失敗。
+func appState(err error, pending *app.Pending) string {
+	if err == nil {
+		if pending != nil {
+			return "pending"
+		}
+		return "done"
+	}
+	var e *define.Error
+	if errors.As(err, &e) && (e.Code == define.CodeFailedPrecondition || e.Code == define.CodeInvalidArgument) {
+		return "refused"
+	}
+	return "error"
 }

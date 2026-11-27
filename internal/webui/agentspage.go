@@ -1,6 +1,11 @@
 package webui
 
 import (
+	"context"
+
+	"github.com/imohiyoko/herdrorchestrator/internal/app"
+	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
+
 	"fmt"
 	"regexp"
 	"strconv"
@@ -404,10 +409,16 @@ func agentOp(sess, op, name string) string {
 	}
 	var args []string
 	switch op {
-	case "stop":
+	case "stop", "force-stop":
+		if sess == SessionName() {
+			return agentStop(sess, name, op == "force-stop")
+		}
+		// herdr の呼び出し先はプロセスの環境で決まる(herdr アダプタはまだセッションを受け取らない)。ほかのセッションは
+		// 前と同じく、HERDR_SESSION を渡した tb の子プロセスで行う
 		args = []string{"agent-stop", name}
-	case "force-stop":
-		args = []string{"agent-stop", name, "--force"}
+		if op == "force-stop" {
+			args = append(args, "--force")
+		}
 	case "revive":
 		args = []string{"agent-revive", name}
 	case "revive-fresh":
@@ -417,6 +428,18 @@ func agentOp(sess, op, name string) string {
 	}
 	rc, _ := runTB(sess, spawnTimeout, args...)
 	return rcState(rc)
+}
+
+// agentStop はアプリケーション API の agent.stop を同じプロセスで人として呼ぶ(ADR 0008。tb agent-stop と同じ操作)。
+func agentStop(sess, name string, force bool) string {
+	ctx, cancel := context.WithTimeout(context.Background(), spawnTimeout)
+	defer cancel()
+	c, err := appClient(sess)
+	if err != nil {
+		return "error"
+	}
+	var res agent.StopResult
+	return appState(c.Call(ctx, app.Human(), "agent.stop", agent.StopReq{Name: name, Force: force}, &res), res.Pending)
 }
 
 func agentDecide(sess string, lid int, approve bool) string {

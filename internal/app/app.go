@@ -11,6 +11,8 @@
 package app
 
 import (
+	"database/sql"
+	"strconv"
 	"time"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
@@ -22,6 +24,21 @@ type Env struct {
 	DB func() (*store.DB, func(), error)
 	// Now は今の時刻(UTC の ISO 8601、秒まで)。nil なら時計。
 	Now func() string
+	// PendingQ は、今積んだ承認待ち(source の source_id)の Q-<n> を返し、決められる agent に知らせる(tb の入口が入れる)。
+	// nil なら Q-<n> を引くだけ。
+	PendingQ func(db *sql.DB, source string, sourceID int64) string
+}
+
+// QOf は承認待ちの行(source の sourceID)の Q-<n>(Env.PendingQ があればそれを使う)。無ければ空。
+func (e *Env) QOf(db *sql.DB, source string, sourceID int64) string {
+	if e != nil && e.PendingQ != nil {
+		return e.PendingQ(db, source, sourceID)
+	}
+	var id int64
+	if db.QueryRow(`SELECT id FROM requests WHERE source=? AND source_id=?`, source, sourceID).Scan(&id) != nil {
+		return ""
+	}
+	return "Q-" + strconv.FormatInt(id, 10)
 }
 
 // NowString は Env.Now(無ければ時計)。

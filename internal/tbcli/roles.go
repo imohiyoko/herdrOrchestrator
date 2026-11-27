@@ -473,12 +473,7 @@ func roleSetTx(db *store.DB, name, old, role, by, why, reg string) (int64, error
 
 // otherSession は other_session: 名前が別の herdr セッションの agent なら、その旨の文面。
 func otherSession(db *store.DB, name string) (string, bool) {
-	var s string
-	if db.QueryRow(`SELECT herdr_session FROM main.agents WHERE name=? AND herdr_session!=?
-    AND NOT EXISTS (SELECT 1 FROM agents WHERE name=?) ORDER BY updated_at DESC LIMIT 1`, name, db.Session, name).Scan(&s) != nil || s == "" {
-		return "", false
-	}
-	return name + " は herdr セッション '" + s + "' の agent です。HERDR_SESSION=" + s + " を付けて実行してください", true
+	return agents.OtherSession(db.DB, db.Session, name)
 }
 
 // cmdRoleLog は tb role-log [--json]: ロール変更の記録(このセッションのもの)。

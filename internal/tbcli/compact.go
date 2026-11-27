@@ -193,13 +193,7 @@ func kindSupports(kind, item string) bool {
 
 // recordOp は record_op(新しい行): agent_ops に結果を 1 行足す。
 func recordOp(db *store.DB, op, target, args, by string, rc int, result string) {
-	st := "done"
-	if rc != 0 {
-		st = "failed"
-	}
-	ts := nowTS()
-	_, _ = db.Exec(`INSERT INTO main.agent_ops (herdr_session, op, target, args, requested_by, status, result, created_at, decided_at) VALUES (?,?,?,?,?,?,?,?,?)`,
-		db.Session, op, target, args, by, st, result, ts, ts)
+	agents.RecordOp(db.DB, db.Session, op, target, args, by, rc, result)
 }
 
 // recordOpID は record_op の既存の行(承認待ちの L-<id>)を結果で閉じる。
