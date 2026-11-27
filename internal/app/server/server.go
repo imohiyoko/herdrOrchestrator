@@ -52,9 +52,6 @@ type Client struct {
 // New は env で全サービスの操作を組み立てる。
 // 公開範囲は internal だけ(人と agent・system の両方を受け、エラーの文言を見せる)。外へ出す口は作らない。
 func New(env *app.Env) (*Client, error) {
-	if env.PendingQ == nil { // 承認待ちを積んだら、決められる agent に知らせる(Web UI など。tb は TB_PRIORITY も付ける)
-		env.PendingQ = approval.PendingQ(1)
-	}
 	reg, err := app.Registry(Ops(env)...)
 	if err != nil {
 		return nil, err

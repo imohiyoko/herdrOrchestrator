@@ -29,7 +29,7 @@ type Env struct {
 	// Warn は操作の途中の警告(「tb: …」の 1 行ずつ)の書き込み先。tb の入口は標準エラー。nil なら捨てる。
 	Warn io.Writer
 	// PendingQ は、今積んだ承認待ち(source の source_id)の Q-<n> を返し、決められる agent に知らせる(tb の入口が入れる)。
-	// nil なら server.New が approval.PendingQ(優先度は normal)を入れる。
+	// nil なら Q-<n> を引くだけ。
 	PendingQ func(db *sql.DB, source string, sourceID int64) string
 	// Deliver は、今書いた報告(comments の id)を宛先(指揮官など)に届ける(tb の入口が入れる。best effort)。nil なら届けない。
 	Deliver func(db *store.DB, commentID int64)

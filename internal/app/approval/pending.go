@@ -30,7 +30,7 @@ func PriorityName(n int) string {
 	return "normal"
 }
 
-// PendingQ は app.Env.PendingQ の中身: 今積んだ送信・agent の操作の承認待ち(source の sid)の Q-<n> を返す。
+// PendingQ は app.Env.PendingQ の中身(tb の入口が入れる。Web UI は入れず Q-<n> を引くだけ): 今積んだ送信・agent の操作の承認待ち(source の sid)の Q-<n> を返す。
 // priority が normal 以外ならその優先度を付け、決められる agent にも知らせる(同じ Q-<n> は 1 度だけ)。
 func PendingQ(priority int) func(db *sql.DB, source string, sid int64) string {
 	return func(db *sql.DB, source string, sid int64) string {
@@ -140,7 +140,10 @@ func priorityOp(env *app.Env) app.Op {
 			if err != nil {
 				return PriorityResult{}, define.Errorf(define.CodeInternal, "requests を読めません: %v", err)
 			}
-			if !found || who == "" || (who != "human" && who != r.Requester) {
+			if !found {
+				return PriorityResult{}, define.Errorf(define.CodeNotFound, "承認待ちがありません: %s", in.ID)
+			}
+			if who == "" || (who != "human" && who != r.Requester) {
 				return PriorityResult{}, define.Errorf(define.CodePermissionDenied, "%s の優先度を変えられるのは、依頼した agent と人だけです", in.ID)
 			}
 			if _, err := db.Exec(`UPDATE main.requests SET priority=? WHERE id=?`, p, r.ID); err != nil {
