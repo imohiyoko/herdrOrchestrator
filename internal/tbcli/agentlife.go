@@ -4,17 +4,12 @@ import (
 	"github.com/imohiyoko/herdrorchestrator/internal/app"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
 
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"regexp"
-	"slices"
-	"strconv"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/agents"
@@ -24,9 +19,6 @@ import (
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/herdr"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/transport"
-	"github.com/imohiyoko/herdrorchestrator/internal/kernel/util"
-	"github.com/imohiyoko/herdrorchestrator/internal/limits"
-	"github.com/imohiyoko/herdrorchestrator/internal/message"
 	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
 )
 
@@ -148,285 +140,6 @@ func cmdAgentStop(args []string, w, stderr io.Writer) error {
 
 // ---------- 戻す(revive) ----------
 
-var modelRE = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,64}$`)
-
-const kindDefault = "claude"
-
-func kindValid(k string) bool { return slices.Contains(kindAll, k) }
-
-// kindRequire は kind_require: 対応していなければ理由(KIND_ERR)。
-func kindRequire(kind, item, note string) (string, bool) {
-	if !kindValid(kind) {
-		return "kind=" + kind + " は未知の kind です(使えるのは: " + strings.Join(kindAll, " ") + ") item=kind", false
-	}
-	if kindSupports(kind, item) {
-		return "", true
-	}
-	if note != "" {
-		note = " (" + note + ")"
-	}
-	return "kind=" + kind + " は " + item + " に対応していません item=" + item + note + "。claude の引数を代わりに渡すことはしません(docs/agent-kinds.md)", false
-}
-
-// kindCheckLaunch は kind_check_launch: 要求された起動(モデル指定・会話の再開)に対応していなければ 12。
-func kindCheckLaunch(kind, model, sess string) *opResult {
-	if m, ok := kindRequire(kind, "launch", ""); !ok {
-		return &opResult{code: 12, out: m}
-	}
-	if model != "" {
-		if m, ok := kindRequire(kind, "model", "--model "+model); !ok {
-			return &opResult{code: 12, out: m}
-		}
-		if kind != "claude" || !modelRE.MatchString(model) {
-			return &opResult{code: 12, out: "kind=" + kind + " のモデル名として使えません item=model: " + model}
-		}
-	}
-	if sess != "" {
-		if m, ok := kindRequire(kind, "resume", "session "+sess+" で再開できない。新しい会話にするなら --fresh"); !ok {
-			return &opResult{code: 12, out: m}
-		}
-	}
-	return nil
-}
-
-// kindLaunchArgs は kind_launch_args: herdr agent start の -- 以降。
-func kindLaunchArgs(kind, sess, model string) []string {
-	var a []string
-	if kind == "claude" {
-		if sess != "" {
-			a = append(a, "--resume", sess)
-		}
-		if model != "" {
-			a = append(a, "--model", model)
-		}
-	}
-	return a
-}
-
-// roleModelFor は role_model_for: 設定 role-models で、名前(name:<glob>)か役割の glob に当たるモデル。
-// reg が空でなければ台帳の role の代わりに使う(role_name_of の第 2 引数)。
-func roleModelFor(db *store.DB, name, reg string) string {
-	body, _, ok := config.Lookup(db.DB, db.Session, "role-models")
-	if !ok {
-		return ""
-	}
-	r := agents.NewRoles(db.DB, db.Session)
-	var have []string
-	if reg != "" {
-		have = r.FilesForReg(name, reg)
-	} else if s, _ := r.NameOf(name); s != "" {
-		have = strings.Split(s, ",")
-	}
-	for _, line := range config.Lines(body) {
-		line = config.Trim(config.StripComment(line))
-		k, v, has := strings.Cut(line, "=")
-		if !has {
-			continue
-		}
-		k, v = config.Trim(k), config.Trim(v)
-		if !modelRE.MatchString(v) {
-			continue
-		}
-		if p, ok := strings.CutPrefix(k, "name:"); ok {
-			if util.Glob(p, name) {
-				return v
-			}
-			continue
-		}
-		for _, x := range have {
-			if util.Glob(k, x) {
-				return v
-			}
-		}
-	}
-	return ""
-}
-
-// modelWithRoleDefault は model_with_role_default: 明示が無ければ役割の既定モデル(kind がモデル指定に対応するときだけ)。
-func modelWithRoleDefault(db *store.DB, model, kind, name, role string) string {
-	if model != "" {
-		return model
-	}
-	if !kindSupports(kind, "model") {
-		return ""
-	}
-	return roleModelFor(db, name, role)
-}
-
-// agentRegister は agent_register: 台帳に登録する(新しい命のたびに判定フラグは付け直し)。
-func agentRegister(db *store.DB, name, cwd, model, role, by, kill, why, kind string) error {
-	ts := nowTS()
-	var kby, kat any
-	if kill != "unknown" {
-		kby, kat = by, ts
-	}
-	_, err := db.Exec(`INSERT INTO main.agents (name, kind, herdr_session, cwd, model, role, state, killable, killable_reason, killable_by, killable_at, created_by, created_at, updated_at)
-    VALUES (?, ?, ?, NULLIF(?,''), NULLIF(?,''), NULLIF(?,''), 'running', ?, NULLIF(?,''), ?, ?, ?, ?, ?)
-    ON CONFLICT(herdr_session, name) DO UPDATE SET state='running', stopped_at=NULL, pane_id=NULL, kind=excluded.kind,
-      cwd=COALESCE(excluded.cwd, cwd), model=COALESCE(excluded.model, model), role=COALESCE(excluded.role, role),
-      killable=excluded.killable, killable_reason=excluded.killable_reason, killable_by=excluded.killable_by,
-      killable_at=excluded.killable_at, killable_session=NULL, updated_at=excluded.updated_at`,
-		name, kind, db.Session, cwd, model, role, kill, why, kby, kat, by, ts, ts)
-	return err
-}
-
-// firstPrompt は first_prompt: 起動直後の agent に最初の指示を送る。送れない・確かめられないときは理由(FP_NOTE)。
-func firstPrompt(db *store.DB, name, prompt, by string, stderr io.Writer) string {
-	if !transport.WaitReady(name) {
-		fmt.Fprintf(stderr, "tb: %s が入力待ちにならないため最初の指示を送っていません\n", name)
-		return "最初の指示は未送信(" + envOr("TB_SPAWN_READY_SEC", "60") + " 秒待っても入力待ちになりません。tb send で送り直す)"
-	}
-	sent := false
-	for i := 0; i < 5; i++ {
-		if transport.Send(db.DB, db.Session, name, "[from: tb / agent / "+by+"] "+util.Oneline(prompt, 4000), "agent:"+name, "agent", io.Discard) == transport.Sent {
-			sent = true
-			break
-		}
-		time.Sleep(time.Duration(secEnv("TB_SPAWN_RETRY_SEC", 3) * float64(time.Second)))
-	}
-	if !sent {
-		return "最初の指示は未送信(tb send などで送り直す)"
-	}
-	if !transport.VerifyPrompt(name) {
-		fmt.Fprintf(stderr, "tb: %s に送ったが処理を確認できません。pane で Enter を押してください\n", name)
-		return "最初の指示は送ったが処理が始まったか確認できません(二重になるので再送せず、" + name + " の pane で Enter を押してください)"
-	}
-	return ""
-}
-
-func secEnv(k string, def float64) float64 {
-	if f, err := strconv.ParseFloat(envOr(k, strconv.FormatFloat(def, 'f', -1, 64)), 64); err == nil {
-		return f
-	}
-	return 0
-}
-
-// limitsRefuseRunning は limits_refuse_running <add>: 動作中の agent が add 増えると上限を超えるなら理由を stderr に出して 4。
-func limitsRefuseRunning(db *store.DB, add int, stderr io.Writer) error {
-	running, _, ok := limitsCounts(db)
-	if !ok {
-		return nil
-	}
-	max, lim := limits.Load(db.DB, db.Session).Max("max_running_agents")
-	if limits.Exceeds(running+add, max, lim) {
-		fmt.Fprintf(stderr, "tb: 動作中の agent が上限です(動作中 %d、上限 max_running_agents=%d)。何も作りません。 止める候補は tb agent-shed、上限を変えるのは人(tb limits set max_running_agents <数>)\n", running, max)
-		return &exit{4, ""}
-	}
-	return nil
-}
-
-// agentCwd は AGENT_CWD(TB_AGENT_CWD、既定は TB_ROOT/..)。
-func agentCwd() string {
-	if d := os.Getenv("TB_AGENT_CWD"); d != "" {
-		return d
-	}
-	return filepath.Join(os.Getenv("TB_ROOT"), "..")
-}
-
-func isDir(d string) bool {
-	st, err := os.Stat(d)
-	return err == nil && st.IsDir()
-}
-
-type regRow struct {
-	ok                     bool
-	cwd, model, sess, kind string
-}
-
-func agentRegRow(db *store.DB, name string) regRow {
-	var r regRow
-	var cwd, model, sess, kind sql.NullString
-	if db.QueryRow(`SELECT cwd, model, session_id, kind FROM agents WHERE name=?`, name).Scan(&cwd, &model, &sess, &kind) == nil {
-		r = regRow{true, cwd.String, model.String, sess.String, kind.String}
-		if r.kind == "" {
-			r.kind = kindDefault
-		}
-	}
-	return r
-}
-
-// doAgentRevive は do_agent_revive。
-func doAgentRevive(db *store.DB, name string, fresh bool, model, prompt, by string, stderr io.Writer) opResult {
-	live, err := agents.SyncLive(db.DB, db.Session)
-	if err != nil {
-		return opResult{code: 11, out: "herdr agent list に失敗しました"}
-	}
-	if _, ok := liveOf(live, name); ok {
-		return opResult{code: 1, out: name + " はすでに動いています"}
-	}
-	row := agentRegRow(db, name)
-	if !row.ok {
-		if msg, other := otherSession(db, name); other {
-			return opResult{code: 1, out: msg}
-		}
-		return opResult{code: 1, out: name + " は台帳にありません(新しく作るなら tb agent-new)"}
-	}
-	cwd := row.cwd
-	if model == "" {
-		model = row.model
-	}
-	lmodel := model // 台帳に書くのは明示か台帳の値だけ(役割の既定は書かない)
-	sess := ""
-	if !fresh {
-		sess = row.sess
-	}
-	model = modelWithRoleDefault(db, model, row.kind, name, "")
-	if r := kindCheckLaunch(row.kind, model, sess); r != nil {
-		return *r
-	}
-	if cwd == "" || !isDir(cwd) {
-		if sess != "" {
-			c := cwd
-			if c == "" {
-				c = "未記録"
-			}
-			return opResult{code: 1, out: name + " の作業ディレクトリがありません(" + c + ")。--fresh なら " + agentCwd() + " で新しい会話として起動します"}
-		}
-		cwd = physDir(agentCwd())
-	}
-	if err := agentRegister(db, name, cwd, lmodel, "", by, "unknown", "", row.kind); err != nil {
-		return opResult{code: 1, out: err.Error()}
-	}
-	sp, ok := transport.Spawn(env.TBDB(), row.kind, name, cwd, kindLaunchArgs(row.kind, sess, model))
-	if !ok {
-		if sp.Kept {
-			_, _ = db.Exec(`UPDATE main.agents SET pane_id=? WHERE herdr_session=? AND name=?`, sp.Pane, db.Session, name)
-			out := name + ": " + sp.Err
-			if prompt != "" {
-				out += "。最初の指示は未送信(答えたあと tb send などで送る)"
-			}
-			return opResult{code: 11, out: out}
-		}
-		_, _ = db.Exec(`UPDATE main.agents SET state='stopped', stopped_at=? WHERE herdr_session=? AND name=?`, nowTS(), db.Session, name)
-		return opResult{code: 11, out: name + " を起動できません: " + sp.Err}
-	}
-	_, _ = db.Exec(`UPDATE main.agents SET pane_id=? WHERE herdr_session=? AND name=?`, sp.Pane, db.Session, name)
-	how := "新しい会話"
-	if sess != "" {
-		how = "resume " + sess
-	}
-	out := name + " revived (" + how + ", pane " + sp.Pane + ", cwd " + cwd + ")"
-	note := ""
-	if prompt != "" {
-		if note = firstPrompt(db, name, prompt, by, stderr); note != "" {
-			out += " / " + note
-		}
-	}
-	return opResult{code: 0, out: out, note: note}
-}
-
-// physDir は $(cd D && pwd): 絶対パス(シンボリックリンクは解かない。bash の pwd と同じ論理パス)。
-func physDir(d string) string {
-	if filepath.IsAbs(d) {
-		return filepath.Clean(d)
-	}
-	wd := os.Getenv("PWD")
-	if wd == "" {
-		wd, _ = os.Getwd()
-	}
-	return filepath.Join(wd, d)
-}
-
 func cmdAgentRevive(args []string, w, stderr io.Writer) error {
 	if len(args) < 1 || strings.HasPrefix(args[0], "-") {
 		return usage("agent-revive <名前> [--fresh] [--model M] [--prompt P]")
@@ -464,128 +177,22 @@ func cmdAgentRevive(args []string, w, stderr io.Writer) error {
 		return err
 	}
 	defer db.Close()
-	if row := agentRegRow(db, name); row.ok { // 台帳にあれば、その kind でできない依頼は承認待ちに積む前に止める
-		m, sess := model, ""
-		if m == "" {
-			m = row.model
-		}
-		if !fresh {
-			sess = row.sess
-		}
-		if r := kindCheckLaunch(row.kind, m, sess); r != nil {
-			return &exit{12, r.out}
-		}
-	}
-	if err := limitsRefuseRunning(db, 1, stderr); err != nil {
-		return err
-	}
 	by, err := requester()
 	if err != nil {
 		return err
 	}
-	f := 0
-	if fresh {
-		f = 1
+	var res agent.LifeResult
+	if err := callAppW(db, app.PrincipalOf(by), stderr, "agent.revive", agent.ReviveReq{Name: name, Fresh: fresh, Model: model, Prompt: prompt}, &res); err != nil {
+		return err
 	}
-	kv := []any{"fresh", f}
-	if model != "" {
-		kv = append(kv, "model", model)
+	if res.Pending != nil {
+		return pendingExit(w, res.Pending)
 	}
-	if prompt != "" {
-		kv = append(kv, "prompt", prompt)
-	}
-	return opEntry(db, "revive", name, jsonC(kv...), by, w, func() opResult { return doAgentRevive(db, name, fresh, model, prompt, by, stderr) })
+	fmt.Fprintln(w, res.Out)
+	return nil
 }
 
 // ---------- 再起動(restart) ----------
-
-const restartDefaultPrompt = "MCP の接続を張り直すために再起動しました。直前の作業を続けてください。まず MCP のツールが使えることを確認し、まだ使えないなら tb comment で報告してください。"
-
-// doAgentRestart は do_agent_restart: 停止 + 同じ会話での復活。安全条件を全部満たすときだけ。
-// 0 / 1 / 4 / 10(再開したが最初の指示を確認できない) / 11 / 12
-func doAgentRestart(db *store.DB, st tickets.StatusSet, name, prompt, by string, stderr io.Writer) opResult {
-	t0 := time.Now()
-	live, err := agents.SyncLive(db.DB, db.Session)
-	if err != nil {
-		return opResult{code: 11, out: "herdr agent list に失敗しました"}
-	}
-	a, ok := liveOf(live, name)
-	if !ok {
-		if msg, other := otherSession(db, name); other {
-			return opResult{code: 1, out: msg}
-		}
-		return opResult{code: 1, out: name + " は動いていません(再起動は動いている agent だけ。止まっているなら tb agent-revive " + name + ")"}
-	}
-	if by == name {
-		return opResult{code: 1, out: "自分自身は再起動できません"}
-	}
-	pane, oldSess := a.PaneID, a.AgentSession.Value
-	status, _ := a.AgentStatus.(string)
-	if pane == "" {
-		return opResult{code: 1, out: name + " の pane が分かりません"}
-	}
-	if status != "idle" && status != "done" {
-		s := status
-		if s == "" {
-			s = "状態不明"
-		}
-		return opResult{code: 1, out: name + " は " + s + " のため再起動しません(idle か done のときだけ)"}
-	}
-	var open string
-	_ = db.QueryRow(`SELECT COALESCE(group_concat(id, ' '),'') FROM tasks WHERE owner_agent=? AND status IN (`+st.SQLList("active")+`)`, name).Scan(&open)
-	if open != "" && blank(prompt) {
-		return opResult{code: 1, out: name + " は " + st.Main("active") + " のタスク(" + open + ")を持っています。再開メモを --prompt で渡したときだけ再起動できます"}
-	}
-	row := agentRegRow(db, name)
-	if oldSess == "" {
-		oldSess = row.sess
-	}
-	kind := row.kind // 台帳に無ければ空(bash と同じく未知の kind として止める)
-	// 閉じてから再開できないと困るので、再開できることを先に確かめる(だめなら何も止めない)
-	if m, ok := kindRequire(kind, "resume", "同じ会話に戻れないので止めません"); !ok {
-		return opResult{code: 12, out: m}
-	}
-	if oldSess == "" {
-		return opResult{code: 1, out: name + " の session id が台帳にありません。同じ会話に戻れないので止めません"}
-	}
-	if row.cwd == "" || !isDir(row.cwd) {
-		c := row.cwd
-		if c == "" {
-			c = "未記録"
-		}
-		return opResult{code: 1, out: name + " の作業ディレクトリがありません(" + c + ")。同じ会話に戻れないので止めません"}
-	}
-	if blank(prompt) {
-		prompt = restartDefaultPrompt
-	}
-	if r := closePane(db, name, pane, oldSess); r != nil {
-		return *r
-	}
-	_, _ = agents.SyncLive(db.DB, db.Session)
-	if limitsRefuseRunning(db, 1, io.Discard) != nil {
-		return opResult{code: 4, out: name + " を停止しましたが、動作中の agent が上限のため復活していません。停止のままです。上限が空いたら: tb agent-revive " + name + " [--fresh]"}
-	}
-	rev := doAgentRevive(db, name, false, "", prompt, by, stderr)
-	if rev.code != 0 {
-		return opResult{code: rev.code, out: name + " を停止しました(pane " + pane + " を閉じた)が、復活に失敗: " + rev.out + "。停止のままです。自分で戻すなら: tb agent-revive " + name + " [--fresh](--fresh は新しい会話になります)"}
-	}
-	live, _ = agents.SyncLive(db.DB, db.Session)
-	cur, _ := liveOf(live, name)
-	how := ""
-	switch ns := cur.AgentSession.Value; {
-	case ns == "":
-		how = "session unconfirmed (herdr reports none yet; was " + oldSess + ")"
-	case ns == oldSess:
-		how = "同じ会話に戻った(session " + oldSess + " のまま)"
-	default:
-		how = "session CHANGED (" + oldSess + " -> " + ns + "; verify it is the same conversation)"
-	}
-	out := fmt.Sprintf("%s restarted by %s: stop ok(pane %s を閉じた) / revive ok(%s) / %s / %d 秒", name, by, pane, strings.TrimPrefix(rev.out, name+" revived "), how, int(time.Since(t0).Seconds()))
-	if rev.note != "" {
-		return opResult{code: 10, out: out + " / " + rev.note}
-	}
-	return opResult{code: 0, out: out}
-}
 
 func cmdAgentRestart(args []string, w, stderr io.Writer) error {
 	if len(args) < 1 || strings.HasPrefix(args[0], "-") {
@@ -608,12 +215,7 @@ func cmdAgentRestart(args []string, w, stderr io.Writer) error {
 	if utf8.RuneCountInString(prompt) > 4000 {
 		return usage("agent-restart: --prompt は 4000 字まで")
 	}
-	kv := []any{"restart", 1}
-	if prompt != "" {
-		kv = append(kv, "prompt", prompt)
-	}
-	opArgs := jsonC(kv...)
-	db, st, err := openCmd(stderr)
+	db, _, err := openCmd(stderr)
 	if err != nil {
 		return err
 	}
@@ -622,41 +224,11 @@ func cmdAgentRestart(args []string, w, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if by != "human" {
-		why := ""
-		if by == name {
-			why = "自分自身は再起動できません"
-		} else {
-			for _, n := range message.ConductorNames(db.DB, db.Session) {
-				if n == name {
-					why = "指揮官(" + name + ")は agent から再起動できません(人が実行します)"
-				}
-			}
-		}
-		if why == "" {
-			j := approval.NewJudge(db.DB, db.Session)
-			s, _ := j.Of("agent:stop:"+name, by)
-			v, _ := j.Of("agent:revive:"+name, by)
-			if s != "allow" || v != "allow" {
-				why = "policy で agent:stop と agent:revive(" + name + ")の両方が allow ではありません(stop=" + s + " revive=" + v + ")。人が実行するか、人が許可してください"
-			}
-		}
-		if why != "" {
-			ts := nowTS()
-			_, _ = db.Exec(`INSERT INTO main.agent_ops (herdr_session, op, target, args, requested_by, status, result, created_at, decided_at) VALUES (?, 'revive', ?, ?, ?, 'rejected', ?, ?, ?)`,
-				db.Session, name, opArgs, by, "restart refused: "+why, ts, ts)
-			return &exit{4, why}
-		}
-	}
-	if err := limitsRefuseRunning(db, 0, stderr); err != nil { // 動作中が既に上限を超えているときは触らない(再起動で数は増えない)
+	var res agent.LifeResult
+	if err := callAppW(db, app.PrincipalOf(by), stderr, "agent.restart", agent.RestartReq{Name: name, Prompt: prompt}, &res); err != nil {
 		return err
 	}
-	r := doAgentRestart(db, st, name, prompt, by, stderr)
-	recordOp(db, "revive", name, opArgs, by, r.code, "restart: "+r.out)
-	if r.code != 0 {
-		return &exit{r.code, r.out}
-	}
-	fmt.Fprintln(w, r.out)
+	fmt.Fprintln(w, res.Out)
 	return nil
 }
 

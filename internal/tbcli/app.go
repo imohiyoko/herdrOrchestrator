@@ -31,7 +31,12 @@ func callApp(db *store.DB, what, op string, in, out any) error {
 
 // callAppAs は主体 by(入口で確かめたもの)として操作 op を呼ぶ。
 func callAppAs(db *store.DB, by port.Principal, op string, in, out any) error {
-	c, err := server.New(&app.Env{DB: app.Shared(db), Now: now, PendingQ: pendingQ})
+	return callAppW(db, by, nil, op, in, out)
+}
+
+// callAppW は callAppAs に、操作の途中の警告の書き込み先(標準エラー)を足したもの。
+func callAppW(db *store.DB, by port.Principal, stderr io.Writer, op string, in, out any) error {
+	c, err := server.New(&app.Env{DB: app.Shared(db), Now: now, PendingQ: pendingQ, Warn: stderr})
 	if err != nil {
 		return err
 	}
@@ -83,13 +88,14 @@ func appErr(err error) error {
 	if msg == "" {
 		msg = string(e.Code)
 	}
+	for _, r := range e.Reasons {
+		if code, ok := agent.ExitReasons[r]; ok {
+			return &exit{code, msg}
+		}
+	}
 	switch {
 	case e.Code == define.CodePermissionDenied && slices.Contains(e.Reasons, app.ReasonApprovalRequired):
 		return &exit{20, msg}
-	case slices.Contains(e.Reasons, agent.ReasonOpDenied):
-		return &exit{4, msg}
-	case slices.Contains(e.Reasons, agent.ReasonHerdrUnavailable):
-		return &exit{11, msg}
 	case e.Code == define.CodeInvalidArgument:
 		return &exit{exitUsage, msg}
 	case e.Code == define.CodeUnauthenticated:

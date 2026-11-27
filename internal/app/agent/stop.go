@@ -40,8 +40,8 @@ func stopArgs(in StopReq) string {
 func stopOp(env *app.Env) app.Op {
 	return app.Command(env, "agent.stop",
 		opGate("stop", func(in StopReq) string { return in.Name }, stopArgs, func(who string, in StopReq) error {
-			if !agents.NameRE.MatchString(in.Name) || in.Name == "human" {
-				return define.Errorf(define.CodeInvalidArgument, "agent 名は英小文字で始まり、英小文字・数字・_・- の 32 字以内(human は予約名): %s", in.Name)
+			if err := validName(in.Name); err != nil {
+				return err
 			}
 			if in.Force && who != "human" {
 				return define.Errorf(define.CodeFailedPrecondition, "--force は人が自分の端末で使います(agent '%s' の pane からは使えません)", who)
@@ -70,24 +70,24 @@ func stopOp(env *app.Env) app.Op {
 func Stop(db *store.DB, st tickets.StatusSet, name string, force bool, by string) Result {
 	live, err := agents.SyncLive(db.DB, db.Session)
 	if err != nil {
-		return Result{11, "herdr agent list に失敗しました"}
+		return Result{Code: 11, Out: "herdr agent list に失敗しました"}
 	}
 	a, ok := agents.LiveOf(live, name)
 	if !ok {
 		if msg, other := agents.OtherSession(db.DB, db.Session, name); other {
-			return Result{1, msg}
+			return Result{Code: 1, Out: msg}
 		}
-		return Result{1, name + " は動いていません"}
+		return Result{Code: 1, Out: name + " は動いていません"}
 	}
 	if by == name {
-		return Result{1, "自分自身は止められません"}
+		return Result{Code: 1, Out: "自分自身は止められません"}
 	}
 	pane, sess := a.PaneID, a.AgentSession.Value
 	if pane == "" {
-		return Result{1, name + " の pane が分かりません"}
+		return Result{Code: 1, Out: name + " の pane が分かりません"}
 	}
 	if k, ok := agents.NewRoles(db.DB, db.Session).ProtectReason(name); ok { // 保護は --force でも越えない
-		return Result{1, name + " は保護されています(" + k + ")。止めるなら、人が tb config edit protect で外してから"}
+		return Result{Code: 1, Out: name + " は保護されています(" + k + ")。止めるなら、人が tb config edit protect で外してから"}
 	}
 	if !force {
 		k := agents.Killable(db.DB, db.Session, name)
@@ -98,16 +98,16 @@ func Stop(db *store.DB, st tickets.StatusSet, name string, force bool, by string
 			if open != "" {
 				extra = "、未完了タスク " + open
 			}
-			return Result{1, name + " は止めてよいと判定されていません(killable=" + k + extra + ")。判定役に付けてもらうか(tb agent-flag)、人が --force で止めます"}
+			return Result{Code: 1, Out: name + " は止めてよいと判定されていません(killable=" + k + extra + ")。判定役に付けてもらうか(tb agent-flag)、人が --force で止めます"}
 		}
 	}
 	if !agents.ClosePane(db.DB, db.Session, name, pane, sess) {
-		return Result{11, "pane " + pane + " を閉じられません"}
+		return Result{Code: 11, Out: "pane " + pane + " を閉じられません"}
 	}
 	_ = db.QueryRow(`SELECT COALESCE(session_id,'') FROM agents WHERE name=?`, name).Scan(&sess)
 	out := name + " stopped"
 	if sess != "" {
 		out += " (session " + sess + "。tb agent-revive " + name + " で同じ会話から再開できます)"
 	}
-	return Result{0, out}
+	return Result{Code: 0, Out: out}
 }

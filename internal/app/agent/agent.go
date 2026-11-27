@@ -5,11 +5,14 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"strconv"
+	"strings"
 
 	"github.com/imohiyoko/API/define"
 
+	"github.com/imohiyoko/herdrorchestrator/internal/agents"
 	"github.com/imohiyoko/herdrorchestrator/internal/app"
 	"github.com/imohiyoko/herdrorchestrator/internal/approval"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
@@ -21,12 +24,22 @@ const (
 	ReasonOpDenied = "op_denied"
 	// ReasonHerdrUnavailable は herdr を呼べない・pane を閉じられない(tb の終了コード 11)。
 	ReasonHerdrUnavailable = "herdr_unavailable"
+	// ReasonLimitExceeded は上限(max_running_agents など)を超える(tb の終了コード 4)。
+	ReasonLimitExceeded = "limit_exceeded"
+	// ReasonPromptUnconfirmed は再起動したが最初の指示の処理を確かめられない(tb の終了コード 10)。
+	ReasonPromptUnconfirmed = "prompt_unconfirmed"
+	// ReasonKindUnsupported は agent の種類(kind)が要求に対応していない(tb の終了コード 12)。
+	ReasonKindUnsupported = "kind_unsupported"
 )
+
+// ExitReasons は拒否の理由 → tb の終了コード。
+var ExitReasons = map[string]int{ReasonOpDenied: 4, ReasonLimitExceeded: 4, ReasonHerdrUnavailable: 11, ReasonPromptUnconfirmed: 10, ReasonKindUnsupported: 12}
 
 // Result は操作の実行の結果(tb の opResult。Code は tb の終了コード、Out は文言)。
 type Result struct {
 	Code int
 	Out  string
+	Note string // 最初の指示を送れなかった・確かめられなかった理由(FP_NOTE)
 }
 
 // Err は結果を操作のエラーにする(成功なら nil)。
@@ -36,6 +49,12 @@ func (r Result) Err() error {
 		return nil
 	case 11:
 		return &define.Error{Code: define.CodeUnavailable, Message: r.Out, Reasons: []string{ReasonHerdrUnavailable}}
+	case 4:
+		return &define.Error{Code: define.CodeFailedPrecondition, Message: r.Out, Reasons: []string{ReasonLimitExceeded}}
+	case 10:
+		return &define.Error{Code: define.CodeFailedPrecondition, Message: r.Out, Reasons: []string{ReasonPromptUnconfirmed}}
+	case 12:
+		return &define.Error{Code: define.CodeFailedPrecondition, Message: r.Out, Reasons: []string{ReasonKindUnsupported}}
 	}
 	return &define.Error{Code: define.CodeFailedPrecondition, Message: r.Out}
 }
@@ -99,8 +118,21 @@ func by(ctx context.Context) string {
 	return app.Who(p)
 }
 
-
 // Ops は agent の操作。
 func Ops(env *app.Env) []app.Op {
-	return []app.Op{stopOp(env)}
+	return []app.Op{stopOp(env), reviveOp(env), restartOp(env)}
+}
+
+// validName は agent 名の検査(tb の validAgentName と同じ文言)。
+func validName(n string) error {
+	if n == "human" || !agents.NameRE.MatchString(n) {
+		return define.Errorf(define.CodeInvalidArgument, "agent 名は英小文字で始まり、英小文字・数字・_・- の 32 字以内(human は予約名): %s", n)
+	}
+	return nil
+}
+
+// limitErr は RefuseRunning が書いた理由(「tb: …」の 1 行)を上限のエラーにする。
+func limitErr(b *bytes.Buffer) error {
+	msg := strings.TrimPrefix(strings.TrimRight(b.String(), "\n"), "tb: ")
+	return &define.Error{Code: define.CodeFailedPrecondition, Message: msg, Reasons: []string{ReasonLimitExceeded}}
 }
