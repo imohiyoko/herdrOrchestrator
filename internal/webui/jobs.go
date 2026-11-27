@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/imohiyoko/herdrorchestrator/internal/app"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/job"
 	"github.com/imohiyoko/herdrorchestrator/internal/sched"
 )
@@ -172,8 +171,7 @@ func jobLast(name string) (map[string]any, map[string]any) {
 
 // jobCall はジョブの操作(job.set / job.unset / job.rm)を人として呼ぶ。断られたら画面に出す理由(実行できたら "")。
 func (v *sv) jobCall(op string, in any, out *job.Result) string {
-	var p *app.Pending
-	return callEdit(v.sess, op, in, out, &p)
+	return callEdit(v.sess, op, in, out, &out.Pending)
 }
 
 // runTBInput は標準入力に本文を渡して tb を実行する(tb job set など)。(終了コード, 出力)。
@@ -226,7 +224,12 @@ func (s *Server) startTBJobRun(sess, name string) error {
 func jobTBCmd(ctx context.Context, sess string, args []string) *exec.Cmd {
 	c := exec.CommandContext(ctx, "bash", append([]string{tbPath()}, args...)...)
 	// tb job が見る jobs/・settings/ を、Web UI が見ているものに揃える
-	schedDir, _, _ := schedPaths()
+	jobs, _ := filepath.Abs(schedJobs())
+	sets, _ := filepath.Abs(schedSettings())
+	schedDir := ""
+	if filepath.Base(jobs) == "jobs" && filepath.Base(sets) == "settings" && filepath.Dir(jobs) == filepath.Dir(sets) {
+		schedDir = filepath.Dir(jobs)
+	}
 	var env []string
 	for _, kv := range childEnv(sess) {
 		if k, _, _ := strings.Cut(kv, "="); k == "HERDR_PANE_ID" || k == "TB_DB" || k == "LOG_DIR" || (k == "TB_SCHED_DIR" && schedDir != "") {

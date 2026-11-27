@@ -55,7 +55,12 @@ type Result struct {
 	LogRemoved string   `api:"log_removed,optional" json:"log_removed,omitempty"`
 	LogFailed  string   `api:"log_failed,optional" json:"log_failed,omitempty"`
 	Rejected   string   `api:"rejected,optional" json:"rejected,omitempty"`
+	// Pending は承認待ちに積んだとき(agent の呼び出しで policy が ask のとき)。
+	Pending *app.Pending `api:"pending,optional" json:"pending,omitempty"`
 }
+
+// SetPending は app.PendingSetter。
+func (r *Result) SetPending(p *app.Pending) { r.Pending = p }
 
 // schedEnv は env の scheduler の置き場所(空のところは tb と同じ既定)。
 func schedEnv(env *app.Env) jobs.Env {
@@ -112,6 +117,9 @@ func Ops(env *app.Env) []app.Op {
 func setJob(env *app.Env, in SetReq) (Result, error) {
 	if !jobs.ValidName(in.Name) {
 		return Result{}, badName(in.Name)
+	}
+	if in.How == "" && in.Body == "" { // agent セットの書き方(前と同じく空の本文は断る)
+		return Result{}, define.Errorf(define.CodeInvalidArgument, "本文が空です")
 	}
 	db, done, err := env.DB()
 	if err != nil {

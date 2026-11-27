@@ -26,12 +26,14 @@ func appClient(sess string) (*server.Client, error) {
 }
 
 // schedPaths は Web UI が見ている scheduler の置き場所(jobs/・settings/ の親、show.sh、ログ)。jobTBCmd が tb に渡すものと同じ。
-// jobs/ と settings/ の親が揃わなければ dir は空(tb の既定)。show.sh は TB_SCHED_SHOW か、このチェックアウトの scheduler のもの。
+// jobs/ と settings/ の親が揃わなければ dir はこのチェックアウトの scheduler(前に tb を子として動かしていたときと同じ所)。show.sh は TB_SCHED_SHOW か、このチェックアウトの scheduler のもの。
 func schedPaths() (dir, show, logs string) {
 	jobs, _ := filepath.Abs(schedJobs())
 	sets, _ := filepath.Abs(schedSettings())
 	if filepath.Base(jobs) == "jobs" && filepath.Base(sets) == "settings" && filepath.Dir(jobs) == filepath.Dir(sets) {
 		dir = filepath.Dir(jobs)
+	} else {
+		dir = filepath.Join(HerdrRoot(), "scheduler")
 	}
 	if show = os.Getenv("TB_SCHED_SHOW"); show == "" {
 		show = filepath.Join(HerdrRoot(), "scheduler", "bin", "show.sh")
