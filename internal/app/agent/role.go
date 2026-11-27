@@ -21,12 +21,11 @@ import (
 
 var reRoleItem = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
-// RoleWriteReq は agent.role.write の入力。How は記録の理由(role-write / role-edit。role-edit なら cmd:agent:role-edit の行で判定する)。
+// RoleWriteReq は agent.role.write / agent.role.edit の入力(どちらで書いたかは操作で決まり、履歴の理由になる)。
 type RoleWriteReq struct {
 	Name   string `api:"name,path"`
 	Body   string `api:"body"`
 	Shared bool   `api:"shared,optional"`
-	How    string `api:"how,optional"`
 }
 
 // RoleUnsetReq は agent.role.unset の入力。
@@ -65,25 +64,9 @@ type RoleSetResult struct {
 // SetPending は app.PendingSetter。
 func (r *RoleSetResult) SetPending(p *app.Pending) { r.Pending = p }
 
-// HowOf は記録の理由(門が見る)。
-func (r RoleWriteReq) HowOf() string { return r.How }
-
 func roleOps(env *app.Env) []app.Op {
-	write := app.Command(env, "agent.role.write", func(ctx context.Context, env *app.Env, who string, in any) app.Decision {
-		verb := "role-write"
-		if h, ok := in.(interface{ HowOf() string }); ok && h.HowOf() == "role-edit" {
-			verb = "role-edit"
-		}
-		return app.Entry("cmd:agent:"+verb, "tb "+verb)(ctx, env, who, in)
-	},
-		func(ctx context.Context, in RoleWriteReq) (RoleResult, error) {
-			return withDB(env, func(db *store.DB) (RoleResult, error) { return roleWrite(db, roleWho(ctx), in) })
-		},
-		define.Doc("役割の定義を書く(tb role-write / role-edit。人か、policy で role:change を許された agent)"),
-		define.Authz("cmd:agent:role-write", define.Resource("role", "name")),
-		define.Expose(define.Internal, define.REST),
-		define.HTTP("PUT /v1/roles/{name}"),
-	)
+	write := roleWriteOp(env, "write", "PUT /v1/roles/{name}")
+	edit := roleWriteOp(env, "edit", "POST /v1/roles/{name}/edit")
 	unset := app.Command(env, "agent.role.unset", app.Cmd("cmd:agent:role-unset", "tb role-unset"),
 		func(ctx context.Context, in RoleUnsetReq) (RoleResult, error) {
 			if roleWho(ctx) != "human" {
@@ -114,17 +97,25 @@ func roleOps(env *app.Env) []app.Op {
 		define.Expose(define.Internal, define.REST),
 		define.HTTP("PUT /v1/agents/{name}/role"),
 	)
-	return []app.Op{write, unset, set}
+	return []app.Op{write, edit, unset, set}
 }
 
-// roleWho は呼び手(人と system:* は human。決められない主体は空)。
-func roleWho(ctx context.Context) string {
-	w := by(ctx)
-	if w != "" && requests.IsHuman(w) {
-		return "human"
-	}
-	return w
+// roleWriteOp は agent.role.write / agent.role.edit(tb role-write / role-edit。門の行は cmd:agent:role-<verb>)。
+func roleWriteOp(env *app.Env, verb, route string) app.Op {
+	how := "role-" + verb
+	return app.Command(env, "agent.role."+verb, app.Entry("cmd:agent:"+how, "tb "+how),
+		func(ctx context.Context, in RoleWriteReq) (RoleResult, error) {
+			return withDB(env, func(db *store.DB) (RoleResult, error) { return roleWrite(db, roleWho(ctx), how, in) })
+		},
+		define.Doc("役割の定義を書く(tb "+how+"。人か、policy で role:change を許された agent)"),
+		define.Authz("cmd:agent:"+how, define.Resource("role", "name")),
+		define.Expose(define.Internal, define.REST),
+		define.HTTP(route),
+	)
 }
+
+// roleWho は呼び手。人として扱うのは人だけ(system:* は agent と同じ確かめを受ける)。決められない主体は空。
+func roleWho(ctx context.Context) string { return by(ctx) }
 
 func roleKey(name string) (string, error) {
 	key, ok := agents.KeyOf(name)
@@ -184,7 +175,7 @@ func refuseWho(who string) error {
 }
 
 // roleWrite は role_put: 役割の本文を DB に書く。
-func roleWrite(db *store.DB, who string, in RoleWriteReq) (RoleResult, error) {
+func roleWrite(db *store.DB, who, how string, in RoleWriteReq) (RoleResult, error) {
 	key, err := roleKey(in.Name)
 	if err != nil {
 		return RoleResult{}, err
@@ -223,10 +214,6 @@ func roleWrite(db *store.DB, who string, in RoleWriteReq) (RoleResult, error) {
 	}
 	if strings.TrimFunc(in.Body, config.IsSpace) == "" {
 		return RoleResult{}, define.Errorf(define.CodeFailedPrecondition, "本文が空です(消すときは人が tb role-unset %s で行を消す)", name)
-	}
-	how := in.How
-	if how == "" {
-		how = "role-write"
 	}
 	if err := config.DBPut(db.DB, db.Session, key, in.Body, how, in.Shared, who); err != nil {
 		return RoleResult{}, define.Errorf(define.CodeInternal, "%s", err.Error())

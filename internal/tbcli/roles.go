@@ -233,7 +233,7 @@ func rolePut(db *store.DB, name, body, how string, shared bool, w, stderr io.Wri
 		return err
 	}
 	var r agent.RoleResult
-	if err := callAppEnv(appEnv(db, stderr), by, "agent.role.write", agent.RoleWriteReq{Name: name, Body: body, Shared: shared, How: how}, &r); err != nil {
+	if err := callAppEnv(appEnv(db, stderr), by, "agent."+strings.ReplaceAll(how, "-", "."), agent.RoleWriteReq{Name: name, Body: body, Shared: shared}, &r); err != nil {
 		return err
 	}
 	if r.Pending != nil {
@@ -297,8 +297,12 @@ func cmdRoleUnset(args []string, w, stderr io.Writer) error {
 	if err := requireHuman("tb role-unset"); err != nil {
 		return err
 	}
+	by, err := rolePrincipal()
+	if err != nil {
+		return err
+	}
 	var r agent.RoleResult
-	if err := callAppWarn(db, "tb role-unset", stderr, "agent.role.unset", agent.RoleUnsetReq{Name: name, Shared: shared}, &r); err != nil {
+	if err := callAppEnv(appEnv(db, stderr), by, "agent.role.unset", agent.RoleUnsetReq{Name: name, Shared: shared}, &r); err != nil {
 		return err
 	}
 	if r.Pending != nil {
