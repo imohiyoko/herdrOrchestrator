@@ -90,6 +90,7 @@ func NewWith(ctx context.Context, db *store.DB, spec NewSpec, stderr io.Writer) 
 	sp, ok := transport.SpawnAt(db.Path, kind, name, cwd, LaunchArgs(kind, "", ModelWithRoleDefault(db, model, kind, name, role)), spec.At)
 	setPane := func() {
 		_, _ = db.Exec(`UPDATE main.agents SET pane_id=?, spawned_by=NULLIF(?,''), spawn_task=NULLIF(?,'') WHERE herdr_session=? AND name=?`, sp.Pane, sby, stask, db.Session, name)
+		setParents(db, name, sby, by)
 	}
 	if !ok {
 		if sp.Kept { // 人の操作待ち: pane は残っているので台帳にも残す(最初の指示は送らない)

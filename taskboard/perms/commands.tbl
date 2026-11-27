@@ -91,6 +91,8 @@ agent.role.write         cmd:agent:role-write         allow       allow       en
 agent.role.edit          cmd:agent:role-edit          allow       allow       entry
 agent.role.unset         cmd:agent:role-unset         deny        allow       inner
 agent.role.set           cmd:agent:role-set           allow       allow       entry
+agent.parent.add         cmd:agent:parent             allow       allow       entry
+agent.parent.rm          cmd:agent:parent             allow       allow       entry
 agent.role.log           cmd:agent:role-log           allow       allow       entry
 agent.role.broadcast     cmd:agent:role-broadcast     allow       allow       entry
 agent.role.status        cmd:agent:role-list          allow       allow       entry

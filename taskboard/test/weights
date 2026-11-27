@@ -84,6 +84,7 @@
 97_roles_session.sh 2
 98_agent_restart.sh 6
 98_agent_spawn.sh 11
+98_agent_parents.sh 2
 98_gate.sh 134
 98_model_set.sh 11
 99_compact.sh 2

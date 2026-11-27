@@ -284,3 +284,45 @@ func cmdAgentNew(args []string, w, stderr io.Writer) error {
 	fmt.Fprintln(w, res.Out)
 	return nil
 }
+
+// tb agent parent add|rm <子> <親>: 親(agent_parents)を足す・外す。子は親が全員止まったときだけ orphan になる。
+func cmdAgentParentAdd(args []string, w, stderr io.Writer) error {
+	return agentParent(true, args, w, stderr)
+}
+
+func cmdAgentParentRm(args []string, w, stderr io.Writer) error {
+	return agentParent(false, args, w, stderr)
+}
+
+func agentParent(add bool, args []string, w, stderr io.Writer) error {
+	verb, op := "rm", "agent.parent.rm"
+	if add {
+		verb, op = "add", "agent.parent.add"
+	}
+	if len(args) != 2 || strings.HasPrefix(args[0], "-") || strings.HasPrefix(args[1], "-") {
+		return usage("agent parent %s <子> <親>", verb)
+	}
+	db, _, err := openCmd(stderr)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	by, err := requester()
+	if err != nil {
+		return err
+	}
+	var res agent.ParentResult
+	if err := callAppAs(db, app.PrincipalOf(by), op, agent.ParentReq{Name: args[0], Parent: args[1]}, &res); err != nil {
+		return err
+	}
+	ps := strings.Join(res.Parents, " ")
+	if ps == "" {
+		ps = "(なし)"
+	}
+	note := ""
+	if !res.Changed {
+		note = "(変わりません)"
+	}
+	fmt.Fprintf(w, "%s の親: %s%s\n", res.Name, ps, note)
+	return nil
+}

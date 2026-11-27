@@ -35,6 +35,8 @@ type AgentInfo struct {
 	Role   string `api:"role,optional" json:"role,omitempty"`     // 台帳の役割(--role)
 	Kind   string `api:"kind,optional" json:"kind,omitempty"`
 	Task   string `api:"task,optional" json:"task,omitempty"` // 台帳の spawn_task(任されたタスク)
+	// Parents は今の親(agent_parents。名前の順)。Parent は立てた親
+	Parents []string `api:"parents,optional" json:"parents,omitempty"`
 }
 
 // ListResult は agent.list の結果。Running と Max は動作中の数と上限 max_running_agents(上限なしは -1)。
@@ -58,6 +60,7 @@ func List(ctx context.Context, db *store.DB, names []string) (ListResult, error)
 			return a, false
 		}
 		a.Pane, a.Parent, a.Role, a.Kind, a.Task = pane.String, parent.String, role.String, kind.String, task.String
+		a.Parents = Parents(db.DB, name)
 		return a, true
 	}
 	if len(names) == 0 {
