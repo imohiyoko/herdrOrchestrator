@@ -11,7 +11,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/imohiyoko/herdrorchestrator/internal/activity"
+	"github.com/imohiyoko/herdrorchestrator/internal/app/ticket"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/jv"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
@@ -145,8 +145,6 @@ func requireTask(db *store.DB, id string) error {
 	return nil
 }
 
-var ticketJSONCols = []string{"deliverables", "labels", "refs"}
-
 // cmdShow は tb show <id>: 1 件(担当 agent の最終活動とリンクつき)。
 func cmdShow(args []string, w, stderr io.Writer) error {
 	db, _, err := openCmd(stderr)
@@ -161,59 +159,12 @@ func cmdShow(args []string, w, stderr io.Writer) error {
 	if err := needID(id); err != nil {
 		return err
 	}
-	rows, err := sqlObjs(db.DB, ticketJSONCols, "SELECT * FROM tasks WHERE id=?", id)
-	if err != nil {
+	var r ticket.ShowResult
+	if err := callApp(db, "tb show", "ticket.show", ticket.GetReq{ID: id}, &r); err != nil {
 		return err
 	}
-	if len(rows) == 0 {
-		return die("タスクが見つかりません: %s", id)
-	}
-	row := rows[0]
-	var act any
-	if sid, _ := row.Get("session_id").(string); sid != "" {
-		as, err := sqlObjs(db.DB, nil, activity.SelectSQL("10")+" WHERE session_id=?", sid)
-		if err != nil {
-			return err
-		}
-		if len(as) > 0 {
-			act = as[0]
-		}
-	}
-	links, err := taskLinks(db.DB, id)
-	if err != nil {
-		return err
-	}
-	row = row.Set("activity", act).Set("links", links)
-	fmt.Fprintln(w, jv.Pretty(row))
+	fmt.Fprintln(w, r.Text)
 	return nil
-}
-
-// taskLinks は task_links_json: 向きつきのリンクを rel ごとに(rel の名前の順)。
-func taskLinks(db *sql.DB, id string) (jv.Obj, error) {
-	ls, err := sqlObjs(db, nil, `SELECT CASE WHEN l.from_id=?1 THEN l.link_type
-                         WHEN l.link_type='blocks' THEN 'blocked_by'
-                         WHEN l.link_type='duplicates' THEN 'duplicated_by' ELSE 'relates' END AS rel,
-                    t.id, t.title, t.status
-             FROM task_links l JOIN tasks t ON t.id = CASE WHEN l.from_id=?1 THEN l.to_id ELSE l.from_id END
-             WHERE l.from_id=?1 OR l.to_id=?1 ORDER BY l.id`, id)
-	if err != nil {
-		return nil, err
-	}
-	groups := map[string][]any{}
-	var rels []string
-	for _, l := range ls {
-		r := jv.Scalar(l.Get("rel"))
-		if _, ok := groups[r]; !ok {
-			rels = append(rels, r)
-		}
-		groups[r] = append(groups[r], l[1:])
-	}
-	slices.Sort(rels)
-	out := jv.Obj{}
-	for _, r := range rels {
-		out = append(out, jv.KV{K: r, V: groups[r]})
-	}
-	return out, nil
 }
 
 // cmdTree は tb tree <id> | tree -p <project>。

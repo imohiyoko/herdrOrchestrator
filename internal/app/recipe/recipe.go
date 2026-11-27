@@ -1,6 +1,6 @@
-// Package recipe はレシピの登録と実行の依頼の取り消しのアプリケーション API(ADR 0008。tb recipe set / rm / cancel)。
+// Package recipe はレシピの登録・実行・実行の依頼の取り消しのアプリケーション API(ADR 0008。tb recipe set / rm / run / runner / cancel)。
 // 書式の読み取りと部品は internal/recipe。登録と削除は既定で人だけ(commands.tbl の inner の行)。
-// 実行(recipe run / runner)は tb のコマンドを部品として動かすので、まだ tb に残る。
+// 実行は run.go。部品はアプリケーション API の中身(agent.Stop、ticket.Show など)を直接呼ぶ。
 package recipe
 
 import (
@@ -91,7 +91,7 @@ func Ops(env *app.Env) []app.Op {
 		define.Expose(define.Internal, define.REST),
 		define.HTTP("POST /v1/recipe-runs/{id}/cancel"),
 	)
-	return []app.Op{set, rm, cancel}
+	return append([]app.Op{set, rm, cancel}, runOps(env)...)
 }
 
 func who(ctx context.Context) string {
