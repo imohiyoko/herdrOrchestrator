@@ -357,18 +357,8 @@ func (n *notifyCmd) ack(args []string) error {
 	if mid != "" && !reMsgID.MatchString(mid) {
 		return usage("ack: --id は英数字と . _ : / - の 80 字まで")
 	}
-	rep, err := paneReporter(n.db, n.stderr)
-	if err != nil {
-		return err
-	}
-	by, err := callerPrincipal("tb notify ack")
-	if err != nil {
-		return err
-	}
-	env := appEnv(n.db, n.stderr)
-	env.Reporter = rep
 	var r appnotify.AckResult
-	if err := callAppEnv(env, by, "notify.ack", appnotify.AckReq{ID: args[0], Hash: hash, MsgID: mid}, &r); err != nil {
+	if err := reporterCall(n.db, "tb notify ack", n.stderr, "notify.ack", appnotify.AckReq{ID: args[0], Hash: hash, MsgID: mid}, &r); err != nil {
 		return err
 	}
 	if r.Status == "mismatch" {

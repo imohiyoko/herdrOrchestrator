@@ -113,7 +113,7 @@ func Ops(env *app.Env) []app.Op {
 	)
 	approve := app.Command(env, "alert.approve", app.Cmd("cmd:alert:approve", "tb alert-approve"),
 		func(ctx context.Context, in IDReq) (StatusResult, error) {
-			id, err := humanAid(ctx, in.ID, "tb alert-approve")
+			id, err := aid(in.ID)
 			if err != nil {
 				return StatusResult{}, err
 			}
@@ -150,7 +150,7 @@ func Ops(env *app.Env) []app.Op {
 	)
 	closeOp := app.Command(env, "alert.close", app.Cmd("cmd:alert:close", "tb alert-close"),
 		func(ctx context.Context, in IDReq) (StatusResult, error) {
-			id, err := humanAid(ctx, in.ID, "tb alert-close")
+			id, err := aid(in.ID)
 			if err != nil {
 				return StatusResult{}, err
 			}
@@ -216,14 +216,6 @@ func aid(s string) (int64, error) {
 		n = -1
 	}
 	return n, nil
-}
-
-// humanAid は人だけの操作(承認・閉じる)の入口: 呼び手が人でなければ断り、A-<n> の n を返す。
-func humanAid(ctx context.Context, s, what string) (int64, error) {
-	if w := who(ctx); w == "" || !requests.IsHuman(w) { // 決められない主体は人とみなさない
-		return 0, define.Errorf(define.CodePermissionDenied, "%s は人だけが実行できます", what)
-	}
-	return aid(s)
 }
 
 // Status は A-<id> の今の状態(無ければ空)。

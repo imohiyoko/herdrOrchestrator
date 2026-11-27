@@ -1,6 +1,7 @@
 // Package notify は外への通知(Slack)のアプリケーション API(ADR 0008。tb notify の書き込み)。
 // 中身(イベントの列・送信・規則)は internal/notify。ここは入口の確かめと、設定 notify の書き換え。
-// 通知を入れる・止める・試す・送り切る・手でイベントを積むのは人だけ。ack は notifier agent か人。
+// 通知を入れる・止める・試す・送り切る・手でイベントを積むのは既定で人だけ(commands.tbl の inner の行。policy で緩められる)。
+// ack は notifier agent か人。
 package notify
 
 import (
@@ -101,9 +102,6 @@ func Ops(env *app.Env) []app.Op {
 	sw := func(val string) app.Op {
 		return app.Command(env, "notify."+val, app.Cmd("cmd:notify:"+val, "tb notify "+val),
 			func(ctx context.Context, _ SwitchReq) (SwitchResult, error) {
-				if err := human(ctx, "tb notify "+val); err != nil {
-					return SwitchResult{}, err
-				}
 				return withDB(env, func(db *store.DB) (SwitchResult, error) {
 					if err := WriteConf(db, "enabled", val); err != nil {
 						return SwitchResult{}, err
@@ -111,7 +109,7 @@ func Ops(env *app.Env) []app.Op {
 					return SwitchResult{Enabled: val}, nil
 				})
 			},
-			define.Doc(map[string]string{"on": "外への通知を入れる(tb notify on。人だけ)", "off": "外への通知を止める(tb notify off。人だけ)"}[val]),
+			define.Doc(map[string]string{"on": "外への通知を入れる(tb notify on。既定は人だけ)", "off": "外への通知を止める(tb notify off。既定は人だけ)"}[val]),
 			define.Authz("cmd:notify:"+val),
 			define.Expose(define.Internal, define.REST),
 			define.HTTP("POST /v1/notify/"+val),
@@ -119,12 +117,9 @@ func Ops(env *app.Env) []app.Op {
 	}
 	test := app.Command(env, "notify.test", app.Cmd("cmd:notify:test", "tb notify test"),
 		func(ctx context.Context, _ SwitchReq) (TestResult, error) {
-			if err := human(ctx, "tb notify test"); err != nil {
-				return TestResult{}, err
-			}
 			return withDB(env, func(db *store.DB) (TestResult, error) {
 				q := queue(db)
-				id, _ := q.Enqueue(notify.Event{Type: "test", Ref: fmt.Sprintf("test-%d-%d", time.Now().Unix(), os.Getpid()), Force: true})
+				id, _ := q.Enqueue(notify.Event{Type: "test", Ref: fmt.Sprintf("test-%d-%d", time.Now().UnixNano(), os.Getpid()) /* 長く動くプロセスから続けて呼んでも重ならない */, Force: true})
 				if id == 0 {
 					return TestResult{}, define.Errorf(define.CodeInternal, "test: イベントを作れませんでした")
 				}
@@ -134,16 +129,13 @@ func Ops(env *app.Env) []app.Op {
 				return TestResult{ID: "N-" + strconv.FormatInt(id, 10), Status: field(db, id, "slack_status"), Text: field(db, id, "text")}, nil
 			})
 		},
-		define.Doc("試しの通知を 1 件積んで送る(tb notify test。人だけ)"),
+		define.Doc("試しの通知を 1 件積んで送る(tb notify test。既定は人だけ)"),
 		define.Authz("cmd:notify:test"),
 		define.Expose(define.Internal, define.REST),
 		define.HTTP("POST /v1/notify/test"),
 	)
 	flush := app.Command(env, "notify.flush", app.Cmd("cmd:notify:flush", "tb notify flush"),
 		func(ctx context.Context, in FlushReq) (FlushResult, error) {
-			if err := human(ctx, "tb notify flush"); err != nil {
-				return FlushResult{}, err
-			}
 			return withDB(env, func(db *store.DB) (FlushResult, error) {
 				st := tickets.LoadStatuses(db.DB, db.Session)
 				q := notify.New(db.DB, db.Session)
@@ -164,7 +156,7 @@ func Ops(env *app.Env) []app.Op {
 				return FlushResult{}, nil
 			})
 		},
-		define.Doc("溜まった通知を送り切る(tb notify flush。人だけ)"),
+		define.Doc("溜まった通知を送り切る(tb notify flush。既定は人だけ)"),
 		define.Authz("cmd:notify:flush"),
 		define.Expose(define.Internal, define.REST),
 		define.HTTP("POST /v1/notify/flush"),
@@ -183,15 +175,15 @@ func Ops(env *app.Env) []app.Op {
 			if in.Type != "incident_opened" && in.Type != "incident_closed" {
 				return EventResult{}, define.Errorf(define.CodeInvalidArgument, "notify event: 種別は incident_opened|incident_closed")
 			}
-			if err := human(ctx, "tb notify event"); err != nil {
-				return EventResult{}, err
+			if strings.TrimSpace(in.Ref) == "" {
+				return EventResult{}, define.Errorf(define.CodeInvalidArgument, "notify event: ID が必要です")
 			}
 			return withDB(env, func(db *store.DB) (EventResult, error) {
 				queue(db).Emit(notify.Event{Type: in.Type, Ref: in.Ref, Sev: in.Severity, A: in.Title})
 				return EventResult{Type: in.Type, Ref: in.Ref}, nil
 			})
 		},
-		define.Doc("人がインシデントのイベントを積む(tb notify event。人だけ)"),
+		define.Doc("人がインシデントのイベントを積む(tb notify event。既定は人だけ)"),
 		define.Authz("cmd:notify:event"),
 		define.Expose(define.Internal, define.REST),
 		define.HTTP("POST /v1/notify/events"),
@@ -202,14 +194,6 @@ func Ops(env *app.Env) []app.Op {
 func who(ctx context.Context) string {
 	p, _ := define.PrincipalFrom(ctx)
 	return app.Who(p)
-}
-
-// human は人だけの操作の確かめ(system:* も人の側。決められない主体は断る)。
-func human(ctx context.Context, what string) error {
-	if w := who(ctx); w == "human" || strings.HasPrefix(w, "system:") {
-		return nil
-	}
-	return define.Errorf(define.CodePermissionDenied, "%s は人だけが実行できます", what)
 }
 
 func withDB[T any](env *app.Env, f func(*store.DB) (T, error)) (T, error) {
