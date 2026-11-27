@@ -27,16 +27,11 @@ func kindRequire(kind, item, note string) (string, bool)        { return agent.K
 func kindLaunchArgs(kind, sess, model string) []string          { return agent.LaunchArgs(kind, sess, model) }
 func roleModelFor(db *store.DB, name, reg string) string        { return agent.RoleModelFor(db, name, reg) }
 func agentCwd() string                                          { return agent.DefaultCwd() }
-func physDir(d string) string                                   { return agent.PhysDir(d) }
 func isDir(d string) bool                                       { return agent.IsDir(d) }
 func limitsCounts(db *store.DB) (running, working int, ok bool) { return agent.Counts(db) }
 
 func modelWithRoleDefault(db *store.DB, model, kind, name, role string) string {
 	return agent.ModelWithRoleDefault(db, model, kind, name, role)
-}
-
-func agentRegister(db *store.DB, name, cwd, model, role, by, kill, why, kind string) error {
-	return agent.Register(db, name, cwd, model, role, by, kill, why, kind)
 }
 
 func firstPrompt(db *store.DB, name, prompt, by string, stderr io.Writer) string {

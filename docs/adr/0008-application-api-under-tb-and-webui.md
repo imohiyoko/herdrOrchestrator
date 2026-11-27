@@ -302,6 +302,7 @@ ADR 0004 の依存の検査に次を足す。今ある違反は許容リスト�
 - 設定 `config.set` / `config.unset`(`internal/app/config`。`PUT` / `DELETE /v1/config/{key}`、`tb config set` / `edit` / `unset`)。キーごとの検査(`Validators`)と、policy を変える agent の行ごとの確かめも API の中。Web UI の policy の保存も同じプロセスで呼ぶ。これで Web UI の `runTB` は、herdr の呼び先をプロセスの環境で決めるためのほかのセッションの agent の操作と承認だけになった。
 - 送信 `message.send`(`POST /v1/messages`)と `message.flush`(`internal/app/message`)。中身(入力の確かめ・受け付けの判定・outbox への書き込み・配送・届けたあとの読み直し)は `internal/message`(send.go)。送信者は `Env.Reporter`(tb は herdr から引いたもの。決められなければ理由 `no_sender`、tb は 3)。
 - まだ残るもの: report / pending / comments の読み取りと、tasks.go の読み込み。outbox / inbox の一覧と inbox の既読。
+- アラート `alert.raise` / `alert.dispatch` / `alert.approve` / `alert.result` / `alert.close`(`internal/app/alert`。`POST /v1/alerts`、`/v1/alerts/{id}/<動詞>`、`tb alert` / `alert-dispatch` / `alert-approve` / `alert-result` / `alert-close`)。指紋での重複の数え上げ・解析役の起動(承認・上限・`max_running_agents`)・結果の受け取りと指揮官への配送・解析役に止めてよい印を付けるのは API の中。報告者は `Env.Reporter`(tb は pane の中だけ herdr から引く)。承認と閉じるのは人だけで、API の中でも断る。報告ファイルを読むのと一覧(`tb alerts`)は tb に残した。
 
 ## 検討した代替案
 
