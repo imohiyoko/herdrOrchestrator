@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/imohiyoko/herdrorchestrator/internal/app/ticket"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/config"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/jv"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
@@ -74,26 +75,21 @@ func cmdTicket(args []string, w, stderr io.Writer) error {
 	return usage("ticket: 不明なサブコマンド %s(move / status / rm / add / list / show / update / claim / done / block / cancel)", sub)
 }
 
-// ticketMove は ticket_move。
+// ticketMove は ticket_move。中身はアプリケーション API の ticket.move(ADR 0008)。
+// ここは引数を読み、呼び出し元を主体にして呼び、結果を今の文言にする。
 func ticketMove(args []string, w, stderr io.Writer) error {
-	db, st, err := openWrite(stderr)
+	db, _, err := openWrite(stderr)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	return moveTicket(db, st, args, w)
-}
-
-func moveTicket(db *store.DB, st tickets.StatusSet, args []string, w io.Writer) error {
 	if len(args) < 2 {
 		return usage("ticket move <id> <状態> [-m メモ] [-d 成果物 ...]")
 	}
-	id, to := args[0], args[1]
-	if err := needID(id); err != nil {
+	in := ticket.MoveReq{ID: args[0], Status: args[1], Deliverables: []string{}}
+	if err := needID(in.ID); err != nil {
 		return err
 	}
-	msg, hasMsg := "", false
-	dels := []string{}
 	for i := 2; i < len(args); i++ {
 		a := args[i]
 		switch a {
@@ -108,57 +104,38 @@ func moveTicket(db *store.DB, st tickets.StatusSet, args []string, w io.Writer) 
 		i++
 		if a == "-d" || a == "--deliverable" {
 			if !blank(v) {
-				dels = append(dels, v)
+				in.Deliverables = append(in.Deliverables, v)
 			}
 		} else {
-			msg, hasMsg = v, true
+			in.Message, in.SetMessage = v, true
 		}
-	}
-	if err := oneOf(st.Names, to, "status"); err != nil {
-		return err
-	}
-	if len(dels) > 0 && !st.Is(to, "done") {
-		return usage("ticket move: -d(成果物)は done の分類へ動かすときだけ使えます: %s", to)
-	}
-	cur, err := taskStatus(db, id)
-	if err != nil {
-		return err
-	}
-	if err := specialTicketGuard(db.DB, id, "tb ticket move"); err != nil {
-		return err
-	}
-	if cur == to && !hasMsg && len(dels) == 0 {
-		fmt.Fprintf(w, "%s はすでに %s です\n", id, to)
-		return nil
-	}
-	q := store.Quote
-	sets := []string{"status=" + q(to)}
-	if es := statusEnterSets(st, to, cur); es != "" {
-		sets = append(sets, es)
-	}
-	if hasMsg {
-		col := "note"
-		if st.Is(to, "done", "cancelled") {
-			col = "summary"
-		}
-		sets = append(sets, col+"=NULLIF("+q(msg)+",'')")
-	}
-	if len(dels) > 0 {
-		sets = append(sets, "deliverables="+q(strArray(dels)))
 	}
 	if err := eventActorResolve(db); err != nil {
 		return err
 	}
-	r, err := db.Exec("UPDATE main.tasks SET "+strings.Join(sets, ", ")+", updated_at=? WHERE herdr_session=? AND id=? AND status=?", now(), db.Session, id, cur)
-	if err != nil {
+	var res ticket.MoveResult
+	if err := callApp(db, "tb ticket move", "ticket.move", in, &res); err != nil {
 		return err
 	}
-	if n, _ := r.RowsAffected(); n != 1 {
-		return die("ticket move できません(並行して状態が変わりました): %s", id)
+	if res.Pending != nil {
+		return pendingExit(w, res.Pending)
+	}
+	if !res.Changed {
+		fmt.Fprintf(w, "%s はすでに %s です\n", res.ID, res.To)
+		return nil
+	}
+	fmt.Fprintf(w, "%s %s → %s\n", res.ID, res.From, res.To)
+	return nil
+}
+
+// moveDirect は ticket status rm が、外す状態のチケットを移し先へ動かす(人だけのコマンドの中。門はコマンドの入口で済んでいる)。
+func moveDirect(db *store.DB, st tickets.StatusSet, id, to string) error {
+	cur, changed, err := tickets.Move(db, st, id, to, "", false, nil, now())
+	if err != nil || !changed {
+		return ticketErr(err)
 	}
 	statusEnteredHook(db, st, id, to, cur)
 	rulesHook(db, st)
-	fmt.Fprintf(w, "%s %s → %s\n", id, cur, to)
 	return nil
 }
 
@@ -436,7 +413,7 @@ func ticketStatusRm(args []string, w, stderr io.Writer) error {
 			if db.QueryRow(`SELECT 1 FROM alert_details WHERE task_id=?1 UNION ALL SELECT 1 FROM proposal_details WHERE task_id=?1 LIMIT 1`, id).Scan(&x) == nil {
 				continue
 			}
-			if err := moveTicket(db, st, []string{id, to}, io.Discard); err != nil {
+			if err := moveDirect(db, st, id, to); err != nil {
 				return err
 			}
 			moved++

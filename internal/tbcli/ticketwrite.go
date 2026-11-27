@@ -53,11 +53,7 @@ func actorName(db *store.DB, stderr io.Writer) (string, error) {
 }
 
 // rulesHook は notify_rules_hook: 通知の規則を流す(失敗しても止めない)。
-func rulesHook(db *store.DB, st tickets.StatusSet) {
-	q := notify.New(db.DB, db.Session)
-	q.ActiveSQL = st.SQLList("active", "review")
-	_ = q.RunRules()
-}
+func rulesHook(db *store.DB, st tickets.StatusSet) { notify.TicketRules(db.DB, db.Session, st) }
 
 func openWrite(stderr io.Writer) (*store.DB, tickets.StatusSet, error) {
 	db, st, err := openCmd(stderr)

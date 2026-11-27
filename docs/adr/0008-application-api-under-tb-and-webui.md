@@ -284,6 +284,14 @@ ADR 0004 の依存の検査に次を足す。今ある違反は許容リスト�
 - scheduler の側(#299・#302): 1 回だけのジョブ `AT=`、呼ばれたときだけのジョブ `MANUAL=1`、DB のジョブをすべて毎分読み直す `dispatch.sh --all`(セットが足したジョブも、dispatch を登録し直さずに動く)。Web UI の上のバーは「job」(#300)。
 - まだ入れていないもの: `panes_per_workspace`(1 つの workspace に入れる pane の数)、Web UI のセットごとの表示と job を今すぐ動かすボタン。定義に書いてあれば黙って無視せず断る。
 
+## 段 2 で入れたもの(2026-11-27)
+
+- `internal/app/ticket`: 状態の変更 `ticket.move`(`POST /v1/tickets/{id}/move`、`tb ticket move`)と削除 `ticket.rm`(`POST /v1/tickets/rm`、`tb ticket rm`)。中身(アラート・提案のチケットの守り、状態の分類が変わるときの列、並行した変更の検出、消すときの子・作成時刻の確かめ)は `internal/tickets`(write.go)に移し、完了の通知と通知の規則は `internal/notify`(tickethooks.go)に移した。tb の `ticket status rm`(外す状態のチケットを移す)も同じ `tickets.Move` を使う。
+- 入口の段の門 `app.Entry`: commands.tbl の場所が entry の行(`cmd:ticket:move` / `cmd:ticket:rm`)で、ask は承認待ち(Q-<n>)に、deny は tb と同じ文言と記録にする。tb の入口は `perms.Gate` で判定済みなので、`Env.EntryChecked` を立てて二重に判定・記録しない。Web UI や将来の API から agent として呼べば、ここで判定される(`ticket.rm` は agent からは ask)。
+- 履歴の「変えた者」は `Env.EventActor`: tb の入口は今のトリガー(pane から引いた名前か `pane:<id>`)のまま、Web UI などは主体から(agent は名前、ほかは `human`)。
+- Web UI の「状態を変える」(/task-status)と「チケットを消す」(/task-rm)は `runTB` をやめ、同じ操作を同じプロセスで人として呼ぶ(`callEdit`)。断ったときは「断りました: <理由>」と出す。
+- まだ残るもの: claim / done / block / cancel / add / update / comment / link / sprint と、Web UI の状態の定義・スプリント(edits.go の `runTB`)、tasks.go の読み込み。
+
 ## 検討した代替案
 
 | 案 | 採らない理由 |

@@ -1,19 +1,27 @@
 package webui
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/imohiyoko/API/define"
+
+	"github.com/imohiyoko/herdrorchestrator/internal/app"
+	"github.com/imohiyoko/herdrorchestrator/internal/app/ticket"
 )
 
 // edits.go は Web UI からの編集: チケットの状態(/task-status)、チケットの削除(/task-rm)、状態の定義(/statuses)、スプリント(/sprint-op)、
 // 設定 policy(/policy)。ジョブの定義(/jobs/<job> の action=conf)は jobspage.go。
-// 書き込みはどれも tb が行い(tasks.db にも config にも直接書かない)、検査と認可も tb のものを通る。
-// Web UI からの tb は人の操作として動く(HERDR_PANE_ID を外す。runTB)。policy はさらにログインのパスワードを求める。
+// 書き込みはどれも tb かアプリケーション API が行い(tasks.db にも config にも直接書かない)、検査と認可も同じものを通る。
+// チケットの状態と削除は API(ticket.move / ticket.rm)を同じプロセスで人として呼ぶ(callEdit)。
+// 残りは tb を人の操作として動かす(HERDR_PANE_ID を外す。runTB)。policy はさらにログインのパスワードを求める。
 
 var editPaths = map[string]bool{"/task-status": true, "/statuses": true, "/sprint-op": true, "/policy": true, "/approval-op": true, "/task-rm": true}
 
@@ -75,6 +83,38 @@ func tbFail(rc int, out string) string {
 		out = "(出力なし)"
 	}
 	return "tb が断りました(終了コード " + strconv.Itoa(rc) + "): " + out
+}
+
+// callEdit はアプリケーション API の操作 op を同じプロセスで人として呼ぶ(ADR 0008。runTB の置き換え)。
+// 断られたら画面に出す理由を返す(実行できたら空)。pending は結果の承認待ち(人の操作では積まれないが、積まれたら知らせる)。
+func callEdit(sess, op string, in, out any, pending **app.Pending) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	c, err := appClient(sess)
+	if err != nil {
+		return "実行できませんでした(" + Clean(err.Error()) + ")"
+	}
+	if err := c.Call(ctx, app.Human(), op, in, out); err != nil {
+		msg := ""
+		var e *define.Error
+		if errors.As(err, &e) {
+			msg = e.Message
+			if msg == "" {
+				msg = string(e.Code)
+			}
+		} else {
+			msg = err.Error()
+		}
+		msg = Clean(msg)
+		if utf8.RuneCountInString(msg) > editOutMax {
+			msg = string([]rune(msg)[:editOutMax]) + "…"
+		}
+		return "断りました: " + msg
+	}
+	if *pending != nil {
+		return "承認待ちに積みました: " + Clean((*pending).Message)
+	}
+	return ""
 }
 
 // textHash は本文の版(編集を始めたときの本文と、保存するときの本文が同じかを確かめる)。
@@ -167,12 +207,10 @@ func (s *Server) postTaskStatus(q *rq, f form) (string, string, string, func(pag
 	if utf8.RuneCountInString(memo) > editMemoMax {
 		return back, "", "メモは " + strconv.Itoa(editMemoMax) + " 文字までです", render
 	}
-	args := []string{"ticket", "move", id, st}
-	if memo != "" {
-		args = append(args, "-m", memo)
-	}
-	if rc, out := runTB(q.name, 15*time.Second, args...); rc != 0 {
-		return back, "", tbFail(rc, out), render
+	in := ticket.MoveReq{ID: id, Status: st, Message: memo, SetMessage: memo != ""}
+	var res ticket.MoveResult
+	if msg := callEdit(q.name, "ticket.move", in, &res, &res.Pending); msg != "" {
+		return back, "", msg, render
 	}
 	return back, "status", "", render
 }
@@ -228,8 +266,10 @@ func (s *Server) postTaskRm(q *rq, f form) (string, string, string, func(pageCtx
 		return "", "", "消すときは「元に戻せないことを確かめた」に印を付けてください", render
 	}
 	// 画面を開いたときのチケットか(消した ID がまた使われていれば、tb が断る)
-	if rc, out := runTB(q.name, 15*time.Second, "ticket", "rm", id, "--if-created", f["created"]); rc != 0 {
-		return "", "", tbFail(rc, out), render
+	in := ticket.RmReq{IDs: []string{id}, IfCreated: f["created"], HasIfCreated: true}
+	var res ticket.RmResult
+	if msg := callEdit(q.name, "ticket.rm", in, &res, &res.Pending); msg != "" {
+		return "", "", msg, render
 	}
 	return "/tasks", "task-rm", "", render
 }

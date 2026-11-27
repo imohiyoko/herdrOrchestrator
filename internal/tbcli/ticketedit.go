@@ -90,13 +90,7 @@ func labelsJSON(args []string) ([]string, error) {
 	return slices.Compact(out), nil
 }
 
-func strArray(ss []string) string {
-	a := make([]any, len(ss))
-	for i, s := range ss {
-		a[i] = s
-	}
-	return jv.Compact(a)
-}
+func strArray(ss []string) string { return tickets.StrArray(ss) }
 
 // refsJSON は refs_json: 引数(<種類>=<URL> か URL)→ [{kind,url}](url で重複なし、先に書いたものを残す)。
 func refsJSON(args []string) (string, error) {
@@ -414,16 +408,7 @@ func cmdAdd(args []string, w, stderr io.Writer) error {
 
 // statusEnterSets は status_enter_sets: 分類に入ったときだけ完了報告の列を合わせる。
 func statusEnterSets(st tickets.StatusSet, to, cur string) string {
-	if st.Is(to, st.Cat(cur)) {
-		return ""
-	}
-	if st.Is(to, "done") {
-		return "reported_at=NULL"
-	}
-	if st.Is(to, "cancelled") {
-		return "reported_at=" + store.Quote(now())
-	}
-	return ""
+	return tickets.EnterSets(st, to, cur, now())
 }
 
 // statusEnteredHook は status_entered_hook: done の分類に入ったら done の通知。
