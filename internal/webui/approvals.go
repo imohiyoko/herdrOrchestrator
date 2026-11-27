@@ -291,7 +291,11 @@ func (s *Server) pageApprovals(q *rq, c pageCtx) (string, string) {
 		}
 		switch pyStr(r["status"]) {
 		case "pending":
-			return form("approve", "承認", "") + form("reject", "却下", "")
+			out := form("approve", "承認", "") + form("reject", "却下", "")
+			if src := pyStr(r["source"]); src == "outbox" || src == "agent_ops" { // 送信と agent の操作だけ(tb approval approve --always と同じ)
+				out += form("always", "承認して今後は承認なし", `<label class=note><input type=checkbox name=confirm value=1 required>policy に allow を書く</label> `)
+			}
+			return out
 		case "denied":
 			if pyStr(r["tier"]) == "deny" {
 				return form("exception", "例外として 1 回許可", `<label class=note><input type=checkbox name=confirm value=1 required>policy の拒否を越えて許可する</label> `)
@@ -343,7 +347,7 @@ func (s *Server) pageApprovals(q *rq, c pageCtx) (string, string) {
 	return "承認(Q チケット)", body
 }
 
-// postApprovalOp は POST /approval-op(Q-<n> の承認・却下と、deny の例外の許可)。書き込みは tb approval が行う。
+// postApprovalOp は POST /approval-op(Q-<n> の承認・却下・承認して今後は承認なし(--always)と、deny の例外の許可)。書き込みは tb approval が行う。
 func (s *Server) postApprovalOp(q *rq, f form) (string, string, string, func(pageCtx) (string, string, string)) {
 	id := f["id"]
 	// 戻り先はボタンを押した画面(絞り込みのまま)。/approvals の中だけ受ける
@@ -369,7 +373,7 @@ func (s *Server) postApprovalOp(q *rq, f form) (string, string, string, func(pag
 		sep = "&"
 	}
 	decided := back + sep + pyURLEncode([][2]string{{"decided", "Q-" + id}})
-	if op := f["op"]; op != "approve" && op != "reject" && op != "exception" {
+	if op := f["op"]; op != "approve" && op != "reject" && op != "exception" && op != "always" {
 		return "", "", "", nil
 	}
 	cur := ""
@@ -381,17 +385,23 @@ func (s *Server) postApprovalOp(q *rq, f form) (string, string, string, func(pag
 		return back, "", "Q-" + id + " が見つかりません", render
 	case f["op"] == "exception" && cur != "denied":
 		return back, "", "Q-" + id + " は policy が拒否したもの(denied)ではありません(" + cur + ")", render
-	case (f["op"] == "approve" || f["op"] == "reject") && cur != "pending":
+	case (f["op"] == "approve" || f["op"] == "reject" || f["op"] == "always") && cur != "pending":
 		return back, "", "Q-" + id + " は承認待ちではありません(" + cur + ")", render
 	}
 	if f["op"] == "exception" && f["confirm"] != "1" {
 		return back, "", "例外として許可するには、確認のチェックを入れてください", render
+	}
+	if f["op"] == "always" && f["confirm"] != "1" {
+		return back, "", "今後は承認なしにするには、確認のチェックを入れてください", render
 	}
 	q.v.close() // tb が書き込むので、読んだ接続は閉じて描き直しで開き直す
 	q.v = nil
 	args := []string{"approval", "approve", "Q-" + id} // deny の例外も approve(tb の側で人だけに限る)
 	if f["op"] == "reject" {
 		args[1] = "reject"
+	}
+	if f["op"] == "always" { // 承認して、今後は承認なし(policy に * <操作> <対象> = allow。tb の側で送信と agent の操作だけに限る)
+		args = append(args, "--always")
 	}
 	// 依頼者が知らせる相手でないとき(scheduler など)は承認した側(ここ)で実行するので、長めに待つ
 	if rc, out := runTB(q.name, 60*time.Second, args...); rc != 0 {

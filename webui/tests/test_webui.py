@@ -1415,6 +1415,20 @@ check("送信の承認も Q の記録に human が approved で残り、届い�
       and regdb("SELECT status, decided_by FROM requests WHERE id=?", (_qo,)) == [("approved", "human")]
       and f"Q-{_qo}: 承認しました" in _ap and re.search(f"Q-{_qo}</a></td><td>ask</td><td>approved<br><span class=note>送信: (sent|denied)", _ap), str(regdb("SELECT status, reason FROM outbox ORDER BY id DESC LIMIT 1")) + str(re.findall(r"<p class=note>Q-[^<]*</p>", _ap)) + str(re.findall(f"Q-{_qo}</a>.{{0,300}}", _ap)))
 check("CSRF 無しの /approval-op は拒否", cl.raw("POST", "/approval-op", {"op": "approve", "id": str(_qg)})[0] == 403)
+# 承認して今後は承認なし(tb approval approve Q-<n> --always)。送信と agent の操作だけに出し、確認のチェックが要る
+regdb("INSERT INTO outbox (from_name,from_pane,from_session,target,kind,text,status,created_at) VALUES ('conductor','w0:p1','s','alpha','answer','いつも','pending','2026-11-10T00:00:00Z')")
+_qw = regdb("SELECT id FROM requests WHERE source='outbox' AND source_id=(SELECT max(id) FROM outbox)")[0][0]
+ap = cl.get("/approvals?tier=all")[2]
+check("今後は承認なしのボタンは送信に出て、コマンドの承認待ちには出ない",
+      re.search(f'name=id value="{_qw}"><input type=hidden name=back value="[^"]*"><input type=hidden name=op value=always>', ap)
+      and not re.search(f'name=id value="{_qg}"><input type=hidden name=back value="[^"]*"><input type=hidden name=op value=always>', ap))
+r = cl.raw("POST", "/approval-op", {"op": "always", "id": str(_qw), "csrf": _tok})
+check("今後は承認なしは確認のチェックが要る", r[0] == 400 and "確認のチェック" in r[2] and regdb("SELECT status FROM requests WHERE id=?", (_qw,)) == [("pending",)])
+r = cl.raw("POST", "/approval-op", {"op": "always", "id": str(_qw), "confirm": "1", "csrf": _tok})
+_pol = "\n".join(b for (b,) in regdb("SELECT body FROM config WHERE key='policy'"))
+check("承認して policy に allow を書く", r[0] == 302 and r[1].get("Location") == f"/approvals?decided=Q-{_qw}&done=always"
+      and regdb("SELECT status, decided_by FROM requests WHERE id=?", (_qw,)) == [("approved", "human")]
+      and re.search(r"^\* send:answer alpha = allow", _pol, re.M), str(r[:2]) + _pol + str(re.findall(r"<p class=err>.*?</p>", r[2])))
 # ---- ドキュメント(agent が成果物として報告したローカルのファイル)
 DOCS = os.path.join(d, "work")
 os.makedirs(os.path.join(DOCS, "out", "sub"), exist_ok=True)
