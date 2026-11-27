@@ -52,6 +52,9 @@ func (s *Server) pageJobs(q *rq, c pageCtx) (string, string) {
 		var sched, st, what string
 		if info != nil {
 			sched = E(intervalText(info)) + "おき / " + E(info.start) + "-" + E(info.end) + " / " + E(info.days)
+			if info.at != "" {
+				sched = "1 回だけ " + E(info.at)
+			}
 			if info.overridden {
 				sched += " <span class=note>(Web UI で変更済み)</span>"
 			}
@@ -99,13 +102,13 @@ func (s *Server) pageJobs(q *rq, c pageCtx) (string, string) {
 		}
 	}
 	if len(left) > 0 { // DB に取り込んでいない conf のジョブは scheduler が動かさない
-		note = `<p class=warn>DB に取り込んでいない <code>scheduler/jobs/*.conf</code> があります。定期実行は DB の定義だけで動くので、これらは動きません: ` +
+		note = `<p class=warn>DB に取り込んでいない <code>scheduler/jobs/*.conf</code> があります。job は DB の定義だけで動くので、これらは動きません: ` +
 			strings.Join(left, ", ") +
 			`。取り込む: <code>taskboard/bin/tb job import --dry-run</code> で確かめてから <code>taskboard/bin/tb job import</code></p>`
 	}
 	note += "<p class=note>「何をする」の 2 行目は conf の先頭のコメント(無ければコマンドから推した説明)です。job 名を開くと、型(agent に送る / コマンドを実行)・宛先と今の状態・送られる本文やコマンド・次回の予定・承認の扱いを読めます。" +
-		"スケジュール(間隔・時間帯・曜日・一時停止)だけ変更できます(次の分から反映)。</p>"
-	return "定期実行", doneNotice(c) + note + table([]string{"job", "何をする(宛先)", "間隔 / 時間帯 / 曜日", "状態", "最終記録", "最後の実行"}, rows)
+		"スケジュール(間隔・時間帯・曜日・一時停止)だけ変更できます(次の分から反映)。1 回だけのジョブ(AT)の日時は定義で変えます。</p>"
+	return "job", doneNotice(c) + note + table([]string{"job", "何をする(宛先)", "いつ(間隔 / 時間帯 / 曜日、または 1 回だけの日時)", "状態", "最終記録", "最後の実行"}, rows)
 }
 
 // fold は長い本文を折りたたむ(全文は details の中)。text は無害化・マスク済み。
@@ -316,7 +319,7 @@ func (s *Server) pageJobDraft(q *rq, name, csrf, errMsg string, saved bool, done
 	info, err := v.jobInfo(name)
 	if info == nil { // scheduler が読めない定義でも、消すことはできる(tb job rm は本文を読まない)
 		hid := `<input type=hidden name=csrf value="` + E(csrf) + `">`
-		return "定期実行: " + name, errHTML(orStr(err, errMsg)) + jobRmForm(pyQuote(name, "/"), hid) + `<p><a href="/jobs">一覧へ</a></p>`
+		return "job: " + name, errHTML(orStr(err, errMsg)) + jobRmForm(pyQuote(name, "/"), hid) + `<p><a href="/jobs">一覧へ</a></p>`
 	}
 	days := info.days
 	preset := ""
@@ -360,11 +363,15 @@ func (s *Server) pageJobDraft(q *rq, name, csrf, errMsg string, saved bool, done
 		`<button type=submit>保存</button></form>` +
 		`<form method=post action="/jobs/` + qn + `" style="margin-top:12px">` + hid + `<input type=hidden name=action value=reset>` +
 		`<button type=submit>conf の値に戻す</button></form>`
+	if info.at != "" { // 1 回だけのジョブ: 間隔・時間帯・曜日のフォームは出さない(日時は定義の AT で変える)
+		form = `<p>1 回だけ <b>` + E(info.at) + `</b>(TZ ` + E(info.tz) + `)に動くジョブです。日時を変えるには、下の定義の <code>AT=</code> を直します。` +
+			`一時停止は定義に <code>ENABLED=0</code> を書きます。</p>`
+	}
 	what := "コマンドを実行する"
 	if info.kind == "prompt" {
 		what = `agent <code>` + E(info.target) + `</code> にプロンプトを送る`
 	}
-	return "定期実行: " + name, errHTML(errMsg) + ifs(saved && done == "", `<p class=note>保存しました。次の分から反映されます。</p>`) +
+	return "job: " + name, errHTML(errMsg) + ifs(saved && done == "", `<p class=note>保存しました。次の分から反映されます。</p>`) +
 		ifs(done == "conf", `<p class=note>`+E(doneMsg["conf"])+`</p>`) +
 		"<p>" + what + "ジョブ。" + ifs(info.overridden, "Web UI で変更済み。") + "</p>" + v.jobOverview(name, info) + "<h2>スケジュールの変更</h2>" + form +
 		"<p class=note>スケジュールの保存先: DB の <code>sched-settings:" + E(name) + `</code>(セッション <code>` + E(v.sess) + `</code>)</p>` +

@@ -120,6 +120,7 @@ type jobInfo struct {
 	kind, target, start, end, days, tz, settingsSource string
 	intervalSec, intervalMin                           int // intervalMin は 60 で割り切れないとき -1
 	enabled, overridden                                bool
+	at                                                 string // 1 回だけのジョブの日時(AT。繰り返しなら空)
 }
 
 func (v *sv) jobInfo(name string) (*jobInfo, string) {
@@ -143,7 +144,7 @@ func (v *sv) jobInfo(name string) (*jobInfo, string) {
 		kind = "command"
 	}
 	return &jobInfo{kind: kind, target: j.Target, start: j.Start, end: j.End, days: j.Days, tz: j.TZ, settingsSource: j.SettingsSrc,
-		intervalSec: j.IntervalSec, intervalMin: j.IntervalMin, enabled: j.Enabled == "1", overridden: j.SettingsSrc != "none"}, ""
+		intervalSec: j.IntervalSec, intervalMin: j.IntervalMin, enabled: j.Enabled == "1", overridden: j.SettingsSrc != "none", at: j.At}, ""
 }
 
 func intervalText(info *jobInfo) string {

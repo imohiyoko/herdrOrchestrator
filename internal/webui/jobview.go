@@ -9,6 +9,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/imohiyoko/herdrorchestrator/internal/sched"
 )
 
 // jobview.go は定期実行ジョブの「何が・誰に・いつ・承認は」を読み取りで見せる。
@@ -656,6 +658,16 @@ func nextRuns(info *jobInfo, n int) ([]string, string) {
 		return nil, unknown
 	}
 	now := nowFn().In(loc)
+	if info.at != "" {
+		at, err := sched.ParseAt(info.at, loc)
+		if err != nil {
+			return nil, unknown
+		}
+		if at.Before(now.Truncate(time.Minute)) {
+			return nil, "1 回だけのジョブで、その日時(" + info.at + ")は過ぎました"
+		}
+		return []string{at.Format("2006-01-02 15:04:05")}, ""
+	}
 	iv := info.intervalSec
 	if iv == 0 {
 		iv = max(info.intervalMin, 0) * 60
