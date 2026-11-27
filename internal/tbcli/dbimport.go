@@ -3,6 +3,7 @@ package tbcli
 import (
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 
 	appconfig "github.com/imohiyoko/herdrorchestrator/internal/app/config"
@@ -43,6 +44,9 @@ func cmdDBImport(args []string, w, stderr io.Writer) error {
 	}
 	if !appconfig.ReSessName.MatchString(in.Session) {
 		return usage("db-import: セッション名は英数字で始まり、英数字と . _ - の 64 字以内: %s", in.Session)
+	}
+	if abs, err := filepath.Abs(in.Path); err == nil {
+		in.Path = abs
 	}
 	var r appconfig.DBImportResult
 	if err := callApp(db, "tb db-import", "config.db.import", in, &r); err != nil {

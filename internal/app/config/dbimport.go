@@ -3,13 +3,13 @@ package config
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/imohiyoko/API/define"
 
@@ -60,7 +60,7 @@ func physPath(p string) (string, error) {
 	return filepath.Join(d, filepath.Base(p)), nil
 }
 
-// DBImportReq は config.db.import の入力。Session が空なら呼び手の今のセッション。
+// DBImportReq は config.db.import の入力。Path は絶対パス。Session が空なら呼び手の今のセッション。
 type DBImportReq struct {
 	Path    string `api:"path"`
 	Session string `api:"session,optional"`
@@ -80,15 +80,17 @@ func dbImportOp(env *app.Env) app.Op {
 			if in.Path == "" {
 				return DBImportResult{}, define.Errorf(define.CodeInvalidArgument, "db-import <旧 DB のパス> [--session <名前>] [--dry-run]")
 			}
-			if in.Session != "" && !ReSessName.MatchString(in.Session) {
-				return DBImportResult{}, define.Errorf(define.CodeInvalidArgument, "db-import: セッション名は英数字で始まり、英数字と . _ - の 64 字以内: %s", in.Session)
+			if !filepath.IsAbs(in.Path) { // 呼び手と API の作業ディレクトリは違いうる(tb は絶対パスにして渡す)
+				return DBImportResult{}, define.Errorf(define.CodeInvalidArgument, "db-import: 旧 DB のパスは絶対パスで: %s", in.Path)
 			}
+			p, _ := define.PrincipalFrom(ctx)
+			who := app.Who(p)
 			db, done, err := env.DB()
 			if err != nil {
 				return DBImportResult{}, define.Errorf(define.CodeInternal, "%s", err.Error())
 			}
 			defer done()
-			return dbImport(db, in)
+			return dbImport(db, in, who, env.NowString())
 		},
 		define.Doc("旧形式の DB(スキーマ v11 まで)を共有の DB の 1 セッションとして取り込む(tb db-import。既定は人だけ)"),
 		define.Authz("cmd:config:db-import"),
@@ -97,10 +99,18 @@ func dbImportOp(env *app.Env) app.Op {
 	)
 }
 
-func dbImport(db *store.DB, in DBImportReq) (DBImportResult, error) {
+// alreadyImported は、書き込みの鍵を取ったあとで印が見つかった(同時に取り込んだ)。
+type alreadyImported struct{ seen string }
+
+func (e *alreadyImported) Error() string { return "already imported: " + e.seen }
+
+func dbImport(db *store.DB, in DBImportReq, who, now string) (DBImportResult, error) {
 	src, session, dry := in.Path, in.Session, in.DryRun
 	if session == "" {
 		session = db.Session
+	}
+	if !ReSessName.MatchString(session) {
+		return DBImportResult{}, define.Errorf(define.CodeInvalidArgument, "db-import: セッション名は英数字で始まり、英数字と . _ - の 64 字以内: %s", session)
 	}
 	fail := func(format string, a ...any) (DBImportResult, error) {
 		return DBImportResult{}, define.Errorf(define.CodeFailedPrecondition, format, a...)
@@ -155,12 +165,16 @@ func dbImport(db *store.DB, in DBImportReq) (DBImportResult, error) {
 	}
 	cp, err := store.Open(copyPath, session, opt)
 	if err != nil {
-		return fail("旧 DB の写しを移行できません")
+		return fail("旧 DB の写しを移行できません: %v", err)
 	}
 	defer cp.Close()
-	out, err := runImport(cp, db.Path, session, mark, dry)
+	out, err := runImport(cp, db.Path, session, mark, who, now, dry)
+	var ai *alreadyImported
+	if errors.As(err, &ai) {
+		return fail("この DB は取り込み済みです: %s(%s)", real, ai.seen)
+	}
 	if err != nil {
-		return DBImportResult{}, define.Errorf(define.CodeInternal, "取り込みに失敗しました(何も変えていません)")
+		return DBImportResult{}, define.Errorf(define.CodeInternal, "取り込みに失敗しました(何も変えていません): %v", err)
 	}
 	if dry {
 		out = "(dry-run: 何も書いていません)\n" + out
@@ -171,7 +185,7 @@ func dbImport(db *store.DB, in DBImportReq) (DBImportResult, error) {
 }
 
 // runImport は import_sql を写しの接続で流す(写しを main、共有の DB を dst)。出力は SELECT の行。
-func runImport(cp *store.DB, dstPath, session, mark string, dry bool) (string, error) {
+func runImport(cp *store.DB, dstPath, session, mark, who, ts string, dry bool) (string, error) {
 	conn := cp.DB
 	if _, err := conn.Exec(`ATTACH ` + store.Quote(dstPath) + ` AS dst`); err != nil {
 		return "", err
@@ -186,6 +200,11 @@ func runImport(cp *store.DB, dstPath, session, mark string, dry bool) (string, e
 			_, _ = conn.Exec(`ROLLBACK`)
 		}
 	}()
+	// 同じ DB を同時に 2 度取り込まない(書き込みの鍵を取ってから印を見直す)
+	var seen string
+	if conn.QueryRow(`SELECT herdr_session||' / '||value FROM dst.tb_flags WHERE key=? LIMIT 1`, mark).Scan(&seen) == nil {
+		return "", &alreadyImported{seen}
+	}
 	var out strings.Builder
 	ex := func(q string) error { _, err := conn.Exec(q); return err }
 	sel := func(q string) error {
@@ -292,8 +311,7 @@ func runImport(cp *store.DB, dstPath, session, mark string, dry bool) (string, e
          spawned_by = COALESCE(spawned_by, excluded.spawned_by), spawn_task = COALESCE(spawn_task, excluded.spawn_task)`); err != nil {
 		return "", err
 	}
-	ts := time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	if _, err := conn.Exec(`INSERT INTO dst.tb_flags (herdr_session, key, value, set_by, set_at) VALUES (?, ?, ?, 'human', ?)`, session, mark, ts, ts); err != nil {
+	if _, err := conn.Exec(`INSERT INTO dst.tb_flags (herdr_session, key, value, set_by, set_at) VALUES (?, ?, ?, ?, ?)`, session, mark, ts, who, ts); err != nil {
 		return "", err
 	}
 	// 4. 件数(ずらした番号の範囲と、付け替えたタスク)
