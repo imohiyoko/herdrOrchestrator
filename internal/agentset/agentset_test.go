@@ -14,6 +14,7 @@ import (
 	"github.com/imohiyoko/API/port"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
+	"github.com/imohiyoko/herdrorchestrator/internal/app/job"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/ticket"
 )
 
@@ -63,21 +64,28 @@ func TestParse(t *testing.T) {
 	}
 	for body, want := range map[string]string{
 		"": "メンバーがいません",
-		"[member a]\nparent = b\n[member b]\nparent = a\n": "輪になります",
-		"[member a]\nparent = ~set\n":                      "セットの parent が要ります",
-		"[member a]\ncount = 2\n[member b]\nparent = a\n":  "count = 1 で max の無いメンバー",
-		"[member a]\nmax = 3\n[member b]\nparent = a\n":    "count = 1 で max の無いメンバー",
-		"[member a]\ncount = 3\nmax = 2\n":                 "max(2)を超えて",
-		"[member a]\nmax = 0\n":                            "max は 1 以上の数か unlimited",
-		"[member a]\ncount = 0\n":                          "count は 1 以上",
-		"[member a]\nschedule = every 30m\n":               "schedule はまだ使えません",
-		"[member a]\n[adopt]\nw -> Bad\n":                  "[adopt] の w の親",
-		"[member a]\nfoo = 1\n":                            "メンバーのキーは",
-		"foo = 1\n[member a]\n":                            "セットのキーは",
-		"[member a]\n[member a]\n":                         "2 回あります",
-		"[member Bad]\n":                                   "メンバーの名前は",
-		"[member a]\nparent = Bad\n":                       "parent はメンバー名",
-		"[member abcdefghijkl]\ncount = 100\n":             "長すぎます",
+		"[member a]\nparent = b\n[member b]\nparent = a\n":      "輪になります",
+		"[member a]\nparent = ~set\n":                           "セットの parent が要ります",
+		"[member a]\ncount = 2\n[member b]\nparent = a\n":       "count = 1 で max の無いメンバー",
+		"[member a]\nmax = 3\n[member b]\nparent = a\n":         "count = 1 で max の無いメンバー",
+		"[member a]\ncount = 3\nmax = 2\n":                      "max(2)を超えて",
+		"[member a]\nmax = 0\n":                                 "max は 1 以上の数か unlimited",
+		"[member a]\ncount = 0\n":                               "count は 1 以上",
+		"[member a]\nschedule = every 30m\n":                    "schedule は「every",
+		"[member a]\nschedule = every 0m: x\n":                  "1 分から 24 時間",
+		"[member a]\nschedule = every 25h: x\n":                 "1 分から 24 時間",
+		"[member a]\nschedule = every 307445734561825861h: x\n": "1 分から 24 時間",
+		"[member a]\nschedule = every 1441m: x\n":               "1 分から 24 時間",
+		"[member a]\nschedule = every 5m: /compact\n":           "/ や - で始められません",
+		"[member a]\nschedule = every 5m: it's\n":               "' と",
+		"[member a]\ncount = 2\nschedule = every 5m: x\n":       "count = 1 で max の無い",
+		"[member a]\n[adopt]\nw -> Bad\n":                       "[adopt] の w の親",
+		"[member a]\nfoo = 1\n":                                 "メンバーのキーは",
+		"foo = 1\n[member a]\n":                                 "セットのキーは",
+		"[member a]\n[member a]\n":                              "2 回あります",
+		"[member Bad]\n":                                        "メンバーの名前は",
+		"[member a]\nparent = Bad\n":                            "parent はメンバー名",
+		"[member abcdefghijkl]\ncount = 100\n":                  "長すぎます",
 	} {
 		name := "s"
 		if want == "長すぎます" {
@@ -100,6 +108,7 @@ type fakeAPI struct {
 	fail   string // この名前の new を失敗させる
 	n      int
 	tasks  map[string]ticket.GetResult // ticket.get の答え(無ければ not_found)
+	jobs   map[string]string           // job.set / job.rm
 }
 
 func (f *fakeAPI) Call(_ context.Context, by port.Principal, op string, in, out any) error {
@@ -173,6 +182,19 @@ func (f *fakeAPI) Call(_ context.Context, by port.Principal, op string, in, out 
 		}
 		f.agents[q.Name] = a
 		set(agent.ParentResult{Name: q.Name, Parents: a.Parents, Changed: true})
+	case "job.set":
+		q := in.(job.SetReq)
+		if f.jobs == nil {
+			f.jobs = map[string]string{}
+		}
+		changed := f.jobs[q.Name] != q.Body
+		f.jobs[q.Name] = q.Body
+		set(job.Result{Name: q.Name, Changed: changed})
+	case "job.rm":
+		q := in.(job.RmReq)
+		_, ok := f.jobs[q.Name]
+		delete(f.jobs, q.Name)
+		set(job.Result{Name: q.Name, Changed: ok})
 	case "ticket.get":
 		t, ok := f.tasks[in.(ticket.GetReq).ID]
 		if !ok {
@@ -188,7 +210,7 @@ func (f *fakeAPI) Call(_ context.Context, by port.Principal, op string, in, out 
 func ops(f *fakeAPI) []string {
 	var out []string
 	for _, c := range f.calls {
-		if !strings.HasPrefix(c, "agent.list") {
+		if !strings.HasPrefix(c, "agent.list") && !strings.HasPrefix(c, "job.") {
 			out = append(out, c)
 		}
 	}
@@ -536,5 +558,28 @@ func TestAdoptParentExit(t *testing.T) {
 	d.OnParentExit = ""
 	if lines, _ := d.parentExit(ctx, f, by, f.agents); lines != nil {
 		t.Errorf("keep: %+v", lines)
+	}
+}
+
+func TestSchedule(t *testing.T) {
+	d, err := Parse("s", "[member lead]\nschedule = every 2h: 未処理を確かめる\n[member w]\nparent = lead\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := d.member("lead"); m.Every != 120 || m.Say != "未処理を確かめる" || d.JobName(m) != "agentset-s-lead" ||
+		!strings.Contains(d.JobBody(m), "TARGET=s-lead\nPROMPT='未処理を確かめる'\n") || !strings.Contains(d.JobBody(m), "INTERVAL_MIN=120") {
+		t.Fatalf("parse: %+v %q", m, d.JobBody(m))
+	}
+	ctx, by := context.Background(), port.Principal{}
+	f := &fakeAPI{agents: map[string]agent.AgentInfo{}, max: -1}
+	if _, err := Up(ctx, f, by, d); err != nil || len(f.jobs) != 1 || f.jobs["agentset-s-lead"] == "" {
+		t.Fatalf("up: %v %+v", err, f.jobs)
+	}
+	lines, err := Up(ctx, f, by, d)
+	if err != nil || len(lines) != 3 || !strings.Contains(lines[2].Out, "同じ") {
+		t.Errorf("up again: %v %+v", err, lines)
+	}
+	if _, err := Down(ctx, f, by, d, true); err != nil || len(f.jobs) != 0 {
+		t.Errorf("down: %v %+v", err, f.jobs)
 	}
 }

@@ -124,6 +124,14 @@ eq "agentset reap: on_parent_exit = set-parent adds the set's parent to the memb
   "ad-w:,loner: ad-w>conductor,loner>conductor"
 eq "agentset down: removes the adopted parent, keeps the adopted agent" "$($TB agentset down ad --force 2>&1 | grep -c '^loner: 親 ad-lead を外しました') $(as_sql "SELECT COUNT(*) FROM agent_parents WHERE child='loner' AND parent='ad-lead';") $(as_sql "SELECT state FROM agents WHERE name='loner';")" "1 0 running"
 
+# ---- schedule: up が scheduler のジョブ agentset-<セット>-<メンバー> を書き、down で消す
+as_reset
+$TB agentset add sd <<<$'cwd = '"$TMP"$'\n[member lead]\nschedule = every 30m: 未処理を確かめる\n' >/dev/null
+eq "agentset schedule: up writes the job" "$($TB agentset up sd | grep -c '^agentset-sd-lead: 定期の指示を書きました(30 分おき)') $($TB job show agentset-sd-lead 2>/dev/null | grep -E '^(TARGET|PROMPT|INTERVAL_MIN)=' | paste -sd' ' -)" "1 TARGET=sd-lead PROMPT='未処理を確かめる' INTERVAL_MIN=30"
+eq "agentset schedule: up again keeps it" "$($TB agentset up sd | grep -c '^agentset-sd-lead: 定期の指示は同じです')" "1"
+eq "agentset schedule: an unreadable value is refused at add" "$(rc $TB agentset add sd2 <<<$'[member a]\nschedule = every 5m: /compact\n')" "2"
+eq "agentset schedule: down removes the job" "$($TB agentset down sd --force | grep -c '^agentset-sd-lead: 定期の指示を消しました') $(rc $TB job show agentset-sd-lead)" "1 1"
+
 as_reset
 unset HERDR_PANE_ID TB_DB TB_AGENTSETS TB_SPAWN_RETRY_SEC TB_AGENT_CWD FAKE_DYNAMIC FAKE_AGENTS
 eval "$_saved_env"
