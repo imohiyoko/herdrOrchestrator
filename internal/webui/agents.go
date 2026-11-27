@@ -12,8 +12,6 @@ import (
 // agents.go は agent の画面のための読み取り: graph.py の関係グラフと役割の一覧、data.py の台帳(止めてよいか・保護)と担当タスク、
 // herdr.py の agent read。
 
-const defaultTarget = "conductor" // taskboard/lib/core.sh の DEFAULT_TARGET
-
 var (
 	verbLabel = map[string]string{"spawn": "spawn", "lead": "指揮", "report": "報告", "analyze": "解析",
 		"role": "ロール変更", "read": "中身を読む", "send:task": "依頼", "send:info": "連絡", "send:answer": "回答"}
@@ -77,10 +75,7 @@ func (v *sv) targetFor(project string) string {
 	if exact != "" {
 		return exact
 	}
-	if star != "" {
-		return star
-	}
-	return defaultTarget
+	return star // どちらも無ければ空(既定の宛先はコードで決めない。tb の message.TargetFor と同じ)
 }
 
 // edgeSQL は taskboard/sql/agent_edges.sql(-- で始まる行を除く)。
