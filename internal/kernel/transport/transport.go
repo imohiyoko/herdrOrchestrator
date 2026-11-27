@@ -36,6 +36,7 @@ func Send(db *sql.DB, session, target, msg, id, kind string, stderr io.Writer) i
 		kind = "report"
 	}
 	if target == "" { // 既定の宛先はコードで決めない(設定 projects の * の行)
+		LogMessage(db, session, kind, id, "", msg, "failed") // 台帳(Web UI の /ledger)に残して、届いていないことを見えるようにする
 		fmt.Fprintf(stderr, "tb: 宛先が決まっていません(設定 projects に *=<名前> か <project>=<名前> を書く: tb config edit projects)。未送信(pending に残す): %s\n", id)
 		return Failed
 	}

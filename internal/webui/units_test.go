@@ -446,8 +446,8 @@ func TestGraphAndRoles(t *testing.T) {
 	for _, e := range es {
 		flat = append(flat, e.from+" "+e.verb+" "+e.to)
 	}
-	if !reflect.DeepEqual(flat, []string{"b-conductor lead worker2", "conductor send:task worker1", "conductor lead worker2", "worker2 report b-conductor"}) {
-		t.Errorf("project の端は指揮官で埋め、自分への辺は捨てる(1 体に複数の上流): %v", flat)
+	if !reflect.DeepEqual(flat, []string{"b-conductor lead worker2", "conductor send:task worker1", "worker2 report b-conductor"}) {
+		t.Errorf("project の端は指揮官で埋め、宛先の決まらない端と自分への辺は捨てる: %v", flat)
 	}
 	var ns []gnode
 	for _, n := range []string{"conductor", "b-conductor", "worker1", "worker2", "<b>x</b>"} {
