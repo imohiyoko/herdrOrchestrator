@@ -33,7 +33,7 @@ const (
 )
 
 // ExitReasons は拒否の理由 → tb の終了コード。
-var ExitReasons = map[string]int{ReasonOpDenied: 4, ReasonLimitExceeded: 4, ReasonHerdrUnavailable: 11, ReasonPromptUnconfirmed: 10, ReasonKindUnsupported: 12, ReasonUseTB: 1}
+var ExitReasons = map[string]int{ReasonOpDenied: 4, ReasonLimitExceeded: 4, ReasonHerdrUnavailable: 11, ReasonPromptUnconfirmed: 10, ReasonKindUnsupported: 12}
 
 // Result は操作の実行の結果(tb の opResult。Code は tb の終了コード、Out は文言)。
 type Result struct {

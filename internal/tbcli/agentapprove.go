@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/agents"
+	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
 	"github.com/imohiyoko/herdrorchestrator/internal/approval"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/config"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
@@ -206,7 +207,8 @@ func agentApproveImpl(args []string, w, stderr io.Writer) error {
 	return nil
 }
 
-// slashApprove は slash_approve(op=slash の承認待ち)。
+// slashApprove は slash_approve(op=slash の承認待ち)。tb に残るのは --always のときだけ(ほかは API の agent.approve)。
+// 送る中身は app/agent.SlashApproved と同じ。
 func slashApprove(db *store.DB, o opRow, always bool, ap approver, w, stderr io.Writer) error {
 	id, cmd := o.id, o.parsed().Command
 	if always && o.target == "*" {
@@ -215,68 +217,29 @@ func slashApprove(db *store.DB, o opRow, always bool, ap approver, w, stderr io.
 	if err := opClaim(db, id, ap.name); err != nil { // 同時に承認しても送るのは 1 回
 		return err
 	}
-	// 承認待ちの間に許可リストが変わっていたら、今の行に従う(外された・deny になったら送らない)
-	body, _, has := config.Lookup(db.DB, db.Session, "slash")
-	e, r, _ := slashLookup(body, has, cmd)
-	if r != 0 || e.policy != "allow" {
-		recordOpID(db, id, 1, "/"+cmd+" は許可リストに無いか deny になったため送らない / "+ap.label()+"が承認")
-		return &exit{1, fmt.Sprintf("L-%d: /%s は許可リストに無いか deny です。送りません", id, cmd)}
-	}
 	if always {
-		pat := "agent:slash:" + cmd + ":" + o.target
-		if setApproval(db, "allow", pat, io.Discard, io.Discard) == nil {
-			fmt.Fprintln(w, pat+" = allow(今後は承認なし)")
+		// 許可リストで送れないものに allow を書かない(送るかどうかは SlashApproved がもう一度確かめる)
+		body, _, has := config.Lookup(db.DB, db.Session, "slash")
+		if e, r, _ := slashLookup(body, has, cmd); r == 0 && e.Policy == "allow" {
+			pat := "agent:slash:" + cmd + ":" + o.target
+			if setApproval(db, "allow", pat, io.Discard, io.Discard) == nil {
+				fmt.Fprintln(w, pat+" = allow(今後は承認なし)")
+			}
 		}
 	}
-	live, err := agents.SyncLive(db.DB, db.Session)
-	if err != nil {
-		return die("herdr agent list に失敗しました")
-	}
-	c := &slashCtx{db: db, live: live, roles: agents.NewRoles(db.DB, db.Session), cmd: cmd, e: e}
-	if o.target == "*" {
-		// 承認の行には要約を、送った宛先ごとの行は別に残す
-		rc, n := 0, 0
-		for _, t := range c.resolve(true, o.by, nil) {
-			if t.name == "" {
-				continue
-			}
-			if t.why != "" {
-				fmt.Fprintln(w, t.name+" "+t.why)
-				continue
-			}
-			line, r := c.sendOne(t.name, o.by, 0, "")
+	line, rc := agent.SlashApproved(db, agent.OpRow{ID: o.id, Op: o.op, Target: o.target, Args: o.args, By: o.by, Stat: o.stat, Result: o.result}, ap.label(), w)
+	switch rc {
+	case 0:
+		if o.target != "*" {
 			fmt.Fprintln(w, line)
-			if r == 0 {
-				n++
-			}
-			if r == 1 {
-				rc = 11
-			}
-		}
-		res := 0
-		if rc != 0 {
-			res = 1
-		}
-		recordOpID(db, id, res, fmt.Sprintf("/%s を --all で %d 体に送った / 人が承認", cmd, n))
-		if rc != 0 {
-			return &exit{rc, ""}
 		}
 		return nil
-	}
-	out, rr := "", 0
-	for _, t := range c.resolve(false, o.by, []string{o.target}) {
-		if t.name == "" {
-			continue
+	case 11:
+		if o.target == "*" {
+			return &exit{11, ""}
 		}
-		if t.why != "" {
-			recordOpID(db, id, 1, t.why+" / "+ap.label()+"が承認")
-			return &exit{1, fmt.Sprintf("L-%d: %s %s", id, t.name, t.why)}
-		}
-		out, rr = c.sendOne(t.name, o.by, id, ap.label())
-	}
-	fmt.Fprintf(w, "L-%d: %s\n", id, out)
-	if rr != 0 {
+		fmt.Fprintln(w, line)
 		return &exit{11, ""}
 	}
-	return nil
+	return &exit{1, line}
 }
