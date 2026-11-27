@@ -242,6 +242,26 @@ t0=$SECONDS; NOW="$THU 12:00" bash bin/tick.sh fast
 ok "すぐ終わるコマンドは待たずに ran" "$(last fast | jq -r '[.action,.stdout]|join("|")')$([ $((SECONDS - t0)) -le 1 ] && echo y)" "ran|quicky"
 ok "時間切れの見張り(sleep)が残らない" "$(pgrep -f '^sleep 97$' >/dev/null && echo left || echo none)" none
 
+# ---- 1 回だけ(AT): その分にだけ動く。過ぎたら・まだなら動かない。繰り返しのキーとは同時に書かない
+printf '%s\n' "COMMAND='echo once'" 'AT="2026-11-05 12:30"' >"$JOBS_DIR/once.conf"
+printf '%s\n' "TARGET=dummy" "PROMPT='at sec'" 'AT=2026-11-05T12:30:20' >"$JOBS_DIR/oncesec.conf"
+printf '%s\n' "COMMAND='echo x'" 'AT="2026-11-05 12:30"' 'INTERVAL_MIN=5' >"$JOBS_DIR/oncebad.conf"
+printf '%s\n' "COMMAND='echo x'" 'AT="2026-13-05 12:30"' >"$JOBS_DIR/oncebad2.conf"
+check "AT: その分は実行"                ran        once "$THU 12:30"
+check "AT: 前の分はまだ"                skipped_at once "$THU 12:29"
+check "AT: 次の分は過ぎた"              skipped_at once "$THU 12:31"
+check "AT: 次の日も動かない"            skipped_at once "2026-11-06 12:30"
+check "AT: 秒まで書けばその秒"          sent       oncesec "$THU 12:30:20" idle
+check "AT: 秒が違えば動かない"          skipped_at oncesec "$THU 12:30:21" idle
+ok "AT: 分指定の NOW はその分の秒の回" "$(acts oncesec "$THU 12:30")" "12:30:20 sent "
+ok "AT: 理由に AT を添える" "$(DRY_RUN=1 NOW="$THU 12:31" bash bin/tick.sh once | jq -r .reason)" "AT 2026-11-05 12:30 has passed"
+bash bin/tick.sh oncebad >/dev/null 2>&1; ok "AT と INTERVAL_MIN の同時指定はエラー(exit 2)" "$?" 2
+bash bin/tick.sh oncebad2 >/dev/null 2>&1; ok "AT の日付が不正ならエラー(exit 2)" "$?" 2
+ok "show.sh: at" "$(bash bin/show.sh once | jq -c '[.at,.kind]')" '["2026-11-05 12:30","command"]'
+ok "show.sh: 繰り返しのジョブの at は null" "$(bash bin/show.sh t | jq -c .at)" 'null'
+SCHED_INTERVAL_MIN=1 check "AT: SCHED_* の上書きは効かない" skipped_at once "$THU 12:31"
+NOW="$THU 12:30" bash bin/tick.sh once; ok "AT: 実行して記録" "$(last once | jq -r '[.action,.stdout]|join("|")')" "ran|once"
+
 # ---- dispatch.sh: 複数のジョブを 1 回の起動で(各ジョブはサブシェル。判定と記録は tick.sh と同じ)
 rm -f "$LOG_DIR/cmd.log" "$LOG_DIR/fast.log" "$LOG_DIR/cmdok.log"
 NOW="$THU 12:00" bash bin/dispatch.sh cmd fast cmdok; drc=$?
@@ -254,6 +274,10 @@ NOW="$THU 12:00" bash bin/dispatch.sh fast nosuchjob >/dev/null 2>&1; ok "dispat
 OUT_DIR="$TMP/gen" bash bin/gen-plist.sh --dispatch fast cmd >/dev/null
 ok "gen-plist --dispatch: 1 本の plist に dispatch.sh とジョブ名" "$(grep -c '<string>' "$TMP/gen/local.herdr-sched-dispatch.plist") $(grep -c 'bin/dispatch.sh</string>' "$TMP/gen/local.herdr-sched-dispatch.plist")" "8 1"
 OUT_DIR="$TMP/gen" bash bin/gen-plist.sh --dispatch fast nosuchjob >/dev/null 2>&1; ok "gen-plist --dispatch: 無いジョブは止める" "$?" 2
+rm -f "$LOG_DIR/once.log"; NOW="$THU 12:30" bash bin/dispatch.sh --all >/dev/null 2>&1
+ok "dispatch --all: その時のすべてのジョブを判定する(AT のジョブも)" "$(last once | jq -r .action)" ran
+OUT_DIR="$TMP/gen" bash bin/gen-plist.sh --dispatch --all >/dev/null
+ok "gen-plist --dispatch --all: plist の引数は --all" "$(grep -A1 'bin/dispatch.sh</string>' "$TMP/gen/local.herdr-sched-dispatch.plist" | tail -1 | tr -d ' \t')" "<string>--all</string>"
 mkcmd dispatch "COMMAND='true'"; OUT_DIR="$TMP/gen" bash bin/gen-plist.sh dispatch >/dev/null 2>&1; ok "ジョブ名 dispatch は予約済み" "$?" 2; rm -f "$JOBS_DIR/dispatch.conf"
 
 # ---- 発火条件(GATE)。順序: 窓・間隔・曜日 → ENABLED → GATE → SKIP_IF → ロック → 発火

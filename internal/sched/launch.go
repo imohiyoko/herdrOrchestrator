@@ -67,7 +67,7 @@ func (e Env) JobNames() []string {
 // (tick は TZ や SCHED_* を環境変数に置くので、1 プロセスの中で混ぜない)。1 つでも失敗があれば 1。
 func Dispatch(jobs []string, stdout, stderr io.Writer) int {
 	if len(jobs) == 0 {
-		fmt.Fprintln(stderr, "error: 使い方: dispatch.sh <job> [<job> ...]")
+		fmt.Fprintln(stderr, "error: 使い方: dispatch.sh <job> [<job> ...] | --all")
 		return 2
 	}
 	self, err := os.Executable()
@@ -124,15 +124,22 @@ func GenPlist(e Env, logDir string, args []string, stdout io.Writer) error {
 	if len(args) > 0 && args[0] == "--dispatch" {
 		args = args[1:]
 		if len(args) == 0 {
-			return die("使い方: gen-plist.sh --dispatch <job> [<job> ...]")
+			return die("使い方: gen-plist.sh --dispatch <job> [<job> ...] | --dispatch --all")
 		}
+		all := len(args) == 1 && args[0] == "--all"
 		for _, j := range args {
+			if all {
+				break
+			}
 			if _, err := e.Load(j); err != nil {
 				return err
 			}
 		}
 		job, prog, progArgs = "dispatch", filepath.Join(e.Root, "bin", "dispatch.sh"), args
 		what = "ジョブ " + strings.Join(args, " ")
+		if all {
+			what = "DB のすべてのジョブ(毎分読み直す)"
+		}
 	} else {
 		name := ""
 		if len(args) > 0 {
@@ -147,6 +154,9 @@ func GenPlist(e Env, logDir string, args []string, stdout io.Writer) error {
 		}
 		job, prog, progArgs = j.Name, filepath.Join(e.Root, "bin", "tick.sh"), []string{j.Name}
 		what = fmt.Sprintf("間隔 %s / %s / %s", j.intervalLabel(), j.Window, j.Days)
+		if j.At != "" {
+			what = "1 回だけ " + j.At
+		}
 	}
 	prefix, err := labelPrefix()
 	if err != nil {
