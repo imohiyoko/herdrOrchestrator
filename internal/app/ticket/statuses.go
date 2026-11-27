@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/imohiyoko/API/define"
 
@@ -71,7 +72,8 @@ func statusOps(env *app.Env) []app.Op {
 				if errors.As(err, &bad) {
 					// tb は検査の文言だけを出して 1 で終わる(続く文は出さない)
 					fmt.Fprint(env.Warner(), bad.Detail)
-					return StatusDefResult{}, &define.Error{Code: define.CodeFailedPrecondition, Reasons: []string{ReasonQuiet}}
+					// Message は tb には出さない(ReasonQuiet)。Web UI などは理由として見せる
+					return StatusDefResult{}, &define.Error{Code: define.CodeFailedPrecondition, Message: strings.TrimSpace(bad.Detail), Reasons: []string{ReasonQuiet}}
 				}
 				if err != nil {
 					return StatusDefResult{}, err
@@ -111,6 +113,9 @@ func statusWrite(env *app.Env, w *writer, body, how string, _ bool) error {
 	var bad *tickets.BadStatuses
 	if errors.As(err, &bad) {
 		fmt.Fprint(env.Warner(), bad.Detail)
+		if env.Warn == nil { // 警告の出し先が無い入口(Web UI など)には、検査の文言を理由に含める
+			return define.Errorf(define.CodeFailedPrecondition, "%s: %s", bad.Error(), strings.TrimSpace(bad.Detail))
+		}
 		return define.Errorf(define.CodeFailedPrecondition, "%s", bad.Error())
 	}
 	var sl *config.ErrSymlink
