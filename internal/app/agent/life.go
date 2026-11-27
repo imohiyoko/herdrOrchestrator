@@ -4,6 +4,7 @@ package agent
 // 承認後の実行・recipe・tb agent-new などからも呼ぶ。警告は stderr に書く(tb は標準エラー、API の操作は結果の Warnings)。
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"io"
@@ -240,7 +241,12 @@ func RegRowOf(db *store.DB, name string) RegRow {
 
 // Revive は do_agent_revive。
 func Revive(db *store.DB, name string, fresh bool, model, prompt, by string, stderr io.Writer) Result {
-	live, err := agents.SyncLive(db.DB, db.Session)
+	return ReviveContext(context.Background(), db, name, fresh, model, prompt, by, stderr)
+}
+
+// ReviveContext は Revive に ctx を足したもの。ctx の期限を過ぎたら、起動する前に時間切れ(11)にする。
+func ReviveContext(ctx context.Context, db *store.DB, name string, fresh bool, model, prompt, by string, stderr io.Writer) Result {
+	live, err := agents.SyncLiveContext(ctx, db.DB, db.Session)
 	if err != nil {
 		return Result{Code: 11, Out: "herdr agent list に失敗しました"}
 	}
@@ -279,6 +285,10 @@ func Revive(db *store.DB, name string, fresh bool, model, prompt, by string, std
 	}
 	if err := Register(db, name, cwd, lmodel, "", by, "unknown", "", row.Kind); err != nil {
 		return Result{Code: 1, Out: err.Error()}
+	}
+	if ctx.Err() != nil {
+		_, _ = db.Exec(`UPDATE main.agents SET state='stopped', stopped_at=? WHERE herdr_session=? AND name=?`, nowTS(), db.Session, name)
+		return Result{Code: 11, Out: name + " を起動する前に時間切れになりました(起動していません)"}
 	}
 	sp, ok := transport.Spawn(db.Path, row.Kind, name, cwd, LaunchArgs(row.Kind, sess, model))
 	if !ok {
@@ -327,8 +337,13 @@ const RestartDefaultPrompt = "MCP の接続を張り直すために再起動し�
 // Restart は do_agent_restart: 停止 + 同じ会話での復活。安全条件を全部満たすときだけ。
 // 0 / 1 / 4 / 10(再開したが最初の指示を確認できない) / 11 / 12
 func Restart(db *store.DB, st tickets.StatusSet, name, prompt, by string, stderr io.Writer) Result {
+	return RestartContext(context.Background(), db, st, name, prompt, by, stderr)
+}
+
+// RestartContext は Restart に ctx を足したもの。ctx の期限を過ぎていたら、pane を閉じる前に時間切れ(11)にする。
+func RestartContext(ctx context.Context, db *store.DB, st tickets.StatusSet, name, prompt, by string, stderr io.Writer) Result {
 	t0 := time.Now()
-	live, err := agents.SyncLive(db.DB, db.Session)
+	live, err := agents.SyncLiveContext(ctx, db.DB, db.Session)
 	if err != nil {
 		return Result{Code: 11, Out: "herdr agent list に失敗しました"}
 	}
@@ -381,14 +396,17 @@ func Restart(db *store.DB, st tickets.StatusSet, name, prompt, by string, stderr
 	if blank(prompt) {
 		prompt = RestartDefaultPrompt
 	}
-	if !agents.ClosePane(db.DB, db.Session, name, pane, oldSess) {
+	if ctx.Err() != nil {
+		return Result{Code: 11, Out: name + " を再起動する前に時間切れになりました(何も変えていません)"}
+	}
+	if !agents.ClosePaneContext(ctx, db.DB, db.Session, name, pane, oldSess) {
 		return Result{Code: 11, Out: "pane " + pane + " を閉じられません"}
 	}
 	_, _ = agents.SyncLive(db.DB, db.Session)
 	if RefuseRunning(db, 1, io.Discard) {
 		return Result{Code: 4, Out: name + " を停止しましたが、動作中の agent が上限のため復活していません。停止のままです。上限が空いたら: tb agent-revive " + name + " [--fresh]"}
 	}
-	rev := Revive(db, name, false, "", prompt, by, stderr)
+	rev := Revive(db, name, false, "", prompt, by, stderr) // 閉じたあとは期限を過ぎても戻す(止めたままにしない)
 	if rev.Code != 0 {
 		return Result{Code: rev.Code, Out: name + " を停止しました(pane " + pane + " を閉じた)が、復活に失敗: " + rev.Out + "。停止のままです。自分で戻すなら: tb agent-revive " + name + " [--fresh](--fresh は新しい会話になります)"}
 	}

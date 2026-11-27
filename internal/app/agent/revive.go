@@ -112,7 +112,7 @@ func reviveOp(env *app.Env) app.Op {
 		func(ctx context.Context, in ReviveReq) (LifeResult, error) {
 			who := by(ctx)
 			return withDB(env, func(db *store.DB) (LifeResult, error) {
-				r := Revive(db, in.Name, in.Fresh, in.Model, in.Prompt, who, env.Warner())
+				r := ReviveContext(ctx, db, in.Name, in.Fresh, in.Model, in.Prompt, who, env.Warner())
 				agents.RecordOp(db.DB, db.Session, "revive", in.Name, reviveArgs(in), who, r.Code, r.Out)
 				if err := r.Err(); err != nil {
 					return LifeResult{}, err
@@ -192,7 +192,7 @@ func restartOp(env *app.Env) app.Op {
 		func(ctx context.Context, in RestartReq) (LifeResult, error) {
 			who := by(ctx)
 			return withDB(env, func(db *store.DB) (LifeResult, error) {
-				r := Restart(db, tickets.LoadStatuses(db.DB, db.Session), in.Name, in.Prompt, who, env.Warner())
+				r := RestartContext(ctx, db, tickets.LoadStatuses(db.DB, db.Session), in.Name, in.Prompt, who, env.Warner())
 				agents.RecordOp(db.DB, db.Session, "revive", in.Name, restartArgs(in), who, r.Code, "restart: "+r.Out)
 				if err := r.Err(); err != nil {
 					return LifeResult{}, err
