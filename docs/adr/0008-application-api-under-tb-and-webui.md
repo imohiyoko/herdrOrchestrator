@@ -125,17 +125,23 @@ agent セットの設計案では、セットは「tb の公開コマンドを�
 // 例(名前は段 0 で決める。定義の書き方は 2a の imohiyoko/API の形)
 package agent
 
+// フィールドの名前と api タグは段 0 で決める。API に出すフィールドには一意な api タグを付ける
 type NewReq struct {
-    Name, Cwd, Kind, Model string
-    Roles    []string
-    Prompt   string
-    Killable Tri
-    Pane     PanePlacement // 段 1 の後で: 既存の workspace に置く(agent セット用)
+    Name     string        `api:"name"` // define.Resource("agent", "name") が指す
+    Cwd      string        `api:"cwd,optional"`
+    Kind     string        `api:"kind,optional"`
+    Model    string        `api:"model,optional"`
+    Roles    []string      `api:"roles,optional"`
+    Prompt   string        `api:"prompt,optional"`
+    Killable string        `api:"killable,optional"` // yes / no / unknown
+    Pane     *PanePlacement `api:"pane,optional"`    // 段 1 の後で: 既存の workspace に置く(agent セット用)
 }
 
 type NewResult struct {
-    Name, Pane, Workspace string
-    Pending *app.PendingID // 承認待ちに積んだときだけ(L-<n> / Q-<n>)
+    Name      string   `api:"name"`
+    Pane      string   `api:"pane,optional"`
+    Workspace string   `api:"workspace,optional"`
+    Pending   *Pending `api:"pending,optional"` // 承認待ちに積んだときだけ(L-<n> / Q-<n>)
 }
 
 // 操作は 2a の define.Command で定義する。主体は ctx(define.PrincipalFrom)から読む
@@ -143,7 +149,11 @@ type NewResult struct {
 
 - **主体は入口が確かめて渡す**: 主体は ADR 0007 の `human` / `agent:<名前>` / `system:<名前>` / `unknown`。確かめるのは入口の責任: tb は今の `kernel/identity`(プロセスと pane)、Web UI はログイン、scheduler は `system:sched`。入口は確かめた結果を `Invoke` のトークンとして渡し、herdr の `port.Authenticator` が主体に戻す(2a)。API の中では `define.PrincipalFrom(ctx)` で読み、環境変数から主体を決めない。
 - **門は API の側**: ADR 0006・0007 の権限段階と policy の判定は、API の関数の最初で必ず通す。API の門(herdr の `port.Authorizer`)は、`port.CheckRequest` で渡される主体だけで判定し、pane や `perms.HumanPane()` から決めない。今の `perms.Gate` / `perms.EnforceTarget` は、pane が無く `identity.System` も空のプロセスを人として扱い policy を見ずに通す(perms.go の `HumanPane`)。そのまま API から呼ぶと、pane の無い Web UI のプロセスが agent を主体として呼んだときに agent の policy が効かない。そのため段 0 で、主体を引数で受け取る判定の関数(例: `perms.GateFor(by Principal, op, target)`)を足し、API はそれだけを呼ぶ。tb の入口は、今の `Gate` を「pane から主体を決めて `GateFor` を呼ぶ」薄い関数にする。Web UI が API を直接呼んでも、判定を迂回しない。
-- **出力しない**: `io.Writer`・終了コード・`os.Exit` を使わない。エラーは型(`define.Errorf` の `*define.Error`。2a)。tb の入口が `Code` を今の終了コードに、`Msg` を今の文言に写す(文言は今と同じにする)。
+- **出力しない**: `io.Writer`・終了コード・`os.Exit` を使わない。エラーは型(`define.Errorf` の `*define.Error`。2a)。tb の入口が `Code` を今の終了コードに、`Message` を今の文言に写す(文言は今と同じにする)。
+- **判定は 2 つの層で、`ask` はハンドラーの手前の門で扱う**: imohiyoko/API の認可の結果(`port.Decision`)は `Allowed` と拒否の理由(`Reasons`)だけで、`ask` を表せない。そこで判定を次の 2 つに分け、どちらも API の中で必ず通す。
+    1. **入口の段(`cmd:<サービス>:<動詞>`)は `port.Authorizer`**: 各操作の `define.Authz` の操作名を、今 `taskboard/perms/commands.tbl` で入口(`entry`)の判定に使っている `cmd:` の名前にする(`agent.new` → `cmd:agent:new`)。herdr の Authorizer は policy の効果が `deny` なら拒否、`allow` と `ask` なら通す。これで Web UI など tb の入口(`perms.Gate`)を通らない呼び出しでも `cmd:` の行が効く。tb の入口の `Gate` は移した動詞では二重になるが、結果は同じなので、段 5 で入口からは外す。
+    2. **操作の中の判定(`agent:new:<名前>` など)と `ask` はハンドラーの手前の門**: herdr の操作はすべて `app.Guard(判定の作り方, ハンドラー)` で包んで登録する。門は主体(`define.PrincipalFrom`)と入力から操作名と対象を作り、policy を 3 つの効果で判定する: `deny` は `*define.Error`(`permission_denied`)、`ask` はハンドラーを呼ばずに承認待ちに積み `Pending` を持つ結果を返す、`allow` だけがハンドラーを呼ぶ。入口の段(1)の `ask` も、この門が同じく承認待ちにする(Authorizer は `ask` を通すだけで、実行させない)。
+    - `Guard` を使わずに登録した操作が無いことを、レジストリを走査するテストで CI に検査させる。
 - **承認待ちは結果の 1 つ**: 「承認待ちに積んだ」は失敗ではなく `Pending` を持つ結果として返す。`Pending` は経路(agent の操作の待ち `L-<n>` か、コマンドの入口の `ask` の `Q-<n>` か)と番号を持ち、tb の入口は経路ごとに今の文言を再現する: agent の操作は今どおり終了コード 20 と `L-<n> pending …`、コマンドの入口の `ask` は今どおり `Q-<n>` を含む説明。2 つを共通の文言にまとめない。
 - **環境は注入**: DB、セッション、herdr のアダプタ、時計は `app.Env`(または各サービスの構造体)で渡す。テストでは疑似の herdr と一時 DB を入れる。
 - **読み取りも API**: 一覧・詳細は `app/<サービス>` の読み取り関数(`ticket.List(ctx, by, Filter)` など)。画面向けの集計(Web UI の一覧の JOIN など)も、その表を持つサービスの読み取り関数に置く。
@@ -158,12 +168,12 @@ imohiyoko/API は「操作を 1 回定義すると、公開範囲(internal / par
 // internal/app/agent
 var New = define.Command[NewReq, NewResult]("agent.new",
     define.Doc("agent を作って起動する"),
-    define.Authz("agent:new", define.Resource("agent", "Name")), // policy の操作名と対象
+    define.Authz("cmd:agent:new", define.Resource("agent", "name")), // 入口の段(commands.tbl の cmd: の名前)
     define.Expose(define.Internal, define.REST),                 // internal に出す。Invoke も Expose した公開範囲でだけ呼べる
-).Handle(func(ctx context.Context, in NewReq) (NewResult, error) {
+).Handle(app.Guard(agentNewOp, func(ctx context.Context, in NewReq) (NewResult, error) {
     by := define.PrincipalFrom(ctx) // 主体は文脈から(環境変数から決めない)
-    ...
-})
+    ... // ここに来るのは agent:new:<名前> が allow のときだけ。ask なら Guard が承認待ちにして返す
+}))
 
 // 入口(tb・Web UI・agent セット)。どれも同じ流れを通る
 out, err := srv.Invoke(ctx, define.Internal, "agent.new", token, agent.NewReq{...})
@@ -173,8 +183,8 @@ out, err := srv.Invoke(ctx, define.Internal, "agent.new", token, agent.NewReq{..
 | imohiyoko/API の部品 | herdr での中身 |
 |---|---|
 | 操作(`define.Query` / `Command`) | `app/<サービス>` の各操作。名前は `<サービス>.<動詞>`(tb のサービス名に合わせる) |
-| `define.Authz("<操作>", Resource(...))` | 設定 policy の操作名と対象(ADR 0007)。`agent:new:<名前>` など |
-| `port.Authorizer` | herdr のアダプタ: `perms` / `approval` の判定(主体を引数で受け取る `GateFor`。上の 2)。`ask` は承認待ちに積んだ結果として返す |
+| `define.Authz("<操作>", Resource(...))` | 入口の段の操作名(`cmd:agent:new`)。操作の中の判定(`agent:new:<名前>`)と `ask` は `app.Guard`(上の 2) |
+| `port.Authorizer` | herdr のアダプタ: 入口の段 `cmd:<サービス>:<動詞>` を policy で判定する(主体は `port.CheckRequest` のものだけ。上の 2)。`deny` だけ拒否し、`allow` と `ask` は通す |
 | `port.Authenticator` | herdr のアダプタ: Web UI のログインのセッション → `human`、agent の pane → `agent:<名前>`(ADR 0007 の確かめ方)、scheduler → `system:<名前>` |
 | 公開範囲 | 当面は internal だけ(127.0.0.1 の Web UI・agent セット)。外へ出す口は作らない |
 | `define.Errorf(Code…)` | 操作のエラー。tb の入口がコードを今の終了コードと文言に写す |
@@ -187,7 +197,7 @@ out, err := srv.Invoke(ctx, define.Internal, "agent.new", token, agent.NewReq{..
 | **プロセス内の呼び出し** | **imohiyoko/API で入った**([#11](https://github.com/imohiyoko/API/issues/11)、imohiyoko/API の ADR 0007、M3.5) | `Server.Invoke(ctx, 公開範囲, 操作の名前, トークン, 入力)`。公開範囲は必ず渡し、`Expose` していない公開範囲では `not_found`。入力は In 型の値か JSON。出力は公開範囲で絞り込んだ値(`map[string]any`)、エラーは開示のルールを通した `*define.Error`。tb の CLI・Web UI・agent セットはこれで呼ぶ。HTTP の口は立てない |
 | **依存の分割** | **imohiyoko/API で入った**([#12](https://github.com/imohiyoko/API/issues/12)) | gRPC は `runtime/grpcx`、YAML は `manifest/yamlx` に分かれた。herdrctl は `define`・`manifest`・`runtime`・`port` だけを import し、grpc・protobuf・YAML を含めない。`cli`(契約の生成)は grpc・protobuf を含むので、herdrctl からは import せず、契約の生成は別の小さな main(`cmd/apigen` など)で行う |
 | **主体はトークンからしか作れない**: herdr の主体は呼び出したプロセスと pane で決まる(ADR 0007) | **herdr のアダプタ** | `port.Authenticator` の実装が、`Invoke` に渡す「トークン」を主体に変える。tb は呼び出し元の確かめ(kernel/identity)の結果を短命のトークンにして渡し、Web UI はログインのセッション、scheduler は `system:<名前>` の印を渡す。imohiyoko/API は確かめ済みの主体を渡す口を作らない(imohiyoko/API の ADR 0007 の代替案)ので、確かめは必ずアダプタを通る |
-| **承認待ち(`ask`)の形が無い** | **herdr の中** | 認可(`port.Authorizer`)は許可・拒否のまま。`ask` に当たる操作はハンドラーが承認待ちに積み、`Pending`(`L-<n>` / `Q-<n>`)を結果として返す |
+| **承認待ち(`ask`)の形が無い** | **herdr の中** | 認可(`port.Authorizer`)は許可・拒否のまま(`ask` は通す)。`ask` は `app.Guard` がハンドラーを呼ばずに承認待ちに積み、`Pending`(`L-<n>` / `Q-<n>`)を結果として返す(上の 2) |
 
 段 0 で確かめること:
 
