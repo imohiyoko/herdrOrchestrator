@@ -132,6 +132,24 @@ eq "agentset schedule: up again keeps it" "$($TB agentset up sd | grep -c '^agen
 eq "agentset schedule: an unreadable value is refused at add" "$(rc $TB agentset add sd2 <<<$'[member a]\nschedule = every 5m: /compact\n')" "2"
 eq "agentset schedule: down removes the job" "$($TB agentset down sd --force | grep -c '^agentset-sd-lead: 定期の指示を消しました') $(rc $TB job show agentset-sd-lead)" "1 1"
 
+# ---- autoscale: 条件を 1 回評価して増やす・減らす(増やすのは max まで、減らすのは count まで)
+as_reset
+$TB agentset add au <<<$'cwd = '"$TMP"$'\n[member w]\ncount = 1\nmax = 2\nqueue = project:au\nscale_out = queue > 1\nscale_in = queue == 0 and idle >= 1\n' >/dev/null
+$TB agentset up au >/dev/null 2>&1
+as_sql "INSERT INTO tasks (id, project, title, status, owner_agent, created_at, updated_at, herdr_session) VALUES ('T-au-001','au','a','todo',NULL,'t','t','default'),('T-au-002','au','b','todo',NULL,'t','t','default'),('T-au-003','au','c','todo','x','t','t','default'),('T-zz-001','zz','d','todo',NULL,'t','t','default');"
+eq "agentset autoscale --dry-run: shows the decision, changes nothing" \
+  "$($TB agentset autoscale au --dry-run) $(as_sql "SELECT COUNT(*) FROM agents WHERE name LIKE 'au-%';")" \
+  "au-w: queue=2 live=1 idle=1 busy=0 blocked=0: scale_out(queue > 1) → +1(--dry-run なので変えません) 1"
+eq "agentset autoscale: scale_out adds one" "$($TB agentset autoscale au | grep -c '^au-w-2: ') $(as_sql "SELECT killable FROM agents WHERE name='au-w-2';")" "1 yes"
+eq "agentset autoscale: at max stays" "$($TB agentset autoscale au | grep -c 'max(2)なのでそのまま')" "1"
+as_sql "UPDATE tasks SET status='done' WHERE id IN ('T-au-001','T-au-002');"
+eq "agentset autoscale: scale_in stops the highest number" "$($TB agentset autoscale au | grep -c '^au-w-2: au-w-2 stopped') $(as_sql "SELECT state FROM agents WHERE name='au-w-1';")" "1 running"
+eq "agentset autoscale: at count stays" "$($TB agentset autoscale au | grep -c 'count(1)なのでそのまま')" "1"
+eq "agentset autoscale: a set without conditions → 2" "$(rc $TB agentset autoscale sc)" "2"
+eq "agentset autoscale: from an agent pane is refused" "$(HERDR_PANE_ID=wC:p1 rc $TB agentset autoscale au)" "1"
+eq "agentset autoscale: a broken condition is refused at add" "$(rc $TB agentset add au2 <<<$'[member w]\nmax = 2\nscale_out = cpu > 1\n')" "2"
+$TB agentset down au --force >/dev/null 2>&1
+
 as_reset
 unset HERDR_PANE_ID TB_DB TB_AGENTSETS TB_SPAWN_RETRY_SEC TB_AGENT_CWD FAKE_DYNAMIC FAKE_AGENTS
 eval "$_saved_env"

@@ -109,6 +109,7 @@ type fakeAPI struct {
 	n      int
 	tasks  map[string]ticket.GetResult // ticket.get の答え(無ければ not_found)
 	jobs   map[string]string           // job.set / job.rm
+	queue  int                         // ticket.count の答え
 }
 
 func (f *fakeAPI) Call(_ context.Context, by port.Principal, op string, in, out any) error {
@@ -195,6 +196,8 @@ func (f *fakeAPI) Call(_ context.Context, by port.Principal, op string, in, out 
 		_, ok := f.jobs[q.Name]
 		delete(f.jobs, q.Name)
 		set(job.Result{Name: q.Name, Changed: ok})
+	case "ticket.count":
+		set(ticket.CountResult{Count: f.queue})
 	case "ticket.get":
 		t, ok := f.tasks[in.(ticket.GetReq).ID]
 		if !ok {
@@ -581,5 +584,102 @@ func TestSchedule(t *testing.T) {
 	}
 	if _, err := Down(ctx, f, by, d, true); err != nil || len(f.jobs) != 0 {
 		t.Errorf("down: %v %+v", err, f.jobs)
+	}
+}
+
+const scaled = `
+[member w]
+count = 1
+max = 3
+queue = project:web label:bug
+scale_out = queue > 2
+scale_out = blocked >= 1 and idle == 0
+scale_in = queue == 0 and idle >= 1
+`
+
+func TestAutoscaleParse(t *testing.T) {
+	d, err := Parse("as", scaled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := d.Members[0]
+	if len(m.Out) != 2 || len(m.In) != 1 || m.Queue != (Queue{Project: "web", Label: "bug"}) || len(m.In[0].Terms) != 2 {
+		t.Fatalf("%+v", m)
+	}
+	for _, bad := range []string{
+		"[member w]\nmax = 3\nscale_out = queue >\n",
+		"[member w]\nmax = 3\nscale_out = cpu > 1\n",
+		"[member w]\nmax = 3\nscale_out = queue => 1\n",
+		"[member w]\nmax = 3\nscale_out = queue > -1\n",
+		"[member w]\nscale_out = queue > 1\n",             // max が要る
+		"[member w]\nmode = job\nscale_out = queue > 1\n", // job 型は書けない
+		"[member w]\nmax = 3\nqueue = project:web\n",      // 条件なしの queue
+		"[member w]\nmax = 3\nscale_out = queue > 1\nqueue = foo\n",
+		"[member w]\nmax = 3\nscale_out = queue > 1\nscale_step = 0\n",
+	} {
+		if _, err := Parse("as", bad); err == nil {
+			t.Errorf("断るはず: %q", bad)
+		}
+	}
+}
+
+func TestDecide(t *testing.T) {
+	d, _ := Parse("as", scaled)
+	m := d.Members[0]
+	for _, c := range []struct {
+		v    map[string]int
+		want int
+	}{
+		{map[string]int{"queue": 3, "live": 1}, 1},
+		{map[string]int{"queue": 3, "live": 3}, 0},               // max
+		{map[string]int{"queue": 0, "live": 2, "idle": 1}, -1},   // scale_in
+		{map[string]int{"queue": 0, "live": 1, "idle": 1}, 0},    // count が下限
+		{map[string]int{"queue": 1, "live": 2, "idle": 0}, 0},    // どれも当たらない
+		{map[string]int{"queue": 0, "live": 2, "blocked": 1}, 1}, // 2 行目の scale_out
+	} {
+		if n, why := Decide(m, c.v); n != c.want {
+			t.Errorf("%v: %d %s (want %d)", c.v, n, why, c.want)
+		}
+	}
+	m.Step = 5
+	if n, _ := Decide(m, map[string]int{"queue": 9, "live": 1}); n != 2 {
+		t.Errorf("step は max で切る: %d", n)
+	}
+	m.In = append(m.In, Cond{Text: "queue > 2", Terms: []Term{{"queue", ">", 2}}})
+	if n, why := Decide(m, map[string]int{"queue": 3, "live": 1}); n != 0 || !strings.Contains(why, "両方") {
+		t.Errorf("両方: %d %s", n, why)
+	}
+}
+
+func TestAutoscale(t *testing.T) {
+	d, _ := Parse("as", scaled)
+	ctx, by := context.Background(), port.Principal{}
+	f := &fakeAPI{agents: map[string]agent.AgentInfo{
+		"as-w-1": {Name: "as-w-1", State: "running", Live: true, Pane: "w0:p1", Status: "working"},
+	}, max: -1, queue: 5}
+	lines, err := Autoscale(ctx, f, by, d, true)
+	if err != nil || len(lines) != 1 || !strings.Contains(lines[0].Out, "queue=5") || !strings.Contains(lines[0].Out, "--dry-run") || len(ops(f)) != 1 {
+		t.Fatalf("dry: %v %+v %q", err, lines, ops(f))
+	}
+	if !strings.Contains(ops(f)[0], `ticket.count {"Project":"web","Label":"bug","Category":"","Unowned":true}`) {
+		t.Errorf("count: %q", ops(f))
+	}
+	f.calls = nil
+	lines, err = Autoscale(ctx, f, by, d, false)
+	if err != nil || !f.agents["as-w-2"].Live {
+		t.Fatalf("out: %v %+v", err, lines)
+	}
+	// 両方 idle、queue 0 → 1 体減らす(番号の大きいほう)
+	for _, n := range []string{"as-w-1", "as-w-2"} {
+		a := f.agents[n]
+		a.Status = "idle"
+		f.agents[n] = a
+	}
+	f.queue = 0
+	if lines, err = Autoscale(ctx, f, by, d, false); err != nil || f.agents["as-w-2"].Live || !f.agents["as-w-1"].Live {
+		t.Fatalf("in: %v %+v", err, lines)
+	}
+	if _, err := Autoscale(ctx, f, by, Def{Name: "x", Members: []Member{{Name: "a", Count: 1}}}, false); err == nil {
+		t.Error("条件の無いセットは断る")
 	}
 }
