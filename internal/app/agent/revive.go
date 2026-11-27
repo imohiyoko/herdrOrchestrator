@@ -24,6 +24,8 @@ type ReviveReq struct {
 	Prompt string `api:"prompt,optional"` // 最初の指示(4000 字まで)
 	// Pane は置き場所(空なら専用の workspace)。人だけが指定できる(agent セットが自分の workspace に戻す)
 	Pane *PanePlacement `api:"pane,optional"`
+	// Killable は止めてよいかの判定(yes|no。空は unknown)。人だけが指定できる(agent セットが scale で戻す agent)
+	Killable string `api:"killable,optional"`
 }
 
 // LifeResult は agent.revive / agent.restart の結果。
@@ -90,6 +92,12 @@ func revivePre(env *app.Env, who string, in ReviveReq) error {
 	if err := paneErr("agent-revive", who, in.Pane); err != nil {
 		return err
 	}
+	switch {
+	case in.Killable != "" && in.Killable != "yes" && in.Killable != "no":
+		return usageErr("agent-revive: --killable は yes|no")
+	case in.Killable != "" && who != "human":
+		return define.Errorf(define.CodePermissionDenied, "agent-revive: 止めてよいかの判定を付けられるのは人だけです(%s)", who)
+	}
 	_, err := withDB(env, func(db *store.DB) (struct{}, error) {
 		if row := RegRowOf(db, in.Name); row.Ok {
 			m, sess := in.Model, ""
@@ -118,7 +126,11 @@ func reviveOp(env *app.Env) app.Op {
 		func(ctx context.Context, in ReviveReq) (LifeResult, error) {
 			who := by(ctx)
 			return withDB(env, func(db *store.DB) (LifeResult, error) {
-				r := ReviveAt(ctx, db, in.Name, in.Fresh, in.Model, in.Prompt, who, in.Pane.place(), env.Warner())
+				kill := in.Killable
+				if kill == "" {
+					kill = "unknown"
+				}
+				r := ReviveAt(ctx, db, in.Name, in.Fresh, in.Model, in.Prompt, who, in.Pane.place(), kill, env.Warner())
 				agents.RecordOp(db.DB, db.Session, "revive", in.Name, reviveArgs(in), who, r.Code, r.Out)
 				if err := r.Err(); err != nil {
 					return LifeResult{}, err

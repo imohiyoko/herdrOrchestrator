@@ -34,6 +34,7 @@ type AgentInfo struct {
 	Parent string `api:"parent,optional" json:"parent,omitempty"` // 台帳の spawned_by
 	Role   string `api:"role,optional" json:"role,omitempty"`     // 台帳の役割(--role)
 	Kind   string `api:"kind,optional" json:"kind,omitempty"`
+	Task   string `api:"task,optional" json:"task,omitempty"` // 台帳の spawn_task(任されたタスク)
 }
 
 // ListResult は agent.list の結果。Running と Max は動作中の数と上限 max_running_agents(上限なしは -1)。
@@ -52,11 +53,11 @@ func List(ctx context.Context, db *store.DB, names []string) (ListResult, error)
 	}
 	row := func(name string) (AgentInfo, bool) {
 		a := AgentInfo{Name: name}
-		var pane, parent, role, kind sql.NullString
-		if db.QueryRow(`SELECT state, pane_id, spawned_by, role, kind FROM agents WHERE name=?`, name).Scan(&a.State, &pane, &parent, &role, &kind) != nil {
+		var pane, parent, role, kind, task sql.NullString
+		if db.QueryRow(`SELECT state, pane_id, spawned_by, role, kind, spawn_task FROM agents WHERE name=?`, name).Scan(&a.State, &pane, &parent, &role, &kind, &task) != nil {
 			return a, false
 		}
-		a.Pane, a.Parent, a.Role, a.Kind = pane.String, parent.String, role.String, kind.String
+		a.Pane, a.Parent, a.Role, a.Kind, a.Task = pane.String, parent.String, role.String, kind.String, task.String
 		return a, true
 	}
 	if len(names) == 0 {
