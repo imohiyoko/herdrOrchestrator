@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -206,5 +207,101 @@ func TestAgentNewGate(t *testing.T) {
 	want := []string{"rejected w1", "failed w1", "pending w1"}
 	if got := opsRows(t, env); !slices.Equal(got, want) {
 		t.Errorf("agent_ops: %q, want %q", got, want)
+	}
+}
+
+// fakeHerdr は呼ばれ方を log に 1 行ずつ書く疑似 herdr(agent list は空、workspace create は wA:p1、pane split は wA:p2)。
+func fakeHerdr(t *testing.T) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("疑似 herdr が sh")
+	}
+	dir := t.TempDir()
+	log := filepath.Join(dir, "log")
+	sh := `#!/bin/sh
+echo "$*" >>` + log + `
+case "$1 $2" in
+"agent list") echo '{"result":{"agents":[]}}' ;;
+"workspace create") echo '{"result":{"workspace":{"workspace_id":"wA"},"root_pane":{"pane_id":"wA:p1"}}}' ;;
+"pane split") echo '{"result":{"pane":{"pane_id":"wA:p2"}}}' ;;
+"agent start") echo '{"result":{"type":"ok"}}' ;;
+*) echo '{"result":{}}' ;;
+esac
+`
+	bin := filepath.Join(dir, "herdr")
+	if err := os.WriteFile(bin, []byte(sh), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_BIN", bin)
+	t.Setenv("TB_SPAWN_LOG", filepath.Join(dir, "spawn.log"))
+	return log
+}
+
+// agent.new の親と置き場所: 人だけが指定でき、名前を付けた workspace に 1 体目、その pane を分けて 2 体目を置く。
+// 親は台帳の spawned_by に入る。
+func TestAgentNewPlacement(t *testing.T) {
+	log := fakeHerdr(t)
+	env, _ := fixture(t, "")
+	cwd := t.TempDir()
+	call := func(by port.Principal, in agent.NewReq) (agent.NewResult, *define.Error) {
+		t.Helper()
+		c, err := New(env)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var res agent.NewResult
+		if err := c.Call(context.Background(), by, "agent.new", in, &res); err != nil {
+			var e *define.Error
+			if !errors.As(err, &e) {
+				t.Fatalf("not a define.Error: %v", err)
+			}
+			return res, e
+		}
+		return res, nil
+	}
+	for _, c := range []struct {
+		by   port.Principal
+		in   agent.NewReq
+		code define.Code
+	}{
+		{app.Agent("w1"), agent.NewReq{Name: "c1", Cwd: cwd, Parent: "lead"}, define.CodePermissionDenied},
+		{app.Agent("w1"), agent.NewReq{Name: "c1", Cwd: cwd, Pane: &agent.PanePlacement{Split: "wA:p1"}}, define.CodePermissionDenied},
+		{app.Human(), agent.NewReq{Name: "c1", Cwd: cwd, Parent: "nobody"}, define.CodeFailedPrecondition},
+		{app.Human(), agent.NewReq{Name: "c1", Cwd: cwd, Parent: "c1"}, define.CodeInvalidArgument},
+		{app.Human(), agent.NewReq{Name: "c1", Cwd: cwd, Pane: &agent.PanePlacement{Split: "wA:p1", Workspace: "x"}}, define.CodeInvalidArgument},
+		{app.Human(), agent.NewReq{Name: "c1", Cwd: cwd, Pane: &agent.PanePlacement{Split: "wA:p1", Direction: "up"}}, define.CodeInvalidArgument},
+		{app.Human(), agent.NewReq{Name: "c1", Cwd: cwd, Pane: &agent.PanePlacement{Split: "a b"}}, define.CodeInvalidArgument},
+	} {
+		if _, e := call(c.by, c.in); e == nil || e.Code != c.code {
+			t.Errorf("%+v: %v", c.in, e)
+		}
+	}
+	os.Remove(log)
+	res, e := call(app.Human(), agent.NewReq{Name: "lead", Cwd: cwd, Pane: &agent.PanePlacement{Workspace: "set1"}})
+	if e != nil || res.Pane != "wA:p1" || res.Workspace != "wA" {
+		t.Fatalf("1 体目: %+v %v", res, e)
+	}
+	res, e = call(app.Human(), agent.NewReq{Name: "c1", Cwd: cwd, Parent: "lead", Pane: &agent.PanePlacement{Split: res.Pane, Direction: "down"}})
+	if e != nil || res.Pane != "wA:p2" || res.Workspace != "" {
+		t.Fatalf("2 体目: %+v %v", res, e)
+	}
+	b, _ := os.ReadFile(log)
+	pc := agent.PhysDir(cwd)
+	for _, want := range []string{
+		"workspace create --cwd " + pc + " --label set1 --no-focus",
+		"agent start lead --kind claude --pane wA:p1",
+		"pane split wA:p1 --direction down --cwd " + pc + " --no-focus",
+		"agent start c1 --kind claude --pane wA:p2",
+	} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("herdr の呼び出しに %q が無い:\n%s", want, b)
+		}
+	}
+	db, done, _ := env.DB()
+	defer done()
+	var sby, pane string
+	db.QueryRow(`SELECT IFNULL(spawned_by,''), IFNULL(pane_id,'') FROM agents WHERE name='c1'`).Scan(&sby, &pane)
+	if sby != "lead" || pane != "wA:p2" {
+		t.Errorf("台帳: spawned_by=%q pane=%q", sby, pane)
 	}
 }

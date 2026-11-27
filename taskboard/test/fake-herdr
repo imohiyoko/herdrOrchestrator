@@ -50,6 +50,11 @@ case "$1 $2" in
     echo "workspace-create $*" >>"${FAKE_LOG:?}"
     [[ ${FAKE_WS_FAIL:-0} == 1 ]] && { echo '{"error":{"code":"x"}}'; exit 1; }
     echo "{\"result\":{\"workspace\":{\"workspace_id\":\"wN\"},\"root_pane\":{\"pane_id\":\"${FAKE_NEW_PANE:-wA:p1}\"}}}";;
+  "pane split")
+    # 既存の pane を分ける(agent セットの置き場所)。FAKE_SPLIT_PANE で新しい pane、FAKE_SPLIT_FAIL=1 で失敗
+    echo "pane-split ${*:3}" >>"${FAKE_LOG:?}"
+    [[ ${FAKE_SPLIT_FAIL:-0} == 1 ]] && { echo '{"error":{"code":"pane_not_found"}}'; exit 1; }
+    echo "{\"result\":{\"pane\":{\"pane_id\":\"${FAKE_SPLIT_PANE:-wA:p2}\"}}}";;
   "workspace list")
     echo "workspace-list" >>"${FAKE_LOG:?}"
     [[ ${FAKE_WS_LIST_FAIL:-0} == 1 ]] && { echo '{"error":{"code":"x"}}'; exit 1; }

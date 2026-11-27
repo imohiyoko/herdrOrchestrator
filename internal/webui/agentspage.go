@@ -529,7 +529,7 @@ func agentNewApp(sess string, in agent.NewReq) (string, string) {
 	if err != nil {
 		return "error", "作成できませんでした"
 	}
-	var res agent.LifeResult
+	var res agent.NewResult
 	err = c.Call(ctx, app.Human(), "agent.new", in, &res)
 	st := appState(err, res.Pending)
 	if st == "done" || st == "pending" {

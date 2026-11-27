@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/imohiyoko/herdrorchestrator/internal/app"
 	"github.com/imohiyoko/herdrorchestrator/internal/approval"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/transport"
 )
 
 // NewReq は agent.new の入力(tb agent-new)。
@@ -25,6 +27,80 @@ type NewReq struct {
 	Role     string `api:"role,optional"`     // 役割(カンマ区切りで 1〜4 個)
 	Prompt   string `api:"prompt,optional"`   // 最初の指示(4000 字まで)
 	Killable string `api:"killable,optional"` // yes|no(空は unknown)
+	// Parent は親(台帳の spawned_by)。親が止まると子は orphan になる(tb agent-shed)。人だけが指定できる
+	Parent string `api:"parent,optional"`
+	// Pane は置き場所(空なら専用の workspace)。人だけが指定できる(agent セットが 1 つの workspace に並べる)
+	Pane *PanePlacement `api:"pane,optional"`
+}
+
+// PanePlacement は agent の置き場所: 既存の pane を分けて置く(Split)か、名前を付けた新しい workspace(Workspace)。
+type PanePlacement struct {
+	Workspace string `api:"workspace,optional"` // 新しい workspace の label(空なら agent の名前)
+	Split     string `api:"split,optional"`     // この pane を分けて置く(herdr の pane id)
+	Direction string `api:"direction,optional"` // right|down(空は right)
+}
+
+// NewResult は agent.new の結果。
+type NewResult struct {
+	Name string `api:"name" json:"name"`
+	// Out は tb の文言(「<名前> started (…)」)。途中の警告は Env.Warn に書く。
+	Out       string       `api:"out" json:"out"`
+	Pane      string       `api:"pane,optional" json:"pane,omitempty"`           // 起動した pane
+	Workspace string       `api:"workspace,optional" json:"workspace,omitempty"` // 作った workspace(Split のときは空)
+	Pending   *app.Pending `api:"pending,optional" json:"pending,omitempty"`
+}
+
+// SetPending は app.PendingSetter の実装。
+func (r *NewResult) SetPending(p *app.Pending) { r.Pending = p }
+
+var (
+	rePaneID = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,64}$`)
+	reLabel  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+)
+
+func (in NewReq) place() transport.Place {
+	if in.Pane == nil {
+		return transport.Place{}
+	}
+	return transport.Place{Label: in.Pane.Workspace, Split: in.Pane.Split, Direction: in.Pane.Direction}
+}
+
+// placeErr は親と置き場所の確かめ(人だけ。親は台帳にいる別の agent。pane の id と向き)。
+func placeErr(db *store.DB, who string, in NewReq) error {
+	if in.Parent == "" && in.Pane == nil {
+		return nil
+	}
+	if who != "human" {
+		return define.Errorf(define.CodePermissionDenied, "agent-new: 親と置き場所(pane)を指定できるのは人だけです(%s)", who)
+	}
+	if in.Parent != "" {
+		if err := validName(in.Parent); err != nil {
+			return err
+		}
+		if in.Parent == in.Name {
+			return usageErr("agent-new: 自分自身を親にはできません: %s", in.Name)
+		}
+		var n int
+		_ = db.QueryRow(`SELECT count(*) FROM agents WHERE name=?`, in.Parent).Scan(&n)
+		if n == 0 {
+			return define.Errorf(define.CodeFailedPrecondition, "agent-new: 親 %s が台帳にいません", in.Parent)
+		}
+	}
+	if p := in.Pane; p != nil {
+		switch {
+		case p.Split != "" && p.Workspace != "":
+			return usageErr("agent-new: pane を分ける(split)と新しい workspace は同時に指定できません")
+		case p.Split != "" && !rePaneID.MatchString(p.Split):
+			return usageErr("agent-new: pane の id に使えない文字があります: %s", p.Split)
+		case p.Workspace != "" && !reLabel.MatchString(p.Workspace):
+			return usageErr("agent-new: workspace の名前は英数字で始まり、英数字・.・_・- の 64 字以内: %s", p.Workspace)
+		case p.Direction != "" && p.Direction != "right" && p.Direction != "down":
+			return usageErr("agent-new: 分ける向きは right|down: %s", p.Direction)
+		case p.Direction != "" && p.Split == "":
+			return usageErr("agent-new: 向きは pane を分けるときだけ指定できます")
+		}
+	}
+	return nil
 }
 
 // NormalizeCwd は agent-new の --cwd を絶対パスにする: 空なら既定の場所、~ は HOME、相対パスは PWD から。
@@ -76,7 +152,14 @@ func newArgs(in NewReq) string {
 			kv = append(kv, p[0], p[1])
 		}
 	}
-	return jsonArgs(append(kv, "killable", in.kill())...)
+	kv = append(kv, "killable", in.kill())
+	if in.Parent != "" {
+		kv = append(kv, "parent", in.Parent)
+	}
+	if p := in.Pane; p != nil {
+		kv = append(kv, "pane", map[string]string{"workspace": p.Workspace, "split": p.Split, "direction": p.Direction})
+	}
+	return jsonArgs(kv...)
 }
 
 func usageErr(format string, a ...any) error {
@@ -103,6 +186,9 @@ func newPre(env *app.Env, who string, in NewReq) error {
 		return usageErr("agent-new: --cwd は絶対パスにしてください: %s", in.Cwd)
 	}
 	_, err := withDB(env, func(db *store.DB) (struct{}, error) {
+		if err := placeErr(db, who, in); err != nil {
+			return struct{}{}, err
+		}
 		if in.Role != "" {
 			rs := strings.Split(in.Role, ",")
 			if len(rs) > 1 && rs[len(rs)-1] == "" { // IFS=, read -ra は末尾の空の欄を数えない
@@ -153,15 +239,16 @@ func newOp(env *app.Env) app.Op {
 		opGateRole("new", func(in NewReq) string { return in.Name }, newArgs,
 			func(who string, in NewReq) error { return newPre(env, who, in) },
 			func(in NewReq) string { return in.Role }),
-		func(ctx context.Context, in NewReq) (LifeResult, error) {
+		func(ctx context.Context, in NewReq) (NewResult, error) {
 			who := by(ctx)
-			return withDB(env, func(db *store.DB) (LifeResult, error) {
-				r := NewContext(ctx, db, in.Name, in.cwd(), in.Model, in.Role, in.Prompt, in.kill(), who, "", "", in.kind(), env.Warner())
+			return withDB(env, func(db *store.DB) (NewResult, error) {
+				r := NewWith(ctx, db, NewSpec{Name: in.Name, Cwd: in.cwd(), Model: in.Model, Role: in.Role, Prompt: in.Prompt, Kill: in.kill(),
+					By: who, SpawnedBy: in.Parent, Kind: in.kind(), At: in.place()}, env.Warner())
 				agents.RecordOp(db.DB, db.Session, "new", in.Name, newArgs(in), who, r.Code, r.Out)
 				if err := r.Err(); err != nil {
-					return LifeResult{}, err
+					return NewResult{}, err
 				}
-				return LifeResult{Name: in.Name, Out: r.Out}, nil
+				return NewResult{Name: in.Name, Out: r.Out, Pane: r.Pane, Workspace: r.WS}, nil
 			})
 		},
 		define.Doc("agent を作る(tb agent-new)"),

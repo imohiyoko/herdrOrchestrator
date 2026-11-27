@@ -40,6 +40,18 @@ func New(db *store.DB, name, cwd, model, role, prompt, kill, by, sby, stask, kin
 
 // NewContext は New に ctx を足したもの。ctx の期限を過ぎたら、起動する前に時間切れ(11)にする。
 func NewContext(ctx context.Context, db *store.DB, name, cwd, model, role, prompt, kill, by, sby, stask, kind string, stderr io.Writer) Result {
+	return NewWith(ctx, db, NewSpec{Name: name, Cwd: cwd, Model: model, Role: role, Prompt: prompt, Kill: kill, By: by, SpawnedBy: sby, SpawnTask: stask, Kind: kind}, stderr)
+}
+
+// NewSpec は作る agent の中身。SpawnedBy は親(台帳の spawned_by)、SpawnTask は tb agent-spawn の子のタスク、At は置き場所。
+type NewSpec struct {
+	Name, Cwd, Model, Role, Prompt, Kill, By, SpawnedBy, SpawnTask, Kind string
+	At                                                                   transport.Place
+}
+
+// NewWith は NewContext の引数を NewSpec にまとめたもの。結果の Pane と WS に起動した pane と workspace が入る。
+func NewWith(ctx context.Context, db *store.DB, spec NewSpec, stderr io.Writer) Result {
+	name, cwd, model, role, prompt, kill, by, sby, stask, kind := spec.Name, spec.Cwd, spec.Model, spec.Role, spec.Prompt, spec.Kill, spec.By, spec.SpawnedBy, spec.SpawnTask, spec.Kind
 	if r := CheckLaunch(kind, model, ""); r != nil {
 		return *r
 	}
@@ -75,7 +87,7 @@ func NewContext(ctx context.Context, db *store.DB, name, cwd, model, role, promp
 		_, _ = db.Exec(`DELETE FROM main.agents WHERE herdr_session=? AND name=?`, db.Session, name)
 		return Result{Code: 11, Out: name + " を起動する前に時間切れになりました(起動していません)"}
 	}
-	sp, ok := transport.Spawn(db.Path, kind, name, cwd, LaunchArgs(kind, "", ModelWithRoleDefault(db, model, kind, name, role)))
+	sp, ok := transport.SpawnAt(db.Path, kind, name, cwd, LaunchArgs(kind, "", ModelWithRoleDefault(db, model, kind, name, role)), spec.At)
 	setPane := func() {
 		_, _ = db.Exec(`UPDATE main.agents SET pane_id=?, spawned_by=NULLIF(?,''), spawn_task=NULLIF(?,'') WHERE herdr_session=? AND name=?`, sp.Pane, sby, stask, db.Session, name)
 	}
@@ -86,7 +98,7 @@ func NewContext(ctx context.Context, db *store.DB, name, cwd, model, role, promp
 			if prompt != "" {
 				out += "。最初の指示は未送信(答えたあと tb send などで送る)"
 			}
-			return Result{Code: 11, Out: out}
+			return Result{Code: 11, Out: out, Pane: sp.Pane, WS: sp.WS}
 		}
 		_, _ = db.Exec(`DELETE FROM main.agents WHERE herdr_session=? AND name=?`, db.Session, name)
 		return Result{Code: 11, Out: name + " を起動できません: " + sp.Err}
@@ -105,5 +117,5 @@ func NewContext(ctx context.Context, db *store.DB, name, cwd, model, role, promp
 			out += " / " + note
 		}
 	}
-	return Result{Code: 0, Out: out}
+	return Result{Code: 0, Out: out, Pane: sp.Pane, WS: sp.WS}
 }
