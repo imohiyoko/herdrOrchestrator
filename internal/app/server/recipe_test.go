@@ -75,3 +75,24 @@ func TestRecipeCancel(t *testing.T) {
 		t.Errorf("記録の変えた者: %q", got)
 	}
 }
+
+func TestRecipeRunGates(t *testing.T) {
+	t.Setenv("HERDR_PANE_ID", "")
+	env, _ := fixture(t, "w1 cmd:recipe:runner * = ask\n")
+	// 実行役を ask にした agent は、承認待ちか(積めないなら)拒否になる。内部の失敗にはしない
+	res, e := callOp[recipe.RunnerResult](t, env, app.Agent("w1"), "recipe.runner", recipe.RunnerReq{})
+	if (e == nil && res.Pending == nil) || (e != nil && e.Code == define.CodeInternal) {
+		t.Fatalf("ask の runner: %+v %v", res, e)
+	}
+	if _, e := callOp[recipe.RunnerResult](t, env, app.Agent("w2"), "recipe.runner", recipe.RunnerReq{}); e == nil || e.Code != define.CodePermissionDenied {
+		t.Errorf("既定の runner: %v", e)
+	}
+	if _, e := callOp[recipe.RunResult](t, env, app.Human(), "recipe.run", recipe.RunReq{Name: "r1"}); e == nil || e.Code != define.CodeInvalidArgument {
+		t.Errorf("人の端末で --target なし: %v", e)
+	}
+	// 登録の無いレシピは実行せず 4
+	run, e := callOp[recipe.RunResult](t, env, app.Human(), "recipe.run", recipe.RunReq{Name: "r1", Target: "w1"})
+	if e != nil || run.Code != 4 || !strings.Contains(run.Err, "登録されていないレシピ") {
+		t.Errorf("未登録: %+v %v", run, e)
+	}
+}
