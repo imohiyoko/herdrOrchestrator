@@ -33,7 +33,7 @@ const (
 )
 
 // ExitReasons は拒否の理由 → tb の終了コード。
-var ExitReasons = map[string]int{ReasonOpDenied: 4, ReasonLimitExceeded: 4, ReasonHerdrUnavailable: 11, ReasonPromptUnconfirmed: 10, ReasonKindUnsupported: 12, ReasonUseTB: 1}
+var ExitReasons = map[string]int{ReasonOpDenied: 4, ReasonLimitExceeded: 4, ReasonHerdrUnavailable: 11, ReasonPromptUnconfirmed: 10, ReasonKindUnsupported: 12}
 
 // Result は操作の実行の結果(tb の opResult。Code は tb の終了コード、Out は文言)。
 type Result struct {
@@ -134,7 +134,7 @@ func by(ctx context.Context) string {
 
 // Ops は agent の操作。
 func Ops(env *app.Env) []app.Op {
-	return []app.Op{newOp(env), listOp(env), stopOp(env), reviveOp(env), restartOp(env), parentOp(env, true), parentOp(env, false), spawnOp(env), decideOp(env, true), decideOp(env, false)}
+	return []app.Op{newOp(env), listOp(env), orgOp(env), stopOp(env), reviveOp(env), restartOp(env), parentOp(env, true), parentOp(env, false), spawnOp(env), decideOp(env, true), decideOp(env, false)}
 }
 
 // ValidName は agent 名として使えるか(英小文字で始まる 32 字以内。human は予約名)。

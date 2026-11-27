@@ -22,6 +22,9 @@ var navGroups = []struct {
 	{"運用", [][2]string{{"/jobs", "job"}, {"/perms", "権限"}, {"/docs", "ドキュメント"}}},
 }
 
+// navAlias はタブを持たない画面と、そのとき光らせるタブ。
+var navAlias = map[string]string{"/agent-graph": "/agents", "/org": "/agents", "/agent-new": "/agents"}
+
 // pageOpts は views.page の引数(ページごとの指定)。
 type pageOpts struct {
 	norefresh bool
@@ -44,7 +47,7 @@ func (s *Server) page(q *rq, title, body, path, logout string, o pageOpts) strin
 		links.WriteString(`<div class=navg><span class=navh>` + g.head + `</span>`)
 		for _, n := range g.items {
 			href, label := n[0], n[1]
-			on := path == href || (href != "/" && strings.HasPrefix(path, href+"/"))
+			on := path == href || (href != "/" && strings.HasPrefix(path, href+"/")) || navAlias[path] == href
 			b := ""
 			switch href {
 			case "/inbox":
@@ -274,6 +277,7 @@ var pages = map[string]pageFn{
 	"/docs":          (*Server).pageDocs,
 	"/agents":        (*Server).pageAgents,
 	"/agent-graph":   (*Server).pageAgentGraph,
+	"/org":           (*Server).pageOrg,
 	"/agent-new":     (*Server).pageAgentNewRoute,
 	"/statuses":      (*Server).pageStatuses,
 }

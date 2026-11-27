@@ -974,7 +974,7 @@ check("ジョブ詳細: 次回の予定が出る", re.search(r"次回の予定\(
 check("ジョブ詳細: 承認の扱い(scheduler は policy を見ない)", "policy を見ず" in _pjh and "send:task:alpha" in _pjh)
 check("ジョブ詳細: 副作用は推測せず「不明」", "分かりません(不明)" in _pjh)
 check("ジョブ詳細: 送信履歴へのリンク", 'href="/ledger?kind=scheduler&amp;target=alpha"' in _pjh)
-check("ジョブ詳細: 編集フォームは増えていない(保存と戻すと消すの 3 つだけ)", _pjh.count('<form method=post action="/jobs/pj"') == 3 and "name=prompt" not in _pjh and "name=command" not in _pjh and "name=target" not in _pjh)
+check("ジョブ詳細: 編集フォームは増えていない(保存・戻す・今すぐ流す・消すの 4 つだけ)", _pjh.count('<form method=post action="/jobs/pj"') == 4 and "name=prompt" not in _pjh and "name=command" not in _pjh and "name=target" not in _pjh)
 _pcm = cl.get("/jobs/pcomment")[2]
 check("ジョブ詳細: コメントアウトされた PROMPT は読まない", "REAL-PROMPT" in _pcm and "ignored-line" not in _pcm)
 for _n, _body in (("pdeny1", "DENIED-KEY-BODY"), ("pdeny2", "DENIED-ENV-BODY"), ("pdeny3", "DENIED-KEY-BODY")):
@@ -1167,12 +1167,52 @@ _c = sqlite3.connect(env["WEBUI_TB_DB"])
 _left = _c.execute("SELECT COUNT(*) FROM config WHERE key='sched-settings:dbjob'").fetchone()[0]
 _c.close()
 check("DB の定義: 戻すと DB の上書き設定を消す", r[0] == 302 and _left == 0 and "20 分おき" in cl.get("/jobs")[2])
+# 今すぐ流す(tb job run)。待たずに戻り、結果は scheduler のログに残る
+_c = sqlite3.connect(env["WEBUI_TB_DB"])
+_c.execute("INSERT INTO config (herdr_session, key, body, updated_by, updated_at) VALUES (?, 'sched-job:runjob', ?, 'human', 'x')",
+           (_sess, "COMMAND='echo run-now'\nMANUAL=1\n"))
+_c.commit(); _c.close()
+_runlog = os.path.join(env["WEBUI_SCHED_LOGS"], "runjob.log")
+_rp = cl.get("/jobs/runjob")[2]
+check("今すぐ流す: 詳細にボタン", "value=run>" in _rp and "今すぐ 1 回流す" in _rp)
+check("今すぐ流す: CSRF 無しは拒否", cl.raw("POST", "/jobs/runjob", {"action": "run"})[0] == 403)
+r = cl.raw("POST", "/jobs/runjob", {"action": "run", "csrf": cl.csrf("/jobs/runjob")})
+check("今すぐ流す: 待たずに詳細へ戻り、動かし始めたと知らせる", r[0] == 302 and r[1].get("Location") == "/jobs/runjob?done=job-run", str(r[:2]))
+check("今すぐ流す: 戻った画面に知らせ", "ジョブを動かし始めました" in cl.get("/jobs/runjob?done=job-run")[2])
+for _ in range(100):
+    if os.path.exists(_runlog) and '"action":"ran"' in open(_runlog).read().replace(" ", ""):
+        break
+    time.sleep(0.1)
+check("今すぐ流す: scheduler のログに ran が残る", os.path.exists(_runlog) and '"action":"ran"' in open(_runlog).read().replace(" ", ""),
+      open(_runlog).read() if os.path.exists(_runlog) else "no log")
 # ジョブを消す(tb job rm)。印を付けないと消さない。消すと定義・上書き設定の行とログが消え、一覧から外れる(履歴は残る)
 _c = sqlite3.connect(env["WEBUI_TB_DB"])
 _c.execute("INSERT INTO config (herdr_session, key, body, updated_by, updated_at) VALUES (?, 'sched-job:rmjob', ?, 'human', 'x')",
            (_sess, "COMMAND='echo rm'\nWINDOW=09:00-21:00\nINTERVAL_MIN=30\n"))
 _c.execute("INSERT INTO config (herdr_session, key, body, updated_by, updated_at) VALUES (?, 'sched-settings:rmjob', 'ENABLED=0', 'human', 'x')", (_sess,))
 _c.commit(); _c.close()
+# 組織図(設定 org。agent 一覧の中の節と /org。上司は tb org と同じ agent.org で引く)
+_ab = cl.get("/agents")[2]
+check("組織図: 未設定なら agent 一覧に未設定の案内(図へのリンクは出さない)", '<h2 id="org">組織図</h2>' in _ab and "組織図は未設定です" in _ab
+      and 'href="/org"' not in _ab and 'href="/org"' not in cl.get("/")[2])
+_c = sqlite3.connect(env["WEBUI_TB_DB"])
+for _n in ("orgboss", "orgw1", "orgw2"):
+    _c.execute("INSERT OR IGNORE INTO agents (herdr_session, name, state, created_by, created_at, updated_at) VALUES (?, ?, 'stopped', 'human', 'x', 'x')", (_sess, _n))
+_c.execute("INSERT INTO config (herdr_session, key, body, updated_by, updated_at) VALUES (?, 'org', ?, 'human', 'x')",
+           (_sess, "orgw* -> orgboss\n"))
+_c.commit(); _c.close()
+_ab = cl.get("/agents")[2]
+_og = _ab.split('<h2 id="org">')[1].split('<h2 id="roles">')[0]
+check("組織図: agent 一覧に上司の下へ部下が入った木と図へのリンク",
+      re.search(r'<li><a href="/agents/orgboss">orgboss</a>[^<]*(<span[^>]*>[^<]*</span>)?<ul><li><a href="/agents/orgw1">orgw1</a>.*?</li><li><a href="/agents/orgw2">', _og) is not None
+      and 'href="/org"' in _og, _og[:800])
+_os, _oh, _ob = cl.get("/org")
+_om = _ob.split("<pre class=mermaid>")[1].split("</pre>")[0] if "<pre class=mermaid>" in _ob else ""
+check("組織図: /org は mermaid の図(上司 → 部下)と木、スクリプトは同一オリジンだけ", _os == 200 and _om.startswith("flowchart TD")
+      and re.search(r"n\d+ --&gt; n\d+", _om) is not None and "orgw1" in _om
+      and script_tags(_ob) == [NOTIFY_TAG[:-9], '<script src="/static/mermaid.min.js" defer>', '<script src="/docs.js" defer>'], _om[:300])
+_c = sqlite3.connect(env["WEBUI_TB_DB"]); _c.execute("DELETE FROM config WHERE key='org'")
+_c.execute("DELETE FROM agents WHERE name LIKE 'org%'"); _c.commit(); _c.close()
 _rmlog = os.path.join(env["WEBUI_SCHED_LOGS"], "rmjob.log")
 open(_rmlog, "w").write('{"ts":"2026-11-01T10:00:00+0900","job":"rmjob","action":"ran"}\n')
 def _rmrows():

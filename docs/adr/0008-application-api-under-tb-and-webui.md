@@ -260,11 +260,13 @@ ADR 0004 の依存の検査に次を足す。今ある違反は許容リスト�
 ### 段 1 の続き(2026-11-27)
 
 - 規則つきの子の作成 `agent.spawn`(#293): spawn-policy の読み取り・規則の検査・名前・最初の指示・承認待ちへの積み方を `app/agent/spawn.go` に移した。承認待ちを指揮官に知らせる報告の配達は、Env の新しいフック `Deliver`(tb の入口が配達の関数を入れる)。フックの無い入口では知らせが届かないので、Web UI から spawn を呼ぶ段で配達を `app` の下に移す。
-- 承認・却下 `agent.approve` / `agent.reject`(#295): 承認者の確かめ(人か、policy の approve:agent:… を許された依頼者以外の agent)、再検査、1 回だけ実行する印、実行と記録、Q-<n> の記録、依頼した agent への知らせ(`transport.Send`)まで API がする。スラッシュコマンドとモデルの切り替えの承認と `--always`(policy を書く)は、まだ tb の中(API は `use_tb` で断る)。これらは段 3 で policy の書き込みと一緒に移す。
+- 承認・却下 `agent.approve` / `agent.reject`(#295): 承認者の確かめ(人か、policy の approve:agent:… を許された依頼者以外の agent)、再検査、1 回だけ実行する印、実行と記録、Q-<n> の記録、依頼した agent への知らせ(`transport.Send`)まで API がする。`--always`(policy を書く)は、まだ tb の中。段 3 で policy の書き込みと一緒に移す。
+- スラッシュコマンドとモデルの切り替えの承認も `agent.approve` でする(送る部品 `SlashLookup` / `SlashCtx` / `SlashApproved` と `ModelSetRun` を `app/agent` に移した)。`use_tb` で断るのはやめた。
 - 親を足す・外す `agent.parent.add` / `agent.parent.rm`(#290): 表 `agent_parents`(030、`spawned_by` から埋める)。`spawned_by` は立てた親(上限・深さ・記録)のまま。`tb agent shed` の orphan は、親が 1 体以上いて全員止まったときだけ。承認・報告を「親のうち誰か」に回すのは別の設計(多対多の親)。
 - job の書き込み `job.set` / `job.rm`(#292、段 3 の先取り): `tb job set` / `rm` と同じ権限と確かめ(scheduler が読めるか)。agent セットの schedule が使う。チケットの読み取り `ticket.get`(#289)も先に入れた。
 - 自動スケールの条件に使う読み取り(#297): `ticket.count`(project・label・状態の分類・担当なしで絞った数)と、`agent.list` の `status`(herdr の agent_status)。
 - job を今すぐ動かす `job.run`(#302、`POST /v1/jobs/{name}/run`、`tb job run`): 中身は `herdrctl sched tick --now <job>`。時刻は見ず、ENABLED・GATE・SKIP_IF・ロックは毎分の回と同じ。既定は人だけ(policy の `cmd:job:run` で agent にも許せる)。scheduler を通さず、API を呼べば job が動く。
+- 組織図の読み取り `agent.org`(`GET /v1/org`、`tb org`): 台帳の agent と設定 org で決まる上司。`tb org` の計算をここへ寄せ、Web UI の agent 一覧の組織図と `/org` も同じプロセスで呼ぶ。
 - まだ残るもの: 一覧(`tb agents` / `agent-ops`)の読み取りの全部と、Web UI の agents 画面を同じプロセスで呼ぶこと。agent セットが使う最小の読み取り `agent.list` は入れた(今の親 `Parents` も返す)。
 
 ### agent セット(`internal/agentset`、`tb agentset`)

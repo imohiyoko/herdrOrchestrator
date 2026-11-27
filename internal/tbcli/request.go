@@ -451,7 +451,7 @@ func reject(db *store.DB, args []string, w io.Writer) error {
 }
 
 func cmdAgentApprove(args []string, w, stderr io.Writer) error {
-	if len(args) >= 1 && reLid.MatchString(args[0]) && !(len(args) > 1 && args[1] == "--always") && !agentOpUsesTB(args[0], stderr) {
+	if len(args) >= 1 && reLid.MatchString(args[0]) && !(len(args) > 1 && args[1] == "--always") { // --always だけは tb の中(policy を書く)
 		if len(args) > 1 {
 			return usage("agent-approve L-<n> [--always]")
 		}
@@ -472,22 +472,6 @@ func cmdAgentReject(args []string, w, stderr io.Writer) error {
 	return agentDecide("agent.reject", args[0], w, stderr)
 }
 
-// agentOpUsesTB は L-<n> がスラッシュコマンドかモデルの切り替えの承認待ち(tb の中で承認する)か。読めなければ false(API が断る)。
-func agentOpUsesTB(lid string, stderr io.Writer) bool {
-	id, err := validLid(lid)
-	if err != nil {
-		return false
-	}
-	db, _, err := openCmd(stderr)
-	if err != nil {
-		return false
-	}
-	defer db.Close()
-	o, ok := agent.OpRowOf(db, id)
-	return ok && agent.UseTB(o)
-}
-
-// agentDecide は agent.approve / agent.reject を今の主体として呼ぶ。
 func agentDecide(op, lid string, w, stderr io.Writer) error {
 	db, _, err := openCmd(stderr)
 	if err != nil {

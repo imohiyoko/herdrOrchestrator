@@ -23,11 +23,8 @@ import (
 
 // 承認待ちの agent の操作(L-<n>)の承認と却下(tb agent approve / reject)。承認できるのは人か、
 // policy の approve:agent:… で許された agent(依頼者本人は不可)。
-// API で扱うのは作成・停止・再開(spawn を含む)。スラッシュコマンド(op=slash)とモデルの切り替え(tb model-set)の承認と
-// --always(今後は承認なし)は tb の入口が扱う(ReasonUseTB で断る)。
-
-// ReasonUseTB は、この承認待ちは API では決められず tb agent approve で決める(slash・model-set)。
-const ReasonUseTB = "use_tb"
+// API で扱うのは作成・停止・再開(spawn を含む)・スラッシュコマンド(op=slash)・モデルの切り替え(tb model-set)。
+// --always(今後は承認なし。policy を書く)だけは tb の入口が扱う(段 3 で policy の書き込みと一緒に移す)。
 
 var reLid = regexp.MustCompile(`^L-[0-9]+$`)
 
@@ -179,8 +176,6 @@ func OpClaim(db *store.DB, now string, id int64, by string) error {
 	return nil
 }
 
-// UseTB は、この行の承認を tb の入口で扱う(スラッシュコマンドとモデルの切り替え)か。
-func UseTB(o OpRow) bool { return o.Op == "slash" || o.Parsed().ModelSet == 1 }
 
 func decideOp(env *app.Env, approve bool) app.Op {
 	name, sub, cmd, verb := "agent.reject", "reject", "tb agent-reject", "reject"
@@ -240,9 +235,17 @@ func decideOp(env *app.Env, approve bool) app.Op {
 
 func approveRow(env *app.Env, db *store.DB, o OpRow, ap Approver) (DecideResult, error) {
 	id := o.ID
-	if UseTB(o) {
-		return DecideResult{}, &define.Error{Code: define.CodeFailedPrecondition, Reasons: []string{ReasonUseTB},
-			Message: fmt.Sprintf("L-%d(スラッシュコマンド・モデルの切り替え)は tb agent approve L-%d で承認します", id, id)}
+	if o.Op == "slash" { // スラッシュコマンド: 印を取ってから、今の許可リストで送る
+		if err := OpClaim(db, env.NowString(), id, ap.Name); err != nil {
+			return DecideResult{}, err
+		}
+		var b bytes.Buffer
+		line, rc := SlashApproved(db, o, ap.Label(), &b)
+		out := strings.TrimRight(b.String()+line, "\n")
+		if err := (Result{Code: rc, Out: out}).Err(); err != nil {
+			return DecideResult{}, err
+		}
+		return DecideResult{ID: "L-" + strconv.FormatInt(id, 10), Out: out}, nil
 	}
 	st := tickets.LoadStatuses(db.DB, db.Session)
 	a := o.Parsed()
@@ -250,7 +253,7 @@ func approveRow(env *app.Env, db *store.DB, o OpRow, ap Approver) (DecideResult,
 		if why := SpawnRecheck(db, st, id, a.Spawn.Parent, a.Role, a.Spawn.Task); why != "" {
 			return DecideResult{}, define.Errorf(define.CodeFailedPrecondition, "L-%d は承認できません(規則に合わなくなりました): %s。L-%d は承認待ちのままです(tb agent-reject L-%d で却下)", id, why, id, id)
 		}
-	} else if o.Op == "new" || o.Op == "revive" {
+	} else if o.Op == "new" || (o.Op == "revive" && a.ModelSet != 1) {
 		var b bytes.Buffer
 		if RefuseRunning(db, 1, &b) { // 承認待ちの間に上限へ達していたら、承認待ちのまま残す
 			return DecideResult{}, limitErr(&b)
@@ -291,6 +294,9 @@ func runOp(db *store.DB, st tickets.StatusSet, o OpRow, stderr io.Writer) Result
 	case "stop":
 		return Stop(db, st, o.Target, a.Force == 1, o.By)
 	case "revive":
+		if a.ModelSet == 1 { // tb model-set(承認後)
+			return ModelSetRun(db, o.Target, o.Args, o.By, stderr)
+		}
 		return Revive(db, o.Target, a.Fresh == 1, a.Model, a.Prompt, o.By, stderr)
 	}
 	return Result{Code: 1, Out: "不明な操作: " + o.Op}
