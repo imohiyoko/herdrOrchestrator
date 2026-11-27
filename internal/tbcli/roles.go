@@ -6,44 +6,26 @@ import (
 	"os"
 	"regexp"
 	"strings"
-	"time"
+
+	"github.com/imohiyoko/API/port"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/agents"
-	"github.com/imohiyoko/herdrorchestrator/internal/approval"
-	"github.com/imohiyoko/herdrorchestrator/internal/kernel/config"
+	"github.com/imohiyoko/herdrorchestrator/internal/app"
+	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/herdr"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/identity"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/jv"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/transport"
-	"github.com/imohiyoko/herdrorchestrator/internal/kernel/util"
 )
 
 // 役割の配布と定義(taskboard/lib/roles.sh の role-context / role-broadcast / role-show / role-list / role-write / role-edit /
 // role-unset / role-set / role-log / roles)。
 
 var (
-	reRoleSrc  = regexp.MustCompile(`^(startup|resume|clear|compact)$`)
-	reRoleSID  = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
-	reRoleItem = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+	reRoleSrc = regexp.MustCompile(`^(startup|resume|clear|compact)$`)
+	reRoleSID = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 )
-
-// holdsRole は by が役割 role を持っているか(自分の持つ役割の定義は人だけが書き換える)。
-func holdsRole(j *approval.Judge, by, role string) bool { return j.Roles.Match(by, "@"+role) == 0 }
-
-// grantsRoleChange は役割 roles(カンマ区切り)を持つと policy の行で role:change が許されるようになるか。
-// 役割の名前では決めず、役割の無いときと比べて policy の行だけで判定する(そういう役割を配る・書き換えるのは人だけ)。
-func grantsRoleChange(j *approval.Judge, roles string) bool {
-	const probe = "role-probe.tb" // 台帳に無い名前。役割は Hint で与える
-	defer j.Roles.Forget(probe)
-	j.Roles.Hint(probe, "")
-	if _, ok := j.GrantOf(probe, "role:change", "*"); ok {
-		return false
-	}
-	j.Roles.Hint(probe, roles)
-	_, ok := j.GrantOf(probe, "role:change", "*")
-	return ok
-}
 
 // paneAgent は agent_name_by_pane(無ければ空。herdr に聞けなければ err)。
 func paneAgent(pane string) (string, error) { return identity.PaneOwnerName(pane) }
@@ -232,69 +214,32 @@ func roleWriteArgs(args []string) (name string, shared bool, err error) {
 	return name, shared, nil
 }
 
-// roleChangeCheck は agent が役割を変えてよいか。決めるのは policy の role:change の行だけ(役割の名前では決めない)。
-// target は policy の対象、cmd は人に頼むときのコマンド。
-func roleChangeCheck(db *store.DB, j *approval.Judge, by, target, cmd string, stderr io.Writer) error {
-	value, rule := "allow", ""
-	if r, ok := j.GrantOf(by, "role:change", target); ok {
-		rule = r
-	} else {
-		value, rule = j.Of("role:change", by)
+// rolePrincipal は役割を書く呼び手(requester と同じく、pane の中なら herdr から引いた agent、外なら人)。
+func rolePrincipal() (port.Principal, error) {
+	by, err := requester()
+	if err != nil {
+		return port.Principal{}, err
 	}
-	if value == "deny" {
-		return die("role:change は実行できません(deny。%s)(%s)", rule, by)
+	if by == "human" {
+		return app.Human(), nil
 	}
-	if value != "allow" {
-		fmt.Fprintf(stderr, "tb: [role.change.needs-approval] %s\n", config.Msg(db.DB, db.Session, "role.change.needs-approval",
-			"role:change は人の承認が要ります({rule})。人が自分の端末で実行してください: {command}", "rule="+rule, "command="+cmd))
-		return &exit{exitAsk, ""}
-	}
-	return nil
+	return app.Agent(by), nil
 }
 
-// rolePut は role_put: 役割の本文を DB に書く(人か、policy で role:change を許された agent)。
+// rolePut は role_put: 役割の本文を書く(agent.role.write。人か、policy で role:change を許された agent)。
 func rolePut(db *store.DB, name, body, how string, shared bool, w, stderr io.Writer) error {
-	key, _ := agents.KeyOf(name)
-	by, err := requester()
+	by, err := rolePrincipal()
 	if err != nil {
 		return err
 	}
-	j := approval.NewJudge(db.DB, db.Session)
-	if by != "human" {
-		if holdsRole(j, by, name) {
-			return die("自分の持つ役割(%s)を書き換えられるのは人だけです", name)
-		}
-		if name != "@map" && grantsRoleChange(j, name) {
-			return die("policy で role:change を許される役割(%s)を書き換えられるのは人だけです", name)
-		}
-		if name == "@map" {
-			for _, line := range strings.Split(body, "\n") {
-				k, x, _ := strings.Cut(line, "=")
-				x = util.ReadRest(x, "=")
-				if pat := config.Trim(cutHash(k)); pat != "" && util.Glob(pat, by) {
-					return die("自分に当たる対応(%s)は書けません(自分のロールは変えられません)", pat)
-				}
-				if x = strings.ReplaceAll(config.Trim(cutHash(x)), " ", ""); x != "" && grantsRoleChange(j, x) {
-					return die("policy で role:change を許される役割(%s)を付ける対応を書けるのは人だけです", x)
-				}
-			}
-		}
-		sh := ""
-		if shared {
-			sh = " --shared"
-		}
-		if err := roleChangeCheck(db, j, by, name, "tb role-write "+name+sh+" < 本文", stderr); err != nil {
-			return err
-		}
-	}
-	if blank(body) {
-		return die("本文が空です(消すときは人が tb role-unset %s で行を消す)", name)
-	}
-	if err := config.DBPut(db.DB, db.Session, key, body, how, shared, by); err != nil {
+	var r agent.RoleResult
+	if err := callAppEnv(appEnv(db, stderr), by, "agent."+strings.ReplaceAll(how, "-", "."), agent.RoleWriteReq{Name: name, Body: body, Shared: shared}, &r); err != nil {
 		return err
 	}
-	_, src, _ := agents.NewRoles(db.DB, db.Session).LookupSrc(name)
-	fmt.Fprintf(w, "%s: %s。動いている agent に配るには: tb role-broadcast\n", name, src)
+	if r.Pending != nil {
+		return pendingExit(w, r.Pending)
+	}
+	fmt.Fprintf(w, "%s: %s。動いている agent に配るには: tb role-broadcast\n", name, r.Src)
 	return nil
 }
 
@@ -352,12 +297,19 @@ func cmdRoleUnset(args []string, w, stderr io.Writer) error {
 	if err := requireHuman("tb role-unset"); err != nil {
 		return err
 	}
-	key, _ := agents.KeyOf(name)
-	if err := config.Unset(db.DB, db.Session, key, shared); err != nil {
+	by, err := rolePrincipal()
+	if err != nil {
 		return err
 	}
-	if _, src, ok := agents.NewRoles(db.DB, db.Session).LookupSrc(name); ok {
-		fmt.Fprintf(w, "%s: %s\n", name, src)
+	var r agent.RoleResult
+	if err := callAppEnv(appEnv(db, stderr), by, "agent.role.unset", agent.RoleUnsetReq{Name: name, Shared: shared}, &r); err != nil {
+		return err
+	}
+	if r.Pending != nil {
+		return pendingExit(w, r.Pending)
+	}
+	if r.Found {
+		fmt.Fprintf(w, "%s: %s\n", name, r.Src)
 	} else {
 		fmt.Fprintf(w, "%s: なし\n", name)
 	}
@@ -385,95 +337,31 @@ func cmdRoleSet(args []string, w, stderr io.Writer) error {
 	if !agents.NameRE.MatchString(name) {
 		return usage("agent 名は英小文字で始まり、英小文字・数字・_・- の 32 字以内: %s", name)
 	}
-	xs := strings.Split(role, ",") // IFS=, read -ra: 末尾の空の欄は数えない
-	if xs[len(xs)-1] == "" {
-		xs = xs[:len(xs)-1]
-	}
-	if len(xs) < 1 || len(xs) > 4 {
-		return usage("ロールはカンマ区切りで 1〜4 個: %s", role)
+	if _, err := agent.RoleItems(role); err != nil {
+		return appErr(err)
 	}
 	db, _, err := openCmd(stderr)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	j := approval.NewJudge(db.DB, db.Session)
-	for _, x := range xs {
-		if !reRoleItem.MatchString(x) || x == "README" || !j.Roles.Exists(x) {
-			return usage("ロールは定義のある役割名(tb role-list。カンマ区切りで複数可): %s", x)
-		}
-	}
-	by, err := requester()
+	by, err := rolePrincipal()
 	if err != nil {
 		return err
 	}
-	if by != "human" {
-		if by == name {
-			return die("自分のロールは変えられません")
-		}
-		if grantsRoleChange(j, strings.Join(xs, ",")) {
-			return die("policy で role:change を許される役割(%s)を付けられるのは人だけです", strings.Join(xs, ","))
-		}
-		if err := roleChangeCheck(db, j, by, name, "tb role-set "+name+" "+role, stderr); err != nil {
-			return err
-		}
+	var r agent.RoleSetResult
+	if err := callAppEnv(appEnv(db, stderr), by, "agent.role.set", agent.RoleSetReq{Name: name, Role: role, Reason: why}, &r); err != nil {
+		return err
 	}
-	_ = agents.Sync(db.DB, db.Session)
-	var one int
-	if db.QueryRow(`SELECT 1 FROM agents WHERE name=?`, name).Scan(&one) != nil {
-		if msg, ok := otherSession(db, name); ok {
-			return die("%s(ロールはセッション固有)", msg)
-		}
-		return die("台帳に無い agent です: %s(tb agents で確かめる)", name)
+	if r.Pending != nil {
+		return pendingExit(w, r.Pending)
 	}
-	r := agents.NewRoles(db.DB, db.Session)
-	if _, src, ok := r.LookupSrc(name); ok {
-		return die("役割 %s(%s)があるため、台帳のロールは効きません(その役割の定義を直す)", name, src)
-	}
-	// 旧ロールは読んだ台帳の値から決め、変更はその値が変わっていないときだけ行う
-	var reg string
-	if db.QueryRow(`SELECT COALESCE(role,'') FROM agents WHERE name=?`, name).Scan(&reg) != nil {
-		return die("台帳を読めません")
-	}
-	old := strings.Join(r.FilesForReg(name, reg), ",")
-	n, err := roleSetTx(db, name, old, role, by, util.Oneline(why, 300), reg)
-	if err != nil {
-		return die("ロールを変えられませんでした(DB)")
-	}
-	if n != 1 {
-		return die("同時に別のロール変更が入りました。もう一度実行してください")
-	}
-	nw := strings.Join(agents.NewRoles(db.DB, db.Session).FilesForLoose(name), ",")
+	old := r.Old
 	if old == "" {
 		old = "-"
 	}
-	fmt.Fprintf(w, "%s role %s -> %s (by %s)。本人に配るには: tb role-broadcast %s\n", name, old, nw, by, name)
+	fmt.Fprintf(w, "%s role %s -> %s (by %s)。本人に配るには: tb role-broadcast %s\n", name, old, r.New, r.By, name)
 	return nil
-}
-
-func roleSetTx(db *store.DB, name, old, role, by, why, reg string) (int64, error) {
-	tx, err := db.Begin()
-	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback()
-	ts := time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	if _, err := tx.Exec(`INSERT INTO main.role_changes (agent, old_role, new_role, changed_by, reason, created_at, herdr_session)
-    SELECT ?, NULLIF(?,''), ?, ?, NULLIF(?,''), ?, ?
-    WHERE (SELECT COALESCE(role,'') FROM agents WHERE name=?)=?`, name, old, role, by, why, ts, db.Session, name, reg); err != nil {
-		return 0, err
-	}
-	res, err := tx.Exec(`UPDATE main.agents SET role=?, updated_at=? WHERE herdr_session=? AND name=? AND COALESCE(role,'')=?`, role, ts, db.Session, name, reg)
-	if err != nil {
-		return 0, err
-	}
-	n, _ := res.RowsAffected()
-	return n, tx.Commit()
-}
-
-// otherSession は other_session: 名前が別の herdr セッションの agent なら、その旨の文面。
-func otherSession(db *store.DB, name string) (string, bool) {
-	return agents.OtherSession(db.DB, db.Session, name)
 }
 
 // cmdRoleLog は tb role-log [--json]: ロール変更の記録(このセッションのもの)。
