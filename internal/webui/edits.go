@@ -20,7 +20,7 @@ import (
 // edits.go は Web UI からの編集: チケットの状態(/task-status)、チケットの削除(/task-rm)、状態の定義(/statuses)、スプリント(/sprint-op)、
 // 設定 policy(/policy)。ジョブの定義(/jobs/<job> の action=conf)は jobspage.go。
 // 書き込みはどれも tb かアプリケーション API が行い(tasks.db にも config にも直接書かない)、検査と認可も同じものを通る。
-// チケットの状態・削除・スプリントは API(ticket.move / ticket.rm / ticket.sprint.*)を同じプロセスで人として呼ぶ(callEdit)。
+// チケットの状態・削除・スプリント・状態の定義は API(ticket.move / ticket.rm / ticket.sprint.* / ticket.status.*)を同じプロセスで人として呼ぶ(callEdit)。
 // 残りは tb を人の操作として動かす(HERDR_PANE_ID を外す。runTB)。policy はさらにログインのパスワードを求める。
 
 var editPaths = map[string]bool{"/task-status": true, "/statuses": true, "/sprint-op": true, "/policy": true, "/approval-op": true, "/task-rm": true}
@@ -363,30 +363,22 @@ func (s *Server) postStatuses(q *rq, f form) (string, string, string, func(pageC
 		if strings.ContainsAny(desc, "\n#") || utf8.RuneCountInString(desc) > 200 {
 			return "/statuses", "", "説明は 200 文字までで、改行と # は使えません", render
 		}
-		args := []string{"ticket", "status", "add", name, cat}
-		if desc != "" {
-			args = append(args, "-m", desc)
+		if after != "" && !isDefinedStatus(q.data(), after) {
+			return "/statuses", "", "位置の状態がありません", render
 		}
-		if after != "" {
-			if !isDefinedStatus(q.data(), after) {
-				return "/statuses", "", "位置の状態がありません", render
-			}
-			args = append(args, "--after", after)
-		}
-		if rc, out := runTB(q.name, 15*time.Second, args...); rc != 0 {
-			return "/statuses", "", tbFail(rc, out), render
+		var res ticket.StatusDefResult
+		if msg := callEdit(q.name, "ticket.status.add", ticket.StatusAddReq{Name: name, Category: cat, Desc: desc, After: after}, &res, &res.Pending); msg != "" {
+			return "/statuses", "", msg, render
 		}
 		return "/statuses", "status-add", "", render
 	case "rm":
-		args := []string{"ticket", "status", "rm", name}
-		if to := f["to"]; to != "" {
-			if !isDefinedStatus(q.data(), to) || to == name {
-				return "/statuses", "", "移し先の状態が不正です", render
-			}
-			args = append(args, "--to", to)
+		to := f["to"]
+		if to != "" && (!isDefinedStatus(q.data(), to) || to == name) {
+			return "/statuses", "", "移し先の状態が不正です", render
 		}
-		if rc, out := runTB(q.name, 15*time.Second, args...); rc != 0 {
-			return "/statuses", "", tbFail(rc, out), render
+		var res ticket.StatusDefResult
+		if msg := callEdit(q.name, "ticket.status.rm", ticket.StatusRmReq{Name: name, To: to}, &res, &res.Pending); msg != "" {
+			return "/statuses", "", msg, render
 		}
 		return "/statuses", "status-rm", "", render
 	}

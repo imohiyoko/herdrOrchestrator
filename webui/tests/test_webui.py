@@ -1723,7 +1723,7 @@ check("状態の定義: 足すと設定 statuses に書く(tb ticket status add)
 check("状態の定義: 足した状態が一覧に出る(説明はエスケープ)", "検証 &lt;b&gt;中&lt;/b&gt;" in ec.get("/statuses?done=status-add")[2]
       and "状態を足しました" in ec.get("/statuses?done=status-add")[2])
 r = ec.raw("POST", "/statuses", {"action": "add", "name": "qa", "cat": "review", "csrf": ec.csrf("/statuses")})
-check("状態の定義: 同じ名前は tb が断り、理由を見せる", r[0] == 400 and "tb が断りました" in r[2], r[2][-300:])
+check("状態の定義: 同じ名前は API が断り、理由を見せる", r[0] == 400 and "断りました: 状態" in r[2], r[2][-300:])
 
 # ---- チケットの状態(/task-status。tb ticket move)
 tp = ec.get("/tasks/T-pj-001")

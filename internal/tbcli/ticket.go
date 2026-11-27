@@ -6,7 +6,6 @@ package tbcli
 import (
 	"fmt"
 	"io"
-	"os"
 	"slices"
 	"strings"
 
@@ -128,17 +127,6 @@ func ticketMove(args []string, w, stderr io.Writer) error {
 	return nil
 }
 
-// moveDirect は ticket status rm が、外す状態のチケットを移し先へ動かす(人だけのコマンドの中。門はコマンドの入口で済んでいる)。
-func moveDirect(db *store.DB, st tickets.StatusSet, id, to string) error {
-	cur, changed, err := tickets.Move(db, st, id, to, "", false, nil, now())
-	if err != nil || !changed {
-		return ticketErr(err)
-	}
-	statusEnteredHook(db, st, id, to, cur)
-	rulesHook(db, st)
-	return nil
-}
-
 // ticketStatus は ticket_status。
 func ticketStatus(args []string, w, stderr io.Writer) error {
 	sub := "list"
@@ -174,38 +162,7 @@ func statusDescs(body string) map[string]string {
 	return out
 }
 
-// statusBody は ticket_status_body: 今の本文(設定が無ければ組み込みの 6 つを書式どおりに)。末尾の改行は付けない。
-func statusBody(db *store.DB) string {
-	if body, _, ok := config.Lookup(db.DB, db.Session, "statuses"); ok {
-		return strings.TrimRight(body, "\n")
-	}
-	var b strings.Builder
-	for i, k := range tickets.Statuses {
-		if i > 0 {
-			b.WriteByte('\n')
-		}
-		fmt.Fprintf(&b, "%-12s %s", k, tickets.BuiltinCat(k))
-	}
-	return b.String()
-}
-
-func statusSource(db *store.DB) string {
-	_, src, _ := config.Lookup(db.DB, db.Session, "statuses")
-	return src
-}
-
-// statusWrite は ticket_status_write: 今読んでいる行(このセッション / 共通 / 明示したファイル)へ書く。設定が無ければ共通の行。
-func statusWrite(db *store.DB, st tickets.StatusSet, body, how string, stderr io.Writer) error {
-	if msg := tickets.ValidateStatuses(body); msg != "" {
-		fmt.Fprint(stderr, msg)
-		return die("statuses の本文に問題があるため書きませんでした")
-	}
-	info, _ := config.Info("statuses")
-	if f := os.Getenv(info.Env); f != "" {
-		return writeConfigFile(f, body)
-	}
-	return config.DBPut(db.DB, db.Session, "statuses", body, how, statusSource(db) != "db:"+db.Session, "")
-}
+func statusSource(db *store.DB) string { return tickets.StatusSource(db) }
 
 func ticketStatusList(args []string, w, stderr io.Writer) error {
 	db, st, err := openCmd(stderr)
@@ -260,17 +217,8 @@ func ticketStatusList(args []string, w, stderr io.Writer) error {
 	return nil
 }
 
-// statusLineName は awk の split($0 から # 以降を除いたもの, f, " ") の f[1]。
-func statusLineName(line string) string {
-	f := strings.Fields(config.StripComment(line))
-	if len(f) == 0 {
-		return ""
-	}
-	return f[0]
-}
-
 func ticketStatusAdd(args []string, w, stderr io.Writer) error {
-	db, st, err := openCmd(stderr)
+	db, _, err := openCmd(stderr)
 	if err != nil {
 		return err
 	}
@@ -298,50 +246,19 @@ func ticketStatusAdd(args []string, w, stderr io.Writer) error {
 		*p = v
 		i++
 	}
-	if err := requireHuman("tb ticket status add"); err != nil {
+	var res ticket.StatusDefResult
+	if err := callAppWarn(db, "tb ticket status add", stderr, "ticket.status.add", ticket.StatusAddReq{Name: name, Category: cat, Desc: desc, After: after}, &res); err != nil {
 		return err
 	}
-	if !slices.Contains(tickets.Categories, cat) {
-		return usage("ticket status add: 分類は %s のどれか: %s", strings.Join(tickets.Categories, " "), cat)
+	if res.Pending != nil {
+		return pendingExit(w, res.Pending)
 	}
-	if strings.ContainsAny(desc, "\n#") {
-		return usage("ticket status add: 説明に改行と # は使えません")
-	}
-	if slices.Contains(st.Names, name) {
-		return die("状態 %s はすでにあります(分類 %s)", name, st.Cat(name))
-	}
-	if after != "" && !slices.Contains(st.Names, after) {
-		return usage("ticket status add: --after の状態がありません: %s", after)
-	}
-	line := name + " " + cat
-	if desc != "" {
-		line += " = " + desc
-	}
-	cur := statusBody(db)
-	var body string
-	if after != "" { // その状態の行の直後に入れる(書いた順が選択肢と列の順)
-		var out []string
-		done := false
-		for _, l := range strings.Split(cur, "\n") {
-			out = append(out, l)
-			if !done && statusLineName(l) == after {
-				out = append(out, line)
-				done = true
-			}
-		}
-		body = strings.TrimRight(strings.Join(out, "\n"), "\n")
-	} else {
-		body = cur + "\n" + line
-	}
-	if err := statusWrite(db, st, body, "ticket status add "+name, stderr); err != nil {
-		return err
-	}
-	fmt.Fprintf(w, "状態 %s を足しました(分類 %s。設定 statuses: %s)\n", name, cat, statusSource(db))
+	fmt.Fprintf(w, "状態 %s を足しました(分類 %s。設定 statuses: %s)\n", name, cat, res.Source)
 	return nil
 }
 
 func ticketStatusRm(args []string, w, stderr io.Writer) error {
-	db, st, err := openWrite(stderr)
+	db, _, err := openWrite(stderr)
 	if err != nil {
 		return err
 	}
@@ -361,68 +278,16 @@ func ticketStatusRm(args []string, w, stderr io.Writer) error {
 		to = v
 		i++
 	}
-	if err := requireHuman("tb ticket status rm"); err != nil {
+	var res ticket.StatusDefResult
+	if err := callAppWarn(db, "tb ticket status rm", stderr, "ticket.status.rm", ticket.StatusRmReq{Name: name, To: to}, &res); err != nil {
 		return err
 	}
-	if !slices.Contains(st.Names, name) {
-		return die("状態 %s は設定にありません(tb ticket status で一覧)", name)
+	if res.Pending != nil {
+		return pendingExit(w, res.Pending)
 	}
-	if to != "" && to == name {
-		return usage("ticket status rm: --to に外す状態そのものは指定できません")
+	if res.HadTickets {
+		fmt.Fprintf(w, "状態 %s のチケット %d 件を %s へ移しました\n", name, res.Moved, to)
 	}
-	if to != "" {
-		if err := oneOf(st.Names, to, "status"); err != nil {
-			return err
-		}
-	}
-	var n int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE status=?`, name).Scan(&n); err != nil {
-		return err
-	}
-	// アラート・提案のチケットは DB のトリガーが組み込みの名前で書くので、組み込みの名前を外してもチケットは移さない
-	if n > 0 && to == "" {
-		ex := st.Main(st.Cat(name))
-		if ex == name {
-			ex = st.Main("todo")
-		}
-		return die("状態 %s のチケットが %d 件あります。--to <状態> で移してから外します(例: tb ticket status rm %s --to %s)", name, n, name, ex)
-	}
-	var keep []string
-	for _, l := range strings.Split(statusBody(db), "\n") {
-		if statusLineName(l) != name {
-			keep = append(keep, l)
-		}
-	}
-	body := strings.TrimRight(strings.Join(keep, "\n"), "\n")
-	if msg := tickets.ValidateStatuses(body); msg != "" {
-		// bash は set -e で statuses_parse の失敗のところで終わるので、続く die の文は出ない(同じにする。bash を外したら文を出す)
-		fmt.Fprint(stderr, msg)
-		return &exit{exitErr, ""}
-	}
-	if n > 0 {
-		var ids []string
-		if err := qrows(db.DB, `SELECT id FROM tasks WHERE status=? ORDER BY id`, []any{name}, func(_ []string, v []any) error {
-			ids = append(ids, tickets.Text(v[0]))
-			return nil
-		}); err != nil {
-			return err
-		}
-		moved := 0
-		for _, id := range ids {
-			var x int
-			if db.QueryRow(`SELECT 1 FROM alert_details WHERE task_id=?1 UNION ALL SELECT 1 FROM proposal_details WHERE task_id=?1 LIMIT 1`, id).Scan(&x) == nil {
-				continue
-			}
-			if err := moveDirect(db, st, id, to); err != nil {
-				return err
-			}
-			moved++
-		}
-		fmt.Fprintf(w, "状態 %s のチケット %d 件を %s へ移しました\n", name, moved, to)
-	}
-	if err := statusWrite(db, st, body, "ticket status rm "+name, stderr); err != nil {
-		return err
-	}
-	fmt.Fprintf(w, "状態 %s を外しました(設定 statuses: %s)\n", name, statusSource(db))
+	fmt.Fprintf(w, "状態 %s を外しました(設定 statuses: %s)\n", name, res.Source)
 	return nil
 }
