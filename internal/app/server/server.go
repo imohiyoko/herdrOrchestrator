@@ -17,6 +17,7 @@ import (
 	"github.com/imohiyoko/herdrorchestrator/internal/app/approval"
 	appconfig "github.com/imohiyoko/herdrorchestrator/internal/app/config"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/job"
+	appmessage "github.com/imohiyoko/herdrorchestrator/internal/app/message"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/ticket"
 )
 
@@ -28,6 +29,7 @@ func Ops(env *app.Env) []app.Op {
 	ops = append(ops, job.Ops(env)...)
 	ops = append(ops, approval.Ops(env)...)
 	ops = append(ops, appconfig.Ops(env)...)
+	ops = append(ops, appmessage.Ops(env)...)
 	return ops
 }
 
