@@ -2,8 +2,12 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/imohiyoko/API/define"
@@ -144,6 +148,65 @@ func TestReviveRestartGate(t *testing.T) {
 		t.Errorf("人の restart は門を通る: %v", e)
 	}
 	want := []string{"pending w1", "rejected w1", "rejected w1", "failed human"}
+	if got := opsRows(t, env); !slices.Equal(got, want) {
+		t.Errorf("agent_ops: %q, want %q", got, want)
+	}
+}
+
+// agent.new の門: 入力の検査は tb と同じ文言、policy の @<役割> は要求された役割で比べる、
+// --killable は agent:flag を許された agent だけ。承認待ちの引数は tb agent-new と同じ形。
+func TestAgentNewGate(t *testing.T) {
+	t.Setenv("HERDR_BIN", "/nonexistent/herdr")
+	roles := t.TempDir()
+	if err := os.WriteFile(filepath.Join(roles, "reviewer.md"), []byte("review\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TB_ROLES", roles)
+	env, _ := fixture(t, "w1 agent:new @reviewer = allow\nw1 agent:new w9 = deny\n")
+	cwd := t.TempDir()
+	for _, c := range []struct {
+		in   agent.NewReq
+		code define.Code
+		msg  string
+	}{
+		{agent.NewReq{Name: "Bad"}, define.CodeInvalidArgument, "agent 名は英小文字で始まり、英小文字・数字・_・- の 32 字以内(human は予約名): Bad"},
+		{agent.NewReq{Name: "w2", Kind: "x"}, define.CodeInvalidArgument, "agent-new: --kind は " + strings.Join(agent.KindAll, " ") + " のどれか: x"},
+		{agent.NewReq{Name: "w2", Cwd: "rel"}, define.CodeInvalidArgument, "agent-new: --cwd は絶対パスにしてください: rel"},
+		{agent.NewReq{Name: "w2", Role: "nope"}, define.CodeInvalidArgument, "agent-new: --role は定義のある役割名(tb role-list。カンマ区切りで複数可): nope"},
+		{agent.NewReq{Name: "w2", Role: "a,b,c,d,e"}, define.CodeInvalidArgument, "agent-new: --role はカンマ区切りで 1〜4 個: a,b,c,d,e"},
+		{agent.NewReq{Name: "reviewer", Role: "reviewer,reviewer"}, define.CodeInvalidArgument, "agent-new: 役割 reviewer の定義があるため、この名前の役割は reviewer に固定です(--role reviewer,reviewer は効きません)"},
+		{agent.NewReq{Name: "w2", Killable: "maybe"}, define.CodeInvalidArgument, "agent-new: --killable は yes|no"},
+		{agent.NewReq{Name: "w2", Killable: "yes"}, define.CodeFailedPrecondition, "agent-new --killable を付けられるのは人と、policy で agent:flag を許された agent だけです(w1)"},
+		{agent.NewReq{Name: "w9", Cwd: cwd}, define.CodePermissionDenied, ""},
+	} {
+		_, e := lifeCall(t, env, app.Agent("w1"), "agent.new", c.in)
+		if e == nil || e.Code != c.code || (c.msg != "" && e.Message != c.msg) {
+			t.Errorf("%+v: %v", c.in, e)
+		}
+	}
+	// 役割の付いた依頼は @reviewer の allow で門を通る(herdr が無いので起動は 11 で失敗し、台帳から消える)
+	if _, e := lifeCall(t, env, app.Agent("w1"), "agent.new", agent.NewReq{Name: "w3", Cwd: cwd, Role: "reviewer"}); e == nil || !slices.Contains(e.Reasons, agent.ReasonHerdrUnavailable) {
+		t.Errorf("@reviewer の allow: %v", e)
+	}
+	res, e := lifeCall(t, env, app.Agent("w1"), "agent.new", agent.NewReq{Name: "w4", Cwd: cwd, Prompt: "やって <b>"})
+	if e != nil || res.Pending == nil || res.Pending.Route != "L" {
+		t.Fatalf("ask: %+v %v", res, e)
+	}
+	db, done, _ := env.DB()
+	var args string
+	var n int
+	db.QueryRow(`SELECT args FROM main.agent_ops WHERE status='pending'`).Scan(&args)
+	db.QueryRow(`SELECT count(*) FROM main.agents`).Scan(&n)
+	done()
+	var got struct{ Cwd, Prompt, Killable string }
+	if err := json.Unmarshal([]byte(args), &got); err != nil || (got.Cwd != cwd && got.Cwd != agent.PhysDir(cwd)) || got.Prompt != "やって <b>" || got.Killable != "unknown" ||
+		!strings.HasPrefix(args, `{"cwd":`) || !strings.HasSuffix(args, `"prompt":"やって <b>","killable":"unknown"}`) {
+		t.Errorf("承認後の実行に使う引数: %s", args)
+	}
+	if n != 0 {
+		t.Errorf("起動に失敗した agent が台帳に残る: %d", n)
+	}
+	want := []string{"rejected w1", "failed w1", "pending w1"}
 	if got := opsRows(t, env); !slices.Equal(got, want) {
 		t.Errorf("agent_ops: %q, want %q", got, want)
 	}

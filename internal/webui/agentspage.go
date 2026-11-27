@@ -2,16 +2,18 @@ package webui
 
 import (
 	"context"
-
-	"github.com/imohiyoko/herdrorchestrator/internal/app"
-	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
-
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/imohiyoko/API/define"
+
+	"github.com/imohiyoko/herdrorchestrator/internal/app"
+	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
 )
 
 // agentspage.go は agent の画面(/agents、/agents/<key>、/agent-graph、/agent-new)と、
@@ -490,6 +492,10 @@ func agentNew(sess string, form map[string]string) (string, string) {
 	case killable != "unknown" && killable != "yes" && killable != "no":
 		return "refused", "止めてよいかの指定が不正です"
 	}
+	if sess == SessionName() {
+		return agentNewApp(sess, agent.NewReq{Name: name, Cwd: agent.NormalizeCwd(cwd), Model: model, Role: role, Prompt: prompt, Killable: killable})
+	}
+	// ほかのセッションは、herdr の呼び出し先をプロセスの環境で決めるため tb の子プロセスで行う(agentOp と同じ)
 	args := []string{"agent-new", name}
 	for _, x := range [][2]string{{"--cwd", cwd}, {"--model", model}, {"--role", role}, {"--prompt", prompt}} {
 		if x[1] != "" {
@@ -511,6 +517,28 @@ func agentNew(sess string, form map[string]string) (string, string) {
 			msg = rest
 			break
 		}
+	}
+	return st, runesN(msg, 300)
+}
+
+// agentNewApp は agent.new を同じプロセスで人として呼ぶ(tb agent-new と同じ操作)。(結果, エラー文)。
+func agentNewApp(sess string, in agent.NewReq) (string, string) {
+	ctx, cancel := context.WithTimeout(context.Background(), spawnTimeout)
+	defer cancel()
+	c, err := appClient(sess)
+	if err != nil {
+		return "error", "作成できませんでした"
+	}
+	var res agent.LifeResult
+	err = c.Call(ctx, app.Human(), "agent.new", in, &res)
+	st := appState(err, res.Pending)
+	if st == "done" || st == "pending" {
+		return st, ""
+	}
+	msg := "作成できませんでした"
+	var e *define.Error
+	if errors.As(err, &e) && e.Message != "" {
+		msg = e.Message
 	}
 	return st, runesN(msg, 300)
 }

@@ -63,6 +63,12 @@ func (r Result) Err() error {
 // allow は通す、deny は却下の行を残して拒否、ask は承認待ち(agent_ops の pending の行、L-<n>)に積む。
 // args は承認後の実行に使う引数(agent_ops.args の JSON)。pre は判定の前の確かめ(--force は人だけ、など)。
 func opGate[In any](op string, target func(In) string, args func(In) string, pre func(who string, in In) error) app.Gate {
+	return opGateRole(op, target, args, pre, nil)
+}
+
+// opGateRole は opGate に、policy の @<役割> を比べる役割(role。空なら台帳の役割)を足したもの。
+// 作成(new)は、まだ台帳に無い agent を要求された役割(--role)で判定する。
+func opGateRole[In any](op string, target func(In) string, args func(In) string, pre func(who string, in In) error, role func(In) string) app.Gate {
 	return func(_ context.Context, env *app.Env, who string, v any) app.Decision {
 		in := v.(In)
 		if pre != nil {
@@ -79,7 +85,13 @@ func opGate[In any](op string, target func(In) string, args func(In) string, pre
 		}
 		defer done()
 		t := target(in)
-		val, rule := approval.NewJudge(db.DB, db.Session).Of("agent:"+op+":"+t, who)
+		j := approval.NewJudge(db.DB, db.Session)
+		if role != nil {
+			if r := role(in); r != "" {
+				j.Roles.Hint(t, r)
+			}
+		}
+		val, rule := j.Of("agent:"+op+":"+t, who)
 		switch val {
 		case "allow":
 			return app.Decision{}
@@ -120,7 +132,7 @@ func by(ctx context.Context) string {
 
 // Ops は agent の操作。
 func Ops(env *app.Env) []app.Op {
-	return []app.Op{stopOp(env), reviveOp(env), restartOp(env)}
+	return []app.Op{newOp(env), stopOp(env), reviveOp(env), restartOp(env)}
 }
 
 // validName は agent 名の検査(tb の validAgentName と同じ文言)。
