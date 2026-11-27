@@ -14,7 +14,7 @@ import (
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 )
 
-// PeekReq は agent.peek の入力(tb peek)。Lines は 1〜200(0 なら 40)。
+// PeekReq は agent.peek の入力(tb peek)。Lines は 1〜200(0 か省略なら 40)。
 type PeekReq struct {
 	Name  string `api:"name"`
 	Lines int    `api:"lines,optional"`
@@ -29,6 +29,9 @@ type PeekResult struct {
 func ValidPeek(in PeekReq) error {
 	if in.Lines < 0 || in.Lines > 200 {
 		return define.Errorf(define.CodeInvalidArgument, "peek: --lines は 1〜200")
+	}
+	if in.Name == "human" {
+		return define.Errorf(define.CodeInvalidArgument, "agent 名 human は予約名です")
 	}
 	if !agents.NameRE.MatchString(in.Name) {
 		return define.Errorf(define.CodeInvalidArgument, "agent 名に使えない文字があります: %s", in.Name)
