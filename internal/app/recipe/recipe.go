@@ -150,17 +150,18 @@ func set(env *app.Env, db *store.DB, who string, in SetReq) (SetResult, error) {
 	if why != "" {
 		return SetResult{}, define.Errorf(define.CodeInvalidArgument, "recipe-set: %s", strings.ReplaceAll(why, "\n", " / "))
 	}
-	var old string
-	exists := db.QueryRow(`SELECT body FROM recipes WHERE name=?`, in.Name).Scan(&old) == nil
-	how := "add"
-	var oldv any
-	if exists {
-		how, oldv = "update", old
-	}
 	ts := env.NowString()
 	tx, err := db.Begin()
 	if err != nil {
 		return SetResult{}, ierr(err)
+	}
+	// 前の本文は同じトランザクションで読む(同時に足しても履歴の add / update と old_body が上書きした行と合う)
+	var old string
+	exists := tx.QueryRow(`SELECT body FROM recipes WHERE name=?`, in.Name).Scan(&old) == nil
+	how := "add"
+	var oldv any
+	if exists {
+		how, oldv = "update", old
 	}
 	_, err = tx.Exec(`INSERT INTO main.recipes (herdr_session, name, body, risk, steps, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(herdr_session, name) DO UPDATE SET body=excluded.body, risk=excluded.risk, steps=excluded.steps,
