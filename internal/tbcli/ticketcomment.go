@@ -6,13 +6,11 @@ package tbcli
 import (
 	"github.com/imohiyoko/herdrorchestrator/internal/app/ticket"
 
-	"database/sql"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"regexp"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -289,7 +287,7 @@ func cmdReopen(args []string, w, stderr io.Writer) error {
 
 // cmdReport は tb report <id> | report C-<n>: 完了の報告を指揮役へ届ける(C-<n> は未配送コメントの再送)。
 func cmdReport(args []string, w, stderr io.Writer) error {
-	db, st, err := openWrite(stderr)
+	db, _, err := openWrite(stderr)
 	if err != nil {
 		return err
 	}
@@ -297,47 +295,22 @@ func cmdReport(args []string, w, stderr io.Writer) error {
 	if len(args) != 1 {
 		return usage("report <id>")
 	}
-	if reCRef.MatchString(args[0]) {
-		return deliverComment(db, w, stderr, strings.TrimPrefix(args[0], "C-"))
-	}
-	id := args[0]
-	if err := needID(id); err != nil {
+	var r ticket.ReportResult
+	if err := callAppNoHerdr(db, "tb report", stderr, "ticket.report", ticket.ReportReq{Ref: args[0]}, &r); err != nil {
 		return err
 	}
-	var status, project string
-	var reported sql.NullString
-	err = db.QueryRow(`SELECT status, project, reported_at FROM tasks WHERE id=?`, id).Scan(&status, &project, &reported)
-	if err == sql.ErrNoRows {
-		return die("タスクが見つかりません: %s", id)
+	switch {
+	case r.Reported != "":
+		fmt.Fprintf(w, "%s は報告済みです(%s)\n", r.ID, r.Reported)
+	case r.Code != 0:
+		return &exit{r.Code, ""}
+	case r.ID == "" && r.Already != "": // C-<n> の再送
+		fmt.Fprintf(w, "%s は配送済みです(%s)\n", r.Comment, r.Already)
+	case r.ID == "":
+		fmt.Fprintf(w, "%s delivered to %s\n", r.Comment, r.Target)
+	default:
+		fmt.Fprintf(w, "%s reported to %s (%s)\n", r.ID, r.Target, r.Comment)
 	}
-	if err != nil {
-		return err
-	}
-	if !st.Is(status, "done") {
-		return die("done ではないタスクは report できません(%s): %s", status, id)
-	}
-	if reported.String != "" {
-		fmt.Fprintf(w, "%s は報告済みです(%s)\n", id, reported.String)
-		return nil
-	}
-	target := message.TargetFor(db.DB, db.Session, project)
-	// 完了の報告も報告コメント(kind done の C-<n>)として届ける。未配送の done コメントがあればそれを送り直す
-	var cid int64
-	err = db.QueryRow(`SELECT id FROM comments WHERE task_id=? AND kind='done' AND delivered_at IS NULL ORDER BY id LIMIT 1`, id).Scan(&cid)
-	if err == sql.ErrNoRows {
-		r, err := db.Exec(`INSERT INTO main.comments (herdr_session, task_id, kind, text, deliverables, from_name, from_pane, from_session, created_at)
-			SELECT ?, id, 'done', COALESCE(summary,''), deliverables, COALESCE(owner_agent,'-'), '-', COALESCE(session_id,'-'), ? FROM tasks WHERE id=?`, db.Session, now(), id)
-		if err != nil {
-			return err
-		}
-		cid, _ = r.LastInsertId()
-	} else if err != nil {
-		return err
-	}
-	if err := deliverComment(db, io.Discard, stderr, strconv.FormatInt(cid, 10)); err != nil {
-		return err
-	}
-	fmt.Fprintf(w, "%s reported to %s (C-%d)\n", id, target, cid)
 	return nil
 }
 

@@ -318,7 +318,10 @@ func inboxRead(db *store.DB, args []string, w, stderr io.Writer) error {
 	if cols == nil {
 		return die("inbox に見つかりません: I-%s", num)
 	}
-	if _, err := db.Exec(`UPDATE main.inbox SET read_at=? WHERE herdr_session=? AND id=? AND recipient=? AND read_at IS NULL`, nowTS(), db.Session, iid, l.Name); err != nil {
+	env := appEnv(db, stderr)
+	env.Reporter = func(string) (string, string, string) { return l.Name, l.Pane, l.Session }
+	var rr appmessage.ReadResult
+	if err := callAppEnv(env, app.Agent(l.Name), "message.read", appmessage.ReadReq{ID: "I-" + num}, &rr); err != nil {
 		return err
 	}
 	if js {
