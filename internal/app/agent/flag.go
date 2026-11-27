@@ -24,9 +24,13 @@ type FlagReq struct {
 
 // FlagResult は付けた判定。
 type FlagResult struct {
-	Name     string `api:"name" json:"name"`
-	Killable string `api:"killable" json:"killable"`
+	Name     string       `api:"name" json:"name"`
+	Killable string       `api:"killable" json:"killable"`
+	Pending  *app.Pending `api:"pending,optional" json:"pending,omitempty"`
 }
+
+// SetPending は app.PendingSetter。
+func (r *FlagResult) SetPending(p *app.Pending) { r.Pending = p }
 
 // FreezeReq は agent.freeze / agent.unfreeze の入力(無し)。
 type FreezeReq struct{}
@@ -77,8 +81,8 @@ func flagOps(env *app.Env) []app.Op {
 					if val {
 						v = "1"
 					}
-					if who == "" || strings.HasPrefix(who, "system:") {
-						who = "human"
+					if who == "" {
+						return FreezeResult{}, define.Errorf(define.CodePermissionDenied, "呼び手を決められません")
 					}
 					if _, err := db.Exec(`INSERT INTO main.tb_flags (herdr_session, key, value, set_by, set_at) VALUES (?, 'spawn_frozen', ?, ?, ?)
     ON CONFLICT(herdr_session, key) DO UPDATE SET value=excluded.value, set_by=excluded.set_by, set_at=excluded.set_at`, db.Session, v, who, env.NowString()); err != nil {
@@ -101,15 +105,13 @@ func setFlag(env *app.Env, db *store.DB, who string, in FlagReq) (FlagResult, er
 	if who == "" {
 		return FlagResult{}, define.Errorf(define.CodePermissionDenied, "呼び手を決められません")
 	}
-	if who != "human" && !strings.HasPrefix(who, "system:") {
+	if who != "human" { // 人として扱うのは人だけ(system:* も agent と同じ確かめを受ける。記録は本当の主体)
 		if _, ok := approval.NewJudge(db.DB, db.Session).GrantOf(who, "agent:flag", name); !ok {
 			return FlagResult{}, define.Errorf(define.CodePermissionDenied, "判定フラグを付けられるのは人と、policy で agent:flag を許された agent だけです(%s)", who)
 		}
 		if who == name {
 			return FlagResult{}, define.Errorf(define.CodeFailedPrecondition, "自分自身の判定は付けられません")
 		}
-	} else {
-		who = "human"
 	}
 	if err := agents.Sync(db.DB, db.Session); err != nil {
 		return FlagResult{}, define.Errorf(define.CodeUnavailable, "herdr agent list に失敗しました")

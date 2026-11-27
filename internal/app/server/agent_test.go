@@ -330,4 +330,18 @@ func TestAgentSpawnFreeze(t *testing.T) {
 	if _, e := callOp[agent.FlagResult](t, env, app.Human(), "agent.flag", agent.FlagReq{Name: "w1", Killable: "yes"}); e == nil || e.Code != define.CodeInvalidArgument {
 		t.Errorf("yes には理由が要る: %v", e)
 	}
+	if _, e := callOp[agent.FlagResult](t, env, app.Agent("w2"), "agent.flag", agent.FlagReq{Name: "w1", Killable: "yes", Reason: "r"}); e == nil || e.Code != define.CodePermissionDenied {
+		t.Errorf("agent:flag の無い agent: %v", e)
+	}
+	if _, e := callOp[agent.FlagResult](t, env, app.System("sched"), "agent.flag", agent.FlagReq{Name: "w1", Killable: "yes", Reason: "r"}); e == nil || e.Code != define.CodePermissionDenied {
+		t.Errorf("system も agent と同じ確かめ: %v", e)
+	}
+}
+
+func TestAgentFlagSelf(t *testing.T) {
+	t.Setenv("HERDR_PANE_ID", "")
+	env, _ := fixture(t, "w1 agent:flag * = allow\n")
+	if _, e := callOp[agent.FlagResult](t, env, app.Agent("w1"), "agent.flag", agent.FlagReq{Name: "w1", Killable: "no", Reason: "r"}); e == nil || e.Code != define.CodeFailedPrecondition {
+		t.Errorf("自分には付けられない: %v", e)
+	}
 }

@@ -115,6 +115,9 @@ func cmdAgentFlag(args []string, w, stderr io.Writer) error {
 	if err := callAppEnv(appEnv(db, stderr), by, "agent.flag", agent.FlagReq{Name: name, Killable: kill, Reason: why}, &r); err != nil {
 		return err
 	}
+	if r.Pending != nil {
+		return pendingExit(w, r.Pending)
+	}
 	fmt.Fprintf(w, "%s killable=%s\n", name, r.Killable)
 	return nil
 }
