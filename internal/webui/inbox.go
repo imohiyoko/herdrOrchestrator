@@ -108,7 +108,7 @@ func (v *sv) remindersHTML() string {
 		rows = append(rows, []string{label, E(it.what), E(orStr(it.who, "-")), E(orStr(it.due, "-")), ref, E(orStr(it.age, "-")), E(st)})
 	}
 	s := `<h2 id="reminders">忘れているかも</h2>` + table([]string{"優先", "何が", "誰の番", "期限", "参照", "経過", "前回から"}, rows) +
-		`<p class=note>` + E(rem.at) + ` の tb reminder publish の結果(定期実行が更新する)。`
+		`<p class=note>` + E(rem.at) + ` の tb reminder publish の結果(job が更新する)。`
 	if rem.removed != 0 {
 		s += fmt.Sprintf("前回から解消 %d 件。", rem.removed)
 	}

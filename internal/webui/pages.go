@@ -11,7 +11,7 @@ import (
 const refreshSec = 30 // 自動更新の間隔(見ていないタブでは止まる。static/refresh.js)
 
 var nav = [][2]string{{"/", "概要"}, {"/notifications", "緊急通知"}, {"/agents", "agent"}, {"/tasks", "タスク"}, {"/board", "ボード"},
-	{"/inbox", "報告・承認待ち"}, {"/approvals", "承認(Q)"}, {"/outbox", "送信"}, {"/docs", "ドキュメント"}, {"/jobs", "定期実行"}, {"/ledger", "送信履歴"}, {"/perms", "権限"},
+	{"/inbox", "報告・承認待ち"}, {"/approvals", "承認(Q)"}, {"/outbox", "送信"}, {"/docs", "ドキュメント"}, {"/jobs", "job"}, {"/ledger", "送信履歴"}, {"/perms", "権限"},
 	{"/sessions", "セッション"}}
 
 // pageOpts は views.page の引数(ページごとの指定)。
@@ -66,7 +66,7 @@ func (s *Server) page(q *rq, title, body, path, logout string, o pageOpts) strin
 	if !o.norefresh {
 		note = fmt.Sprintf("自動更新 %d 秒(見ていないタブでは止まる)", refreshSec)
 	}
-	h.WriteString("<p class=note>" + note + " / 変更できるのは定期実行の設定と定義・報告の「対応済み」・agent の停止 / 復活 / 作成・チケットの状態と状態の定義・スプリント・policy・承認待ち(Q-n)の承認 / 却下だけ(書き込みは tb が行う。送信履歴は読み取りのみ) / 機密を含みうる画面です / Chrome 通知は「緊急通知」で設定</p></main></body></html>")
+	h.WriteString("<p class=note>" + note + " / 変更できるのは job の設定と定義・報告の「対応済み」・agent の停止 / 復活 / 作成・チケットの状態と状態の定義・スプリント・policy・承認待ち(Q-n)の承認 / 却下だけ(書き込みは tb が行う。送信履歴は読み取りのみ) / 機密を含みうる画面です / Chrome 通知は「緊急通知」で設定</p></main></body></html>")
 	return h.String()
 }
 
@@ -119,7 +119,7 @@ func (s *Server) pageNotifications(q *rq, _ pageCtx) (string, string) {
 	}
 	body += table([]string{"種別", "何が・中身・どう対応するか", "時刻"}, rows)
 	body += fmt.Sprintf("<p class=note>対象: 未完了タスクの question/blocked 報告、pending-human の代行依頼、blocked の agent、"+
-		"working のまま %d 分超の agent、最後の実行が失敗した定期実行、tb reminder が急ぎとしたもの(期限切れ・今日・明日が期限)。"+
+		"working のまま %d 分超の agent、最後の実行が失敗した job、tb reminder が急ぎとしたもの(期限切れ・今日・明日が期限)。"+
 		"通知は Web UI のタブが 1 つ開いている間だけ届きます(タブを閉じると止まる)。</p>", stallMin)
 	return "緊急通知", body
 }

@@ -402,8 +402,8 @@ func (v *sv) urgentItems() []item {
 			}
 		}
 		for _, j := range failedJobs() {
-			add(item{"j:" + j.name + ":" + Clean(pyStr(j.rec["ts"])), "job_failed", "定期実行の失敗", j.name, short(or(j.rec["reason"], "failed"), 200),
-				"定期実行の画面で理由と設定を確かめる(記録は scheduler/logs/" + j.name + ".log)", "/jobs/" + pyQuote(j.name, "/"), Clean(or(j.rec["ts"], ""))})
+			add(item{"j:" + j.name + ":" + Clean(pyStr(j.rec["ts"])), "job_failed", "job の失敗", j.name, short(or(j.rec["reason"], "failed"), 200),
+				"job の画面で理由と設定を確かめる(記録は scheduler/logs/" + j.name + ".log)", "/jobs/" + pyQuote(j.name, "/"), Clean(or(j.rec["ts"], ""))})
 		}
 		if len(items) > notifyMax {
 			items = items[:notifyMax]
