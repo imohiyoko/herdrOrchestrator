@@ -104,7 +104,7 @@ func cmdDBImport(args []string, w, stderr io.Writer) error {
 	if real == dreal {
 		return die("取り込み先と同じ DB です: %s", src)
 	}
-	ro, err := sql.Open("sqlite", real+"?mode=ro")
+	ro, err := store.OpenRO(real, 0)
 	if err != nil {
 		return die("旧 DB を開けません: %s", src)
 	}

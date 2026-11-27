@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 )
 
 // sessions は URL の /s/<名前>/ に書ける herdr セッションの一覧。
@@ -39,7 +39,7 @@ func sessionsFromDB(out map[string]bool) {
 	if !isFile(p) {
 		return
 	}
-	db, err := sql.Open("sqlite", p+"?mode=ro&_pragma=busy_timeout(2000)")
+	db, err := store.OpenRO(p, 2000)
 	if err != nil {
 		return
 	}
