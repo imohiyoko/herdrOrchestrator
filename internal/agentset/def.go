@@ -47,6 +47,21 @@ type Member struct {
 	Max    int    // scale の上限(0 は書いていない = Count まで、-1 は上限なし)
 	Mode   string // job: 1 タスクに 1 体(tb agentset run で立て、タスクが終わったら reap で止める)
 	Parent string // セットのメンバー名 / ~set / 既存の agent 名(空なら親なし)
+	// Every と Say は schedule(every <N>m|<N>h: <本文>): up で scheduler のジョブ agentset-<セット>-<メンバー> を書き、down で消す
+	Every int // 分(0 なら schedule なし)
+	Say   string
+}
+
+// JobName は schedule を書いたメンバーの scheduler のジョブの名前。
+func (d Def) JobName(m Member) string { return "agentset-" + d.Name + "-" + m.Name }
+
+// JobBody は schedule のジョブの本文(TARGET はメンバーの agent、終日、Every 分おき)。
+func (d Def) JobBody(m Member) string {
+	return "# agent セット " + d.Name + " のメンバー " + m.Name + " の schedule(tb agentset up が書き、down で消す。直すなら定義を直して up)\n" +
+		"TARGET=" + m.agentNames(d.Name)[0] + "\n" +
+		"PROMPT='" + m.Say + "'\n" +
+		"WINDOW=00:00-23:59\n" +
+		"INTERVAL_MIN=" + strconv.Itoa(m.Every) + "\n"
 }
 
 // Scalable は数を変えられるメンバー(count が 2 以上か、max を書いた)。agent の名前は <セット>-<メンバー>-<N>。
@@ -68,7 +83,7 @@ var (
 )
 
 // まだ入れていない項目(設計案の段 4 以降)。書いてあれば断る(黙って無視しない)。
-var later = map[string]bool{"schedule": true, "panes_per_workspace": true}
+var later = map[string]bool{"panes_per_workspace": true}
 
 // Parse は定義の本文を読む。書式は「キー = 値」の行と、メンバーごとの段落 [member <名前>]。
 // # で始まる行と、空白のあとの「# 」から行末はコメント。
@@ -170,6 +185,12 @@ func Parse(name, body string) (Def, error) {
 			}
 			m.Count = n
 			countSet[m.Name] = true
+		case "schedule":
+			every, say, err := parseSchedule(v)
+			if err != nil {
+				return d, fmt.Errorf("%d 行目: %s", ln, err)
+			}
+			m.Every, m.Say = every, say
 		case "mode":
 			if v != "job" {
 				return d, fmt.Errorf("%d 行目: mode は job だけ: %s", ln, v)
@@ -186,7 +207,7 @@ func Parse(name, body string) (Def, error) {
 			}
 			m.Max = n
 		default:
-			return d, fmt.Errorf("%d 行目: メンバーのキーは role / model / kind / cwd / prompt / count / max / mode / parent: %s", ln, k)
+			return d, fmt.Errorf("%d 行目: メンバーのキーは role / model / kind / cwd / prompt / count / max / mode / parent / schedule: %s", ln, k)
 		}
 	}
 	if err := sc.Err(); err != nil {
@@ -227,6 +248,9 @@ func (d Def) check() error {
 		return fmt.Errorf("parent は agent の名前: %s", d.Parent)
 	}
 	for _, m := range d.Members {
+		if m.Every > 0 && m.Scalable() {
+			return fmt.Errorf("メンバー %s の schedule は count = 1 で max の無いメンバーだけ(送り先の agent が 1 体に決まらない)", m.Name)
+		}
 		if l := m.Limit(); l >= 0 && m.Count > l {
 			return fmt.Errorf("メンバー %s の count(%d)が max(%d)を超えています", m.Name, m.Count, l)
 		}
@@ -405,4 +429,29 @@ func (d Def) WorkspaceLabel() string {
 		return d.Workspace
 	}
 	return d.Name
+}
+
+var reSchedule = regexp.MustCompile(`^every\s+([0-9]+)(m|h)\s*:\s*(.+)$`)
+
+// parseSchedule は schedule の値「every <N>m|<N>h: <本文>」を分と本文にする。
+func parseSchedule(v string) (int, string, error) {
+	g := reSchedule.FindStringSubmatch(v)
+	if g == nil {
+		return 0, "", fmt.Errorf("schedule は「every <N>m: <本文>」か「every <N>h: <本文>」: %s", v)
+	}
+	n, err := strconv.Atoi(g[1])
+	if g[2] == "h" {
+		n *= 60
+	}
+	if err != nil || n < 1 || n > 24*60 {
+		return 0, "", fmt.Errorf("schedule の間隔は 1 分から 24 時間まで: %s", v)
+	}
+	say := strings.TrimSpace(g[3])
+	if strings.HasPrefix(say, "/") || strings.HasPrefix(say, "-") {
+		return 0, "", fmt.Errorf("schedule の本文は / や - で始められません(スラッシュコマンドと解釈されるため): %s", say)
+	}
+	if strings.ContainsAny(say, "'\\") {
+		return 0, "", fmt.Errorf("schedule の本文に ' と \\ は使えません: %s", say)
+	}
+	return n, say, nil
 }

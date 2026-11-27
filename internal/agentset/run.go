@@ -16,6 +16,7 @@ import (
 	"github.com/imohiyoko/API/port"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
+	"github.com/imohiyoko/herdrorchestrator/internal/app/job"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/ticket"
 )
 
@@ -200,7 +201,7 @@ func Up(ctx context.Context, c Caller, by port.Principal, d Def) ([]Line, error)
 			need++
 		}
 	}
-	if need == 0 && len(d.Adopt) == 0 {
+	if need == 0 && len(d.Adopt) == 0 && len(d.scheduled()) == 0 {
 		return []Line{{Name: d.Name, Out: "すべて動いています(何もしません)"}}, nil
 	}
 	if need > 0 && lr.Max >= 0 && lr.Running+need > lr.Max {
@@ -255,7 +256,48 @@ func Up(ctx context.Context, c Caller, by port.Principal, d Def) ([]Line, error)
 		}
 		out = append(out, Line{Name: a.Agent, Out: "親に " + p + " を足しました(親: " + strings.Join(r.Parents, " ") + ")"})
 	}
+	for _, m := range d.scheduled() {
+		var r job.Result
+		if err := c.Call(ctx, by, "job.set", job.SetReq{Name: d.JobName(m), Body: d.JobBody(m)}, &r); err != nil {
+			out = append(out, Line{Name: d.JobName(m), Err: err})
+			return out, err
+		}
+		msg := "定期の指示を書きました(" + strconv.Itoa(m.Every) + " 分おき)"
+		if !r.Changed {
+			msg = "定期の指示は同じです(そのまま)"
+		}
+		out = append(out, Line{Name: d.JobName(m), Out: msg})
+	}
 	return out, nil
+}
+
+// scheduled は schedule を書いたメンバー。
+func (d Def) scheduled() []Member {
+	var out []Member
+	for _, m := range d.Members {
+		if m.Every > 0 {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// unschedule は schedule のジョブを消す(書いていなければ何もしない。定義から schedule を消したメンバーの古いジョブも消す)。
+func unschedule(ctx context.Context, c Caller, by port.Principal, d Def) ([]Line, error) {
+	var out []Line
+	var first error
+	for _, m := range d.Members {
+		var r job.Result
+		if err := c.Call(ctx, by, "job.rm", job.RmReq{Name: d.JobName(m)}, &r); err != nil {
+			out = append(out, Line{Name: d.JobName(m), Err: err})
+			first = cmp.Or(first, err)
+			continue
+		}
+		if r.Changed {
+			out = append(out, Line{Name: d.JobName(m), Out: "定期の指示を消しました"})
+		}
+	}
+	return out, first
 }
 
 // unadopt は [adopt] の agent から、セットが足した親を外す(agent は止めない)。
@@ -285,7 +327,9 @@ func Down(ctx context.Context, c Caller, by port.Principal, d Def, force bool) (
 		return nil, err
 	}
 	plan := d.Known(have)
-	out, first := unadopt(ctx, c, by, d, have)
+	out, first := unschedule(ctx, c, by, d)
+	lines, err := unadopt(ctx, c, by, d, have)
+	out, first = append(out, lines...), cmp.Or(first, err)
 	for i := len(plan) - 1; i >= 0; i-- {
 		in := plan[i]
 		if a := have[in.Name]; !a.Live && a.State != "running" {
