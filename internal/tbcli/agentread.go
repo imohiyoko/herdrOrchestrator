@@ -11,12 +11,11 @@ import (
 	"strings"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/agents"
+	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
 	"github.com/imohiyoko/herdrorchestrator/internal/approval"
-	"github.com/imohiyoko/herdrorchestrator/internal/kernel/config"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/herdr"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/identity"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/jv"
-	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 	"github.com/imohiyoko/herdrorchestrator/internal/message"
 )
 
@@ -226,47 +225,22 @@ func cmdOrg(args []string, w, stderr io.Writer) error {
 		return err
 	}
 	defer db.Close()
-	var names []string
-	st := map[string]string{}
-	if err := orgLedger(db, &names, st); err != nil {
+	var extra []string
+	if who != "" {
+		extra = []string{who}
+	}
+	org, err := agent.Org(db, extra...)
+	if err != nil {
 		return err
 	}
-	if who != "" {
-		if _, ok := st[who]; !ok {
-			names = append(names, who)
-			st[who] = "-"
-		}
+	has, src := org.Set, org.Source
+	var names []string
+	st, mgr := map[string]string{}, map[string]string{}
+	for _, a := range org.Agents {
+		names = append(names, a.Name)
+		st[a.Name], mgr[a.Name] = a.State, a.Manager
 	}
 	j := approval.NewJudge(db.DB, db.Session)
-	_, src, has := config.Lookup(db.DB, db.Session, "org")
-	mgr := map[string]string{}
-	if has {
-		for _, n := range names {
-			switch m, rc := j.ManagerOf(n); rc {
-			case 0:
-				mgr[n] = m
-			case 2:
-				mgr[n] = "?"
-			}
-		}
-	}
-	// 上司として書かれているが台帳にいない名前も出す(上司の上司もたどる)
-	for added := true; added; {
-		added = false
-		for _, n := range append([]string(nil), names...) {
-			m := mgr[n]
-			if m != "" && m != "?" {
-				if _, ok := st[m]; !ok {
-					names = append(names, m)
-					st[m] = "-"
-					added = true
-					if x, rc := j.ManagerOf(m); rc == 0 {
-						mgr[m] = x
-					}
-				}
-			}
-		}
-	}
 	if who != "" {
 		chain, ok := j.Chain(who)
 		if !ok {
@@ -367,25 +341,6 @@ func cmdOrg(args []string, w, stderr io.Writer) error {
 		fmt.Fprintf(w, "循環していて木にできない: %s\n", strings.Join(rest, " "))
 	}
 	return nil
-}
-
-func orgLedger(db *store.DB, names *[]string, st map[string]string) error {
-	rows, err := db.Query(`SELECT name, COALESCE(state,'') FROM agents ORDER BY name`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var n, s string
-		if err := rows.Scan(&n, &s); err != nil {
-			return err
-		}
-		if n != "" {
-			*names = append(*names, n)
-			st[n] = s
-		}
-	}
-	return rows.Err()
 }
 
 func nonEmpty(s string) []string {

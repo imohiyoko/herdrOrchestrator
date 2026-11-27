@@ -1191,6 +1191,28 @@ _c.execute("INSERT INTO config (herdr_session, key, body, updated_by, updated_at
            (_sess, "COMMAND='echo rm'\nWINDOW=09:00-21:00\nINTERVAL_MIN=30\n"))
 _c.execute("INSERT INTO config (herdr_session, key, body, updated_by, updated_at) VALUES (?, 'sched-settings:rmjob', 'ENABLED=0', 'human', 'x')", (_sess,))
 _c.commit(); _c.close()
+# 組織図(設定 org。agent 一覧の中の節と /org。上司は tb org と同じ agent.org で引く)
+_ab = cl.get("/agents")[2]
+check("組織図: 未設定なら agent 一覧に未設定の案内(図へのリンクは出さない)", '<h2 id="org">組織図</h2>' in _ab and "組織図は未設定です" in _ab
+      and 'href="/org"' not in _ab and 'href="/org"' not in cl.get("/")[2])
+_c = sqlite3.connect(env["WEBUI_TB_DB"])
+for _n in ("orgboss", "orgw1", "orgw2"):
+    _c.execute("INSERT OR IGNORE INTO agents (herdr_session, name, state, created_by, created_at, updated_at) VALUES (?, ?, 'stopped', 'human', 'x', 'x')", (_sess, _n))
+_c.execute("INSERT INTO config (herdr_session, key, body, updated_by, updated_at) VALUES (?, 'org', ?, 'human', 'x')",
+           (_sess, "orgw* -> orgboss\n"))
+_c.commit(); _c.close()
+_ab = cl.get("/agents")[2]
+_og = _ab.split('<h2 id="org">')[1].split('<h2 id="roles">')[0]
+check("組織図: agent 一覧に上司の下へ部下が入った木と図へのリンク",
+      re.search(r'<li><a href="/agents/orgboss">orgboss</a>[^<]*(<span[^>]*>[^<]*</span>)?<ul><li><a href="/agents/orgw1">orgw1</a>.*?</li><li><a href="/agents/orgw2">', _og) is not None
+      and 'href="/org"' in _og, _og[:800])
+_os, _oh, _ob = cl.get("/org")
+_om = _ob.split("<pre class=mermaid>")[1].split("</pre>")[0] if "<pre class=mermaid>" in _ob else ""
+check("組織図: /org は mermaid の図(上司 → 部下)と木、スクリプトは同一オリジンだけ", _os == 200 and _om.startswith("flowchart TD")
+      and re.search(r"n\d+ --&gt; n\d+", _om) is not None and "orgw1" in _om
+      and script_tags(_ob) == [NOTIFY_TAG[:-9], '<script src="/static/mermaid.min.js" defer>', '<script src="/docs.js" defer>'], _om[:300])
+_c = sqlite3.connect(env["WEBUI_TB_DB"]); _c.execute("DELETE FROM config WHERE key='org'")
+_c.execute("DELETE FROM agents WHERE name LIKE 'org%'"); _c.commit(); _c.close()
 _rmlog = os.path.join(env["WEBUI_SCHED_LOGS"], "rmjob.log")
 open(_rmlog, "w").write('{"ts":"2026-11-01T10:00:00+0900","job":"rmjob","action":"ran"}\n')
 def _rmrows():
