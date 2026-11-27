@@ -16,6 +16,7 @@ import (
 
 	"github.com/imohiyoko/herdrorchestrator/internal/app"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
+	appapproval "github.com/imohiyoko/herdrorchestrator/internal/app/approval"
 	"github.com/imohiyoko/herdrorchestrator/internal/approval"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/herdr"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/identity"
@@ -41,58 +42,17 @@ const reqPending = `((r.source='cmd' AND r.status='pending')
   OR (r.source='outbox' AND EXISTS (SELECT 1 FROM outbox o WHERE o.id=r.source_id AND o.status='pending'))
   OR (r.source='agent_ops' AND EXISTS (SELECT 1 FROM agent_ops a WHERE a.id=r.source_id AND a.status='pending')))`
 
-var reqPriorities = map[string]int{"low": 0, "normal": 1, "high": 2}
-
-func priorityName(n int) string {
-	for k, v := range reqPriorities {
-		if v == n {
-			return k
-		}
-	}
-	return "normal"
-}
-
 // envPriority は TB_PRIORITY(high / normal / low。無ければ normal)。
 func envPriority() (int, error) {
 	v := os.Getenv("TB_PRIORITY")
 	if v == "" {
 		return 1, nil
 	}
-	p, ok := reqPriorities[v]
+	p, ok := appapproval.Priorities[v]
 	if !ok {
 		return 0, fmt.Errorf("TB_PRIORITY は high / normal / low のどれかです: %s", v)
 	}
 	return p, nil
-}
-
-// qidOf は元の行(outbox / agent_ops)の承認待ちの ID(無ければ空)。
-func qidOf(db *sql.DB, source string, sid int64) string {
-	var id int64
-	if db.QueryRow(`SELECT id FROM requests WHERE source=? AND source_id=?`, source, sid).Scan(&id) != nil {
-		return ""
-	}
-	return "Q-" + strconv.FormatInt(id, 10)
-}
-
-// setSourcePriority は TB_PRIORITY を、今積んだ送信・agent の操作の承認待ちに付ける。
-func setSourcePriority(db *sql.DB, source string, sid int64) {
-	if p, err := envPriority(); err == nil && p != 1 {
-		_, _ = db.Exec(`UPDATE main.requests SET priority=? WHERE source=? AND source_id=?`, p, source, sid)
-	}
-}
-
-// pendingQ は今積んだ送信・agent の操作の承認待ちの ID(TB_PRIORITY があれば優先度も付ける)。
-// 決められる agent にも知らせる(同じ Q-<n> は 1 度だけ)。
-func pendingQ(db *sql.DB, source string, sid int64) string {
-	setSourcePriority(db, source, sid)
-	q := qidOf(db, source, sid)
-	if q != "" {
-		var session string
-		if db.QueryRow(`SELECT herdr_session FROM requests WHERE id=?`, qidNum(q)).Scan(&session) == nil {
-			notifyApprovers(db, session, qidNum(q))
-		}
-	}
-	return q
 }
 
 // queueCmd は perms.Queue: ask で止まったコマンドを、引数と標準入力ごと積む。
@@ -194,15 +154,13 @@ func insertCmd(tier, op, target, rule string, withStdin bool) (string, error) {
 		detail = "tb " + strings.Join(words, " ") + "(会話の文面を含みうるため、引数と標準入力は残していません)"
 	}
 	payload, _ := json.Marshal(pl)
-	res, err := db.Exec(`INSERT INTO main.requests (herdr_session, source, requester, op, target, priority, detail, payload, status, tier, rule, decided_by, decided_at, created_at)
-	  VALUES (?, 'cmd', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, session, who, op, target, p, detail, string(payload),
-		status, tier, rule, decidedBy, decidedAt, nowTS())
+	id, err := requests.InsertCmd(db, requests.CmdRow{Session: session, Requester: who, Op: op, Target: target, Priority: p, Detail: detail,
+		Payload: string(payload), Status: status, Tier: tier, Rule: rule, DecidedBy: decidedBy, DecidedAt: decidedAt, CreatedAt: nowTS()})
 	if err != nil {
 		return "", err
 	}
-	id, _ := res.LastInsertId()
 	if tier == "ask" {
-		notifyApprovers(db, session, id)
+		appapproval.NotifyApprovers(db, session, id)
 	}
 	return "Q-" + strconv.FormatInt(id, 10), nil
 }
@@ -240,7 +198,7 @@ func approvalList(db *store.DB, args []string, w io.Writer) error {
 		var ids []string
 		j := approval.NewJudge(db.DB, db.Session)
 		for _, id := range all {
-			if r, ok, _ := loadRequest(db.DB, id); ok && canDecide(db, j, r, who) {
+			if r, ok, _ := loadRequest(db.DB, id); ok && appapproval.CanDecide(db, j, r, who) {
 				ids = append(ids, strconv.FormatInt(id, 10))
 			}
 		}
@@ -462,11 +420,11 @@ func approvedRun(args []string) (bool, error) {
 	if strings.Join(pl.Args, "\x00") != strings.Join(args, "\x00") {
 		return false, die("承認済みの依頼とコマンドが違います: %s", q)
 	}
-	res, err := db.Exec(`UPDATE main.requests SET status='running', run_key=NULL WHERE id=? AND status='approved' AND run_key=?`, r.ID, requests.KeyHash(key))
+	claimed, err := requests.ClaimRun(db, r.ID, key)
 	if err != nil {
 		return false, err
 	}
-	if n, _ := res.RowsAffected(); n != 1 {
+	if !claimed {
 		return false, die("承認済みの依頼の鍵が合わないか、もう実行しました: %s", q)
 	}
 	// 依頼者として動く
@@ -499,39 +457,27 @@ func approvedRun(args []string) (bool, error) {
 	return true, nil
 }
 
-// requestPriority は tb approval priority Q-<n> high|normal|low(依頼者か人だけ)。
+// requestPriority は tb approval priority Q-<n> high|normal|low(依頼者か人だけ。approval.priority)。
 func requestPriority(args []string, w, stderr io.Writer) error {
 	if len(args) != 2 || !reQID.MatchString(args[0]) {
 		return usage("approval priority Q-<n> high|normal|low")
 	}
-	p, ok := reqPriorities[args[1]]
-	if !ok {
+	if _, ok := appapproval.Priorities[args[1]]; !ok {
 		return usage("優先度は high / normal / low のどれかです: %s", args[1])
+	}
+	by, err := requesterPrincipal()
+	if err != nil {
+		return err
 	}
 	db, _, err := openCmd(stderr)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	r, found, err := loadRequest(db.DB, qidNum(args[0]))
-	if err != nil {
+	var r appapproval.PriorityResult
+	if err := callAppEnv(appEnv(db, stderr), by, "approval.priority", appapproval.PriorityReq{ID: args[0], Priority: args[1]}, &r); err != nil {
 		return err
 	}
-	who := "human"
-	if pane := os.Getenv("HERDR_PANE_ID"); pane != "" {
-		if who, err = identity.PaneOwnerName(pane); err != nil {
-			return die("herdr agent list に失敗したため、実行者を特定できません")
-		}
-		if who == "" {
-			who = "human"
-		}
-	}
-	if !found || (who != "human" && who != r.Requester) {
-		return die("%s の優先度を変えられるのは、依頼した agent と人だけです", args[0])
-	}
-	if _, err := db.Exec(`UPDATE main.requests SET priority=? WHERE id=?`, p, r.ID); err != nil {
-		return err
-	}
-	fmt.Fprintf(w, "%s priority %s\n", r.QID(), priorityName(p))
+	fmt.Fprintf(w, "%s priority %s\n", r.ID, r.Priority)
 	return nil
 }

@@ -30,12 +30,10 @@ import internal/tbcli internal/tickets
 import internal/webui internal/kernel/herdr
 import internal/webui internal/kernel/store
 import internal/webui internal/sched
-sql internal/tbcli/agentapprove.go 1
 sql internal/tbcli/agentlist.go 3
 sql internal/tbcli/agentmisc.go 2
 sql internal/tbcli/agentshed.go 10
 sql internal/tbcli/alert.go 3
-sql internal/tbcli/approvers.go 1
 sql internal/tbcli/config.go 2
 sql internal/tbcli/dbimport.go 59
 sql internal/tbcli/deadlines.go 2
@@ -47,7 +45,7 @@ sql internal/tbcli/message.go 6
 sql internal/tbcli/notify.go 7
 sql internal/tbcli/recipe.go 4
 sql internal/tbcli/reciperun.go 11
-sql internal/tbcli/request.go 15
+sql internal/tbcli/request.go 9
 sql internal/tbcli/roles.go 2
 sql internal/tbcli/tbcli.go 1
 sql internal/tbcli/ticket.go 1

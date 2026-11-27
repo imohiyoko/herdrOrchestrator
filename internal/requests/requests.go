@@ -223,3 +223,34 @@ func CheckApprover(j *approval.Judge, cmd, who, act, by string) (Approver, error
 	}
 	return Approver{who, rule}, nil
 }
+
+// CmdRow は requests に足すコマンドの 1 行(tb の入口が ask で止めたコマンドと、agent の呼び出しの allow / deny の記録)。
+type CmdRow struct {
+	Session, Requester, Op, Target string
+	Priority                       int
+	Detail, Payload, Status, Tier  string
+	Rule                           string
+	DecidedBy, DecidedAt           sql.NullString
+	CreatedAt                      string
+}
+
+// InsertCmd は requests にコマンドの 1 行を足し、その id を返す。
+func InsertCmd(db *sql.DB, c CmdRow) (int64, error) {
+	res, err := db.Exec(`INSERT INTO main.requests (herdr_session, source, requester, op, target, priority, detail, payload, status, tier, rule, decided_by, decided_at, created_at)
+	  VALUES (?, 'cmd', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, c.Session, c.Requester, c.Op, c.Target, c.Priority, c.Detail, c.Payload,
+		c.Status, c.Tier, c.Rule, c.DecidedBy, c.DecidedAt, c.CreatedAt)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// ClaimRun は承認済みのコマンド id を、鍵 key が合うときだけ 1 回だけ実行中にする(合わないか実行済みなら false)。
+func ClaimRun(db *sql.DB, id int64, key string) (bool, error) {
+	res, err := db.Exec(`UPDATE main.requests SET status='running', run_key=NULL WHERE id=? AND status='approved' AND run_key=?`, id, KeyHash(key))
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
+}
