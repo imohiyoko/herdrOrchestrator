@@ -64,7 +64,10 @@ func TestParse(t *testing.T) {
 		"": "メンバーがいません",
 		"[member a]\nparent = b\n[member b]\nparent = a\n": "輪になります",
 		"[member a]\nparent = ~set\n":                      "セットの parent が要ります",
-		"[member a]\ncount = 2\n[member b]\nparent = a\n":  "count = 1 のメンバー",
+		"[member a]\ncount = 2\n[member b]\nparent = a\n":  "count = 1 で max の無いメンバー",
+		"[member a]\nmax = 3\n[member b]\nparent = a\n":    "count = 1 で max の無いメンバー",
+		"[member a]\ncount = 3\nmax = 2\n":                 "max(2)を超えて",
+		"[member a]\nmax = 0\n":                            "max は 1 以上の数か unlimited",
 		"[member a]\ncount = 0\n":                          "count は 1 以上",
 		"[member a]\nschedule = every 30m\n":               "schedule はまだ使えません",
 		"[adopt]\nw -> a\n":                                "[adopt]",
@@ -108,7 +111,15 @@ func (f *fakeAPI) Call(_ context.Context, by port.Principal, op string, in, out 
 	switch op {
 	case "agent.list":
 		r := agent.ListResult{Max: f.max}
-		for _, n := range strings.Split(in.(agent.ListReq).Names, ",") {
+		names := strings.Split(in.(agent.ListReq).Names, ",")
+		if in.(agent.ListReq).Names == "" {
+			names = nil
+			for n := range f.agents {
+				names = append(names, n)
+			}
+			slices.Sort(names)
+		}
+		for _, n := range names {
 			a, ok := f.agents[n]
 			if !ok {
 				a = agent.AgentInfo{Name: n}
@@ -264,4 +275,78 @@ func TestStore(t *testing.T) {
 	if err := Remove(dir, "s"); err == nil {
 		t.Error("2 回目の rm")
 	}
+}
+
+func TestScale(t *testing.T) {
+	d, err := Parse("s", "[member lead]\n[member w]\nmax = 4\nparent = lead\nprompt = 働く\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, by := context.Background(), port.Principal{}
+	f := &fakeAPI{agents: map[string]agent.AgentInfo{}, max: -1}
+	if _, err := Up(ctx, f, by, d); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := f.agents["s-w-1"]; !ok || f.agents["s-lead"].Pane == "" {
+		t.Fatalf("up: %+v", f.agents)
+	}
+	for spec, want := range map[string]string{"5": "max(4)を超えます", "-2": "0 を下回る", "x": "N / +N / -N"} {
+		if _, err := Scale(ctx, f, by, d, "w", spec); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: %v", spec, err)
+		}
+	}
+	if _, err := Scale(ctx, f, by, d, "lead", "+1"); err == nil || !strings.Contains(err.Error(), "数を変えられません") {
+		t.Errorf("lead: %v", err)
+	}
+	if _, err := Scale(ctx, f, by, d, "nobody", "+1"); err == nil {
+		t.Error("無いメンバー")
+	}
+	f.calls = nil
+	lines, err := Scale(ctx, f, by, d, "w", "+2")
+	if err != nil || len(lines) != 2 {
+		t.Fatalf("+2: %v %+v", err, lines)
+	}
+	got := ops(f)
+	if !strings.Contains(got[0], `"Name":"s-w-2"`) || !strings.Contains(got[0], `"Killable":"yes","Parent":"s-lead"`) || !strings.Contains(got[1], `"Name":"s-w-3"`) {
+		t.Errorf("+2: %q", got)
+	}
+	// 減らすのは番号の大きい順。止められない(手が空いていない)ものは飛ばす
+	f.calls = nil
+	if _, err := Scale(ctx, f, by, d, "w", "1"); err != nil {
+		t.Fatal(err)
+	}
+	var stopped []string
+	for _, c := range ops(f) {
+		var q agent.StopReq
+		_ = json.Unmarshal([]byte(strings.TrimPrefix(c, "agent.stop ")), &q)
+		stopped = append(stopped, q.Name)
+	}
+	if !slices.Equal(stopped, []string{"s-w-3", "s-w-2"}) {
+		t.Errorf("down: %q", stopped)
+	}
+	// 止まっている番号から戻す(killable=yes)
+	f.calls = nil
+	if _, err := Scale(ctx, f, by, d, "w", "+1"); err != nil || len(ops(f)) != 1 || !strings.Contains(ops(f)[0], `agent.revive {"Name":"s-w-2"`) || !strings.Contains(ops(f)[0], `"Killable":"yes"`) {
+		t.Errorf("戻す: %v %q", err, ops(f))
+	}
+	// status と down は scale で足した agent も含む
+	rows, _ := Status(ctx, f, by, d)
+	if len(rows) != 4 || rows[3].Name != "s-w-3" || rows[3].State != "stopped" {
+		t.Errorf("status: %+v", rows)
+	}
+	// 上限
+	f.max = f.running()
+	if _, err := Scale(ctx, f, by, d, "w", "+1"); err == nil || !strings.Contains(err.Error(), "上限") {
+		t.Errorf("上限: %v", err)
+	}
+}
+
+func (f *fakeAPI) running() int {
+	n := 0
+	for _, a := range f.agents {
+		if a.State == "running" {
+			n++
+		}
+	}
+	return n
 }

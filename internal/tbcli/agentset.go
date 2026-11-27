@@ -21,7 +21,7 @@ import (
 
 var agentsetVerbs = map[string]cmdFunc{
 	"add": cmdAgentsetAdd, "rm": cmdAgentsetRm, "list": cmdAgentsetList, "show": cmdAgentsetShow,
-	"up": cmdAgentsetUp, "down": cmdAgentsetDown, "status": cmdAgentsetStatus,
+	"up": cmdAgentsetUp, "down": cmdAgentsetDown, "status": cmdAgentsetStatus, "scale": cmdAgentsetScale,
 }
 
 var agentsetService = service{name: "agentset", one: agentsetVerbs, help: agentsetUsageText}
@@ -37,6 +37,7 @@ tb agentset show <セット>   定義の本文
 tb agentset up <セット>   1 つの workspace に pane を分けて立ち上げる(動いているメンバーはそのまま、止まっているメンバーは戻す)
 tb agentset down <セット> [--force]   メンバーを子から順に止める(止めてよいと判定されていないメンバーは --force)
 tb agentset status <セット> [--json]   メンバーごとの状態・pane・親
+tb agentset scale <セット> <メンバー> <N|+N|-N>   数を変えられるメンバーの動いている数を変える(同じ workspace に足す・手の空いたものから止める)
 `
 
 // appCaller は agentset.Caller(同じプロセスで API を呼ぶ)。
@@ -279,4 +280,17 @@ func cmdAgentsetStatus(args []string, w, stderr io.Writer) error {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s%s\n", r.Name, r.Member, r.State, dash(r.Pane), dash(r.Parent), diff)
 	}
 	return nil
+}
+
+func cmdAgentsetScale(args []string, w, stderr io.Writer) error {
+	if len(args) != 3 {
+		return usage("agentset scale <セット> <メンバー> <N|+N|-N>")
+	}
+	db, d, c, by, err := agentsetLoad(args[:1], "scale", stderr)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	lines, err := agentset.Scale(context.Background(), c, by, d, args[1], args[2])
+	return agentsetLines(lines, err, w, stderr)
 }

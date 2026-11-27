@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/imohiyoko/API/define"
@@ -107,6 +108,58 @@ func (d Def) list(ctx context.Context, c Caller, by port.Principal, extra []stri
 	return m, res, nil
 }
 
+// all は台帳の全員(scale で足したメンバーを見つけるため)。
+func all(ctx context.Context, c Caller, by port.Principal) (map[string]agent.AgentInfo, agent.ListResult, error) {
+	var res agent.ListResult
+	if err := c.Call(ctx, by, "agent.list", agent.ListReq{}, &res); err != nil {
+		return nil, res, err
+	}
+	m := map[string]agent.AgentInfo{}
+	for _, a := range res.Agents {
+		m[a.Name] = a
+	}
+	return m, res, nil
+}
+
+// numOf は数を変えられるメンバーの agent の番号(<セット>-<メンバー>-<N> でなければ 0)。
+func (d Def) numOf(m Member, name string) int {
+	rest, ok := strings.CutPrefix(name, d.Name+"-"+m.Name+"-")
+	if !ok || rest == "" || strings.TrimLeft(rest, "0123456789") != "" || rest[0] == '0' {
+		return 0
+	}
+	n, _ := strconv.Atoi(rest)
+	return n
+}
+
+// Known は起動の順の 1 体ずつに、台帳にいる scale で足した agent(番号の順)をメンバーごとに足したもの。
+func (d Def) Known(have map[string]agent.AgentInfo) []Instance {
+	plan := d.Plan()
+	seen := map[string]bool{}
+	for _, in := range plan {
+		seen[in.Name] = true
+	}
+	var out []Instance
+	for i, in := range plan {
+		out = append(out, in)
+		if !in.Member.Scalable() || (i+1 < len(plan) && plan[i+1].Member.Name == in.Member.Name) {
+			continue
+		}
+		var extra []int
+		for n := range have {
+			if k := d.numOf(in.Member, n); k > 0 && !seen[n] {
+				extra = append(extra, k)
+			}
+		}
+		sort.Ints(extra)
+		for _, k := range extra {
+			out = append(out, Instance{Name: in.Member.instName(d.Name, k), Member: in.Member, Parent: in.Parent})
+		}
+	}
+	return out
+}
+
+func (m Member) instName(set string, n int) string { return set + "-" + m.Name + "-" + strconv.Itoa(n) }
+
 // split は herdr-up.sh と同じ並べ方: 2 体目は 1 体目の右、3 体目は 1 体目の下、4 体目からは 2 体目(右の列)を下へ。
 func split(panes []string) *agent.PanePlacement {
 	switch len(panes) {
@@ -191,11 +244,11 @@ func Up(ctx context.Context, c Caller, by port.Principal, d Def) ([]Line, error)
 
 // Down はセットのメンバーを子から順に止める(定義の外の agent は止めない)。失敗しても残りは止める。
 func Down(ctx context.Context, c Caller, by port.Principal, d Def, force bool) ([]Line, error) {
-	have, _, err := d.list(ctx, c, by, nil)
+	have, _, err := all(ctx, c, by)
 	if err != nil {
 		return nil, err
 	}
-	plan := d.Plan()
+	plan := d.Known(have)
 	var out []Line
 	var first error
 	for i := len(plan) - 1; i >= 0; i-- {
@@ -235,12 +288,12 @@ type Row struct {
 
 // Status はメンバーごとの状態と、定義の親との差。
 func Status(ctx context.Context, c Caller, by port.Principal, d Def) ([]Row, error) {
-	have, _, err := d.list(ctx, c, by, nil)
+	have, _, err := all(ctx, c, by)
 	if err != nil {
 		return nil, err
 	}
 	var out []Row
-	for _, in := range d.Plan() {
+	for _, in := range d.Known(have) {
 		a := have[in.Name]
 		st := a.State
 		switch {
@@ -254,4 +307,157 @@ func Status(ctx context.Context, c Caller, by port.Principal, d Def) ([]Row, err
 		out = append(out, Row{Name: in.Name, Member: in.Member.Name, State: st, Pane: a.Pane, Parent: a.Parent, Want: in.Parent})
 	}
 	return out, nil
+}
+
+// panesOf はセットの動いている agent の pane(起動の順。新しい agent を置くときに分ける元)。
+func panesOf(known []Instance, have map[string]agent.AgentInfo) []string {
+	var out []string
+	for _, in := range known {
+		if a := have[in.Name]; a.Live && a.Pane != "" {
+			out = append(out, a.Pane)
+		}
+	}
+	return out
+}
+
+// Scale は数を変えられるメンバーの動いている数を n にする(spec は N / +N / -N)。
+// 増やすときは止まっている agent を番号の小さい順に戻し、足りなければ新しい番号で立てる(同じ workspace に pane を足す。
+// 止めてよい = killable=yes で立てる)。減らすときは番号の大きい順に、止めてよい・未完了のタスクが無いものだけを止める。
+func Scale(ctx context.Context, c Caller, by port.Principal, d Def, member, spec string) ([]Line, error) {
+	m, ok := d.member(member)
+	if !ok {
+		return nil, &define.Error{Code: define.CodeInvalidArgument, Message: "セット " + d.Name + " にメンバー " + member + " はいません"}
+	}
+	if !m.Scalable() {
+		return nil, &define.Error{Code: define.CodeInvalidArgument, Message: "メンバー " + member + " は数を変えられません(定義に max を書く)"}
+	}
+	have, lr, err := all(ctx, c, by)
+	if err != nil {
+		return nil, err
+	}
+	known := d.Known(have)
+	var live, stopped []Instance
+	used := map[int]bool{}
+	parent := ""
+	for _, in := range known {
+		if in.Member.Name != m.Name {
+			continue
+		}
+		parent = in.Parent
+		a := have[in.Name]
+		if a.State != "" || a.Live {
+			used[d.numOf(m, in.Name)] = true
+		}
+		switch {
+		case a.Live:
+			live = append(live, in)
+		case a.State == "stopped":
+			stopped = append(stopped, in)
+		}
+	}
+	if len(known) > 0 && parent == "" {
+		for _, in := range d.Plan() {
+			if in.Member.Name == m.Name {
+				parent = in.Parent
+				break
+			}
+		}
+	}
+	cur, target := len(live), 0
+	if n, err := strconv.Atoi(strings.TrimLeft(spec, "+")); err == nil && spec != "" {
+		switch spec[0] {
+		case '+':
+			target = cur + n
+		case '-':
+			target = cur + n // n は負
+		default:
+			target = n
+		}
+	} else {
+		return nil, &define.Error{Code: define.CodeInvalidArgument, Message: "数は N / +N / -N: " + spec}
+	}
+	if target < 0 {
+		return nil, &define.Error{Code: define.CodeInvalidArgument, Message: fmt.Sprintf("動いている %s は %d 体です(%s で 0 を下回る)", member, cur, spec)}
+	}
+	if l := m.Limit(); l >= 0 && target > l {
+		return nil, &define.Error{Code: define.CodeFailedPrecondition, Reasons: []string{agent.ReasonLimitExceeded},
+			Message: fmt.Sprintf("メンバー %s の max(%d)を超えます(%d 体にしようとしました)", member, l, target)}
+	}
+	if target == cur {
+		return []Line{{Name: d.Name + "-" + member, Out: fmt.Sprintf("%d 体のまま(何もしません)", cur)}}, nil
+	}
+	var out []Line
+	if target < cur {
+		need := cur - target
+		for i := len(live) - 1; i >= 0 && need > 0; i-- {
+			var r agent.StopResult
+			if err := c.Call(ctx, by, "agent.stop", agent.StopReq{Name: live[i].Name}, &r); err != nil {
+				out = append(out, Line{Name: live[i].Name, Out: "そのまま(" + errText(err) + ")"})
+				continue
+			}
+			out = append(out, Line{Name: live[i].Name, Out: r.Out})
+			need--
+		}
+		if need > 0 {
+			err := &define.Error{Code: define.CodeFailedPrecondition, Message: fmt.Sprintf("%s を %d 体まで減らせませんでした(手の空いた agent が足りません。止めるなら tb agent stop --force)", member, target)}
+			return append(out, Line{Name: d.Name + "-" + member, Err: err}), err
+		}
+		return out, nil
+	}
+	need := target - cur
+	if lr.Max >= 0 && lr.Running+need > lr.Max {
+		return nil, &define.Error{Code: define.CodeFailedPrecondition, Reasons: []string{agent.ReasonLimitExceeded},
+			Message: fmt.Sprintf("動作中の agent が上限を超えます(動作中 %d + 足す %d、上限 max_running_agents=%d)。1 体も足しません", lr.Running, need, lr.Max)}
+	}
+	if parent != "" {
+		if p, ok := have[parent]; !ok || p.State == "" {
+			return nil, &define.Error{Code: define.CodeFailedPrecondition, Message: "親 " + parent + " が台帳にいません(先に tb agentset up " + d.Name + ")"}
+		}
+	}
+	panes := panesOf(known, have)
+	next := 1
+	for i := 0; i < need; i++ {
+		place := &agent.PanePlacement{Workspace: d.WorkspaceLabel()}
+		if len(panes) > 0 {
+			place = split(panes)
+		}
+		var pane, msg, name string
+		if len(stopped) > 0 {
+			name, stopped = stopped[0].Name, stopped[1:]
+			var r agent.LifeResult
+			err = c.Call(ctx, by, "agent.revive", agent.ReviveReq{Name: name, Pane: place, Killable: "yes"}, &r)
+			pane, msg = r.Pane, r.Out
+		} else {
+			for used[next] {
+				next++
+			}
+			used[next] = true
+			name = m.instName(d.Name, next)
+			cwd := m.Cwd
+			if cwd == "" {
+				cwd = d.Cwd
+			}
+			var r agent.NewResult
+			err = c.Call(ctx, by, "agent.new", agent.NewReq{Name: name, Cwd: agent.NormalizeCwd(cwd), Kind: m.Kind, Model: m.Model,
+				Role: m.Role, Prompt: m.Prompt, Killable: "yes", Parent: parent, Pane: place}, &r)
+			pane, msg = r.Pane, r.Out
+		}
+		if err != nil {
+			return append(out, Line{Name: name, Err: err}), err
+		}
+		out = append(out, Line{Name: name, Out: msg})
+		if pane != "" {
+			panes = append(panes, pane)
+		}
+	}
+	return out, nil
+}
+
+// errText は API のエラーの文言。
+func errText(err error) string {
+	var e *define.Error
+	if errors.As(err, &e) && e.Message != "" {
+		return e.Message
+	}
+	return err.Error()
 }

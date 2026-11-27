@@ -33,7 +33,19 @@ type Member struct {
 	Cwd    string
 	Prompt string
 	Count  int
+	Max    int    // scale の上限(0 は書いていない = Count まで、-1 は上限なし)
 	Parent string // セットのメンバー名 / ~set / 既存の agent 名(空なら親なし)
+}
+
+// Scalable は数を変えられるメンバー(count が 2 以上か、max を書いた)。agent の名前は <セット>-<メンバー>-<N>。
+func (m Member) Scalable() bool { return m.Count > 1 || m.Max != 0 }
+
+// Limit は scale の上限(-1 は上限なし)。
+func (m Member) Limit() int {
+	if m.Max == 0 {
+		return m.Count
+	}
+	return m.Max
 }
 
 var (
@@ -44,7 +56,7 @@ var (
 )
 
 // まだ入れていない項目(設計案の段 4 以降)。書いてあれば断る(黙って無視しない)。
-var later = map[string]bool{"schedule": true, "max": true, "mode": true, "on_parent_exit": true, "panes_per_workspace": true}
+var later = map[string]bool{"schedule": true, "mode": true, "on_parent_exit": true, "panes_per_workspace": true}
 
 // Parse は定義の本文を読む。書式は「キー = 値」の行と、メンバーごとの段落 [member <名前>]。
 // # で始まる行と、空白のあとの「# 」から行末はコメント。
@@ -125,8 +137,18 @@ func Parse(name, body string) (Def, error) {
 				return d, fmt.Errorf("%d 行目: count は 1 以上の数: %s", ln, v)
 			}
 			m.Count = n
+		case "max":
+			if v == "unlimited" {
+				m.Max = -1
+				break
+			}
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 1 {
+				return d, fmt.Errorf("%d 行目: max は 1 以上の数か unlimited: %s", ln, v)
+			}
+			m.Max = n
 		default:
-			return d, fmt.Errorf("%d 行目: メンバーのキーは role / model / kind / cwd / prompt / count / parent: %s", ln, k)
+			return d, fmt.Errorf("%d 行目: メンバーのキーは role / model / kind / cwd / prompt / count / max / parent: %s", ln, k)
 		}
 	}
 	if err := sc.Err(); err != nil {
@@ -153,7 +175,14 @@ func (d Def) check() error {
 		return fmt.Errorf("parent は agent の名前: %s", d.Parent)
 	}
 	for _, m := range d.Members {
-		for _, n := range m.agentNames(d.Name) {
+		if l := m.Limit(); l >= 0 && m.Count > l {
+			return fmt.Errorf("メンバー %s の count(%d)が max(%d)を超えています", m.Name, m.Count, l)
+		}
+		probe := m
+		if m.Scalable() { // 名前の長さは、ありうる番号の大きいほうで確かめる
+			probe.Count = max(m.Count, m.Limit(), 99)
+		}
+		for _, n := range probe.agentNames(d.Name) {
 			if !agent.ValidName(n) {
 				return fmt.Errorf("agent の名前 %s が長すぎます(32 字まで。セットかメンバーの名前を短くする)", n)
 			}
@@ -166,8 +195,8 @@ func (d Def) check() error {
 			}
 		default:
 			if pm, ok := d.member(p); ok {
-				if pm.Count != 1 {
-					return fmt.Errorf("メンバー %s の親 %s は count = 1 のメンバーにしてください(親が複数体だとどれの子か決まらない)", m.Name, p)
+				if pm.Scalable() {
+					return fmt.Errorf("メンバー %s の親 %s は count = 1 で max の無いメンバーにしてください(親が複数体だとどれの子か決まらない)", m.Name, p)
 				}
 			} else if !agent.ValidName(p) {
 				return fmt.Errorf("メンバー %s の parent はメンバー名・~set・agent の名前のどれか: %s", m.Name, p)
@@ -192,9 +221,9 @@ func (d Def) check() error {
 	return nil
 }
 
-// agentNames はメンバーの agent の名前: 1 体なら <セット>-<メンバー>、複数なら <セット>-<メンバー>-<N>。
+// agentNames はメンバーの起動時の agent の名前: 数を変えないメンバーは <セット>-<メンバー>、変えられるなら <セット>-<メンバー>-<N>。
 func (m Member) agentNames(set string) []string {
-	if m.Count == 1 {
+	if !m.Scalable() {
 		return []string{set + "-" + m.Name}
 	}
 	out := make([]string, m.Count)

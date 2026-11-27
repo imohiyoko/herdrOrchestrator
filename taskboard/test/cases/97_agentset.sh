@@ -67,6 +67,28 @@ eq "agentset up: an unknown outside parent → 1, nothing started" "$(rc $TB age
 eq "agentset up: no definition → 1" "$(rc $TB agentset up nope)" "1"
 eq "agentset rm" "$($TB agentset rm solo) $($TB agentset list | paste -sd, -)" "agentset solo を消しました rv"
 
+# ---- scale: max を書いたメンバーは <セット>-<メンバー>-<N>。同じ workspace に pane を足し、減らすのは番号の大きい順に止められるものだけ
+as_reset
+$TB agentset add sc <<<$'cwd = '"$TMP"$'\n[member lead]\n[member w]\nmax = 3\nparent = lead\n' >/dev/null
+$TB agentset up sc >/dev/null 2>&1
+eq "agentset scale: up starts the count (1)" "$(as_sql "SELECT name FROM agents WHERE name LIKE 'sc-%' ORDER BY name;" | paste -sd, -)" "sc-lead,sc-w-1"
+: >"$FAKE_LOG"
+eq "agentset scale +2: two new agents, split from the set's panes" "$($TB agentset scale sc w +2 | cut -d' ' -f1-2 | paste -sd, -) $(grep -c '^pane-split' "$FAKE_LOG") $(grep -c '^workspace-create' "$FAKE_LOG")" "sc-w-2: sc-w-2,sc-w-3: sc-w-3 2 0"
+eq "agentset scale: new agents are killable=yes with the member's parent" "$(as_sql "SELECT name||' '||killable||' '||spawned_by FROM agents WHERE name IN ('sc-w-2','sc-w-3') ORDER BY name;" | paste -sd, -)" "sc-w-2 yes sc-lead,sc-w-3 yes sc-lead"
+eq "agentset scale: over max → 4 (limit), nothing started" "$(rc $TB agentset scale sc w +1) $(as_sql "SELECT COUNT(*) FROM agents WHERE name='sc-w-4';")" "4 0"
+eq "agentset scale: a fixed member → 2" "$(rc $TB agentset scale sc lead +1)" "2"
+eq "agentset scale: from an agent pane is refused" "$(HERDR_PANE_ID=wC:p1 rc $TB agentset scale sc w 1)" "1"
+as_sql "INSERT INTO tasks (id, project, title, status, owner_agent, created_at, updated_at, herdr_session) VALUES ('T-sc-001','sc','busy','in_progress','sc-w-3','t','t','default');"
+: >"$FAKE_LOG"
+out=$($TB agentset scale sc w 1 2>&1; echo "rc=$?")
+eq "agentset scale down: skips the busy one (open task) and the unflagged one, stops the idle one, then 1" \
+  "$(grep -c '^sc-w-3: そのまま' <<<"$out") $(grep -c '^sc-w-2: sc-w-2 stopped' <<<"$out") $(grep -c '^sc-w-1: そのまま' <<<"$out") $(tail -1 <<<"$out") $(grep -c '^pane-close' "$FAKE_LOG")" "1 1 1 rc=1 1"
+eq "agentset status shows the scaled agents" "$($TB agentset status sc | cut -f1,3 | paste -sd, -)" $'sc-lead\trunning,sc-w-1\trunning,sc-w-2\tstopped,sc-w-3\trunning'
+: >"$FAKE_LOG"
+eq "agentset scale +1: revives the stopped number first" "$($TB agentset scale sc w +1 | grep -c '^sc-w-2: .* revived') $(as_sql "SELECT killable FROM agents WHERE name='sc-w-2';")" "1 yes"
+$TB agentset down sc --force >/dev/null 2>&1
+eq "agentset down includes the scaled agents" "$(as_sql "SELECT COUNT(*) FROM agents WHERE name LIKE 'sc-%' AND state='running';")" "0"
+
 as_reset
 unset HERDR_PANE_ID TB_DB TB_AGENTSETS TB_SPAWN_RETRY_SEC TB_AGENT_CWD FAKE_DYNAMIC FAKE_AGENTS
 eval "$_saved_env"
