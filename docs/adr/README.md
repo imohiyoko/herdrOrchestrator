@@ -11,3 +11,4 @@
 | [0007](0007-authenticated-principals-and-one-policy.md) | 認証した主体に認可を与える 1 つのモデルにし、過去の権限の仕組みをなくす | Accepted |
 | [0008](0008-application-api-under-tb-and-webui.md) | tb と Web UI の下にアプリケーション API の層を置き、入口を薄くする | Proposed |
 | [0009](0009-specific-subject-rows-override-defaults.md) | 既定の表を一番下の層にし、細かい主体の行が広い行と既定を上書きする | Accepted |
+| [0010](0010-sleep-idle-agents-and-wake-on-demand.md) | 使われていない agent を眠らせ、用があるときに起こす | Accepted |
