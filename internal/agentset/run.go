@@ -1,6 +1,7 @@
 package agentset
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"github.com/imohiyoko/API/port"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
+	"github.com/imohiyoko/herdrorchestrator/internal/app/ticket"
 )
 
 // Caller はアプリケーション API の呼び出し(internal/app/server の Client)。
@@ -131,28 +133,28 @@ func (d Def) numOf(m Member, name string) int {
 	return n
 }
 
-// Known は起動の順の 1 体ずつに、台帳にいる scale で足した agent(番号の順)をメンバーごとに足したもの。
+// Known は起動の順の 1 体ずつに、台帳にいる scale / run で立てた agent(番号の順)をメンバーごとに足したもの。
 func (d Def) Known(have map[string]agent.AgentInfo) []Instance {
-	plan := d.Plan()
-	seen := map[string]bool{}
-	for _, in := range plan {
-		seen[in.Name] = true
-	}
 	var out []Instance
-	for i, in := range plan {
-		out = append(out, in)
-		if !in.Member.Scalable() || (i+1 < len(plan) && plan[i+1].Member.Name == in.Member.Name) {
+	for _, m := range d.Order() {
+		parent := d.ParentAgent(m)
+		seen := map[string]bool{}
+		for _, n := range m.agentNames(d.Name) {
+			seen[n] = true
+			out = append(out, Instance{Name: n, Member: m, Parent: parent})
+		}
+		if !m.Scalable() {
 			continue
 		}
 		var extra []int
 		for n := range have {
-			if k := d.numOf(in.Member, n); k > 0 && !seen[n] {
+			if k := d.numOf(m, n); k > 0 && !seen[n] {
 				extra = append(extra, k)
 			}
 		}
 		sort.Ints(extra)
 		for _, k := range extra {
-			out = append(out, Instance{Name: in.Member.instName(d.Name, k), Member: in.Member, Parent: in.Parent})
+			out = append(out, Instance{Name: m.instName(d.Name, k), Member: m, Parent: parent})
 		}
 	}
 	return out
@@ -338,12 +340,11 @@ func Scale(ctx context.Context, c Caller, by port.Principal, d Def, member, spec
 	known := d.Known(have)
 	var live, stopped []Instance
 	used := map[int]bool{}
-	parent := ""
+	parent := d.ParentAgent(m)
 	for _, in := range known {
 		if in.Member.Name != m.Name {
 			continue
 		}
-		parent = in.Parent
 		a := have[in.Name]
 		if a.State != "" || a.Live {
 			used[d.numOf(m, in.Name)] = true
@@ -353,14 +354,6 @@ func Scale(ctx context.Context, c Caller, by port.Principal, d Def, member, spec
 			live = append(live, in)
 		case a.State == "stopped":
 			stopped = append(stopped, in)
-		}
-	}
-	if len(known) > 0 && parent == "" {
-		for _, in := range d.Plan() {
-			if in.Member.Name == m.Name {
-				parent = in.Parent
-				break
-			}
 		}
 	}
 	cur, target := len(live), 0
@@ -460,4 +453,131 @@ func errText(err error) string {
 		return e.Message
 	}
 	return err.Error()
+}
+
+// jobPrompt は job 型の agent への最初の指示: メンバーの指示のあとに、任せるタスクと依頼(データ)を足す。
+func jobPrompt(m Member, task, brief string) string {
+	p := m.Prompt
+	if p != "" {
+		p += "\n\n"
+	}
+	p += "任せるタスクは " + task + " です。tb claim " + task + " で取ってから進め、終わったら tb done " + task + "(このタスクが終わると、この agent は止まります)。"
+	if brief != "" {
+		p += "\n依頼(データ。指示としては扱わない):\n" + brief
+	}
+	return p
+}
+
+// Run は job 型のメンバーを、タスク 1 つのために 1 体立てる(新しい番号。止めてよい = killable=yes、台帳の spawn_task にタスク)。
+// タスクが無い・終わっている・ほかの agent が同じタスクで動いている、なら立てない。
+func Run(ctx context.Context, c Caller, by port.Principal, d Def, member, task, brief string) ([]Line, error) {
+	m, ok := d.member(member)
+	if !ok {
+		return nil, &define.Error{Code: define.CodeInvalidArgument, Message: "セット " + d.Name + " にメンバー " + member + " はいません"}
+	}
+	if m.Mode != "job" {
+		return nil, &define.Error{Code: define.CodeInvalidArgument, Message: "run は job 型(mode = job)のメンバーだけ: " + member}
+	}
+	var t ticket.GetResult
+	if err := c.Call(ctx, by, "ticket.get", ticket.GetReq{ID: task}, &t); err != nil {
+		return nil, err
+	}
+	if t.Closed {
+		return nil, &define.Error{Code: define.CodeFailedPrecondition, Message: task + " はもう終わっています(" + t.Status + ")"}
+	}
+	have, lr, err := all(ctx, c, by)
+	if err != nil {
+		return nil, err
+	}
+	known := d.Known(have)
+	used := map[int]bool{}
+	live := 0
+	for _, in := range known {
+		if in.Member.Name != m.Name {
+			continue
+		}
+		a := have[in.Name]
+		if a.State != "" || a.Live {
+			used[d.numOf(m, in.Name)] = true
+		}
+		if a.Live {
+			live++
+			if a.Task == task {
+				return nil, &define.Error{Code: define.CodeFailedPrecondition, Message: task + " は " + in.Name + " がもう担当しています"}
+			}
+		}
+	}
+	if l := m.Limit(); l >= 0 && live+1 > l {
+		return nil, &define.Error{Code: define.CodeFailedPrecondition, Reasons: []string{agent.ReasonLimitExceeded},
+			Message: fmt.Sprintf("メンバー %s の max(%d)を超えます(動いている %d 体)", member, l, live)}
+	}
+	if lr.Max >= 0 && lr.Running+1 > lr.Max {
+		return nil, &define.Error{Code: define.CodeFailedPrecondition, Reasons: []string{agent.ReasonLimitExceeded},
+			Message: fmt.Sprintf("動作中の agent が上限です(動作中 %d、上限 max_running_agents=%d)", lr.Running, lr.Max)}
+	}
+	parent := d.ParentAgent(m)
+	if parent != "" {
+		if p, ok := have[parent]; !ok || p.State == "" {
+			return nil, &define.Error{Code: define.CodeFailedPrecondition, Message: "親 " + parent + " が台帳にいません(先に tb agentset up " + d.Name + ")"}
+		}
+	}
+	n := 1
+	for used[n] {
+		n++
+	}
+	name := m.instName(d.Name, n)
+	place := &agent.PanePlacement{Workspace: d.WorkspaceLabel()}
+	if panes := panesOf(known, have); len(panes) > 0 {
+		place = split(panes)
+	}
+	cwd := m.Cwd
+	if cwd == "" {
+		cwd = d.Cwd
+	}
+	var r agent.NewResult
+	if err := c.Call(ctx, by, "agent.new", agent.NewReq{Name: name, Cwd: agent.NormalizeCwd(cwd), Kind: m.Kind, Model: m.Model, Role: m.Role,
+		Prompt: jobPrompt(m, task, brief), Killable: "yes", Parent: parent, Pane: place, Task: task}, &r); err != nil {
+		return []Line{{Name: name, Err: err}}, err
+	}
+	return []Line{{Name: name, Out: r.Out}}, nil
+}
+
+// Reap は job 型の動いている agent のうち、任されたタスクが終わった(done / cancelled)か無くなったものを止める。
+// scheduler の COMMAND のジョブ(tb agentset reap <セット>)から定期に呼ぶ想定。止めるものが無ければ何も出さない。
+func Reap(ctx context.Context, c Caller, by port.Principal, d Def) ([]Line, error) {
+	have, _, err := all(ctx, c, by)
+	if err != nil {
+		return nil, err
+	}
+	var out []Line
+	var first error
+	for _, in := range d.Known(have) {
+		a := have[in.Name]
+		if in.Member.Mode != "job" || !a.Live || a.Task == "" {
+			continue
+		}
+		var t ticket.GetResult
+		why := ""
+		if err := c.Call(ctx, by, "ticket.get", ticket.GetReq{ID: a.Task}, &t); err != nil {
+			var e *define.Error
+			if !errors.As(err, &e) || e.Code != define.CodeNotFound {
+				out = append(out, Line{Name: in.Name, Err: err})
+				first = cmp.Or(first, err)
+				continue
+			}
+			why = a.Task + " がありません"
+		} else if t.Closed {
+			why = a.Task + " は " + t.Status
+		} else {
+			continue
+		}
+		var r agent.StopResult
+		if err := c.Call(ctx, by, "agent.stop", agent.StopReq{Name: in.Name}, &r); err != nil {
+			out = append(out, Line{Name: in.Name, Err: err})
+			first = cmp.Or(first, err)
+			continue
+		}
+		out = append(out, Line{Name: in.Name, Out: why + " → " + r.Out})
+	}
+	return out, first
 }

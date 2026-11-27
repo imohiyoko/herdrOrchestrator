@@ -32,6 +32,8 @@ type NewReq struct {
 	Parent string `api:"parent,optional"`
 	// Pane は置き場所(空なら専用の workspace)。人だけが指定できる(agent セットが 1 つの workspace に並べる)
 	Pane *PanePlacement `api:"pane,optional"`
+	// Task は任せるタスク(台帳の spawn_task。agent セットの job 型が、タスクが終わったら止めるのに使う)。人だけが指定できる
+	Task string `api:"task,optional"`
 }
 
 // PanePlacement は agent の置き場所: 既存の pane を分けて置く(Split)か、名前を付けた新しい workspace(Workspace)。
@@ -55,6 +57,7 @@ type NewResult struct {
 func (r *NewResult) SetPending(p *app.Pending) { r.Pending = p }
 
 var (
+	reTask   = regexp.MustCompile(`^T-[A-Za-z0-9_]+-[0-9]{3,}$`)
 	rePaneID = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,64}$`)
 	reLabel  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 )
@@ -93,11 +96,14 @@ func paneErr(cmd, who string, p *PanePlacement) error {
 
 // placeErr は親と置き場所の確かめ(人だけ。親は台帳にいる別の agent。pane の id と向き)。
 func placeErr(db *store.DB, who string, in NewReq) error {
-	if in.Parent == "" && in.Pane == nil {
+	if in.Parent == "" && in.Pane == nil && in.Task == "" {
 		return nil
 	}
 	if who != "human" {
-		return define.Errorf(define.CodePermissionDenied, "agent-new: 親と置き場所(pane)を指定できるのは人だけです(%s)", who)
+		return define.Errorf(define.CodePermissionDenied, "agent-new: 親・置き場所(pane)・任せるタスクを指定できるのは人だけです(%s)", who)
+	}
+	if in.Task != "" && !reTask.MatchString(in.Task) {
+		return usageErr("agent-new: タスクの ID は T-<project>-<番号>: %s", in.Task)
 	}
 	if in.Parent != "" {
 		if err := validName(in.Parent); err != nil {
@@ -170,6 +176,9 @@ func newArgs(in NewReq) string {
 	kv = append(kv, "killable", in.kill())
 	if in.Parent != "" {
 		kv = append(kv, "parent", in.Parent)
+	}
+	if in.Task != "" {
+		kv = append(kv, "task", in.Task)
 	}
 	if p := in.Pane; p != nil {
 		kv = append(kv, "pane", map[string]string{"workspace": p.Workspace, "split": p.Split, "direction": p.Direction})
@@ -258,7 +267,7 @@ func newOp(env *app.Env) app.Op {
 			who := by(ctx)
 			return withDB(env, func(db *store.DB) (NewResult, error) {
 				r := NewWith(ctx, db, NewSpec{Name: in.Name, Cwd: in.cwd(), Model: in.Model, Role: in.Role, Prompt: in.Prompt, Kill: in.kill(),
-					By: who, SpawnedBy: in.Parent, Kind: in.kind(), At: in.place()}, env.Warner())
+					By: who, SpawnedBy: in.Parent, SpawnTask: in.Task, Kind: in.kind(), At: in.place()}, env.Warner())
 				agents.RecordOp(db.DB, db.Session, "new", in.Name, newArgs(in), who, r.Code, r.Out)
 				if err := r.Err(); err != nil {
 					return NewResult{}, err
