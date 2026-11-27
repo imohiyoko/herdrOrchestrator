@@ -11,7 +11,6 @@ import (
 	"github.com/imohiyoko/API/port"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/agentset"
-	"github.com/imohiyoko/herdrorchestrator/internal/app"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/server"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 )
@@ -51,7 +50,7 @@ func (a appCaller) Call(ctx context.Context, by port.Principal, op string, in, o
 }
 
 func agentsetCaller(db *store.DB, stderr io.Writer) (agentset.Caller, error) {
-	c, err := server.New(&app.Env{DB: app.Shared(db), Now: now, PendingQ: pendingQ, Warn: stderr})
+	c, err := server.New(appEnv(db, stderr))
 	if err != nil {
 		return nil, err
 	}

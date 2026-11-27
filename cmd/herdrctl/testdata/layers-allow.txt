@@ -57,7 +57,6 @@ sql internal/tbcli/request.go 25
 sql internal/tbcli/roles.go 8
 sql internal/tbcli/schedwatch.go 2
 sql internal/tbcli/slash.go 3
-sql internal/tbcli/spawn.go 14
 sql internal/tbcli/tbcli.go 1
 sql internal/tbcli/ticket.go 6
 sql internal/tbcli/ticketcomment.go 26
