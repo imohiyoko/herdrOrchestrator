@@ -3,9 +3,12 @@
 package herdr
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
+	"strconv"
+	"time"
 )
 
 // Bin は herdr の実体(HERDR_BIN。既定は PATH の herdr)。
@@ -16,9 +19,27 @@ func Bin() string {
 	return "herdr"
 }
 
+// callTimeout は herdr の 1 回の呼び出しの上限(HERDR_CALL_TIMEOUT_SEC、既定 60 秒)。
+// herdr が応答しなくても、呼び出し(tb のコマンドや Web UI の操作)が戻らなくならないようにする。超えたら子プロセスを止めて失敗にする。
+func callTimeout() time.Duration {
+	if v, err := strconv.ParseFloat(os.Getenv("HERDR_CALL_TIMEOUT_SEC"), 64); err == nil && v > 0 {
+		return time.Duration(v * float64(time.Second))
+	}
+	return 60 * time.Second
+}
+
+func command(args ...string) (*exec.Cmd, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(context.Background(), callTimeout())
+	c := exec.CommandContext(ctx, Bin(), args...)
+	c.WaitDelay = 2 * time.Second // 孫プロセスが出力を開いたままでも待ち続けない
+	return c, cancel
+}
+
 // Call は herdr を引数そのままで実行し、標準出力を返す(標準エラーは捨てる。herdr_call 2>/dev/null と同じ)。
 func Call(args ...string) ([]byte, error) {
-	return exec.Command(Bin(), args...).Output()
+	c, cancel := command(args...)
+	defer cancel()
+	return c.Output()
 }
 
 // Agent は herdr agent list の 1 件(使う項目だけ)。
@@ -62,5 +83,7 @@ func ParseAgents(out []byte) ([]Agent, error) {
 
 // CallCombined は herdr を実行し、標準出力と標準エラーをまとめて返す(out=$(herdr_call ... 2>&1) と同じ)。
 func CallCombined(args ...string) ([]byte, error) {
-	return exec.Command(Bin(), args...).CombinedOutput()
+	c, cancel := command(args...)
+	defer cancel()
+	return c.CombinedOutput()
 }

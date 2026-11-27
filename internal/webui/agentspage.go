@@ -410,7 +410,15 @@ func agentOp(sess, op, name string) string {
 	var args []string
 	switch op {
 	case "stop", "force-stop":
-		return agentStop(sess, name, op == "force-stop")
+		if sess == SessionName() {
+			return agentStop(sess, name, op == "force-stop")
+		}
+		// herdr の呼び出し先はプロセスの環境で決まる(herdr アダプタはまだセッションを受け取らない)。ほかのセッションは
+		// 前と同じく、HERDR_SESSION を渡した tb の子プロセスで行う
+		args = []string{"agent-stop", name}
+		if op == "force-stop" {
+			args = append(args, "--force")
+		}
 	case "revive":
 		args = []string{"agent-revive", name}
 	case "revive-fresh":
