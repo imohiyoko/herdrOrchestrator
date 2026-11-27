@@ -284,7 +284,7 @@ func Up(ctx context.Context, c Caller, by port.Principal, d Def) ([]Line, error)
 func (d Def) scheduled() []Member {
 	var out []Member
 	for _, m := range d.Members {
-		if m.Every > 0 {
+		if m.Scheduled() {
 			out = append(out, m)
 		}
 	}

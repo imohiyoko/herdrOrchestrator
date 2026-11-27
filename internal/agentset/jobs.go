@@ -111,7 +111,7 @@ func (d Def) tbCommand(args ...string) string {
 func (d Def) Jobs() []JobSpec {
 	var out []JobSpec
 	for _, m := range d.scheduled() {
-		out = append(out, JobSpec{Name: d.JobName(m), Body: d.JobBody(m), Desc: "定期の指示(" + strconv.Itoa(m.Every) + " 分おき)"})
+		out = append(out, JobSpec{Name: d.JobName(m), Body: d.JobBody(m), Desc: m.scheduleDesc()})
 	}
 	if len(d.Autoscaled()) > 0 && d.AutoscaleEvery > 0 {
 		out = append(out, JobSpec{Name: d.autoscaleJob(), Desc: fmt.Sprintf("自動スケールの評価(%d 分おき)", d.AutoscaleEvery),

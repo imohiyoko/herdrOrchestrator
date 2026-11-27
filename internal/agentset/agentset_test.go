@@ -800,7 +800,7 @@ func TestJobs(t *testing.T) {
 		"[member w]\nmax = 3\nscale_at = funday 09:00: 1\n",
 		"[member w]\nmax = 3\nscale_at = at 2026-02-30 09:00: 1\n",
 		"[member w]\nmax = 3\nscale_at = weekdays 09:00: 4\n", // max を超える
-		"[member w]\nscale_at = weekdays 09:00: 1\n",           // 数を変えられない
+		"[member w]\nscale_at = weekdays 09:00: 1\n",          // 数を変えられない
 		"[member w]\nmax = 3\nscale_at = weekdays 09:00\n",
 		"autoscale_every = 0m\n[member w]\nmax = 2\n",
 		"[member autoscale]\nmax = 2\n",
@@ -828,5 +828,34 @@ func TestUpDownJobs(t *testing.T) {
 	}
 	if _, err := Down(ctx, f, by, d, true); err != nil || len(f.jobs) != 0 {
 		t.Fatalf("down で全部消す: %v %v", err, f.jobs)
+	}
+}
+
+func TestScheduleAt(t *testing.T) {
+	d, err := Parse("sa", "[member a]\nschedule = at 2026-12-01 09:30: 朝の確認: 一覧を見る\n[member b]\nschedule = weekdays 18:00: 日報を書く\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _ := d.member("a")
+	if a.SayAt == nil || a.SayAt.At != "2026-12-01 09:30" || a.Say != "朝の確認: 一覧を見る" || !strings.Contains(d.JobBody(a), "AT=\"2026-12-01 09:30\"\n") || strings.Contains(d.JobBody(a), "INTERVAL_MIN") {
+		t.Fatalf("at: %+v %q", a, d.JobBody(a))
+	}
+	b, _ := d.member("b")
+	if !strings.Contains(d.JobBody(b), "WINDOW=18:00-18:00\nINTERVAL_MIN=1440\nDAYS=\"weekdays\"\n") {
+		t.Fatalf("days: %q", d.JobBody(b))
+	}
+	if js := d.Jobs(); len(js) != 2 || js[0].Desc != "定期の指示(2026-12-01 09:30 に 1 回)" || js[1].Desc != "定期の指示(weekdays 18:00)" {
+		t.Fatalf("jobs: %+v", js)
+	}
+	for _, bad := range []string{
+		"[member a]\nschedule = at 2026-13-01 09:30: x\n",
+		"[member a]\nschedule = someday 09:30: x\n",
+		"[member a]\nschedule = weekdays 09:30: /compact\n",
+		"[member a]\nschedule = every 0m: x\n",
+		"[member a]\nmax = 2\nschedule = weekdays 09:30: x\n",
+	} {
+		if _, err := Parse("sa", bad); err == nil {
+			t.Errorf("断るはず: %q", bad)
+		}
 	}
 }

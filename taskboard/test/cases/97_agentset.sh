@@ -130,6 +130,9 @@ $TB agentset add sd <<<$'cwd = '"$TMP"$'\n[member lead]\nschedule = every 30m: �
 eq "agentset schedule: up writes the job" "$($TB agentset up sd | grep -c '^agentset-sd-lead: 定期の指示(30 分おき)を書きました') $($TB job show agentset-sd-lead 2>/dev/null | grep -E '^(TARGET|PROMPT|INTERVAL_MIN)=' | paste -sd' ' -)" "1 TARGET=sd-lead PROMPT='未処理を確かめる' INTERVAL_MIN=30"
 eq "agentset schedule: up again keeps it" "$($TB agentset up sd | grep -c '^agentset-sd-lead: 定期の指示(30 分おき)は同じです')" "1"
 eq "agentset schedule: an unreadable value is refused at add" "$(rc $TB agentset add sd2 <<<$'[member a]\nschedule = every 5m: /compact\n')" "2"
+$TB agentset add sd3 <<<$'cwd = '"$TMP"$'\n[member lead]\nschedule = weekdays 09:00: 朝の確認\n' >/dev/null
+eq "agentset schedule: <days> HH:MM writes a once-a-day job" "$($TB agentset up sd3 | grep -c '^agentset-sd3-lead: 定期の指示(weekdays 09:00)を書きました') $($TB job show agentset-sd3-lead 2>/dev/null | grep -E '^(WINDOW|DAYS)=' | paste -sd' ' -)" '1 WINDOW=09:00-09:00 DAYS="weekdays"'
+$TB agentset down sd3 --force >/dev/null 2>&1
 eq "agentset schedule: down removes the job" "$($TB agentset down sd --force | grep -c '^agentset-sd-lead: ジョブを消しました') $(rc $TB job show agentset-sd-lead)" "1 1"
 
 # ---- autoscale: 条件を 1 回評価して増やす・減らす(増やすのは max まで、減らすのは count まで)

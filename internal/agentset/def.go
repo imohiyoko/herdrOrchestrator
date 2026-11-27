@@ -55,6 +55,8 @@ type Member struct {
 	// Every と Say は schedule(every <N>m|<N>h: <本文>): up で scheduler のジョブ agentset-<セット>-<メンバー> を書き、down で消す
 	Every int // 分(0 なら schedule なし)
 	Say   string
+	// SayAt は schedule = at <日時>: … / <曜日> HH:MM: … の時刻(Every の代わり。nil なら繰り返しの間隔)
+	SayAt *When
 	// Out・In・Queue・Step は自動スケール(autoscale.go。tb agentset autoscale が評価する)
 	Out      []Cond
 	In       []Cond
@@ -65,6 +67,28 @@ type Member struct {
 	ScaleAt []ScaleAt
 }
 
+// scheduleLines は schedule のジョブの時刻の行(間隔なら終日 Every 分おき、時刻ならその時刻)。
+func (m Member) scheduleLines() string {
+	if m.SayAt != nil {
+		return m.SayAt.lines()
+	}
+	return "WINDOW=00:00-23:59\nINTERVAL_MIN=" + strconv.Itoa(m.Every) + "\n"
+}
+
+// Scheduled は schedule を書いたメンバーか。
+func (m Member) Scheduled() bool { return m.Every > 0 || m.SayAt != nil }
+
+// scheduleDesc は up の出力に添える schedule の説明。
+func (m Member) scheduleDesc() string {
+	if m.SayAt != nil {
+		if m.SayAt.At != "" {
+			return "定期の指示(" + m.SayAt.At + " に 1 回)"
+		}
+		return "定期の指示(" + m.SayAt.Days + " " + m.SayAt.HM + ")"
+	}
+	return "定期の指示(" + strconv.Itoa(m.Every) + " 分おき)"
+}
+
 // JobName は schedule を書いたメンバーの scheduler のジョブの名前。
 func (d Def) JobName(m Member) string { return "agentset-" + d.Name + "-" + m.Name }
 
@@ -72,9 +96,7 @@ func (d Def) JobName(m Member) string { return "agentset-" + d.Name + "-" + m.Na
 func (d Def) JobBody(m Member) string {
 	return "# agent セット " + d.Name + " のメンバー " + m.Name + " の schedule(tb agentset up が書き、down で消す。直すなら定義を直して up)\n" +
 		"TARGET=" + m.agentNames(d.Name)[0] + "\n" +
-		"PROMPT='" + m.Say + "'\n" +
-		"WINDOW=00:00-23:59\n" +
-		"INTERVAL_MIN=" + strconv.Itoa(m.Every) + "\n"
+		"PROMPT='" + m.Say + "'\n" + m.scheduleLines()
 }
 
 // Scalable は数を変えられるメンバー(count が 2 以上か、max を書いた)。agent の名前は <セット>-<メンバー>-<N>。
@@ -213,7 +235,14 @@ func Parse(name, body string) (Def, error) {
 			if err != nil {
 				return d, fmt.Errorf("%d 行目: %s", ln, err)
 			}
-			m.Every, m.Say = every, say
+			m.Every, m.Say, m.SayAt = every, say, nil
+			if every == 0 {
+				w, err := parseWhen(whenOf(v))
+				if err != nil {
+					return d, fmt.Errorf("%d 行目: schedule: %s", ln, err)
+				}
+				m.SayAt = &w
+			}
 		case "mode":
 			if v != "job" {
 				return d, fmt.Errorf("%d 行目: mode は job だけ: %s", ln, v)
@@ -308,7 +337,7 @@ func (d Def) check() error {
 		return fmt.Errorf("parent は agent の名前: %s", d.Parent)
 	}
 	for _, m := range d.Members {
-		if m.Every > 0 && m.Scalable() {
+		if m.Scheduled() && m.Scalable() {
 			return fmt.Errorf("メンバー %s の schedule は count = 1 で max の無いメンバーだけ(送り先の agent が 1 体に決まらない)", m.Name)
 		}
 		if len(m.Out)+len(m.In) > 0 {
@@ -515,10 +544,26 @@ func (d Def) WorkspaceLabel() string {
 var reSchedule = regexp.MustCompile(`^every\s+([0-9]+)(m|h)\s*:\s*(.+)$`)
 
 // parseSchedule は schedule の値「every <N>m|<N>h: <本文>」を分と本文にする。
+var reScheduleAt = regexp.MustCompile(`^(at [0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}|[a-z,]+ [0-9]{2}:[0-9]{2})\s*:\s*(.+)$`)
+
+// whenOf は schedule = <時刻>: <本文> の時刻の部分。
+func whenOf(v string) string {
+	if g := reScheduleAt.FindStringSubmatch(v); g != nil {
+		return g[1]
+	}
+	return v
+}
+
+// parseSchedule は schedule の値: every <N>m|<N>h: <本文>(間隔。分を返す)か、<時刻>: <本文>(時刻。分は 0。時刻は whenOf)。
 func parseSchedule(v string) (int, string, error) {
 	g := reSchedule.FindStringSubmatch(v)
 	if g == nil {
-		return 0, "", fmt.Errorf("schedule は「every <N>m: <本文>」か「every <N>h: <本文>」: %s", v)
+		a := reScheduleAt.FindStringSubmatch(v)
+		if a == nil || strings.HasPrefix(v, "every ") {
+			return 0, "", fmt.Errorf("schedule は「every <N>m|<N>h: <本文>」「at YYYY-MM-DD HH:MM: <本文>」「<曜日> HH:MM: <本文>」のどれか: %s", v)
+		}
+		say, err := checkSay(strings.TrimSpace(a[2]))
+		return 0, say, err
 	}
 	n, err := strconv.Atoi(g[1])
 	limit := 24 * 60
@@ -534,12 +579,16 @@ func parseSchedule(v string) (int, string, error) {
 	if n < 1 || n > 24*60 {
 		return 0, "", fmt.Errorf("schedule の間隔は 1 分から 24 時間まで: %s", v)
 	}
-	say := strings.TrimSpace(g[3])
+	say, err := checkSay(strings.TrimSpace(g[3]))
+	return n, say, err
+}
+
+func checkSay(say string) (string, error) {
 	if strings.HasPrefix(say, "/") || strings.HasPrefix(say, "-") {
-		return 0, "", fmt.Errorf("schedule の本文は / や - で始められません(スラッシュコマンドと解釈されるため): %s", say)
+		return "", fmt.Errorf("schedule の本文は / や - で始められません(スラッシュコマンドと解釈されるため): %s", say)
 	}
 	if strings.ContainsAny(say, "'\\") {
-		return 0, "", fmt.Errorf("schedule の本文に ' と \\ は使えません: %s", say)
+		return "", fmt.Errorf("schedule の本文に ' と \\ は使えません: %s", say)
 	}
-	return n, say, nil
+	return say, nil
 }
