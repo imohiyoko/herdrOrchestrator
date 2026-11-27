@@ -89,6 +89,27 @@ eq "agentset scale +1: revives the stopped number first" "$($TB agentset scale s
 $TB agentset down sc --force >/dev/null 2>&1
 eq "agentset down includes the scaled agents" "$(as_sql "SELECT COUNT(*) FROM agents WHERE name LIKE 'sc-%' AND state='running';")" "0"
 
+# ---- job: run はタスクごとに新しい番号で 1 体(killable=yes・spawn_task)、reap は終わったタスクの agent を止める
+as_reset
+$TB agentset add jb <<<$'cwd = '"$TMP"$'\n[member lead]\n[member fix]\nmode = job\nparent = lead\nprompt = 直す\n' >/dev/null
+$TB agentset up jb >/dev/null 2>&1
+eq "agentset job: up starts no job agents" "$(as_sql "SELECT name FROM agents WHERE name LIKE 'jb-%' ORDER BY name;" | paste -sd, -)" "jb-lead"
+as_sql "INSERT INTO tasks (id, project, title, status, created_at, updated_at, herdr_session) VALUES ('T-jb-001','jb','one','todo','t','t','default'),('T-jb-002','jb','two','done','t','t','default');"
+: >"$FAKE_LOG"
+eq "agentset run: starts <set>-<member>-1 split into the set's workspace" "$($TB agentset run jb fix --task T-jb-001 --brief 'see log' | cut -d' ' -f1) $(grep -c '^pane-split' "$FAKE_LOG")" "jb-fix-1: 1"
+eq "agentset run: killable=yes, spawn_task, parent" "$(as_sql "SELECT killable||' '||spawn_task||' '||spawned_by FROM agents WHERE name='jb-fix-1';")" "yes T-jb-001 jb-lead"
+eq "agentset run: the prompt names the task and the brief" "$(grep '^prompt jb-fix-1' "$FAKE_LOG" | grep -c 'tb claim T-jb-001.*see log')" "1"
+eq "agentset run: the same task again → 1" "$(rc $TB agentset run jb fix --task T-jb-001)" "1"
+eq "agentset run: a done task → 1" "$(rc $TB agentset run jb fix --task T-jb-002)" "1"
+eq "agentset run: a missing task → 1" "$(rc $TB agentset run jb fix --task T-jb-404)" "1"
+eq "agentset run: no --task → 2" "$(rc $TB agentset run jb fix)" "2"
+eq "agentset run: a fixed member → 2" "$(rc $TB agentset run jb lead --task T-jb-001)" "2"
+eq "agentset run: from an agent pane is refused" "$(HERDR_PANE_ID=wC:p1 rc $TB agentset run jb fix --task T-jb-001)" "1"
+eq "agentset reap: nothing to stop while the task is open" "$($TB agentset reap jb) $(as_sql "SELECT state FROM agents WHERE name='jb-fix-1';")" "止める job はありません running"
+as_sql "UPDATE tasks SET status='done' WHERE id='T-jb-001';"
+eq "agentset reap: stops the agent whose task is done" "$($TB agentset reap jb | grep -c '^jb-fix-1: T-jb-001 は done') $(as_sql "SELECT state FROM agents WHERE name='jb-fix-1';")" "1 stopped"
+$TB agentset down jb --force >/dev/null 2>&1
+
 as_reset
 unset HERDR_PANE_ID TB_DB TB_AGENTSETS TB_SPAWN_RETRY_SEC TB_AGENT_CWD FAKE_DYNAMIC FAKE_AGENTS
 eval "$_saved_env"

@@ -275,6 +275,8 @@ agentset.up              cmd:agentset:up              deny        allow       en
 agentset.down            cmd:agentset:down            deny        allow       entry
 agentset.status          cmd:agentset:status          allow       allow       entry
 agentset.scale           cmd:agentset:scale           deny        allow       entry
+agentset.run             cmd:agentset:run             deny        allow       entry
+agentset.reap            cmd:agentset:reap            deny        allow       entry
 
 # --- herdr(workspace / pane を閉じる。agent が動いている所は中で必ず断る)
 herdr                    cmd:herdr:help               allow       allow       entry
