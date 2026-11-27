@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/imohiyoko/herdrorchestrator/internal/kernel/util"
 	"github.com/imohiyoko/herdrorchestrator/internal/sched"
 )
 
@@ -208,7 +207,7 @@ func (s *Server) startTBJobRun(sess, name string) error {
 		why := ""
 		if err != nil {
 			m, _ := mask(strings.ToValidUTF8(se.String(), "\uFFFD"))
-			why = " " + util.Oneline(m, 300)
+			why = " " + oneLine(m, 300)
 		}
 		s.logf("jobs: run %s done (%v)%s\n", name, err, why)
 	}()
@@ -398,4 +397,13 @@ func (v *sv) verifyApplied(name string, f form) string {
 		return "保存しましたが、scheduler の読む設定に反映されていません(scheduler は " + where + " を読んでいます)"
 	}
 	return ""
+}
+
+// oneLine は改行と連続した空白を 1 つの空白にし、n 字(rune)で切る(ログの 1 行用)。
+func oneLine(s string, n int) string {
+	r := []rune(strings.Join(strings.Fields(s), " "))
+	if len(r) > n {
+		return string(r[:n]) + "…"
+	}
+	return string(r)
 }
