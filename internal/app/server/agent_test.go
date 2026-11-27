@@ -308,3 +308,26 @@ func TestAgentNewPlacement(t *testing.T) {
 		t.Errorf("台帳: spawned_by=%q pane=%q", sby, pane)
 	}
 }
+
+func TestAgentSpawnFreeze(t *testing.T) {
+	t.Setenv("HERDR_PANE_ID", "")
+	env, _ := fixture(t, "")
+	if _, e := callOp[agent.FreezeResult](t, env, app.Agent("w1"), "agent.freeze", agent.FreezeReq{}); e == nil || e.Code != define.CodePermissionDenied {
+		t.Errorf("agent は既定で断る: %v", e)
+	}
+	if r, e := callOp[agent.FreezeResult](t, env, app.Human(), "agent.freeze", agent.FreezeReq{}); e != nil || !r.Frozen {
+		t.Fatalf("freeze: %+v %v", r, e)
+	}
+	if got := q1(t, env, `SELECT value||' '||set_by FROM tb_flags WHERE key='spawn_frozen'`); got != "1 human" {
+		t.Errorf("凍結の行: %q", got)
+	}
+	if _, e := callOp[agent.FreezeResult](t, env, app.Human(), "agent.unfreeze", agent.FreezeReq{}); e != nil {
+		t.Fatal(e)
+	}
+	if got := q1(t, env, `SELECT value FROM tb_flags WHERE key='spawn_frozen'`); got != "0" {
+		t.Errorf("解除: %q", got)
+	}
+	if _, e := callOp[agent.FlagResult](t, env, app.Human(), "agent.flag", agent.FlagReq{Name: "w1", Killable: "yes"}); e == nil || e.Code != define.CodeInvalidArgument {
+		t.Errorf("yes には理由が要る: %v", e)
+	}
+}
