@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/util"
 	"github.com/imohiyoko/herdrorchestrator/internal/sched"
 )
 
@@ -195,6 +196,8 @@ const jobRunTimeout = 15 * time.Minute
 func (s *Server) startTBJobRun(sess, name string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), jobRunTimeout)
 	c := jobTBCmd(ctx, sess, []string{"job", "run", name})
+	var se bytes.Buffer // scheduler に届く前に tb が断ったとき(herdrctl が無いなど)の理由。ジョブのログには残らない
+	c.Stderr = &se
 	if err := c.Start(); err != nil {
 		cancel()
 		return err
@@ -202,7 +205,12 @@ func (s *Server) startTBJobRun(sess, name string) error {
 	go func() {
 		defer cancel()
 		err := c.Wait()
-		s.logf("jobs: run %s done (%v)\n", name, err)
+		why := ""
+		if err != nil {
+			m, _ := mask(strings.ToValidUTF8(se.String(), "\uFFFD"))
+			why = " " + util.Oneline(m, 300)
+		}
+		s.logf("jobs: run %s done (%v)%s\n", name, err, why)
 	}()
 	return nil
 }
