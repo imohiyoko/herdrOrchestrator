@@ -50,7 +50,6 @@ sql internal/tbcli/modelset.go 2
 sql internal/tbcli/notify.go 7
 sql internal/tbcli/recipe.go 4
 sql internal/tbcli/reciperun.go 11
-sql internal/tbcli/reminder.go 2
 sql internal/tbcli/request.go 15
 sql internal/tbcli/roles.go 2
 sql internal/tbcli/schedwatch.go 2

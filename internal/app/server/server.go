@@ -21,6 +21,7 @@ import (
 	appmessage "github.com/imohiyoko/herdrorchestrator/internal/app/message"
 	appnotify "github.com/imohiyoko/herdrorchestrator/internal/app/notify"
 	apprecipe "github.com/imohiyoko/herdrorchestrator/internal/app/recipe"
+	appreminder "github.com/imohiyoko/herdrorchestrator/internal/app/reminder"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/ticket"
 )
 
@@ -35,6 +36,7 @@ func Ops(env *app.Env) []app.Op {
 	ops = append(ops, appalert.Ops(env)...)
 	ops = append(ops, appnotify.Ops(env)...)
 	ops = append(ops, apprecipe.Ops(env)...)
+	ops = append(ops, appreminder.Ops(env)...)
 	ops = append(ops, appmessage.Ops(env)...)
 	return ops
 }

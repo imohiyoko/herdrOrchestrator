@@ -8,13 +8,13 @@ import (
 	"strconv"
 	"strings"
 
+	appreminder "github.com/imohiyoko/herdrorchestrator/internal/app/reminder"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/capv"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/util"
 	"github.com/imohiyoko/herdrorchestrator/internal/message"
 	"github.com/imohiyoko/herdrorchestrator/internal/notify"
 	"github.com/imohiyoko/herdrorchestrator/internal/reminder"
-	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
 )
 
 const reminderUsage = `tb reminder list [--json]          人が忘れているかもしれないものを優先度順に出す(何も書かない)
@@ -90,6 +90,9 @@ func reminders(args []string, w, stderr io.Writer) error {
 		return err
 	}
 	defer db.Close()
+	if mode == "publish" {
+		return remindersPublish(db, js, w, stderr)
+	}
 	env := reminder.LoadEnv()
 	if !env.Valid() {
 		return usage("TB_REMINDERS_STALE_HOURS / TB_REMINDERS_DUE_DAYS / TB_DIGEST_QUEUED_SEC は数字")
@@ -117,14 +120,6 @@ func reminders(args []string, w, stderr io.Writer) error {
 	text := d.Text(reminder.Now())
 	// 秘密らしい値: 題に紛れ込んだものを伏せる(継続の項目は本文に出ないが、--json と Web UI の行には出るので全項目の題も調べる)
 	text = d.Redact(text)
-	if mode == "publish" {
-		ts := reminder.Now()
-		last := `{"at":` + util.JQString(ts) + `,"full":` + strconv.FormatBool(d.Full) + `,"removed":` + d.RemovedJSON() +
-			`,"text":` + util.JQString(text) + `,"items":` + d.ItemsJSON() + "}"
-		if err := seenTx(db, ts, [][2]string{{"reminders:state", d.StateJSON()}, {"reminders:last", last}}, full, td); err != nil {
-			return die("reminders: 記録を書けませんでした")
-		}
-	}
 	if js {
 		fmt.Fprintln(w, `{"full":`+strconv.FormatBool(d.Full)+`,"removed":`+d.RemovedJSON()+`,"items":`+d.ItemsJSON()+"}")
 	} else {
@@ -133,23 +128,25 @@ func reminders(args []string, w, stderr io.Writer) error {
 	return nil
 }
 
-// seenTx は notify_seen の行を 1 つのトランザクションで書く(full なら reminders:full-day も)。
-func seenTx(db *store.DB, ts string, kv [][2]string, full bool, td string) error {
-	if full {
-		kv = append(kv, [2]string{"reminders:full-day", td})
+// remindersPublish は reminders --publish(reminder.publish)。
+func remindersPublish(db *store.DB, js bool, w, stderr io.Writer) error {
+	if !reminder.LoadEnv().Valid() {
+		return usage("TB_REMINDERS_STALE_HOURS / TB_REMINDERS_DUE_DAYS / TB_DIGEST_QUEUED_SEC は数字")
 	}
-	tx, err := db.Begin()
+	td, err := today() // TB_TODAY が日付でなければ、ここで使い方の誤り
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
-	for _, p := range kv {
-		if _, err := tx.Exec(`INSERT INTO main.notify_seen (herdr_session, key, value, updated_at) VALUES (?, ?, ?, ?)
-    ON CONFLICT(herdr_session, key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`, db.Session, p[0], p[1], ts); err != nil {
-			return err
-		}
+	var r appreminder.PublishResult
+	if err := callAppNoHerdr(db, "tb reminder publish", stderr, "reminder.publish", appreminder.PublishReq{Today: td}, &r); err != nil {
+		return err
 	}
-	return tx.Commit()
+	if js {
+		fmt.Fprintln(w, `{"full":`+strconv.FormatBool(r.Full)+`,"removed":`+r.Removed+`,"items":`+r.Items+"}")
+	} else {
+		fmt.Fprintln(w, r.Text)
+	}
+	return nil
 }
 
 var reProject = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
@@ -183,7 +180,7 @@ func dueScan(args []string, w, stderr io.Writer) error {
 			return usage("due-scan: 不明な引数 %s", a)
 		}
 	}
-	db, st, err := openCmd(stderr)
+	db, _, err := openCmd(stderr)
 	if err != nil {
 		return err
 	}
@@ -192,13 +189,11 @@ func dueScan(args []string, w, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	over, soon, err := tickets.DueScan(db.DB, db.Session, st.SQLList("done", "cancelled"), td, within, project)
-	if err != nil {
-		return die("due-scan: 履歴に書けませんでした")
+	var r appreminder.ScanResult
+	if err := callAppNoHerdr(db, "tb reminder scan", stderr, "reminder.scan", appreminder.ScanReq{Project: project, Within: &within, Today: td}, &r); err != nil {
+		return err
 	}
-	q := notify.New(db.DB, db.Session)
-	q.ActiveSQL = st.SQLList("active", "review")
-	_ = q.RunRules()
+	over, soon := r.Overdue, r.DueSoon
 	fmt.Fprintf(w, "overdue %d due_soon %d\n", over, soon)
 	return nil
 }

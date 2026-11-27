@@ -307,6 +307,7 @@ ADR 0004 の依存の検査に次を足す。今ある違反は許容リスト�
 - 通知 `notify.on` / `notify.off` / `notify.test` / `notify.flush` / `notify.ack` / `notify.event`(`internal/app/notify`。`POST /v1/notify/on|off|test|flush`、`POST /v1/notify/events`、`/v1/notify/events/{id}/ack`、`tb notify on|off|test|flush|ack|event`)。設定 notify の書き換え(`WriteConf`)、試しの通知、送り切り、ack の hash の確かめは API の中。ack は notifier agent か人だけ(呼び手は `Env.Reporter`)、ほかは既定で人だけ(commands.tbl の inner の行で判定し、policy で緩められる。アラートの承認・閉じる、役割の行を消すのも同じ)。状態・一覧・規則の表示と `notify rules run` は tb に残した。
 - レシピ `recipe.set` / `recipe.rm` / `recipe.cancel`(`internal/app/recipe`。`PUT` / `DELETE /v1/recipes/{name}`、`POST /v1/recipe-runs/{id}/cancel`、`tb recipe set` / `rm` / `cancel`)。登録の書式の確かめ・履歴・実行の依頼を閉じる処理(`RunClose`。runner も使う)は API の中。登録と削除は既定で人だけ(inner の行)、取り消しは人と頼んだ agent だけ。実行(`recipe run` / `runner`)は tb のコマンドを部品として動かすので tb に残した。
 - agent の判定フラグと作成の凍結 `agent.flag` / `agent.freeze` / `agent.unfreeze`(`internal/app/agent` の flag.go。`POST /v1/agents/{name}/flag`、`POST /v1/agents/spawn-freeze|spawn-unfreeze`、`tb agent-flag` / `spawn-freeze` / `spawn-unfreeze`)。tb の使われていなかった `opEntry` / `authorizeOp` は消した。
+- リマインダー `reminder.publish` / `reminder.scan`(`internal/app/reminder`。`POST /v1/reminders/publish|scan`、`tb reminder publish` / `scan`(古い名前 `reminders --publish` / `due-scan`))。まとめを作って前回の記録を書く処理と、期限のイベントを残して通知の規則を回す処理は API の中。書かない `list` / `check` と `nudge` は tb に残した。
 
 ## 検討した代替案
 
