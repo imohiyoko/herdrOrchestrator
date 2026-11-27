@@ -32,12 +32,12 @@ case "$1 $2" in
     # FAKE_AGENTS(JSON 配列)で差し替え可。既定は worker1(wW:p1) と名前なし(wW:p2)
     default='[{"pane_id":"wW:p1","name":"worker1","agent_session":{"value":"sess-w1"}},{"pane_id":"wW:p2","agent_session":{"value":"sess-w2"}}]'
     list=${FAKE_AGENTS:-$default}
-    # FAKE_DYNAMIC=1: pane close で一覧から消え、agent start(--resume の session を引き継ぐ)で一覧に載る。再起動のテスト用
+    # FAKE_DYNAMIC=1: pane close で一覧から消え(起動した agent も)、agent start(--resume の session を引き継ぐ)で一覧に載る。再起動のテスト用
     if [[ ${FAKE_DYNAMIC:-0} == 1 ]]; then
       touch "$FAKE_LOG.closed" "$FAKE_LOG.started"
       closed=$(jq -Rsc 'split("\n") | map(select(. != ""))' "$FAKE_LOG.closed")
       started=$(jq -sc '.' "$FAKE_LOG.started")
-      list=$(jq -c --argjson c "$closed" --argjson s "$started" '[.[] | select(.pane_id as $p | $c | index($p) | not)] + $s' <<<"$list")
+      list=$(jq -c --argjson c "$closed" --argjson s "$started" '[(.[], $s[]) | select(.pane_id as $p | $c | index($p) | not)]' <<<"$list")
     fi
     printf '{"result":{"agents":%s},"type":"agent_list"}\n' "$list";;
   "agent prompt")
@@ -51,10 +51,12 @@ case "$1 $2" in
     [[ ${FAKE_WS_FAIL:-0} == 1 ]] && { echo '{"error":{"code":"x"}}'; exit 1; }
     echo "{\"result\":{\"workspace\":{\"workspace_id\":\"wN\"},\"root_pane\":{\"pane_id\":\"${FAKE_NEW_PANE:-wA:p1}\"}}}";;
   "pane split")
-    # 既存の pane を分ける(agent セットの置き場所)。FAKE_SPLIT_PANE で新しい pane、FAKE_SPLIT_FAIL=1 で失敗
+    # 既存の pane を分ける(agent セットの置き場所)。FAKE_SPLIT_PANE で新しい pane を固定、FAKE_SPLIT_FAIL=1 で失敗
     echo "pane-split ${*:3}" >>"${FAKE_LOG:?}"
     [[ ${FAKE_SPLIT_FAIL:-0} == 1 ]] && { echo '{"error":{"code":"pane_not_found"}}'; exit 1; }
-    echo "{\"result\":{\"pane\":{\"pane_id\":\"${FAKE_SPLIT_PANE:-wA:p2}\"}}}";;
+    # 既定の新しい pane は分けるたびに wS:p1, wS:p2, ...(数は $FAKE_LOG.splits)
+    echo x >>"$FAKE_LOG.splits"; _sp=wS:p$(wc -l <"$FAKE_LOG.splits" | tr -d ' ')
+    echo "{\"result\":{\"pane\":{\"pane_id\":\"${FAKE_SPLIT_PANE:-$_sp}\"}}}";;
   "workspace list")
     echo "workspace-list" >>"${FAKE_LOG:?}"
     [[ ${FAKE_WS_LIST_FAIL:-0} == 1 ]] && { echo '{"error":{"code":"x"}}'; exit 1; }
@@ -97,6 +99,8 @@ case "$1 $2" in
         [[ ${_a[_i]} == --pane ]] && _pane=${_a[_i+1]}
       done
       [[ -n ${FAKE_START_SESSION:-} ]] && _sess=$FAKE_START_SESSION
+      # 閉じた pane に起動し直したら、その pane は閉じていない扱いに戻す
+      if [[ -f $FAKE_LOG.closed && -n $_pane ]]; then grep -vxF -- "$_pane" "$FAKE_LOG.closed" >"$FAKE_LOG.closed.tmp"; mv "$FAKE_LOG.closed.tmp" "$FAKE_LOG.closed"; fi
       jq -nc --arg p "$_pane" --arg n "$3" --arg s "$_sess" '{pane_id:$p,name:$n,agent_status:"idle",agent_session:{value:$s},cwd:"/tmp"}' >>"$FAKE_LOG.started"
     fi
     # FAKE_START_OUT: 起動の出力(失敗時のエラー JSON などを試す)

@@ -265,6 +265,16 @@ gh.review.approve        cmd:gh:review-approve        allow       allow       en
 gh.pr                    cmd:gh:pr-help               allow       allow       entry
 gh.pr.merge              cmd:gh:pr-merge              allow       allow       entry
 
+# --- agentset(agent セット。定義を書くのは人だけ。up / down は親と置き場所を付けるので人だけ)
+agentset                 cmd:agentset:help            allow       allow       entry
+agentset.add             cmd:agentset:add             deny        allow       inner
+agentset.rm              cmd:agentset:rm              deny        allow       inner
+agentset.list            cmd:agentset:list            allow       allow       entry
+agentset.show            cmd:agentset:show            allow       allow       entry
+agentset.up              cmd:agentset:up              deny        allow       entry
+agentset.down            cmd:agentset:down            deny        allow       entry
+agentset.status          cmd:agentset:status          allow       allow       entry
+
 # --- herdr(workspace / pane を閉じる。agent が動いている所は中で必ず断る)
 herdr                    cmd:herdr:help               allow       allow       entry
 herdr.workspace          cmd:herdr:workspace-help     allow       allow       entry

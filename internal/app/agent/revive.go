@@ -22,6 +22,8 @@ type ReviveReq struct {
 	Fresh  bool   `api:"fresh,optional"`  // 前の会話に戻らず新しい会話にする
 	Model  string `api:"model,optional"`  // 空なら台帳(と役割の既定)
 	Prompt string `api:"prompt,optional"` // 最初の指示(4000 字まで)
+	// Pane は置き場所(空なら専用の workspace)。人だけが指定できる(agent セットが自分の workspace に戻す)
+	Pane *PanePlacement `api:"pane,optional"`
 }
 
 // LifeResult は agent.revive / agent.restart の結果。
@@ -29,6 +31,7 @@ type LifeResult struct {
 	Name string `api:"name" json:"name"`
 	// Out は tb の文言(「<名前> revived (…)」など)。途中の警告は Env.Warn に書く。
 	Out     string       `api:"out" json:"out"`
+	Pane    string       `api:"pane,optional" json:"pane,omitempty"` // 起動した pane(revive のとき)
 	Pending *app.Pending `api:"pending,optional" json:"pending,omitempty"`
 }
 
@@ -74,7 +77,7 @@ func reviveArgs(in ReviveReq) string {
 }
 
 // revivePre は承認待ちに積む前の確かめ: 入力、台帳の kind でできるか(12)、動作中の上限(4)。
-func revivePre(env *app.Env, in ReviveReq) error {
+func revivePre(env *app.Env, who string, in ReviveReq) error {
 	if err := validName(in.Name); err != nil {
 		return err
 	}
@@ -83,6 +86,9 @@ func revivePre(env *app.Env, in ReviveReq) error {
 	}
 	if utf8.RuneCountInString(in.Prompt) > 4000 {
 		return define.Errorf(define.CodeInvalidArgument, "agent-revive: --prompt は 4000 字まで")
+	}
+	if err := paneErr("agent-revive", who, in.Pane); err != nil {
+		return err
 	}
 	_, err := withDB(env, func(db *store.DB) (struct{}, error) {
 		if row := RegRowOf(db, in.Name); row.Ok {
@@ -108,16 +114,16 @@ func revivePre(env *app.Env, in ReviveReq) error {
 
 func reviveOp(env *app.Env) app.Op {
 	return app.Command(env, "agent.revive",
-		opGate("revive", func(in ReviveReq) string { return in.Name }, reviveArgs, func(_ string, in ReviveReq) error { return revivePre(env, in) }),
+		opGate("revive", func(in ReviveReq) string { return in.Name }, reviveArgs, func(who string, in ReviveReq) error { return revivePre(env, who, in) }),
 		func(ctx context.Context, in ReviveReq) (LifeResult, error) {
 			who := by(ctx)
 			return withDB(env, func(db *store.DB) (LifeResult, error) {
-				r := ReviveContext(ctx, db, in.Name, in.Fresh, in.Model, in.Prompt, who, env.Warner())
+				r := ReviveAt(ctx, db, in.Name, in.Fresh, in.Model, in.Prompt, who, in.Pane.place(), env.Warner())
 				agents.RecordOp(db.DB, db.Session, "revive", in.Name, reviveArgs(in), who, r.Code, r.Out)
 				if err := r.Err(); err != nil {
 					return LifeResult{}, err
 				}
-				return LifeResult{Name: in.Name, Out: r.Out}, nil
+				return LifeResult{Name: in.Name, Out: r.Out, Pane: r.Pane}, nil
 			})
 		},
 		define.Doc("止まっている agent を戻す(tb agent-revive)"),

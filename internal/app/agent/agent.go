@@ -134,8 +134,11 @@ func by(ctx context.Context) string {
 
 // Ops は agent の操作。
 func Ops(env *app.Env) []app.Op {
-	return []app.Op{newOp(env), stopOp(env), reviveOp(env), restartOp(env)}
+	return []app.Op{newOp(env), listOp(env), stopOp(env), reviveOp(env), restartOp(env)}
 }
+
+// ValidName は agent 名として使えるか(英小文字で始まる 32 字以内。human は予約名)。
+func ValidName(n string) bool { return n != "human" && agents.NameRE.MatchString(n) }
 
 // validName は agent 名の検査(tb の validAgentName と同じ文言)。
 func validName(n string) error {
