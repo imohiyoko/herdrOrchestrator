@@ -68,20 +68,23 @@ fi
 
 out=$(mktemp -d); trap 'rm -rf "$out"' EXIT
 running=0
-for s in "${sel[@]}"; do
-  ( run_suite "$s" "$out/$s.log" "$out/$s.sum"; echo $? >"$out/$s.rc" ) &
+# 組の出力のファイルは番号で置く(taskboard-only:<ケース>,... の名前はファイル名の長さの上限を超えることがある)
+for i in "${!sel[@]}"; do
+  s=${sel[$i]}
+  ( run_suite "$s" "$out/$i.log" "$out/$i.sum"; echo $? >"$out/$i.rc" ) &
   running=$((running + 1))
   if ((running >= jobs)); then wait -n; running=$((running - 1)); fi
 done
 wait
 
 failed=()
-for s in "${sel[@]}"; do
+for i in "${!sel[@]}"; do
+  s=${sel[$i]}
   echo "=== $s"
-  if [[ $(cat "$out/$s.rc") != 0 ]]; then
-    failed+=("$s"); grep -E 'FAIL|Error|Traceback' "$out/$s.log" | head -40
+  if [[ $(cat "$out/$i.rc") != 0 ]]; then
+    failed+=("$s"); grep -E 'FAIL|Error|Traceback' "$out/$i.log" | head -40
   fi
-  cat "$out/$s.sum"
+  cat "$out/$i.sum"
 done
 if ((${#failed[@]})); then echo; echo "失敗: ${failed[*]}"; exit 1; fi
 echo; echo "all passed"
