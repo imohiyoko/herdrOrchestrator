@@ -15,14 +15,20 @@ import (
 )
 
 // Refused は、確かめた結果で断った(tb は文言を出して 1 で終わる)。NotFound はチケットが無かったとき。
+// Invalid は入力の誤り(tb は使い方の誤りとして 2 で終わる)。
 type Refused struct {
 	Msg      string
 	NotFound bool
+	Invalid  bool
 }
 
 func (e *Refused) Error() string { return e.Msg }
 
 func refuse(format string, a ...any) error { return &Refused{Msg: fmt.Sprintf(format, a...)} }
+
+func invalid(format string, a ...any) error {
+	return &Refused{Msg: fmt.Sprintf(format, a...), Invalid: true}
+}
 
 func notFound(id string) error {
 	return &Refused{Msg: "タスクが見つかりません: " + id, NotFound: true}

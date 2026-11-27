@@ -196,8 +196,11 @@ func refused(err error) error {
 		return internal(err)
 	}
 	code := define.CodeFailedPrecondition
-	if r.NotFound {
+	switch {
+	case r.NotFound:
 		code = define.CodeNotFound
+	case r.Invalid:
+		code = define.CodeInvalidArgument
 	}
 	return define.Errorf(code, "%s", r.Msg)
 }

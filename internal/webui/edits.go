@@ -20,7 +20,7 @@ import (
 // edits.go は Web UI からの編集: チケットの状態(/task-status)、チケットの削除(/task-rm)、状態の定義(/statuses)、スプリント(/sprint-op)、
 // 設定 policy(/policy)。ジョブの定義(/jobs/<job> の action=conf)は jobspage.go。
 // 書き込みはどれも tb かアプリケーション API が行い(tasks.db にも config にも直接書かない)、検査と認可も同じものを通る。
-// チケットの状態と削除は API(ticket.move / ticket.rm)を同じプロセスで人として呼ぶ(callEdit)。
+// チケットの状態・削除・スプリントは API(ticket.move / ticket.rm / ticket.sprint.*)を同じプロセスで人として呼ぶ(callEdit)。
 // 残りは tb を人の操作として動かす(HERDR_PANE_ID を外す。runTB)。policy はさらにログインのパスワードを求める。
 
 var editPaths = map[string]bool{"/task-status": true, "/statuses": true, "/sprint-op": true, "/policy": true, "/approval-op": true, "/task-rm": true}
@@ -471,23 +471,13 @@ func (s *Server) postSprint(q *rq, f form) (string, string, string, func(pageCtx
 		case utf8.RuneCountInString(goal) > editMemoMax:
 			return "/board", "", "目標は " + strconv.Itoa(editMemoMax) + " 文字までです", render
 		}
-		args := []string{"sprint-add", "-p", p, "-n", name}
-		if start != "" {
-			args = append(args, "--start", start)
-		}
-		if end != "" {
-			args = append(args, "--end", end)
-		}
-		if goal != "" {
-			args = append(args, "--goal", goal)
-		}
-		rc, out := runTB(q.name, 15*time.Second, args...)
-		if rc != 0 {
-			return "/board", "", tbFail(rc, out), render
+		var res ticket.SprintResult
+		if msg := callEdit(q.name, "ticket.sprint.add", ticket.SprintAddReq{Project: p, Name: name, Start: start, End: end, Goal: goal}, &res, &res.Pending); msg != "" {
+			return "/board", "", msg, render
 		}
 		back := "/board"
-		if id := strings.TrimFunc(out, pyIsSpace); reSprint.MatchString(id) {
-			back += "?" + pyURLEncode([][2]string{{"sprint", id}})
+		if reSprint.MatchString(res.ID) {
+			back += "?" + pyURLEncode([][2]string{{"sprint", res.ID}})
 		}
 		return back, "sprint-add", "", render
 	case "start", "close":
@@ -495,15 +485,16 @@ func (s *Server) postSprint(q *rq, f form) (string, string, string, func(pageCtx
 		if !reSprint.MatchString(id) {
 			return "/board", "", "スプリントは S-<番号> です", render
 		}
-		args := []string{"sprint-" + f["op"], id}
+		in := ticket.SprintReq{ID: id}
 		if c := f["carry"]; f["op"] == "close" && c != "" {
 			if !reSprint.MatchString(c) || c == id {
 				return "/board", "", "持ち越し先のスプリントが不正です", render
 			}
-			args = append(args, "--carry", c)
+			in.Carry = c
 		}
-		if rc, out := runTB(q.name, 15*time.Second, args...); rc != 0 {
-			return "/board", "", tbFail(rc, out), render
+		var res ticket.SprintResult
+		if msg := callEdit(q.name, "ticket.sprint."+f["op"], in, &res, &res.Pending); msg != "" {
+			return "/board", "", msg, render
 		}
 		return "/board?" + pyURLEncode([][2]string{{"sprint", id}}), "sprint-" + f["op"], "", render
 	}

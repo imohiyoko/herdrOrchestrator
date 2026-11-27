@@ -1776,13 +1776,13 @@ check("チケットを消す: tb ticket rm で消し、一覧へ戻る(コメン
       and not edb("SELECT 1 FROM tasks WHERE id='T-pj-003'") and not edb("SELECT 1 FROM comments WHERE task_id='T-pj-003'"), str(r[:2]))
 check("チケットを消す: 消したと知らせ、画面は 404", "チケットを消しました" in ec.get("/tasks?done=task-rm")[2] and ec.get("/tasks/T-pj-003")[0] == 404)
 
-# ---- スプリント(/sprint-op。tb sprint-add / sprint-start / sprint-close)
+# ---- スプリント(/sprint-op。API の ticket.sprint.add / start / close)
 bp = ec.get("/board")
 check("ボードにスプリントを作るフォーム(PJ の候補)", 'action="/sprint-op"' in bp[2] and '<option value="pj">' in bp[2])
 r = ec.raw("POST", "/sprint-op", {"op": "add", "project": "p j", "name": "x", "csrf": ec.csrf("/board")})
 check("スプリント: PJ が不正なら 400", r[0] == 400 and "英数字" in r[2] and not edb("SELECT 1 FROM sprints"))
 r = ec.raw("POST", "/sprint-op", {"op": "add", "project": "pj", "name": "S1", "start": "2026-12-01", "end": "2026-11-01", "csrf": ec.csrf("/board")})
-check("スプリント: 終了が開始より前なら tb が断る", r[0] == 400 and "tb が断りました" in r[2] and not edb("SELECT 1 FROM sprints"), r[2][-300:])
+check("スプリント: 終了が開始より前なら API が断る", r[0] == 400 and "断りました: sprint-add: --end は --start より後にする" in r[2] and not edb("SELECT 1 FROM sprints"), r[2][-300:])
 r = ec.raw("POST", "/sprint-op", {"op": "add", "project": "pj", "name": "第 1 <b>", "start": "2026-12-01", "end": "2026-12-14", "goal": "出す",
                                   "csrf": ec.csrf("/board")})
 _sp = edb("SELECT id, project, name, state, goal, herdr_session FROM sprints")

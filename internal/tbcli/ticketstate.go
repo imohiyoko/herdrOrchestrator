@@ -28,6 +28,9 @@ func taskStatus(db *store.DB, id string) (string, error) {
 func ticketErr(err error) error {
 	var r *tickets.Refused
 	if errors.As(err, &r) {
+		if r.Invalid {
+			return usage("%s", r.Msg)
+		}
 		return die("%s", r.Msg)
 	}
 	return err

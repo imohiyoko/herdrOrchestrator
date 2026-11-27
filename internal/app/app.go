@@ -40,6 +40,20 @@ type Env struct {
 	// EntryChecked は、入口がコマンドの入口の段(commands.tbl の entry の行)を判定済み(tb の入口。perms.Gate)。
 	// true なら Entry の門は判定も記録もしない。
 	EntryChecked bool
+	// ActorName は、記録に残す「した者」の名前(リンクの created_by など)を主体 who から決める。
+	// nil なら主体から(agent は名前、それ以外は human)。tb の入口は pane から引いた名前(actor_name)を入れる。
+	ActorName func(who string) string
+}
+
+// ActorOf は主体 who の「した者」の名前(Env.ActorName があればそれ)。
+func (e *Env) ActorOf(who string) string {
+	if e != nil && e.ActorName != nil {
+		return e.ActorName(who)
+	}
+	if who == "" || who == humanID || strings.HasPrefix(who, sysPrefix) {
+		return humanID
+	}
+	return who
 }
 
 // EventActorOf は主体 who の履歴の「変えた者」(Env.EventActor があればそれ)。空なら入口のトリガーをそのまま使う。

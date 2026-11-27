@@ -30,6 +30,21 @@ func callApp(db *store.DB, what, op string, in, out any) error {
 	return callAppAs(db, by, op, in, out)
 }
 
+// callAppActor は callApp に、記録に残す「した者」の名前(actor_name で引いたもの)を足したもの。
+func callAppActor(db *store.DB, what, actor, op string, in, out any) error {
+	by, err := callerPrincipal(what)
+	if err != nil {
+		return err
+	}
+	env := appEnv(db, nil)
+	env.ActorName = func(string) string { return actor }
+	c, err := server.New(env)
+	if err != nil {
+		return err
+	}
+	return appErr(c.Call(context.Background(), by, op, in, out))
+}
+
 // callAppAs は主体 by(入口で確かめたもの)として操作 op を呼ぶ。
 func callAppAs(db *store.DB, by port.Principal, op string, in, out any) error {
 	return callAppW(db, by, nil, op, in, out)
