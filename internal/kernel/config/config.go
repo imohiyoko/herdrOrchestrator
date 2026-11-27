@@ -256,12 +256,17 @@ func HasRow(db *sql.DB, session, key string, shared bool) (bool, error) {
 
 // Unset は config_unset と同じ: DB の行だけを消し、消したときだけ履歴を残す。
 func Unset(db *sql.DB, session, key string, shared bool) error {
+	return UnsetBy(db, session, key, shared, "")
+}
+
+// UnsetBy は Unset に、履歴に残す消した者 by(空なら human)を足したもの。
+func UnsetBy(db *sql.DB, session, key string, shared bool, by string) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := UnsetTx(tx, session, key, shared); err != nil {
+	if _, err := unsetTx(tx, session, key, shared, by); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -269,6 +274,13 @@ func Unset(db *sql.DB, session, key string, shared bool) error {
 
 // UnsetTx は Unset を呼び出し側のトランザクションの中で行う(いくつかのキーをまとめて消すとき)。消したか を返す。
 func UnsetTx(tx *sql.Tx, session, key string, shared bool) (bool, error) {
+	return unsetTx(tx, session, key, shared, "")
+}
+
+func unsetTx(tx *sql.Tx, session, key string, shared bool, by string) (bool, error) {
+	if by == "" {
+		by = "human"
+	}
 	hs := rowSession(session, shared)
 	r, err := tx.Exec(`DELETE FROM main.config WHERE herdr_session=? AND key=?`, hs, key)
 	if err != nil {
@@ -276,7 +288,7 @@ func UnsetTx(tx *sql.Tx, session, key string, shared bool) (bool, error) {
 	}
 	c, _ := r.RowsAffected()
 	if c > 0 {
-		if _, err := tx.Exec(`INSERT INTO main.config_changes (herdr_session, key, body, changed_by, how, changed_at) VALUES (?, ?, NULL, 'human', 'unset', ?)`, hs, key, now()); err != nil {
+		if _, err := tx.Exec(`INSERT INTO main.config_changes (herdr_session, key, body, changed_by, how, changed_at) VALUES (?, ?, NULL, ?, 'unset', ?)`, hs, key, by, now()); err != nil {
 			return false, err
 		}
 	}

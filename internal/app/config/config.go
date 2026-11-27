@@ -64,7 +64,7 @@ func Validators(st tickets.StatusSet) map[string]kconfig.Validator {
 
 // Ops は設定の操作。
 func Ops(env *app.Env) []app.Op {
-	set := app.Command(env, "config.set", app.Cmd("cmd:config:set", "tb config set"),
+	set := app.Command(env, "config.set", howGate("config"),
 		func(ctx context.Context, in SetReq) (Result, error) {
 			p, _ := define.PrincipalFrom(ctx)
 			return withDB(env, func(db *store.DB) (Result, error) { return set(env, db, app.Who(p), in) })
@@ -87,6 +87,21 @@ func Ops(env *app.Env) []app.Op {
 	return []app.Op{set, unset}
 }
 
+// howGate は set / edit の門: 記録の理由 How が edit なら cmd:<サービス>:edit、ほかは cmd:<サービス>:set の行で判定する
+// (tb config edit / tb job edit の入口と同じ行)。
+func howGate(svc string) app.Gate {
+	return func(ctx context.Context, env *app.Env, who string, in any) app.Decision {
+		verb := "set"
+		if h, ok := in.(interface{ HowOf() string }); ok && h.HowOf() == "edit" {
+			verb = "edit"
+		}
+		return app.Cmd("cmd:"+svc+":"+verb, "tb "+svc+" "+verb)(ctx, env, who, in)
+	}
+}
+
+// HowOf は記録の理由(門が見る)。
+func (r SetReq) HowOf() string { return r.How }
+
 func withDB(env *app.Env, f func(*store.DB) (Result, error)) (Result, error) {
 	db, done, err := env.DB()
 	if err != nil {
@@ -106,6 +121,12 @@ func KeyOK(k string) error {
 		return define.Errorf(define.CodeInvalidArgument, "不明な設定のキー: %s(使えるのは: %s)", k, strings.Join(kconfig.Keys, " "))
 	}
 	return nil
+}
+
+// Precheck は config set / edit で本文を読む前に断るもの(tb は本文を読む前に呼ぶ。config.set の中でも同じ確かめをする)。
+func Precheck(key string, shared bool) error {
+	_, err := common(key, shared, false)
+	return err
 }
 
 // common は set / unset に共通の確かめ(キー・書けないキー・--shared とファイル)。ファイルを明示していればそのパス。
@@ -170,8 +191,12 @@ func set(env *app.Env, db *store.DB, who string, in SetReq) (Result, error) {
 		return Result{}, err
 	}
 	how := in.How
-	if how == "" {
+	switch how {
+	case "":
 		how = "set"
+	case "set", "edit":
+	default:
+		return Result{}, define.Errorf(define.CodeInvalidArgument, "how は set か edit: %s", how)
 	}
 	if v := Validators(tickets.LoadStatuses(db.DB, db.Session))[in.Key]; v != nil {
 		if msg := v(in.Body); msg != "" {
@@ -199,7 +224,7 @@ func set(env *app.Env, db *store.DB, who string, in SetReq) (Result, error) {
 			}
 			return Result{}, define.Errorf(define.CodeInternal, "%s", err.Error())
 		}
-	} else if err := kconfig.DBPut(db.DB, db.Session, in.Key, in.Body, how, in.Shared, ""); err != nil {
+	} else if err := kconfig.DBPut(db.DB, db.Session, in.Key, in.Body, how, in.Shared, who); err != nil {
 		return Result{}, define.Errorf(define.CodeInternal, "%s", err.Error())
 	}
 	return Result{Key: in.Key, Source: source(db, in.Key)}, nil
@@ -227,7 +252,7 @@ func unset(db *store.DB, who string, in UnsetReq) (Result, error) {
 			return Result{}, err
 		}
 	}
-	if err := kconfig.Unset(db.DB, db.Session, in.Key, in.Shared); err != nil {
+	if err := kconfig.UnsetBy(db.DB, db.Session, in.Key, in.Shared, who); err != nil {
 		return Result{}, define.Errorf(define.CodeInternal, "%s", err.Error())
 	}
 	return Result{Key: in.Key, Source: source(db, in.Key)}, nil

@@ -115,6 +115,9 @@ func configChange(db *store.DB, st tickets.StatusSet, sub string, args []string,
 		if err := callApp(db, "tb config unset", "config.unset", appconfig.UnsetReq{Key: key, Shared: shared}, &r); err != nil {
 			return err
 		}
+		if r.Pending != nil {
+			return pendingExit(w, r.Pending)
+		}
 		fmt.Fprintf(w, "%s: %s\n", key, r.Source)
 		return nil
 	case "set":
@@ -142,24 +145,15 @@ func configChange(db *store.DB, st tickets.StatusSet, sub string, args []string,
 	if err := callAppWarn(db, "tb config "+sub, stderr, "config.set", appconfig.SetReq{Key: key, Body: body, Shared: shared, How: sub}, &r); err != nil {
 		return err
 	}
+	if r.Pending != nil {
+		return pendingExit(w, r.Pending)
+	}
 	fmt.Fprintf(w, "%s: %s\n", key, r.Source)
 	return nil
 }
 
-// configPrecheck は config set / edit で本文を読む前の断り(tb の今の順と文言)。
-func configPrecheck(key string, shared bool) error {
-	if key == "conv-routes" {
-		return die("conv-routes は tb conv-routes-set < 新しい表 で書きます(緩める変更は --approve-looser が要ります)")
-	}
-	if key == "approvals" || key == "grants" {
-		return die("%s はもう読みません(ADR 0007)。権限は設定 policy に書きます(残っている古い設定は tb policy import で移します)", key)
-	}
-	info, _ := config.Info(key)
-	if shared && os.Getenv(info.Env) != "" {
-		return die("%s でファイルを明示しているので --shared は使えません", info.Env)
-	}
-	return nil
-}
+// configPrecheck は config set / edit で本文を読む前の断り(API の config の確かめと同じ)。
+func configPrecheck(key string, shared bool) error { return appErr(appconfig.Precheck(key, shared)) }
 
 // policyBefore は設定 policy を書く前の本文。共通の行(--shared)はその行そのもの(ほかのセッションにも効くため)。
 // それ以外は今このセッションに効いている本文(書いたあとに効くものとの差分を確かめる)。
