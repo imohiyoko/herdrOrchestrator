@@ -137,7 +137,7 @@ func Ops(env *app.Env) []app.Op {
 	ops := []app.Op{newOp(env), listOp(env), orgOp(env), stopOp(env), reviveOp(env), restartOp(env), parentOp(env, true), parentOp(env, false), spawnOp(env), decideOp(env, true), decideOp(env, false)}
 	ops = append(ops, roleOps(env)...)
 	ops = append(ops, flagOps(env)...)
-	return append(ops, slashOp(env), modelSetOp(env), compactOp(env))
+	return append(ops, slashOp(env), modelSetOp(env), compactOp(env), peekOp(env))
 }
 
 // ValidName は agent 名として使えるか(英小文字で始まる 32 字以内。human は予約名)。

@@ -33,7 +33,6 @@ import internal/webui internal/sched
 sql internal/tbcli/agentapprove.go 1
 sql internal/tbcli/agentlist.go 3
 sql internal/tbcli/agentmisc.go 2
-sql internal/tbcli/agentread.go 1
 sql internal/tbcli/agentshed.go 10
 sql internal/tbcli/alert.go 3
 sql internal/tbcli/approvers.go 1
