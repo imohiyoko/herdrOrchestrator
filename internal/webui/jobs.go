@@ -172,6 +172,50 @@ func jobLast(name string) (map[string]any, map[string]any) {
 func runTBInput(sess string, args []string, text string) (int, string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	c := jobTBCmd(ctx, sess, args)
+	c.Stdin = strings.NewReader(text)
+	var so, se bytes.Buffer
+	c.Stdout, c.Stderr = &so, &se
+	err := c.Run()
+	out := pyStrip(strings.ToValidUTF8(so.String()+se.String(), "�"))
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok && ctx.Err() == nil {
+			return ee.ExitCode(), out
+		}
+		return -1, ""
+	}
+	return 0, out
+}
+
+// jobRunTimeout は Web UI の「今すぐ流す」の上限(app/job の runTimeout と同じ)。
+const jobRunTimeout = 15 * time.Minute
+
+// startTBJobRun は tb job run <job> を裏で動かし、終わるのを待たずに戻る(ジョブは長くかかりうる)。
+// 結果は scheduler のログ(ジョブ画面の「最近の実行」)に残る。Web UI のログには始めたことと終わりの終了コードを書く。
+func (s *Server) startTBJobRun(sess, name string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), jobRunTimeout)
+	c := jobTBCmd(ctx, sess, []string{"job", "run", name})
+	se := &capBuf{max: 4096} // scheduler に届く前に tb が断ったとき(herdrctl が無いなど)の理由。ジョブのログには残らない
+	c.Stderr = se
+	if err := c.Start(); err != nil {
+		cancel()
+		return err
+	}
+	go func() {
+		defer cancel()
+		err := c.Wait()
+		why := ""
+		if err != nil {
+			m, _ := mask(strings.ToValidUTF8(se.String(), "\uFFFD"))
+			why = " " + oneLine(m, 300)
+		}
+		s.logf("jobs: run %s done (%v)%s\n", name, err, why)
+	}()
+	return nil
+}
+
+// jobTBCmd は tb job を Web UI と同じ jobs/・settings/・ログ・DB を見る形で組む(人の操作として。HERDR_PANE_ID は外す)。
+func jobTBCmd(ctx context.Context, sess string, args []string) *exec.Cmd {
 	c := exec.CommandContext(ctx, "bash", append([]string{tbPath()}, args...)...)
 	// tb job が見る jobs/・settings/ を、Web UI が見ているものに揃える
 	jobs, _ := filepath.Abs(schedJobs())
@@ -195,18 +239,7 @@ func runTBInput(sess string, args []string, text string) (int, string) {
 		env = append(env, "TB_SCHED_DIR="+schedDir)
 	}
 	c.Env = env
-	c.Stdin = strings.NewReader(text)
-	var so, se bytes.Buffer
-	c.Stdout, c.Stderr = &so, &se
-	err := c.Run()
-	out := pyStrip(strings.ToValidUTF8(so.String()+se.String(), "�"))
-	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok && ctx.Err() == nil {
-			return ee.ExitCode(), out
-		}
-		return -1, ""
-	}
-	return 0, out
+	return c
 }
 
 type form = map[string]string
@@ -364,4 +397,26 @@ func (v *sv) verifyApplied(name string, f form) string {
 		return "保存しましたが、scheduler の読む設定に反映されていません(scheduler は " + where + " を読んでいます)"
 	}
 	return ""
+}
+
+// oneLine は改行と連続した空白を 1 つの空白にし、n 字(rune)で切る(ログの 1 行用)。
+func oneLine(s string, n int) string {
+	r := []rune(strings.Join(strings.Fields(s), " "))
+	if len(r) > n {
+		return string(r[:n]) + "…"
+	}
+	return string(r)
+}
+
+// capBuf は最初の max バイトだけ持ち、残りは読み捨てる io.Writer(子の標準エラーで Web UI のメモリが増えないように)。
+type capBuf struct {
+	bytes.Buffer
+	max int
+}
+
+func (b *capBuf) Write(p []byte) (int, error) {
+	if room := b.max - b.Len(); room > 0 {
+		b.Buffer.Write(p[:min(len(p), room)])
+	}
+	return len(p), nil
 }

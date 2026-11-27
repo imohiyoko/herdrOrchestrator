@@ -379,10 +379,17 @@ func (s *Server) pageJobDraft(q *rq, name, csrf, errMsg string, saved bool, done
 		what = `agent <code>` + E(info.target) + `</code> にプロンプトを送る`
 	}
 	return "job: " + name, errHTML(errMsg) + ifs(saved && done == "", `<p class=note>保存しました。次の分から反映されます。</p>`) +
-		ifs(done == "conf", `<p class=note>`+E(doneMsg["conf"])+`</p>`) +
-		"<p>" + what + "ジョブ。" + ifs(info.overridden, "Web UI で変更済み。") + "</p>" + v.jobOverview(name, info) + "<h2>スケジュールの変更</h2>" + form +
+		ifs(done == "conf" || done == "job-run", `<p class=note>`+E(doneMsg[done])+`</p>`) +
+		"<p>" + what + "ジョブ。" + ifs(info.overridden, "Web UI で変更済み。") + "</p>" + v.jobOverview(name, info) + jobRunForm(qn, hid) +
+		"<h2>スケジュールの変更</h2>" + form +
 		"<p class=note>スケジュールの保存先: DB の <code>sched-settings:" + E(name) + `</code>(セッション <code>` + E(v.sess) + `</code>)</p>` +
 		v.jobConfForm(name, csrf, draft) + jobRmForm(qn, hid) + `<p><a href="/jobs">一覧へ</a></p>`
+}
+
+// jobRunForm はジョブ画面の「今すぐ流す」(tb job run と同じ。時刻・間隔に関係なく 1 回。ENABLED・GATE・SKIP_IF は効く)。
+func jobRunForm(qn, hid string) string {
+	return `<form method=post action="/jobs/` + qn + `" style="margin:8px 0">` + hid + `<input type=hidden name=action value=run>` +
+		`<button type=submit>今すぐ 1 回流す</button> <span class=note>tb job run と同じ。結果は上の「最近の実行」に出ます(少し待って再読み込み)。</span></form>`
 }
 
 // jobRmForm はジョブ画面の「ジョブを消す」(元に戻せないので、印を付けないと送れない)。
@@ -393,7 +400,7 @@ func jobRmForm(qn, hid string) string {
 		`どのセッションにも定義が残らなければ実行のログも消す。変更の履歴は残る)。共通の行(*)は手元で <code>tb job rm &lt;job&gt; --shared</code>。</p>`
 }
 
-// postJob は POST /jobs/<job>: スケジュールの上書き設定を保存する・conf の値に戻す・ジョブを消す。
+// postJob は POST /jobs/<job>: スケジュールの上書き設定を保存する・conf の値に戻す・今すぐ流す・ジョブを消す。
 func (s *Server) postJob(q *rq, path, name string, f map[string]string, csrf string) {
 	v := q.data()
 	if !JobRE.MatchString(name) || !contains(v.jobNames(), name) {
@@ -416,6 +423,16 @@ func (s *Server) postJob(q *rq, path, name string, f map[string]string, csrf str
 		}
 		s.logf("jobs: removed %s\n", name)
 		s.redirect(q, "/jobs?done=job-rm")
+		return
+	}
+	if f["action"] == "run" { // 今すぐ 1 回流す(tb job run。終わるのは待たない)
+		if err := s.startTBJobRun(v.sess, name); err != nil {
+			title, body := s.pageJob(q, name, csrf, "ジョブを動かせませんでした: "+err.Error(), false)
+			s.html(q, 500, s.page(q, title, body, path, "", pageOpts{norefresh: true}))
+			return
+		}
+		s.logf("jobs: run %s\n", name)
+		s.redirect(q, "/jobs/"+name+"?done=job-run")
 		return
 	}
 	if f["action"] == "conf" { // 定義(本文)の保存

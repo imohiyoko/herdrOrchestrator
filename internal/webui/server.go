@@ -544,8 +544,8 @@ func (s *Server) route(q *rq, path, query, logout, csrf string) {
 		}
 		qs := pyParseQS(query)
 		saved, done := qs["saved"], ""
-		if d := qs["done"]; len(d) == 1 && d[0] == "conf" {
-			done = "conf"
+		if d := qs["done"]; len(d) == 1 && (d[0] == "conf" || d[0] == "job-run") {
+			done = d[0]
 		}
 		title, body := s.pageJobDraft(q, name, csrf, "", len(saved) == 1 && saved[0] == "1", done, nil)
 		s.html(q, 200, s.page(q, title, body, "/jobs/"+name, logout, pageOpts{norefresh: true}))
