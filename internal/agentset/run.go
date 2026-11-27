@@ -92,6 +92,7 @@ func Remove(dir, name string) error {
 	if errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("セット %s の定義がありません", name)
 	}
+	_ = os.Remove(statePath(dir, name)) // 自動スケールの状態も消す(無ければそのまま)
 	return err
 }
 

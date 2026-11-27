@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/imohiyoko/API/port"
 
@@ -368,6 +369,13 @@ func cmdAgentsetAutoscale(args []string, w, stderr io.Writer) error {
 		return err
 	}
 	defer db.Close()
-	lines, err := agentset.Autoscale(context.Background(), c, by, d, dry)
+	dir := agentset.Dir(db.Path)
+	st := agentset.LoadState(dir, d.Name)
+	lines, err := agentset.Autoscale(context.Background(), c, by, d, dry, st, time.Now())
+	if !dry {
+		if serr := agentset.SaveState(dir, d.Name, st); serr != nil {
+			fmt.Fprintln(stderr, "tb agentset autoscale: 状態を書けませんでした: "+serr.Error())
+		}
+	}
 	return agentsetLines(lines, err, w, stderr)
 }

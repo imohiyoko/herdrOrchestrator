@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/imohiyoko/API/define"
 	"github.com/imohiyoko/API/port"
@@ -637,16 +638,16 @@ func TestDecide(t *testing.T) {
 		{map[string]int{"queue": 1, "live": 2, "idle": 0}, 0},    // どれも当たらない
 		{map[string]int{"queue": 0, "live": 2, "blocked": 1}, 1}, // 2 行目の scale_out
 	} {
-		if n, why := Decide(m, c.v); n != c.want {
+		if n, why := Decide(m, c.v, nil, time.Time{}); n != c.want {
 			t.Errorf("%v: %d %s (want %d)", c.v, n, why, c.want)
 		}
 	}
 	m.Step = 5
-	if n, _ := Decide(m, map[string]int{"queue": 9, "live": 1}); n != 2 {
+	if n, _ := Decide(m, map[string]int{"queue": 9, "live": 1}, nil, time.Time{}); n != 2 {
 		t.Errorf("step は max で切る: %d", n)
 	}
 	m.In = append(m.In, Cond{Text: "queue > 2", Terms: []Term{{"queue", ">", 2}}})
-	if n, why := Decide(m, map[string]int{"queue": 3, "live": 1}); n != 0 || !strings.Contains(why, "両方") {
+	if n, why := Decide(m, map[string]int{"queue": 3, "live": 1}, nil, time.Time{}); n != 0 || !strings.Contains(why, "両方") {
 		t.Errorf("両方: %d %s", n, why)
 	}
 }
@@ -657,7 +658,7 @@ func TestAutoscale(t *testing.T) {
 	f := &fakeAPI{agents: map[string]agent.AgentInfo{
 		"as-w-1": {Name: "as-w-1", State: "running", Live: true, Pane: "w0:p1", Status: "working"},
 	}, max: -1, queue: 5}
-	lines, err := Autoscale(ctx, f, by, d, true)
+	lines, err := Autoscale(ctx, f, by, d, true, nil, time.Time{})
 	if err != nil || len(lines) != 1 || !strings.Contains(lines[0].Out, "queue=5") || !strings.Contains(lines[0].Out, "--dry-run") || len(ops(f)) != 1 {
 		t.Fatalf("dry: %v %+v %q", err, lines, ops(f))
 	}
@@ -665,7 +666,7 @@ func TestAutoscale(t *testing.T) {
 		t.Errorf("count: %q", ops(f))
 	}
 	f.calls = nil
-	lines, err = Autoscale(ctx, f, by, d, false)
+	lines, err = Autoscale(ctx, f, by, d, false, nil, time.Time{})
 	if err != nil || !f.agents["as-w-2"].Live {
 		t.Fatalf("out: %v %+v", err, lines)
 	}
@@ -676,10 +677,84 @@ func TestAutoscale(t *testing.T) {
 		f.agents[n] = a
 	}
 	f.queue = 0
-	if lines, err = Autoscale(ctx, f, by, d, false); err != nil || f.agents["as-w-2"].Live || !f.agents["as-w-1"].Live {
+	if lines, err = Autoscale(ctx, f, by, d, false, nil, time.Time{}); err != nil || f.agents["as-w-2"].Live || !f.agents["as-w-1"].Live {
 		t.Fatalf("in: %v %+v", err, lines)
 	}
-	if _, err := Autoscale(ctx, f, by, Def{Name: "x", Members: []Member{{Name: "a", Count: 1}}}, false); err == nil {
+	if _, err := Autoscale(ctx, f, by, Def{Name: "x", Members: []Member{{Name: "a", Count: 1}}}, false, nil, time.Time{}); err == nil {
 		t.Error("条件の無いセットは断る")
+	}
+}
+
+func TestAutoscaleForCooldown(t *testing.T) {
+	d, err := Parse("as", "[member w]\ncount = 1\nmax = 5\nscale_out = queue > 2 for 10m\nscale_in = queue == 0 for 1h\nscale_cooldown = 15m\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := d.Members[0]
+	if m.Out[0].For != 10 || m.In[0].For != 60 || m.Cooldown != 15 || m.Out[0].Terms[0].N != 2 {
+		t.Fatalf("%+v", m)
+	}
+	t0 := time.Date(2026, 11, 27, 9, 0, 0, 0, time.UTC)
+	st := &MemberState{}
+	hi := map[string]int{"queue": 5, "live": 1}
+	if n, why := Decide(m, hi, st, t0); n != 0 || !strings.Contains(why, "あと 10 分") {
+		t.Fatalf("当たり始め: %d %s", n, why)
+	}
+	if n, why := Decide(m, hi, st, t0.Add(9*time.Minute)); n != 0 || !strings.Contains(why, "あと 1 分") {
+		t.Fatalf("9 分: %d %s", n, why)
+	}
+	if n, _ := Decide(m, hi, st, t0.Add(10*time.Minute)); n != 1 {
+		t.Fatalf("10 分続いたら足す: %d", n)
+	}
+	// 一度外れたら数え直す
+	Decide(m, map[string]int{"queue": 1, "live": 1}, st, t0.Add(11*time.Minute))
+	if n, _ := Decide(m, hi, st, t0.Add(12*time.Minute)); n != 0 {
+		t.Fatalf("外れたあとはまた 10 分: %d", n)
+	}
+	// クールダウン: 前に変えてから 15 分は変えない
+	st = &MemberState{Last: t0.Format(time.RFC3339), Since: map[string]string{"scale_out:queue > 2 for 10m": t0.Add(-time.Hour).Format(time.RFC3339)}}
+	if n, why := Decide(m, hi, st, t0.Add(5*time.Minute)); n != 0 || !strings.Contains(why, "あと 10 分") {
+		t.Fatalf("cooldown: %d %s", n, why)
+	}
+	if n, _ := Decide(m, hi, st, t0.Add(15*time.Minute)); n != 1 {
+		t.Fatalf("cooldown 後: %d", n)
+	}
+	// 状態が無ければ for のある条件は当たらない
+	if n, _ := Decide(m, hi, nil, t0); n != 0 {
+		t.Fatalf("状態なし: %d", n)
+	}
+	for _, bad := range []string{"scale_out = queue > 1 for 0m", "scale_out = queue > 1 for 25h", "scale_out = queue > 1 for 5s", "scale_cooldown = 2d\nscale_out = queue > 1"} {
+		if _, err := Parse("as", "[member w]\nmax = 3\n"+bad+"\n"); err == nil {
+			t.Errorf("断るはず: %q", bad)
+		}
+	}
+}
+
+func TestAutoscaleState(t *testing.T) {
+	dir := t.TempDir()
+	d, _ := Parse("as", "[member w]\ncount = 1\nmax = 3\nscale_out = queue > 0 for 5m\n")
+	f := &fakeAPI{agents: map[string]agent.AgentInfo{"as-w-1": {Name: "as-w-1", State: "running", Live: true, Pane: "w0:p1"}}, max: -1, queue: 3}
+	ctx, by := context.Background(), port.Principal{}
+	t0 := time.Date(2026, 11, 27, 9, 0, 0, 0, time.UTC)
+	st := LoadState(dir, "as")
+	if _, err := Autoscale(ctx, f, by, d, false, st, t0); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveState(dir, "as", st); err != nil {
+		t.Fatal(err)
+	}
+	st = LoadState(dir, "as")
+	if lines, err := Autoscale(ctx, f, by, d, false, st, t0.Add(5*time.Minute)); err != nil || !f.agents["as-w-2"].Live {
+		t.Fatalf("5 分後に足す: %v %+v", err, lines)
+	}
+	if st.Members["w"].Last == "" || len(st.Members["w"].Since) != 0 {
+		t.Errorf("変えたら Last を書き、Since を消す: %+v", st.Members["w"])
+	}
+	os.WriteFile(filepath.Join(dir, "as.conf"), []byte("[member w]\nmax = 3\nscale_out = queue > 0\n"), 0o644)
+	if err := Remove(dir, "as"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(statePath(dir, "as")); !os.IsNotExist(err) {
+		t.Errorf("rm で状態も消す: %v", err)
 	}
 }

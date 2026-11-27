@@ -150,6 +150,24 @@ eq "agentset autoscale: from an agent pane is refused" "$(HERDR_PANE_ID=wC:p1 rc
 eq "agentset autoscale: a broken condition is refused at add" "$(rc $TB agentset add au2 <<<$'[member w]\nmax = 2\nscale_out = cpu > 1\n')" "2"
 $TB agentset down au --force >/dev/null 2>&1
 
+# ---- autoscale の for(続けて当たったら)と scale_cooldown。状態は定義の置き場所の .autoscale/<セット>.json
+as_reset
+$TB agentset add af <<<$'cwd = '"$TMP"$'\n[member w]\ncount = 1\nmax = 3\nqueue = project:af\nscale_out = queue > 0 for 10m\nscale_cooldown = 30m\n' >/dev/null
+$TB agentset up af >/dev/null 2>&1
+as_sql "INSERT INTO tasks (id, project, title, status, created_at, updated_at, herdr_session) VALUES ('T-af-001','af','a','todo','t','t','default');"
+eq "agentset autoscale for: holds but not long enough" "$($TB agentset autoscale af | grep -c 'for 10 分まであと 10 分') $(jq -r '.members.w.since|length' "$TB_AGENTSETS/.autoscale/af.json")" "1 1"
+_before=$(cat "$TB_AGENTSETS/.autoscale/af.json")
+$TB agentset autoscale af --dry-run >/dev/null
+eq "agentset autoscale --dry-run does not write the state" "$(cat "$TB_AGENTSETS/.autoscale/af.json")" "$_before"
+_ago=$(sqlite3 :memory: "SELECT strftime('%Y-%m-%dT%H:%M:%SZ','now','-11 minutes');")
+jq --arg t "$_ago" '.members.w.since |= map_values($t)' "$TB_AGENTSETS/.autoscale/af.json" >"$TMP/af.json" && mv "$TMP/af.json" "$TB_AGENTSETS/.autoscale/af.json"
+eq "agentset autoscale for: after 10 minutes adds one" "$($TB agentset autoscale af | grep -c '^af-w-2: ') $(jq -r '(.members.w.last != null) and (.members.w.since|length == 0)' "$TB_AGENTSETS/.autoscale/af.json")" "1 true"
+jq --arg t "$_ago" '.members.w.since = {"scale_out:queue > 0 for 10m": $t}' "$TB_AGENTSETS/.autoscale/af.json" >"$TMP/af.json" && mv "$TMP/af.json" "$TB_AGENTSETS/.autoscale/af.json"
+eq "agentset autoscale cooldown: waits after a change" "$($TB agentset autoscale af | grep -c 'scale_cooldown(30 分)まであと 30 分') $(as_sql "SELECT COUNT(*) FROM agents WHERE name='af-w-3';")" "1 0"
+$TB agentset down af --force >/dev/null 2>&1
+$TB agentset rm af >/dev/null
+eq "agentset rm removes the autoscale state" "$([ -e "$TB_AGENTSETS/.autoscale/af.json" ] && echo kept || echo gone)" "gone"
+
 as_reset
 unset HERDR_PANE_ID TB_DB TB_AGENTSETS TB_SPAWN_RETRY_SEC TB_AGENT_CWD FAKE_DYNAMIC FAKE_AGENTS
 eval "$_saved_env"
