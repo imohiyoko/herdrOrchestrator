@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -199,10 +200,10 @@ func Up(ctx context.Context, c Caller, by port.Principal, d Def) ([]Line, error)
 			need++
 		}
 	}
-	if need == 0 {
+	if need == 0 && len(d.Adopt) == 0 {
 		return []Line{{Name: d.Name, Out: "すべて動いています(何もしません)"}}, nil
 	}
-	if lr.Max >= 0 && lr.Running+need > lr.Max {
+	if need > 0 && lr.Max >= 0 && lr.Running+need > lr.Max {
 		return nil, &define.Error{Code: define.CodeFailedPrecondition, Reasons: []string{agent.ReasonLimitExceeded},
 			Message: fmt.Sprintf("セット %s を立てると動作中の agent が上限を超えます(動作中 %d + 立てる %d、上限 max_running_agents=%d)。1 体も立てません", d.Name, lr.Running, need, lr.Max)}
 	}
@@ -241,7 +242,40 @@ func Up(ctx context.Context, c Caller, by port.Principal, d Def) ([]Line, error)
 			panes = append(panes, pane)
 		}
 	}
+	for _, a := range d.Adopt {
+		p := d.parentName(a.Parent)
+		if slices.Contains(have[a.Agent].Parents, p) {
+			out = append(out, Line{Name: a.Agent, Out: "親 " + p + " は付いています(そのまま)"})
+			continue
+		}
+		var r agent.ParentResult
+		if err := c.Call(ctx, by, "agent.parent.add", agent.ParentReq{Name: a.Agent, Parent: p}, &r); err != nil {
+			out = append(out, Line{Name: a.Agent, Err: err})
+			return out, err
+		}
+		out = append(out, Line{Name: a.Agent, Out: "親に " + p + " を足しました(親: " + strings.Join(r.Parents, " ") + ")"})
+	}
 	return out, nil
+}
+
+// unadopt は [adopt] の agent から、セットが足した親を外す(agent は止めない)。
+func unadopt(ctx context.Context, c Caller, by port.Principal, d Def, have map[string]agent.AgentInfo) ([]Line, error) {
+	var out []Line
+	var first error
+	for _, a := range d.Adopt {
+		p := d.parentName(a.Parent)
+		if !slices.Contains(have[a.Agent].Parents, p) {
+			continue
+		}
+		var r agent.ParentResult
+		if err := c.Call(ctx, by, "agent.parent.rm", agent.ParentReq{Name: a.Agent, Parent: p}, &r); err != nil {
+			out = append(out, Line{Name: a.Agent, Err: err})
+			first = cmp.Or(first, err)
+			continue
+		}
+		out = append(out, Line{Name: a.Agent, Out: "親 " + p + " を外しました(止めません)"})
+	}
+	return out, first
 }
 
 // Down はセットのメンバーを子から順に止める(定義の外の agent は止めない)。失敗しても残りは止める。
@@ -251,8 +285,7 @@ func Down(ctx context.Context, c Caller, by port.Principal, d Def, force bool) (
 		return nil, err
 	}
 	plan := d.Known(have)
-	var out []Line
-	var first error
+	out, first := unadopt(ctx, c, by, d, have)
 	for i := len(plan) - 1; i >= 0; i-- {
 		in := plan[i]
 		if a := have[in.Name]; !a.Live && a.State != "running" {
@@ -284,8 +317,20 @@ type Row struct {
 	Member string `json:"member"`
 	State  string `json:"state"` // running / stopped / absent(まだ立てていない)/ lost(台帳では動作中だが herdr にいない)
 	Pane   string `json:"pane"`
-	Parent string `json:"parent"`
-	Want   string `json:"want_parent"` // 定義の親(Parent と違えば定義との差)
+	Parent string `json:"parent"`      // 今の親(複数なら , で区切る。agent_parents が無ければ立てた親)
+	Want   string `json:"want_parent"` // 定義の親(今の親に無ければ定義との差)
+	// Diff は動いていて、定義の親が今の親に無い
+	Diff bool `json:"diff"`
+}
+
+func parentsOf(a agent.AgentInfo) []string {
+	if len(a.Parents) > 0 {
+		return a.Parents
+	}
+	if a.Parent != "" {
+		return []string{a.Parent}
+	}
+	return nil
 }
 
 // Status はメンバーごとの状態と、定義の親との差。
@@ -295,8 +340,8 @@ func Status(ctx context.Context, c Caller, by port.Principal, d Def) ([]Row, err
 		return nil, err
 	}
 	var out []Row
-	for _, in := range d.Known(have) {
-		a := have[in.Name]
+	row := func(name, member, want string) {
+		a := have[name]
 		st := a.State
 		switch {
 		case a.Live:
@@ -306,7 +351,15 @@ func Status(ctx context.Context, c Caller, by port.Principal, d Def) ([]Row, err
 		case st == "running":
 			st = "lost"
 		}
-		out = append(out, Row{Name: in.Name, Member: in.Member.Name, State: st, Pane: a.Pane, Parent: a.Parent, Want: in.Parent})
+		ps := parentsOf(a)
+		out = append(out, Row{Name: name, Member: member, State: st, Pane: a.Pane, Parent: strings.Join(ps, ","), Want: want,
+			Diff: st == "running" && want != "" && !slices.Contains(ps, want) || st == "running" && want == "" && len(ps) > 0})
+	}
+	for _, in := range d.Known(have) {
+		row(in.Name, in.Member.Name, in.Parent)
+	}
+	for _, a := range d.Adopt {
+		row(a.Agent, "~adopt", d.parentName(a.Parent))
 	}
 	return out, nil
 }
@@ -543,7 +596,8 @@ func Run(ctx context.Context, c Caller, by port.Principal, d Def, member, task, 
 }
 
 // Reap は job 型の動いている agent のうち、任されたタスクが終わった(done / cancelled)か無くなったものを止める。
-// scheduler の COMMAND のジョブ(tb agentset reap <セット>)から定期に呼ぶ想定。止めるものが無ければ何も出さない。
+// そのあと on_parent_exit で、親が全員止まった agent を片付ける(parentExit)。
+// scheduler の COMMAND のジョブ(tb agentset reap <セット>)から定期に呼ぶ想定。片付けるものが無ければ何も出さない。
 func Reap(ctx context.Context, c Caller, by port.Principal, d Def) ([]Line, error) {
 	have, _, err := all(ctx, c, by)
 	if err != nil {
@@ -578,6 +632,76 @@ func Reap(ctx context.Context, c Caller, by port.Principal, d Def) ([]Line, erro
 			continue
 		}
 		out = append(out, Line{Name: in.Name, Out: why + " → " + r.Out})
+		a.Live = false
+		have[in.Name] = a
+	}
+	lines, err := d.parentExit(ctx, c, by, have)
+	return append(out, lines...), cmp.Or(first, err)
+}
+
+// parentExit は on_parent_exit: 動いているメンバー・adopt の agent のうち、親が 1 体以上いて全員動いていないものを、
+// grandparent(止まった親の、動いている親を足す。いなければセットの parent)/ set-parent / stop で片付ける。keep(既定)は何もしない。
+func (d Def) parentExit(ctx context.Context, c Caller, by port.Principal, have map[string]agent.AgentInfo) ([]Line, error) {
+	mode := cmp.Or(d.OnParentExit, "keep")
+	if mode == "keep" {
+		return nil, nil
+	}
+	var names []string
+	for _, in := range d.Known(have) {
+		names = append(names, in.Name)
+	}
+	for _, a := range d.Adopt {
+		names = append(names, a.Agent)
+	}
+	alive := func(n string) bool { return have[n].Live }
+	var out []Line
+	var first error
+	for _, n := range names {
+		a := have[n]
+		if !a.Live || len(a.Parents) == 0 || slices.ContainsFunc(a.Parents, alive) {
+			continue
+		}
+		gone := strings.Join(a.Parents, " ")
+		if mode == "stop" {
+			var r agent.StopResult
+			if err := c.Call(ctx, by, "agent.stop", agent.StopReq{Name: n}, &r); err != nil {
+				out = append(out, Line{Name: n, Err: err})
+				first = cmp.Or(first, err)
+				continue
+			}
+			out = append(out, Line{Name: n, Out: "親(" + gone + ")が止まっている → " + r.Out})
+			a.Live = false
+			have[n] = a
+			continue
+		}
+		var add []string
+		if mode == "grandparent" {
+			for _, p := range a.Parents {
+				for _, g := range have[p].Parents {
+					if alive(g) && g != n && !slices.Contains(add, g) {
+						add = append(add, g)
+					}
+				}
+			}
+		}
+		if len(add) == 0 && d.Parent != "" && alive(d.Parent) && d.Parent != n {
+			add = []string{d.Parent}
+		}
+		if len(add) == 0 {
+			out = append(out, Line{Name: n, Out: "親(" + gone + ")が止まっていますが、付け替える先が動いていません(そのまま)"})
+			continue
+		}
+		for _, p := range add {
+			var r agent.ParentResult
+			if err := c.Call(ctx, by, "agent.parent.add", agent.ParentReq{Name: n, Parent: p}, &r); err != nil {
+				out = append(out, Line{Name: n, Err: err})
+				first = cmp.Or(first, err)
+				continue
+			}
+			out = append(out, Line{Name: n, Out: "親(" + gone + ")が止まっている → 親に " + p + " を足しました"})
+			a.Parents = r.Parents
+		}
+		have[n] = a
 	}
 	return out, first
 }

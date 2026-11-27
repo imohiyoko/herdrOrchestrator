@@ -105,10 +105,24 @@ eq "agentset run: a missing task → 1" "$(rc $TB agentset run jb fix --task T-j
 eq "agentset run: no --task → 2" "$(rc $TB agentset run jb fix)" "2"
 eq "agentset run: a fixed member → 2" "$(rc $TB agentset run jb lead --task T-jb-001)" "2"
 eq "agentset run: from an agent pane is refused" "$(HERDR_PANE_ID=wC:p1 rc $TB agentset run jb fix --task T-jb-001)" "1"
-eq "agentset reap: nothing to stop while the task is open" "$($TB agentset reap jb) $(as_sql "SELECT state FROM agents WHERE name='jb-fix-1';")" "止める job はありません running"
+eq "agentset reap: nothing to stop while the task is open" "$($TB agentset reap jb) $(as_sql "SELECT state FROM agents WHERE name='jb-fix-1';")" "片付けるものはありません running"
 as_sql "UPDATE tasks SET status='done' WHERE id='T-jb-001';"
 eq "agentset reap: stops the agent whose task is done" "$($TB agentset reap jb | grep -c '^jb-fix-1: T-jb-001 は done') $(as_sql "SELECT state FROM agents WHERE name='jb-fix-1';")" "1 stopped"
 $TB agentset down jb --force >/dev/null 2>&1
+
+# ---- adopt: 動いている agent に親を足す(止めない)。on_parent_exit: reap が親の止まったメンバーを付け替える
+as_reset
+export FAKE_AGENTS="[$(as_ag conductor wC:p1),$(as_ag loner wL:p1)]"
+$TB agents >/dev/null
+$TB agentset add ad <<<$'cwd = '"$TMP"$'\nparent = conductor\non_parent_exit = set-parent\n[member lead]\n[member w]\nparent = lead\n[adopt]\nloner -> lead\n' >/dev/null
+eq "agentset adopt: up adds the parent to the adopted agent" "$($TB agentset up ad | grep -c '^loner: 親に ad-lead を足しました') $(as_sql "SELECT parent FROM agent_parents WHERE child='loner';")" "1 ad-lead"
+eq "agentset adopt: up again leaves it" "$($TB agentset up ad | grep -c '^loner: 親 ad-lead は付いています')" "1"
+eq "agentset adopt: status lists the adopted agent" "$($TB agentset status ad | grep '^loner' | cut -f2,5)" $'~adopt\tad-lead'
+$TB agent stop ad-lead --force >/dev/null
+eq "agentset reap: on_parent_exit = set-parent adds the set's parent to the members whose parents all stopped" \
+  "$($TB agentset reap ad | cut -d' ' -f1 | sort | paste -sd, -) $(as_sql "SELECT group_concat(child||'>'||parent, ',') FROM (SELECT * FROM agent_parents WHERE parent='conductor' AND child IN ('ad-w','loner') ORDER BY child);")" \
+  "ad-w:,loner: ad-w>conductor,loner>conductor"
+eq "agentset down: removes the adopted parent, keeps the adopted agent" "$($TB agentset down ad --force 2>&1 | grep -c '^loner: 親 ad-lead を外しました') $(as_sql "SELECT COUNT(*) FROM agent_parents WHERE child='loner' AND parent='ad-lead';") $(as_sql "SELECT state FROM agents WHERE name='loner';")" "1 0 running"
 
 as_reset
 unset HERDR_PANE_ID TB_DB TB_AGENTSETS TB_SPAWN_RETRY_SEC TB_AGENT_CWD FAKE_DYNAMIC FAKE_AGENTS
