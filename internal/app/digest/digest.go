@@ -45,6 +45,9 @@ type run struct {
 	dt                string // project に属さない観測の宛先
 }
 
+// prune は観測の記録から、もう出ていない観測を消す(dry-run でも消す。消えた状態は送るものが無いので、本番と同じに扱う)。
+func (d *run) prune(q string, args ...any) { _, _ = d.db.Exec(q, args...) }
+
 func (d *run) add(target, typ, ref, key, task, okind, label, text string) {
 	d.items = append(d.items, item{target, typ, ref, key, task, okind,
 		"[" + label + "] " + itemText(text, d.itemMax), "[" + label + "] " + itemText(text, 2000)})
@@ -192,7 +195,7 @@ func (d *run) collect() error {
 		d.add(d.target(project), "obs", first, key, first, "multi", owner+" 観測 / 複数チケット",
 			fmt.Sprintf("%s のチケットを %d 枚握っている(%s)。1 枚に絞るか、ほかを %s に戻すか、別の agent に回す", st.Main("active"), n, strings.ReplaceAll(list, ",", " "), st.Main("todo")))
 	}
-	_, _ = db.Exec(`DELETE FROM main.observations WHERE herdr_session=? AND kind='multi' AND key NOT IN (`+sqlQuoteList(multi)+`)`, db.Session)
+	d.prune(`DELETE FROM main.observations WHERE herdr_session=? AND kind='multi' AND key NOT IN (`+sqlQuoteList(multi)+`)`, db.Session)
 	// 4. 観測: stuck_min 分以上 working のまま
 	for _, r := range strRows(db, `SELECT t.id, t.project, COALESCE(t.owner_agent,'-'), 'stuck:'||a.session_id||':'||a.last_prompt_at,
              CAST((julianday('now') - julianday(a.last_prompt_at)) * 1440 AS INTEGER)
@@ -243,7 +246,7 @@ func (d *run) collect() error {
 				"blocked のまま(承認ダイアログ待ちの可能性。herdr agent attach "+who+" で確認)")
 		}
 		// blocked でなくなった agent の記録は消す(再び blocked になったら、また送る)
-		_, _ = db.Exec(`DELETE FROM main.observations WHERE herdr_session=? AND kind='blocked' AND key NOT IN (`+sqlQuoteList(current)+`)`, db.Session)
+		d.prune(`DELETE FROM main.observations WHERE herdr_session=? AND kind='blocked' AND key NOT IN (`+sqlQuoteList(current)+`)`, db.Session)
 	}
 	d.collectSpawn()
 	return d.collectSched()
@@ -271,7 +274,7 @@ func (d *run) collectSpawn() {
 	db, st := d.db, d.st
 	var one int
 	if db.QueryRow(`SELECT 1 FROM agents WHERE spawned_by IS NOT NULL AND state='running' LIMIT 1`).Scan(&one) != nil {
-		_, _ = db.Exec(`DELETE FROM main.observations WHERE herdr_session=? AND kind IN ('spawnlimit','spawnorphan')`, db.Session)
+		d.prune(`DELETE FROM main.observations WHERE herdr_session=? AND kind IN ('spawnlimit','spawnorphan')`, db.Session)
 		return
 	}
 	_ = agents.Sync(db.DB, db.Session)
@@ -314,7 +317,7 @@ func (d *run) collectSpawn() {
 			"親のタスクが "+s+" になったが、子 "+id+" はまだ動いている(止めるなら tb agent-stop "+id+")")
 	}
 	// 条件が外れたものは記録を消す(再び当てはまったら、また送る)
-	_, _ = db.Exec(`DELETE FROM main.observations WHERE herdr_session=? AND kind IN ('spawnlimit','spawnorphan') AND key NOT IN (`+sqlQuoteList(current)+`)`, db.Session)
+	d.prune(`DELETE FROM main.observations WHERE herdr_session=? AND kind IN ('spawnlimit','spawnorphan') AND key NOT IN (`+sqlQuoteList(current)+`)`, db.Session)
 }
 
 // buildDigest は build_digest: 長さの上限に収まる項目だけを入れ、残りは次回に回す。
@@ -441,35 +444,63 @@ func Run(env *app.Env, db *store.DB, dry bool) (RunResult, error) {
 		did := strconv.FormatInt(didN, 10)
 		n, body := buildDigest(items, did, msgMax)
 		sel := items[:n]
-		if e := transport.Send(db.DB, db.Session, t, body, "D-"+did, "digest", stderr); e != 0 {
-			_, _ = db.Exec(`DELETE FROM main.digests WHERE herdr_session=? AND id=?`, db.Session, didN) // 送れなかった回は残さない。項目は次回に持ち越す
-			out.Code = max(out.Code, e)
-			continue
-		}
 		fulls := make([]string, len(sel))
 		for i, it := range sel {
 			fulls[i] = it.full
 		}
-		_, _ = db.Exec(`UPDATE main.digests SET item_count=?, body=? WHERE herdr_session=? AND id=?`, n, strings.Join(fulls, "\n"), db.Session, didN)
-		ts := nowTS()
-		for _, it := range sel {
-			switch it.typ {
-			case "comment":
-				cid := strings.TrimPrefix(it.ref, "C-")
-				_, _ = db.Exec(`UPDATE main.comments SET delivered_at=? WHERE herdr_session=? AND id=? AND delivered_at IS NULL`, ts, db.Session, cid)
-				_, _ = db.Exec(`UPDATE main.tasks SET reported_at=?1, updated_at=?1
-					WHERE herdr_session=?2 AND status IN (`+st.SQLList("done")+`) AND reported_at IS NULL
-					AND id=(SELECT task_id FROM comments WHERE id=?3 AND kind='done')`, ts, db.Session, cid)
-			case "task":
-				_, _ = db.Exec(`UPDATE main.tasks SET reported_at=?, updated_at=? WHERE herdr_session=? AND id=? AND reported_at IS NULL`, ts, ts, db.Session, it.ref)
-			case "alert":
-				_, _ = db.Exec(`UPDATE main.alerts SET result_delivered_at=? WHERE herdr_session=? AND id=? AND result_delivered_at IS NULL`, ts, db.Session, strings.TrimPrefix(it.ref, "A-"))
-			case "obs":
-				_, _ = db.Exec(`INSERT OR IGNORE INTO main.observations (herdr_session, key, kind, task_id, text, digest_id, created_at)
-					VALUES (?, ?, ?, ?, ?, ?, ?)`, db.Session, it.key, it.okind, it.ref, it.full, didN, ts)
-			}
+		// 本文は送る前に残す(送ったあとで残せないと、届いた tb digests D-<n> が空になる)
+		if _, err := db.Exec(`UPDATE main.digests SET item_count=?, body=? WHERE herdr_session=? AND id=?`, n, strings.Join(fulls, "\n"), db.Session, didN); err != nil {
+			dropDigest(db, didN, stderr)
+			fmt.Fprintf(stderr, "tb: digest: %s へのまとめを記録できません: %v\n", t, err)
+			out.Code = max(out.Code, 1)
+			continue
+		}
+		if e := transport.Send(db.DB, db.Session, t, body, "D-"+did, "digest", stderr); e != 0 {
+			dropDigest(db, didN, stderr) // 送れなかった回は残さない。項目は次回に持ち越す
+			out.Code = max(out.Code, e)
+			continue
+		}
+		if err := markDelivered(db, st, sel, didN); err != nil { // 送ったが印を残せない(次回に同じ項目を再び送りうる)
+			fmt.Fprintf(stderr, "tb: digest: D-%s は送りましたが、送り済みの印を残せません: %v\n", did, err)
+			out.Code = max(out.Code, 1)
 		}
 		out.Lines = append(out.Lines, fmt.Sprintf("D-%s sent to %s (%d 件)", did, t, n))
 	}
 	return out, nil
+}
+
+// dropDigest は送らなかった回の行を消す(消せなければ言う。残った行は送っていない回)。
+func dropDigest(db *store.DB, didN int64, stderr io.Writer) {
+	if _, err := db.Exec(`DELETE FROM main.digests WHERE herdr_session=? AND id=?`, db.Session, didN); err != nil {
+		fmt.Fprintf(stderr, "tb: digest: 送っていない D-%d の行を消せません: %v\n", didN, err)
+	}
+}
+
+// markDelivered は送った項目に送り済みの印を付ける。項目ごとに書き、失敗した項目だけ次回に持ち越す(最初のエラーを返す)。
+func markDelivered(db *store.DB, st tickets.StatusSet, sel []item, didN int64) error {
+	ts := nowTS()
+	var first error
+	for _, it := range sel {
+		var err error
+		switch it.typ {
+		case "comment":
+			cid := strings.TrimPrefix(it.ref, "C-")
+			if _, err = db.Exec(`UPDATE main.comments SET delivered_at=? WHERE herdr_session=? AND id=? AND delivered_at IS NULL`, ts, db.Session, cid); err == nil {
+				_, err = db.Exec(`UPDATE main.tasks SET reported_at=?1, updated_at=?1
+					WHERE herdr_session=?2 AND status IN (`+st.SQLList("done")+`) AND reported_at IS NULL
+					AND id=(SELECT task_id FROM comments WHERE id=?3 AND kind='done')`, ts, db.Session, cid)
+			}
+		case "task":
+			_, err = db.Exec(`UPDATE main.tasks SET reported_at=?, updated_at=? WHERE herdr_session=? AND id=? AND reported_at IS NULL`, ts, ts, db.Session, it.ref)
+		case "alert":
+			_, err = db.Exec(`UPDATE main.alerts SET result_delivered_at=? WHERE herdr_session=? AND id=? AND result_delivered_at IS NULL`, ts, db.Session, strings.TrimPrefix(it.ref, "A-"))
+		case "obs":
+			_, err = db.Exec(`INSERT OR IGNORE INTO main.observations (herdr_session, key, kind, task_id, text, digest_id, created_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?)`, db.Session, it.key, it.okind, it.ref, it.full, didN, ts)
+		}
+		if err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
 }

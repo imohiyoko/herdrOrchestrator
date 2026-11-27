@@ -45,12 +45,19 @@ func cmdDBImport(args []string, w, stderr io.Writer) error {
 	if !appconfig.ReSessName.MatchString(in.Session) {
 		return usage("db-import: セッション名は英数字で始まり、英数字と . _ - の 64 字以内: %s", in.Session)
 	}
+	// リンクを先に解く(Abs は link/.. を字面で消すので、指す先と違うファイルになりうる)
+	if real, err := filepath.EvalSymlinks(in.Path); err == nil {
+		in.Path = real
+	}
 	if abs, err := filepath.Abs(in.Path); err == nil {
 		in.Path = abs
 	}
 	var r appconfig.DBImportResult
 	if err := callApp(db, "tb db-import", "config.db.import", in, &r); err != nil {
 		return err
+	}
+	if r.Pending != nil {
+		return pendingExit(w, r.Pending)
 	}
 	fmt.Fprint(w, r.Out)
 	return nil

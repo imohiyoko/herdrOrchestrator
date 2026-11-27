@@ -69,10 +69,14 @@ type DBImportReq struct {
 
 // DBImportResult は取り込んだ結果。Out は tb が標準出力に出す文字列(表ごとの行数と、終わりの 1 行)。
 type DBImportResult struct {
-	Path    string `api:"path" json:"path"`
-	Session string `api:"session" json:"session"`
-	Out     string `api:"out" json:"out"`
+	Path    string       `api:"path" json:"path"`
+	Session string       `api:"session" json:"session"`
+	Out     string       `api:"out" json:"out"`
+	Pending *app.Pending `api:"pending,optional" json:"pending,omitempty"`
 }
+
+// SetPending は app.PendingSetter(門が ask のとき承認待ちを返す)。
+func (r *DBImportResult) SetPending(p *app.Pending) { r.Pending = p }
 
 func dbImportOp(env *app.Env) app.Op {
 	return app.Command(env, "config.db.import", app.Cmd("cmd:config:db-import", "tb db-import"),
@@ -90,9 +94,9 @@ func dbImportOp(env *app.Env) app.Op {
 				return DBImportResult{}, define.Errorf(define.CodeInternal, "%s", err.Error())
 			}
 			defer done()
-			return dbImport(db, in, who, env.NowString())
+			return dbImport(db, in, who, env.NowString)
 		},
-		define.Doc("旧形式の DB(スキーマ v11 まで)を共有の DB の 1 セッションとして取り込む(tb db-import。既定は人だけ)"),
+		define.Doc("旧形式の DB(スキーマ v11 まで)を共有の DB の 1 セッションとして取り込む(tb db-import。既定は agent を断る。system 主体は system: の行に従う)"),
 		define.Authz("cmd:config:db-import"),
 		define.Expose(define.Internal, define.REST),
 		define.HTTP("POST /v1/config/db-import"),
@@ -104,7 +108,7 @@ type alreadyImported struct{ seen string }
 
 func (e *alreadyImported) Error() string { return "already imported: " + e.seen }
 
-func dbImport(db *store.DB, in DBImportReq, who, now string) (DBImportResult, error) {
+func dbImport(db *store.DB, in DBImportReq, who string, now func() string) (DBImportResult, error) {
 	src, session, dry := in.Path, in.Session, in.DryRun
 	if session == "" {
 		session = db.Session
@@ -157,6 +161,12 @@ func dbImport(db *store.DB, in DBImportReq, who, now string) (DBImportResult, er
 		return fail("旧 DB の写しを作れません: %s", src)
 	}
 	ro.Close()
+	// 確かめたあとで元の DB が移行されることがあるので、写しの版も見る
+	if cv, err := copyVersion(copyPath); err != nil {
+		return fail("旧 DB の写しを開けません: %v", err)
+	} else if cv >= 12 {
+		return fail("取り込めるのは旧形式(セッションごとに分ける前、スキーマ v11 まで)の DB だけです(この DB は v%d)", cv)
+	}
 	var opt *store.Options
 	if d := os.Getenv("TB_SCHEMA_DIR"); d != "" {
 		opt = &store.Options{Schema: os.DirFS(d), NoSession: true}
@@ -184,8 +194,20 @@ func dbImport(db *store.DB, in DBImportReq, who, now string) (DBImportResult, er
 	return DBImportResult{Path: real, Session: session, Out: out}, nil
 }
 
+// copyVersion は写しの user_version。
+func copyVersion(path string) (int, error) {
+	ro, err := store.OpenRO(path, 0)
+	if err != nil {
+		return 0, err
+	}
+	defer ro.Close()
+	var v int
+	err = ro.QueryRow(`PRAGMA user_version`).Scan(&v)
+	return v, err
+}
+
 // runImport は import_sql を写しの接続で流す(写しを main、共有の DB を dst)。出力は SELECT の行。
-func runImport(cp *store.DB, dstPath, session, mark, who, ts string, dry bool) (string, error) {
+func runImport(cp *store.DB, dstPath, session, mark, who string, now func() string, dry bool) (string, error) {
 	conn := cp.DB
 	if _, err := conn.Exec(`ATTACH ` + store.Quote(dstPath) + ` AS dst`); err != nil {
 		return "", err
@@ -311,6 +333,7 @@ func runImport(cp *store.DB, dstPath, session, mark, who, ts string, dry bool) (
          spawned_by = COALESCE(spawned_by, excluded.spawned_by), spawn_task = COALESCE(spawn_task, excluded.spawn_task)`); err != nil {
 		return "", err
 	}
+	ts := now() // 印を書く時刻
 	if _, err := conn.Exec(`INSERT INTO dst.tb_flags (herdr_session, key, value, set_by, set_at) VALUES (?, ?, ?, ?, ?)`, session, mark, ts, who, ts); err != nil {
 		return "", err
 	}
