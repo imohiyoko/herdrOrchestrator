@@ -85,6 +85,21 @@ func TestNextRuns(t *testing.T) {
 	if r := at(20, 22, 0, 1); !reflect.DeepEqual(r, []string{"2026-11-23 09:00:00"}) {
 		t.Errorf("終了後は翌営業日: %v", r)
 	}
+	once := info()
+	once.at = "2026-11-20 08:15"
+	nowFn = func() time.Time { return time.Date(2026, 11, 20, 8, 15, 30, 0, tokyo) }
+	if r, _ := nextRuns(once, 5); !reflect.DeepEqual(r, []string{"2026-11-20 08:15:00"}) {
+		t.Errorf("AT のその分はまだ予定: %v", r)
+	}
+	nowFn = func() time.Time { return time.Date(2026, 11, 20, 8, 16, 0, 0, tokyo) }
+	if r, note := nextRuns(once, 5); len(r) != 0 || !strings.Contains(note, "過ぎました") {
+		t.Errorf("AT を過ぎたら予定なし: %v %s", r, note)
+	}
+	man := info()
+	man.manual = true
+	if r, note := nextRuns(man, 5); len(r) != 0 || !strings.Contains(note, "呼ばれたときだけ") {
+		t.Errorf("MANUAL は予定なし: %v %s", r, note)
+	}
 	off := info()
 	off.enabled = false
 	if r, _ := nextRuns(off, 5); len(r) != 0 {

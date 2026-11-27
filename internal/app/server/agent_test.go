@@ -2,8 +2,13 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
+	"runtime"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/imohiyoko/API/define"
@@ -146,5 +151,160 @@ func TestReviveRestartGate(t *testing.T) {
 	want := []string{"pending w1", "rejected w1", "rejected w1", "failed human"}
 	if got := opsRows(t, env); !slices.Equal(got, want) {
 		t.Errorf("agent_ops: %q, want %q", got, want)
+	}
+}
+
+// agent.new の門: 入力の検査は tb と同じ文言、policy の @<役割> は要求された役割で比べる、
+// --killable は agent:flag を許された agent だけ。承認待ちの引数は tb agent-new と同じ形。
+func TestAgentNewGate(t *testing.T) {
+	t.Setenv("HERDR_BIN", "/nonexistent/herdr")
+	roles := t.TempDir()
+	if err := os.WriteFile(filepath.Join(roles, "reviewer.md"), []byte("review\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TB_ROLES", roles)
+	env, _ := fixture(t, "w1 agent:new @reviewer = allow\nw1 agent:new w9 = deny\n")
+	cwd := t.TempDir()
+	for _, c := range []struct {
+		in   agent.NewReq
+		code define.Code
+		msg  string
+	}{
+		{agent.NewReq{Name: "Bad"}, define.CodeInvalidArgument, "agent 名は英小文字で始まり、英小文字・数字・_・- の 32 字以内(human は予約名): Bad"},
+		{agent.NewReq{Name: "w2", Kind: "x"}, define.CodeInvalidArgument, "agent-new: --kind は " + strings.Join(agent.KindAll, " ") + " のどれか: x"},
+		{agent.NewReq{Name: "w2", Cwd: "rel"}, define.CodeInvalidArgument, "agent-new: --cwd は絶対パスにしてください: rel"},
+		{agent.NewReq{Name: "w2", Role: "nope"}, define.CodeInvalidArgument, "agent-new: --role は定義のある役割名(tb role-list。カンマ区切りで複数可): nope"},
+		{agent.NewReq{Name: "w2", Role: "a,b,c,d,e"}, define.CodeInvalidArgument, "agent-new: --role はカンマ区切りで 1〜4 個: a,b,c,d,e"},
+		{agent.NewReq{Name: "reviewer", Role: "reviewer,reviewer"}, define.CodeInvalidArgument, "agent-new: 役割 reviewer の定義があるため、この名前の役割は reviewer に固定です(--role reviewer,reviewer は効きません)"},
+		{agent.NewReq{Name: "w2", Killable: "maybe"}, define.CodeInvalidArgument, "agent-new: --killable は yes|no"},
+		{agent.NewReq{Name: "w2", Killable: "yes"}, define.CodeFailedPrecondition, "agent-new --killable を付けられるのは人と、policy で agent:flag を許された agent だけです(w1)"},
+		{agent.NewReq{Name: "w9", Cwd: cwd}, define.CodePermissionDenied, ""},
+	} {
+		_, e := lifeCall(t, env, app.Agent("w1"), "agent.new", c.in)
+		if e == nil || e.Code != c.code || (c.msg != "" && e.Message != c.msg) {
+			t.Errorf("%+v: %v", c.in, e)
+		}
+	}
+	// 役割の付いた依頼は @reviewer の allow で門を通る(herdr が無いので起動は 11 で失敗し、台帳から消える)
+	if _, e := lifeCall(t, env, app.Agent("w1"), "agent.new", agent.NewReq{Name: "w3", Cwd: cwd, Role: "reviewer"}); e == nil || !slices.Contains(e.Reasons, agent.ReasonHerdrUnavailable) {
+		t.Errorf("@reviewer の allow: %v", e)
+	}
+	res, e := lifeCall(t, env, app.Agent("w1"), "agent.new", agent.NewReq{Name: "w4", Cwd: cwd, Prompt: "やって <b>"})
+	if e != nil || res.Pending == nil || res.Pending.Route != "L" {
+		t.Fatalf("ask: %+v %v", res, e)
+	}
+	db, done, _ := env.DB()
+	var args string
+	var n int
+	db.QueryRow(`SELECT args FROM main.agent_ops WHERE status='pending'`).Scan(&args)
+	db.QueryRow(`SELECT count(*) FROM main.agents`).Scan(&n)
+	done()
+	var got struct{ Cwd, Prompt, Killable string }
+	if err := json.Unmarshal([]byte(args), &got); err != nil || (got.Cwd != cwd && got.Cwd != agent.PhysDir(cwd)) || got.Prompt != "やって <b>" || got.Killable != "unknown" ||
+		!strings.HasPrefix(args, `{"cwd":`) || !strings.HasSuffix(args, `"prompt":"やって <b>","killable":"unknown"}`) {
+		t.Errorf("承認後の実行に使う引数: %s", args)
+	}
+	if n != 0 {
+		t.Errorf("起動に失敗した agent が台帳に残る: %d", n)
+	}
+	want := []string{"rejected w1", "failed w1", "pending w1"}
+	if got := opsRows(t, env); !slices.Equal(got, want) {
+		t.Errorf("agent_ops: %q, want %q", got, want)
+	}
+}
+
+// fakeHerdr は呼ばれ方を log に 1 行ずつ書く疑似 herdr(agent list は空、workspace create は wA:p1、pane split は wA:p2)。
+func fakeHerdr(t *testing.T) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("疑似 herdr が sh")
+	}
+	dir := t.TempDir()
+	log := filepath.Join(dir, "log")
+	sh := `#!/bin/sh
+echo "$*" >>` + log + `
+case "$1 $2" in
+"agent list") echo '{"result":{"agents":[]}}' ;;
+"workspace create") echo '{"result":{"workspace":{"workspace_id":"wA"},"root_pane":{"pane_id":"wA:p1"}}}' ;;
+"pane split") echo '{"result":{"pane":{"pane_id":"wA:p2"}}}' ;;
+"agent start") echo '{"result":{"type":"ok"}}' ;;
+*) echo '{"result":{}}' ;;
+esac
+`
+	bin := filepath.Join(dir, "herdr")
+	if err := os.WriteFile(bin, []byte(sh), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_BIN", bin)
+	t.Setenv("TB_SPAWN_LOG", filepath.Join(dir, "spawn.log"))
+	return log
+}
+
+// agent.new の親と置き場所: 人だけが指定でき、名前を付けた workspace に 1 体目、その pane を分けて 2 体目を置く。
+// 親は台帳の spawned_by に入る。
+func TestAgentNewPlacement(t *testing.T) {
+	log := fakeHerdr(t)
+	env, _ := fixture(t, "")
+	cwd := t.TempDir()
+	call := func(by port.Principal, in agent.NewReq) (agent.NewResult, *define.Error) {
+		t.Helper()
+		c, err := New(env)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var res agent.NewResult
+		if err := c.Call(context.Background(), by, "agent.new", in, &res); err != nil {
+			var e *define.Error
+			if !errors.As(err, &e) {
+				t.Fatalf("not a define.Error: %v", err)
+			}
+			return res, e
+		}
+		return res, nil
+	}
+	for _, c := range []struct {
+		by   port.Principal
+		in   agent.NewReq
+		code define.Code
+	}{
+		{app.Agent("w1"), agent.NewReq{Name: "c1", Cwd: cwd, Parent: "lead"}, define.CodePermissionDenied},
+		{app.Agent("w1"), agent.NewReq{Name: "c1", Cwd: cwd, Pane: &agent.PanePlacement{Split: "wA:p1"}}, define.CodePermissionDenied},
+		{app.Human(), agent.NewReq{Name: "c1", Cwd: cwd, Parent: "nobody"}, define.CodeFailedPrecondition},
+		{app.Human(), agent.NewReq{Name: "c1", Cwd: cwd, Parent: "c1"}, define.CodeInvalidArgument},
+		{app.Human(), agent.NewReq{Name: "c1", Cwd: cwd, Pane: &agent.PanePlacement{Split: "wA:p1", Workspace: "x"}}, define.CodeInvalidArgument},
+		{app.Human(), agent.NewReq{Name: "c1", Cwd: cwd, Pane: &agent.PanePlacement{Split: "wA:p1", Direction: "up"}}, define.CodeInvalidArgument},
+		{app.Human(), agent.NewReq{Name: "c1", Cwd: cwd, Pane: &agent.PanePlacement{Split: "a b"}}, define.CodeInvalidArgument},
+	} {
+		if _, e := call(c.by, c.in); e == nil || e.Code != c.code {
+			t.Errorf("%+v: %v", c.in, e)
+		}
+	}
+	os.Remove(log)
+	res, e := call(app.Human(), agent.NewReq{Name: "lead", Cwd: cwd, Pane: &agent.PanePlacement{Workspace: "set1"}})
+	if e != nil || res.Pane != "wA:p1" || res.Workspace != "wA" {
+		t.Fatalf("1 体目: %+v %v", res, e)
+	}
+	res, e = call(app.Human(), agent.NewReq{Name: "c1", Cwd: cwd, Parent: "lead", Pane: &agent.PanePlacement{Split: res.Pane, Direction: "down"}})
+	if e != nil || res.Pane != "wA:p2" || res.Workspace != "" {
+		t.Fatalf("2 体目: %+v %v", res, e)
+	}
+	b, _ := os.ReadFile(log)
+	pc := agent.PhysDir(cwd)
+	for _, want := range []string{
+		"workspace create --cwd " + pc + " --label set1 --no-focus",
+		"agent start lead --kind claude --pane wA:p1",
+		"pane split wA:p1 --direction down --cwd " + pc + " --no-focus",
+		"agent start c1 --kind claude --pane wA:p2",
+	} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("herdr の呼び出しに %q が無い:\n%s", want, b)
+		}
+	}
+	db, done, _ := env.DB()
+	defer done()
+	var sby, pane string
+	db.QueryRow(`SELECT IFNULL(spawned_by,''), IFNULL(pane_id,'') FROM agents WHERE name='c1'`).Scan(&sby, &pane)
+	if sby != "lead" || pane != "wA:p2" {
+		t.Errorf("台帳: spawned_by=%q pane=%q", sby, pane)
 	}
 }

@@ -53,6 +53,7 @@ eq "agent-spawn: nothing created by any refusal" "$(ws_count) $(spsql "SELECT CO
 out=$(HERDR_PANE_ID=wP:p1 $TB agent-spawn worker --task "$T1" --brief 'src/ を読んで構造をまとめて'; echo "rc=$?")
 eq "agent-spawn: allowed → created without a human" "$(head -1 <<<"$out" | cut -d' ' -f1-2) $(tail -1 <<<"$out")" "parent1-s1 started rc=0"
 eq "agent-spawn: child registry (spawned_by, task, model, role, cwd)" "$(spsql "SELECT spawned_by||' '||spawn_task||' '||model||' '||role||' '||(cwd='$TMP') FROM agents WHERE name='parent1-s1';")" "parent1 $T1 sonnet worker 1"
+eq "agent-spawn: the parent is also the first row of agent_parents" "$(spsql "SELECT parent||' '||added_by FROM agent_parents WHERE child='parent1-s1';")" "parent1 parent1"
 eq "agent-spawn: started with the default model" "$(grep -c '^start parent1-s1 --kind claude --pane wA:p1 -- --model sonnet$' "$FAKE_LOG")" "1"
 eq "agent-spawn: recorded in agent_ops (requested_by parent, policy)" "$(spsql "SELECT op||' '||target||' '||requested_by||' '||status||' '||(result LIKE '%policy%') FROM agent_ops ORDER BY id DESC LIMIT 1;")" "new parent1-s1 parent1 done 1"
 eq "agent-spawn: first prompt names the task and carries the brief" "$(grep '^prompt parent1-s1' "$FAKE_LOG" | grep -c "$T1.*src/ を読んで構造をまとめて")" "1"

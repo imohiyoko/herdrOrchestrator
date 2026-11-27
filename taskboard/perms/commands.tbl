@@ -91,6 +91,8 @@ agent.role.write         cmd:agent:role-write         allow       allow       en
 agent.role.edit          cmd:agent:role-edit          allow       allow       entry
 agent.role.unset         cmd:agent:role-unset         deny        allow       inner
 agent.role.set           cmd:agent:role-set           allow       allow       entry
+agent.parent.add         cmd:agent:parent             allow       allow       entry
+agent.parent.rm          cmd:agent:parent             allow       allow       entry
 agent.role.log           cmd:agent:role-log           allow       allow       entry
 agent.role.broadcast     cmd:agent:role-broadcast     allow       allow       entry
 agent.role.status        cmd:agent:role-list          allow       allow       entry
@@ -215,6 +217,7 @@ job.edit                 cmd:job:edit                 deny        allow       in
 job.unset                cmd:job:unset                deny        allow       inner
 job.import               cmd:job:import               deny        allow       inner
 job.rm                   cmd:job:rm                   deny        allow       inner
+job.run                  cmd:job:run                  deny        allow       inner
 sched-job                cmd:job:list                 allow       allow       entry
 sched-job.list           cmd:job:list                 allow       allow       entry
 sched-job.show           cmd:job:show                 allow       allow       entry
@@ -264,6 +267,20 @@ gh.review.add            cmd:gh:review-add            allow       allow       en
 gh.review.approve        cmd:gh:review-approve        allow       allow       entry
 gh.pr                    cmd:gh:pr-help               allow       allow       entry
 gh.pr.merge              cmd:gh:pr-merge              allow       allow       entry
+
+# --- agentset(agent セット。定義を書くのは人だけ。up / down は親と置き場所を付けるので人だけ)
+agentset                 cmd:agentset:help            allow       allow       entry
+agentset.add             cmd:agentset:add             deny        allow       inner
+agentset.rm              cmd:agentset:rm              deny        allow       inner
+agentset.list            cmd:agentset:list            allow       allow       entry
+agentset.show            cmd:agentset:show            allow       allow       entry
+agentset.up              cmd:agentset:up              deny        allow       entry
+agentset.down            cmd:agentset:down            deny        allow       entry
+agentset.status          cmd:agentset:status          allow       allow       entry
+agentset.scale           cmd:agentset:scale           deny        allow       entry
+agentset.run             cmd:agentset:run             deny        allow       entry
+agentset.reap            cmd:agentset:reap            deny        allow       entry
+agentset.autoscale       cmd:agentset:autoscale       deny        allow       entry
 
 # --- herdr(workspace / pane を閉じる。agent が動いている所は中で必ず断る)
 herdr                    cmd:herdr:help               allow       allow       entry

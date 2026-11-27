@@ -33,13 +33,15 @@ const (
 )
 
 // ExitReasons は拒否の理由 → tb の終了コード。
-var ExitReasons = map[string]int{ReasonOpDenied: 4, ReasonLimitExceeded: 4, ReasonHerdrUnavailable: 11, ReasonPromptUnconfirmed: 10, ReasonKindUnsupported: 12}
+var ExitReasons = map[string]int{ReasonOpDenied: 4, ReasonLimitExceeded: 4, ReasonHerdrUnavailable: 11, ReasonPromptUnconfirmed: 10, ReasonKindUnsupported: 12, ReasonUseTB: 1}
 
 // Result は操作の実行の結果(tb の opResult。Code は tb の終了コード、Out は文言)。
 type Result struct {
 	Code int
 	Out  string
 	Note string // 最初の指示を送れなかった・確かめられなかった理由(FP_NOTE)
+	Pane string // 起動した pane(作成のときだけ)
+	WS   string // 作った workspace(作成で workspace を作ったときだけ)
 }
 
 // Err は結果を操作のエラーにする(成功なら nil)。
@@ -63,6 +65,12 @@ func (r Result) Err() error {
 // allow は通す、deny は却下の行を残して拒否、ask は承認待ち(agent_ops の pending の行、L-<n>)に積む。
 // args は承認後の実行に使う引数(agent_ops.args の JSON)。pre は判定の前の確かめ(--force は人だけ、など)。
 func opGate[In any](op string, target func(In) string, args func(In) string, pre func(who string, in In) error) app.Gate {
+	return opGateRole(op, target, args, pre, nil)
+}
+
+// opGateRole は opGate に、policy の @<役割> を比べる役割(role。空なら台帳の役割)を足したもの。
+// 作成(new)は、まだ台帳に無い agent を要求された役割(--role)で判定する。
+func opGateRole[In any](op string, target func(In) string, args func(In) string, pre func(who string, in In) error, role func(In) string) app.Gate {
 	return func(_ context.Context, env *app.Env, who string, v any) app.Decision {
 		in := v.(In)
 		if pre != nil {
@@ -79,7 +87,13 @@ func opGate[In any](op string, target func(In) string, args func(In) string, pre
 		}
 		defer done()
 		t := target(in)
-		val, rule := approval.NewJudge(db.DB, db.Session).Of("agent:"+op+":"+t, who)
+		j := approval.NewJudge(db.DB, db.Session)
+		if role != nil {
+			if r := role(in); r != "" {
+				j.Roles.Hint(t, r)
+			}
+		}
+		val, rule := j.Of("agent:"+op+":"+t, who)
 		switch val {
 		case "allow":
 			return app.Decision{}
@@ -120,8 +134,11 @@ func by(ctx context.Context) string {
 
 // Ops は agent の操作。
 func Ops(env *app.Env) []app.Op {
-	return []app.Op{stopOp(env), reviveOp(env), restartOp(env)}
+	return []app.Op{newOp(env), listOp(env), stopOp(env), reviveOp(env), restartOp(env), parentOp(env, true), parentOp(env, false), spawnOp(env), decideOp(env, true), decideOp(env, false)}
 }
+
+// ValidName は agent 名として使えるか(英小文字で始まる 32 字以内。human は予約名)。
+func ValidName(n string) bool { return n != "human" && agents.NameRE.MatchString(n) }
 
 // validName は agent 名の検査(tb の validAgentName と同じ文言)。
 func validName(n string) error {

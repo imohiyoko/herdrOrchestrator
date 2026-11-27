@@ -27,6 +27,8 @@ type TickEnv struct {
 	LogDir, Herdr, TB string
 	Dry               bool
 	Now, FakeState    string
+	// Force は今すぐ 1 回(tick --now。tb job run・POST /v1/jobs/{name}/run)。時刻・間隔・曜日・AT・MANUAL を見ない。ENABLED・GATE・SKIP_IF・ロックは同じ
+	Force bool
 }
 
 // DefaultTickEnv は lib.sh / tick.sh と同じ既定。
@@ -98,6 +100,9 @@ func (t *ticker) emit(action, reason string) {
 	add("prompt", t.psrc)
 	if t.exitc != nil {
 		kv = append(kv, [2]any{"exit", *t.exitc}, [2]any{"stdout", t.outS}, [2]any{"stderr", t.errS})
+	}
+	if t.Force {
+		kv = append(kv, [2]any{"now", true}) // tick --now(呼ばれて動いた回)
 	}
 	if t.Dry {
 		add("text", t.dryText)
@@ -292,6 +297,28 @@ func (t *ticker) run() (int, error) {
 		}
 		return 0, nil
 	}
+	var due []int64
+	if t.Force {
+		return t.fire([]int64{nowE}, nowE, slotHi, faked)
+	}
+	if j.Manual {
+		return quiet("skipped_manual", "MANUAL=1 runs only on request (tb job run)")
+	}
+	if j.At != "" {
+		at, err := ParseAt(j.At, t.loc)
+		if err != nil {
+			return 0, die("%s: AT の日時が不正: %s", j.Name, j.At)
+		}
+		switch e := at.Unix(); {
+		case e < slotLo:
+			return quiet("skipped_at", fmt.Sprintf("AT %s has passed", j.At))
+		case e > slotHi:
+			return quiet("skipped_at", fmt.Sprintf("waiting for AT %s", j.At))
+		default:
+			due = []int64{e}
+		}
+		return t.fire(due, nowE, slotHi, faked)
+	}
 	nums, err := DaysToNums(j.Name, j.Days)
 	if err != nil {
 		fmt.Fprintln(t.stderr, "error: "+err.Error()) // tick.sh ではコマンド置換の中の die なので、曜日が合わない扱いになる
@@ -310,7 +337,6 @@ func (t *ticker) run() (int, error) {
 	if lo > hi {
 		return quiet("skipped_window", fmt.Sprintf("%s outside %s", sodLabel(sodLo), j.Window))
 	}
-	var due []int64
 	iv := j.IntervalSec
 	first := j.WinStart + (lo-j.WinStart+iv-1)/iv*iv
 	for p := first; p <= hi; p += iv {
@@ -319,6 +345,12 @@ func (t *ticker) run() (int, error) {
 	if len(due) == 0 {
 		return quiet("skipped_interval", fmt.Sprintf("%s not on the %s-grid from %s", sodLabel(sodLo), j.intervalLabel(), j.Start))
 	}
+	return t.fire(due, nowE, slotHi, faked)
+}
+
+// fire は回の時刻 due を順に実行する(一時停止なら記録だけ)。
+func (t *ticker) fire(due []int64, nowE, slotHi int64, faked bool) (int, error) {
+	j := t.j
 	if j.Enabled != "1" {
 		t.at = t.fmtAt(due[0])
 		t.emit("skipped_disabled", "paused (ENABLED=0)")

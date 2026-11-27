@@ -246,6 +246,12 @@ func Revive(db *store.DB, name string, fresh bool, model, prompt, by string, std
 
 // ReviveContext は Revive に ctx を足したもの。ctx の期限を過ぎたら、起動する前に時間切れ(11)にする。
 func ReviveContext(ctx context.Context, db *store.DB, name string, fresh bool, model, prompt, by string, stderr io.Writer) Result {
+	return ReviveAt(ctx, db, name, fresh, model, prompt, by, transport.Place{}, "unknown", stderr)
+}
+
+// ReviveAt は ReviveContext の置き場所と、止めてよいかの判定(kill。新しい命のたびに付け直す。既定 unknown)を選べるもの
+// (agent セットが自分の workspace に戻す)。
+func ReviveAt(ctx context.Context, db *store.DB, name string, fresh bool, model, prompt, by string, at transport.Place, kill string, stderr io.Writer) Result {
 	live, err := agents.SyncLiveContext(ctx, db.DB, db.Session)
 	if err != nil {
 		return Result{Code: 11, Out: "herdr agent list に失敗しました"}
@@ -283,14 +289,18 @@ func ReviveContext(ctx context.Context, db *store.DB, name string, fresh bool, m
 		}
 		cwd = PhysDir(DefaultCwd())
 	}
-	if err := Register(db, name, cwd, lmodel, "", by, "unknown", "", row.Kind); err != nil {
+	why := ""
+	if kill != "unknown" {
+		why = "復活時に指定"
+	}
+	if err := Register(db, name, cwd, lmodel, "", by, kill, why, row.Kind); err != nil {
 		return Result{Code: 1, Out: err.Error()}
 	}
 	if ctx.Err() != nil {
 		_, _ = db.Exec(`UPDATE main.agents SET state='stopped', stopped_at=? WHERE herdr_session=? AND name=?`, nowTS(), db.Session, name)
 		return Result{Code: 11, Out: name + " を起動する前に時間切れになりました(起動していません)"}
 	}
-	sp, ok := transport.Spawn(db.Path, row.Kind, name, cwd, LaunchArgs(row.Kind, sess, model))
+	sp, ok := transport.SpawnAt(db.Path, row.Kind, name, cwd, LaunchArgs(row.Kind, sess, model), at)
 	if !ok {
 		if sp.Kept {
 			_, _ = db.Exec(`UPDATE main.agents SET pane_id=? WHERE herdr_session=? AND name=?`, sp.Pane, db.Session, name)
@@ -315,7 +325,7 @@ func ReviveContext(ctx context.Context, db *store.DB, name string, fresh bool, m
 			out += " / " + note
 		}
 	}
-	return Result{Code: 0, Out: out, Note: note}
+	return Result{Code: 0, Out: out, Note: note, Pane: sp.Pane, WS: sp.WS}
 }
 
 // PhysDir は $(cd D && pwd): 絶対パス(シンボリックリンクは解かない。bash の pwd と同じ論理パス)。

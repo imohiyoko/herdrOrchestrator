@@ -335,6 +335,8 @@ _FAKE_TOK = "gh" + "p_" + "x" * 24   # 架空の値(分割して連結。ソー�
 open(os.path.join(_J, "pj.conf"), "w").write(
     "TARGET=alpha\nPROMPT='roles/x.md を読んで <b>bold</b> $HOME ${FOO} \"quoted\" " + _FAKE_TOK + " を使う'\n"
     "WINDOW=00:00-23:59\nINTERVAL_MIN=10\nDAYS=daily\nSKIP_IF=\"working blocked\"\nTZ=Asia/Tokyo\n")
+open(os.path.join(_J, "pman.conf"), "w").write("COMMAND='echo m'\nMANUAL=1\nTZ=Asia/Tokyo\n")
+open(os.path.join(_J, "ponce.conf"), "w").write("COMMAND='echo once'\nAT=\"2099-01-02 03:04\"\nTZ=Asia/Tokyo\n")
 open(os.path.join(_J, "pcomment.conf"), "w").write("TARGET=alpha\nPROMPT='REAL-PROMPT'\n# PROMPT='ignored-line'\nWINDOW=09:00-21:00\nINTERVAL_MIN=30\nTZ=Asia/Tokyo\n")
 os.makedirs(os.path.join(_J, ".ssh"), exist_ok=True)
 open(os.path.join(_J, ".ssh", "key.txt"), "w").write("DENIED-KEY-BODY")
@@ -535,7 +537,7 @@ check("承認待ちバッジの件数(question 1 + pending-human 1 + blocked age
 r = cl.get("/notifications")
 check("GET /notifications が 200", r[0] == 200, str(r[0]))
 nb = r[2]
-for label in ("質問", "代行依頼", "承認待ちの agent", "滞留", "定期実行の失敗"):
+for label in ("質問", "代行依頼", "承認待ちの agent", "滞留", "job の失敗"):
     check(f"/notifications に {label}", label in nb)
 check("/notifications: 通知ボタンと状態表示", "id=nenable" in nb and "id=nstate" in nb)
 check("/notifications: 外部由来の値はエスケープ", "exit 3 &lt;script&gt;" in nb and "<script>alert" not in nb)
@@ -949,7 +951,12 @@ _un = Client(port)
 for _pth in ["/ledger", "/perms", "/perms?op=send:task:x", "/ledger?result=all"]:
     _r = _un.get(_pth)
     check(f"未ログインの {_pth} は /login へ(本文なし)", _r[0] == 302 and _r[1].get("Location", "").startswith("/login") and "send:" not in _r[2] and "approvals" not in _r[2])
-check("定期実行が出る", "job1" in cl.get("/jobs")[2])
+check("job が出る", "job1" in cl.get("/jobs")[2])
+check("上のバーは job", '<a href="/jobs">job</a>' in cl.get("/ledger")[2])
+check("呼ばれたときだけの job: 一覧と詳細", "呼ばれたときだけ(tb job run)" in cl.get("/jobs")[2] and "/v1/jobs/pman/run" in cl.get("/jobs/pman")[2])
+check("1 回だけの job: 一覧に日時", "1 回だけ 2099-01-02 03:04" in cl.get("/jobs")[2])
+_po = cl.get("/jobs/ponce")[2]
+check("1 回だけの job: 詳細は日時と次回、間隔のフォームは出さない", "1 回だけ <b>2099-01-02 03:04</b>" in _po and "2099-01-02 03:04:00" in _po and "name=interval " not in _po, _po[:400])
 
 # ---- 定期実行の詳細: 何が・誰に・いつ・承認は(読み取りのみ)
 _L = cl.get("/jobs")[2]

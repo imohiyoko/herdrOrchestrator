@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/env"
 )
@@ -103,6 +104,10 @@ type Job struct {
 	Rules                                                           []Rule
 	Vars                                                            []Var
 	DayNums                                                         []int
+	// At は 1 回だけ動かす時刻(AT=YYYY-MM-DD HH:MM[:SS]。TZ の時刻)。あれば WINDOW / START / END / INTERVAL_* / DAYS は書かない
+	At string
+	// Manual は MANUAL=1: 時刻では動かず、呼ばれたときだけ動く(tb job run / POST /v1/jobs/{name}/run)
+	Manual bool
 }
 
 var (
@@ -110,6 +115,7 @@ var (
 	reWindow   = regexp.MustCompile(`^([0-9:]+)-([0-9:]+)$`)
 	reDigits   = regexp.MustCompile(`^[0-9]+$`)
 	reHMS      = regexp.MustCompile(`^([0-9]{1,2}):([0-9]{2})(:([0-9]{2}))?$`)
+	reAt       = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}(:[0-9]{2})?$`)
 	reSetLine  = regexp.MustCompile(`^([A-Z_]+)=(.*)$`)
 	reSetMin   = regexp.MustCompile(`^[0-9]{1,4}$`)
 	reSetSec   = regexp.MustCompile(`^[0-9]{1,5}$`)
@@ -322,6 +328,35 @@ func (e Env) Load(name string) (*Job, error) {
 	if err != nil {
 		return nil, die("%s: ジョブ定義の書き方が不正(%s)。KEY=値 だけを書き、展開($ や `)は使わない", name, err)
 	}
+	switch c["MANUAL"] {
+	case "", "0":
+	case "1":
+		if c["AT"] != "" {
+			return nil, die("%s: MANUAL=1(呼ばれたときだけ)と AT は同時に書かない", name)
+		}
+		for _, k := range []string{"WINDOW", "START", "END", "INTERVAL_MIN", "INTERVAL_SEC", "DAYS"} {
+			if c[k] != "" {
+				return nil, die("%s: MANUAL=1(呼ばれたときだけ)と %s(繰り返し)は同時に書かない", name, k)
+			}
+		}
+		j.Manual = true
+	default:
+		return nil, die("%s: MANUAL は 0 か 1", name)
+	}
+	if at := c["AT"]; at != "" {
+		if !reAt.MatchString(at) {
+			return nil, die("%s: AT は YYYY-MM-DD HH:MM[:SS](TZ の時刻)", name)
+		}
+		if _, err := ParseAt(at, time.UTC); err != nil {
+			return nil, die("%s: AT の日時が不正: %s", name, at)
+		}
+		for _, k := range []string{"WINDOW", "START", "END", "INTERVAL_MIN", "INTERVAL_SEC", "DAYS"} {
+			if c[k] != "" {
+				return nil, die("%s: AT(1 回だけ)と %s(繰り返し)は同時に書かない", name, k)
+			}
+		}
+		j.At = strings.Replace(at, "T", " ", 1)
+	}
 	start, end := c["START"], c["END"]
 	if w := c["WINDOW"]; w != "" && start+end == "" {
 		m := reWindow.FindStringSubmatch(w)
@@ -335,6 +370,9 @@ func (e Env) Load(name string) (*Job, error) {
 		return nil, err
 	}
 	j.SettingsSrc = s.src
+	if (j.At != "" || j.Manual) && s.min+s.sec+s.start+s.end+s.days != "" {
+		return nil, die("%s: AT・MANUAL のジョブの settings に書けるのは ENABLED だけ", name)
+	}
 	if s.start != "" {
 		start, end = s.start, s.end
 	}
@@ -368,6 +406,10 @@ func (e Env) Load(name string) (*Job, error) {
 	getenv := os.Getenv
 	if e.NoEnvOverride {
 		getenv = func(string) string { return "" }
+	}
+	if j.At != "" || j.Manual {
+		getenv = func(string) string { return "" } // 繰り返しの上書き(SCHED_WINDOW など)は AT・MANUAL のジョブに効かない
+		start, end, iv = "00:00", "23:59", 60
 	}
 	if w := getenv("SCHED_WINDOW"); w != "" {
 		m := reWindow.FindStringSubmatch(w)
@@ -572,4 +614,13 @@ func parseVars(job, body string) ([]Var, error) {
 		return nil, die("%s: PROMPT_VARS に定義が無い", job)
 	}
 	return out, nil
+}
+
+// ParseAt は AT の値(YYYY-MM-DD HH:MM[:SS]。T 区切りも可)を loc の時刻として読む。
+func ParseAt(at string, loc *time.Location) (time.Time, error) {
+	v := strings.Replace(at, "T", " ", 1)
+	if len(v) == len("2006-01-02 15:04") {
+		v += ":00"
+	}
+	return time.ParseInLocation("2006-01-02 15:04:05", v, loc)
 }

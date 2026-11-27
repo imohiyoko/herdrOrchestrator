@@ -72,6 +72,7 @@
 97_agent_read_contract.sh 9
 97_agents.sh 11
 97_agents_graph.sh 6
+97_agentset.sh 3
 97_grants.sh 2
 97_kind_adapter.sh 5
 97_org.sh 6
@@ -83,6 +84,7 @@
 97_roles_session.sh 2
 98_agent_restart.sh 6
 98_agent_spawn.sh 11
+98_agent_parents.sh 2
 98_gate.sh 134
 98_model_set.sh 11
 99_compact.sh 2
