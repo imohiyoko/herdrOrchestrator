@@ -263,13 +263,14 @@ func permWarning(r *rule) string {
 	return ""
 }
 
-// stricterOver は r に重なる、もっと厳しい行(厳しい方が勝つので、重なる相手では r は効かない)。
+// stricterOver は r に重なる、同じ主体のもっと厳しい行(同じ層の中は厳しい方が勝つので、重なる相手では r は効かない)。
+// 主体の細かい行(agent 名・@役割)は主体 * の行を上書きするので、主体の違う行は挙げない(ADR 0009)。
 func (p *perms) stricterOver(r *rule) *rule {
 	for _, o := range p.rules {
 		if o == r || rank(o.effect) <= rank(r.effect) || hasBracket(o) {
 			continue
 		}
-		if fnmatchcase(r.op, o.op) && (o.subject == "*" || o.subject == r.subject) && (o.target == "*" || o.target == r.target) {
+		if fnmatchcase(r.op, o.op) && o.subject == r.subject && (o.target == "*" || o.target == r.target) {
 			return o
 		}
 	}
