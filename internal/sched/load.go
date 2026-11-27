@@ -4,7 +4,7 @@ import (
 	"database/sql"
 
 	"fmt"
-	_ "modernc.org/sqlite"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -55,7 +55,7 @@ func (e Env) dbBody(key string) (string, bool) {
 	if st, err := os.Stat(e.DB); err != nil || !st.Mode().IsRegular() {
 		return "", false
 	}
-	db, err := sql.Open("sqlite", e.DB+"?mode=ro&_pragma=busy_timeout(5000)")
+	db, err := store.OpenRO(e.DB, 5000)
 	if err != nil {
 		return "", false
 	}

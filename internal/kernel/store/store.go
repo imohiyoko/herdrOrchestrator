@@ -256,6 +256,15 @@ type Status struct {
 	JournalMode string `json:"journal_mode,omitempty"`
 }
 
+// OpenRO は path の DB を読み取り専用で開く(ファイルは作らない)。timeoutMS が 0 以下なら BusyTimeoutMS。
+// DB を開く入口はこのパッケージ(Open と OpenRO)だけにする。ほかのパッケージは sql.Open を直接呼ばない。
+func OpenRO(path string, timeoutMS int) (*sql.DB, error) {
+	if timeoutMS <= 0 {
+		timeoutMS = BusyTimeoutMS
+	}
+	return sql.Open("sqlite", path+"?mode=ro&_pragma=busy_timeout("+strconv.Itoa(timeoutMS)+")")
+}
+
 // Inspect は path の DB を読み取り専用で開いて版を返す。無ければ作らない。
 func Inspect(path string) (Status, error) {
 	st := Status{Path: path, Latest: Latest()}
@@ -266,7 +275,7 @@ func Inspect(path string) (Status, error) {
 		return st, err
 	}
 	st.Exists = true
-	db, err := sql.Open("sqlite", path+"?mode=ro&_pragma=busy_timeout("+strconv.Itoa(BusyTimeoutMS)+")")
+	db, err := OpenRO(path, 0)
 	if err != nil {
 		return st, err
 	}

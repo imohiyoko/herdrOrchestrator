@@ -1,8 +1,8 @@
 package sched
 
 import (
-	"database/sql"
 	"fmt"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 	"io"
 	"os"
 	"os/exec"
@@ -21,7 +21,7 @@ func (e Env) dbJobs() []string {
 	if !isRegular(e.DB) {
 		return nil
 	}
-	db, err := sql.Open("sqlite", e.DB+"?mode=ro&_pragma=busy_timeout(5000)")
+	db, err := store.OpenRO(e.DB, 5000)
 	if err != nil {
 		return nil
 	}

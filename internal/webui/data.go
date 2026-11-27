@@ -63,7 +63,7 @@ func (v *sv) conn() *sql.DB {
 	if !isFile(p) {
 		return nil
 	}
-	db, err := sql.Open("sqlite", p+"?mode=ro&_pragma=busy_timeout(2000)")
+	db, err := store.OpenRO(p, 2000)
 	if err != nil {
 		return nil
 	}
