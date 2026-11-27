@@ -316,8 +316,11 @@ tb gh review add <owner/repo> <PR 番号> --comment|--request-changes (--body B 
 tb gh review approve <owner/repo> <PR 番号> [--body B | --body-file -]   approve する(gh:approve。既定 deny。policy で渡す)
 tb gh <gh のコマンド> ... -R <owner/repo>   ほかの gh のコマンドをそのまま渡す(例: tb gh issue create -R o/r ...、tb gh run list -R o/r)。
                               権限は gh:<コマンド>-<サブコマンド>(例: gh:issue-create)。既定: list / view / status / diff / checks / watch / search は allow、
-                              auth / secret / variable / config / extension / alias / ssh-key / gpg-key / repo delete / api は deny、ほかは ask。
-                              pr review / pr comment は専用のコマンドを使う。対象は -R(api はパスの repos/<owner>/<repo>)
+                              auth / secret / variable / config / extension / alias / ssh-key / gpg-key / repo delete は deny、ほかは ask。
+                              pr review / pr comment は専用のコマンドを使う。対象は -R
+tb gh api <パス> [gh api のフラグ...]   GitHub API を呼ぶ。対象はパスの repos/<owner>/<repo>。GET は gh:api-get(allow)、
+                              GET 以外は gh:api-write(ask)、graphql は gh:api-graphql(ask)、秘密・鍵・webhook・権限・approve・マージ・
+                              リポジトリの設定と削除は gh:api-admin(deny)
 tb git fetch|pull|ls-remote <リモート名|URL> [引数...] / tb git clone <URL> ... / tb git push <リモート名> [引数...]
                               GitHub のリモートへの git の操作(git:<サブコマンド>。既定は push が ask、force・削除を含む push は git:push-force で deny、ほかは allow)。
                               対象はリモートの owner/repo(設定したコマンドに URL を聞いて決める)。ローカルの操作は git を直接使う。

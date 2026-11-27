@@ -30,7 +30,10 @@ gh:alias-*         deny
 gh:ssh-key-*       deny
 gh:gpg-key-*       deny
 gh:repo-delete     deny
-gh:api             deny     # どの API も呼べる(approve・マージも)。渡すならリポジトリと主体を絞る
+gh:api-admin       deny     # 秘密・鍵・webhook・権限・runner・協力者・リポジトリの設定と削除、approve・マージの API
+gh:api-get         allow    # GET の REST(ファイルを送らないもの)
+gh:api-write       ask      # GET 以外の REST
+gh:api-graphql     ask      # query と mutation を見分けない
 gh:*-list          allow
 gh:*-view          allow
 gh:*-status        allow
