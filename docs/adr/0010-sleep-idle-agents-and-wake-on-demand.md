@@ -1,6 +1,6 @@
 # ADR 0010: 使われていない agent を眠らせ、用があるときに起こす
 
-- 状態: Proposed
+- 状態: Proposed(2026-11-27。人が「protect と always-on を分ける」を選んだ)
 - 日付: 2026-11-27
 - 関係するもの: ADR 0001(環境で強制する)、ADR 0003(チケットのイベントと規則)、ADR 0007(主体と 1 つの policy)、ADR 0008(アプリケーション API。agent.stop / agent.revive は段 1 で `internal/app/agent` に移った)
 
@@ -39,7 +39,7 @@
 | チケットの割り当て・claim | 担当名が入るだけ。知らせは nudge 任せ |
 | 承認の結果 | 依頼者への送信(上と同じく outbox に残る) |
 
-どの経路も最後は「宛先が herdr にいない」で止まる。**ここに 1 つの関数を挟めば全部の経路で起こせる**。scheduler だけは herdr を直接呼んでいるので、Wake を呼ぶように直す。
+どの経路も最後は「宛先が herdr にいない」で止まる。**ここに 1 つの関数を挟めば全部の経路で起こせる**。scheduler のプロンプト job は、状態を `herdr agent list` で直接見てから `tb system-send` を呼ぶ(outbox を作らない)。状態を見る前に Wake を通すように直す。
 
 ### 3. 眠らせるとぶつかるもの
 
@@ -58,13 +58,20 @@
 
 ### 1. 台帳
 
-- `agents.state` に `sleeping` を足す(`running` / `sleeping` / `stopped`)。`sleeping` の意味は「pane は無いが、仕組みが起こしてよい」。
+- `agents.state` に `sleeping` と `waking` を足す(`running` / `sleeping` / `waking` / `stopped`)。`sleeping` の意味は「pane は無いが、仕組みが起こしてよい」。`waking` は「起こしている途中で、まだ届けられない」。
 - `agent_ops.op` に `sleep` / `wake` を足す。誰が・何の届け物で起こしたか(`args` に outbox の ID など)を残す。
 - 眠らせるときに置き場所(tab・workspace)を `agents` に残す。
+- agent ごとの **借用(lease)** を 1 行で持つ(表 `agent_leases`: 名前・持ち主・期限)。届け物・眠り・起こすの 3 つは、状態の確認から外への操作(送信、pane を閉じる、起動)が終わるまでを、この借用の中で行う。取るのは条件つきの INSERT / UPDATE(空いているか、期限が切れているときだけ)。
+
+### 1a. 借用の決まり
+
+- 借用を持つ操作の ctx の期限(ADR 0008 で herdr の呼び出しまで通した期限)は、借用の期限より短くする。期限を過ぎた持ち主は、herdr を呼ぶ前に止まる。
+- herdr の子プロセスを期限で止めても、herdr の側で処理が続いている恐れがある(pane を閉じたかどうか分からない、など)。**結果が分からないまま借用が切れたときは、自動で引き継がない**。台帳の状態を `stopped` にし、`agent_ops` に「結果不明」を残して人に知らせる。届け物は outbox に残す。
+- 借用を取れなかった届け物は outbox に queued で残す(`tb flush` で再送)。取れなかった眠りは、その回は取りやめる。
 
 ### 2. 眠らせる条件(job `agent-sleep`、既定は 5 分ごと)
 
-全部満たすものだけ:
+全部満たすものだけ(1 と 2 は、借用を取ったあと pane を閉じる直前にもう一度確かめる。判定のときから herdr の状態や時刻が変わっていたら閉じない):
 
 1. herdr の状態が `idle` か `done`。
 2. 最後のプロンプト(`agent_activity.last_prompt_at` と `last_stop_at` の新しいほう)から `sleep_after` 分(設定 limits、既定 120)たっている。
@@ -75,10 +82,18 @@
 
 ### 3. 起こす(`agent.Wake`)
 
-- 呼ぶ場所: `transport.Send` の手前(`message.Deliver`・nudge・承認の結果・`tb flush` が通る)と、scheduler のプロンプト job。
+- 呼ぶ場所: `transport.Send` の手前(`message.Deliver`・nudge・承認の結果・`tb flush` が通る)と、scheduler のプロンプト job(`tb system-send` の中)。
 - 起こすのは `state='sleeping'` の agent だけ。`stopped` は今までどおり起こさない(人や判定役が止めたものを勝手に戻さない)。
-- 順番: delivery の判定(block / hold なら起こさない)→ `max_running_agents` の検査(上限なら outbox に残し、`tb flush` で再送)→ `revive`(resume のみ)→ 届け物を最初の指示として送る → outbox を sent にする。
-- 同時に 2 つ届いたら 1 回だけ起こす(台帳の行を `sleeping → running` に変える UPDATE を取れたほうが起こし、もう一方は届け物を outbox に残して flush に任せる)。
+- 順番: delivery の判定(block / hold なら起こさない)→ 借用を取る → **枠の確保**(下)→ 台帳を `sleeping → waking` → `revive`(resume のみ)→ 届け物を最初の指示として送る → 台帳を `running`、outbox を sent にする → 借用を返す。
+- **枠の確保**: `max_running_agents` の検査と、台帳を `waking` にする UPDATE を、1 つのトランザクション(SQLite の `BEGIN IMMEDIATE`。DB 全体で直列になる)で行う。`running` と `waking` を数えて上限なら確保せず、届け物を outbox に残す。別の agent への同時の Wake でも上限を越えない。
+- 同じ agent に同時に 2 つ届いたら、借用を取れたほうだけが起こす。もう一方と、`waking` の宛先への届け物は、送らずに outbox に queued で残す。起動に成功したら flush が古い順に届ける。
+- 上限・借用を取れないときの扱いは経路ごとに今の決まりに合わせる:
+
+| 経路 | 届かなかったとき |
+|---|---|
+| `tb send` / 返信 / 承認の結果 | outbox に queued で残し、`tb flush` で再送 |
+| nudge | 今のまま取り下げる(`denied`)。古い催促を後から届けない |
+| scheduler のプロンプト job | その回を飛ばす(`skipped_state`)。次の回に任せる |
 
 ### 4. 権限
 
@@ -97,17 +112,17 @@
 
 ### 6. 起こせなかったとき
 
-- cwd が無い・session が見つからない・起動に失敗: 新しい会話にはしない。`state` を `stopped` にし、届け物は outbox に残し、人に知らせる(notify)。
+- cwd が無い・session が見つからない・起動に失敗: 新しい会話にはしない。`state` を `stopped` にし(`waking` から戻す)、届け物は outbox に残し、人に知らせる(notify)。
 - 上限: outbox に残すだけ(失敗にしない)。
 
 ### 7. 見せ方
 
-- `tb agents` と Web UI で `sleeping` を別に見せる(最後に起きた時刻、起こされた回数)。
+- `tb agents` と Web UI で `sleeping` / `waking` を別に見せる(最後に起きた時刻、起こされた回数)。
 - `tb agent-sleep <名前>` / `tb agent-wake <名前>`(人が手で)。名前は `tb agent <サブコマンド>` の決まりに合わせて実装時に決める。
 
 ## 段階
 
-- 段 A: 台帳(`sleeping`、op の追加)、`agent.sleep` / `agent.wake` の操作(中身は Stop / Revive を呼ぶ)、agent-shed の orphan で `sleeping` を親が居ると数える。
+- 段 A: 台帳(`sleeping` / `waking`、op の追加、借用の表)、`agent.sleep` / `agent.wake` の操作(中身は Stop / Revive を呼ぶ)、agent-shed の orphan で `sleeping` を親が居ると数える。
 - 段 B: `message.Deliver`・nudge・scheduler を Wake に通す。2 重起動の防止。
 - 段 C: job `agent-sleep`、`always-on` の設定と移行、Web UI。
 
@@ -132,13 +147,14 @@
 
 ## 人が決めること
 
-1. protect の意味を「消さない・会話を捨てない」に変え、眠らせない指定は always-on に分けてよいか(推奨: 分ける)。
+1. ~~protect の意味を「消さない・会話を捨てない」に変え、眠らせない指定は always-on に分けてよいか~~ → 決定(2026-11-27): 分ける。
 2. `sleep_after` の既定(推奨: 120 分)。
 3. 指揮役(設定 projects の宛先)を既定で always-on にするか(推奨: しない。移行のあいだは protect の agent が always-on とみなされる)。
 
 ## 確認できていないこと・推測
 
 - claude の `--resume` が同じ session ID を保つか(killable の stale 判定と、台帳の session の更新に効く)。
-- 起きるまでの時間(MCP の接続を含む)。
+- 起きるまでの時間(MCP の接続を含む)。借用の期限はこれより長くする必要がある。
+- herdr が子プロセスを止められたあとも pane close / agent start を続けるか(続けるなら「結果不明」は人に回す、という今の決まりで足りる)。
 - resume したときの会話の読み直しの量が、動いたままの 1 回目と同じか。
 - codex / gemini の resume の対応(`KindSupports`)。対応していない kind は眠らせない。
