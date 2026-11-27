@@ -407,6 +407,25 @@ func agentOp(sess, op, name string) string {
 	if !reAgentName.MatchString(name) {
 		return "refused"
 	}
+	if sess != SessionName() {
+		// herdr の呼び出し先はプロセスの環境で決まる(herdr アダプタはまだセッションを受け取らない)。ほかのセッションは
+		// 前と同じく、HERDR_SESSION を渡した tb の子プロセスで行う
+		var args []string
+		switch op {
+		case "stop":
+			args = []string{"agent-stop", name}
+		case "force-stop":
+			args = []string{"agent-stop", name, "--force"}
+		case "revive":
+			args = []string{"agent-revive", name}
+		case "revive-fresh":
+			args = []string{"agent-revive", name, "--fresh"}
+		default:
+			return "refused"
+		}
+		rc, _ := runTB(sess, spawnTimeout, args...)
+		return rcState(rc)
+	}
 	switch op {
 	case "stop", "force-stop":
 		return agentStop(sess, name, op == "force-stop")
