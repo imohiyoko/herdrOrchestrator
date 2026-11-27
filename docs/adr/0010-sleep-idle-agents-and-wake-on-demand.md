@@ -1,6 +1,6 @@
 # ADR 0010: 使われていない agent を眠らせ、用があるときに起こす
 
-- 状態: Proposed(2026-11-27。人が「protect と always-on を分ける」を選んだ)
+- 状態: Accepted(2026-11-27。人が「protect と always-on を分ける」「`sleep_after` は既定で off」「指揮役は always-on」を選んだ)
 - 日付: 2026-11-27
 - 関係するもの: ADR 0001(環境で強制する)、ADR 0003(チケットのイベントと規則)、ADR 0007(主体と 1 つの policy)、ADR 0008(アプリケーション API。agent.stop / agent.revive は段 1 で `internal/app/agent` に移った)
 
@@ -43,7 +43,7 @@
 
 ### 3. 眠らせるとぶつかるもの
 
-- **agent-shed の orphan**: 「親が running でない子」を止める候補にする。親が眠っただけで子が候補になってしまう。`sleeping` を `running` と同じに数える必要がある(多対多の親の設計でも同じ。親が眠っていることは「親がいない」ではない)。
+- **agent-shed の orphan**: 「親が running でない子」を止める候補にする。親が眠っただけで子が候補になってしまう。`sleeping` を `running` と同じに数える必要がある(多対多の親の設計でも同じ。親が眠っている・起きている途中(`waking`)であることは「親がいない」ではない)。
 - **protect**: 今は「--force でも止めない」。眠りを protect が止めると、いちばん眠らせたい指揮役・相談役が眠れない。
 - **killable の stale 判定**: `killable_session` と `session_id` を比べる。resume で session_id が変わる kind では、起こすたびに判定が無効になる(claude の `--resume` が同じ ID を保つかは要確認)。
 - **max_running_agents**: 起こすと 1 つ増える。上限なら起こせない。
@@ -74,7 +74,7 @@
 全部満たすものだけ(借用を取ったあと、pane を閉じる直前に 1〜6 をすべてもう一度確かめる。判定のときから 1 つでも変わっていたら閉じず、次の周期で判定し直す。チケットの割り当てや承認の依頼は借用を使わずに書かれるので、確かめ直しは閉じる直前の 1 回にまとめる):
 
 1. herdr の状態が `idle` か `done`。
-2. 最後のプロンプト(`agent_activity.last_prompt_at` と `last_stop_at` の新しいほう)から `sleep_after` 分(設定 limits、既定 120)たっている。
+2. 最後のプロンプト(`agent_activity.last_prompt_at` と `last_stop_at` の新しいほう)から `sleep_after` 分(設定 limits)たっている。既定は `0` で、`0` のあいだは誰も眠らせない(job も何もしない)。使いたい人だけが値を書く(目安は 120)。
 3. 担当の `active` / `review` / `blocked` のチケットが無い。承認待ちの依頼(agent_ops・approvals の pending)を出していない。
 4. `always-on` に当たらない。
 5. kind が resume に対応している(`KindRequire(kind, "resume")`)。会話の session が台帳にある。
@@ -108,7 +108,7 @@
 | protect(変更) | 消さない・`--fresh` で会話を捨てない・人以外は stop しない | してよい |
 | always-on(新規) | ずっと起きている(眠らせない) | しない |
 
-既定の always-on は空。指揮役を眠らせたくない人は `role:conductor` などを書く。移行: 設定 `always-on` がまだ無いあいだは、今の protect の agent を always-on とみなす(何も変えなければ今の動きのまま)。
+指揮役(設定 projects の宛先になっている agent)は、always-on に書かなくても常に always-on とみなす(眠らせない)。それ以外の既定の always-on は空。移行: 設定 `always-on` がまだ無いあいだは、今の protect の agent も always-on とみなす(何も変えなければ今の動きのまま)。
 
 ### 6. 起こせなかったとき
 
@@ -148,8 +148,8 @@
 ## 人が決めること
 
 1. ~~protect の意味を「消さない・会話を捨てない」に変え、眠らせない指定は always-on に分けてよいか~~ → 決定(2026-11-27): 分ける。
-2. `sleep_after` の既定(推奨: 120 分)。
-3. 指揮役(設定 projects の宛先)を既定で always-on にするか(推奨: しない。移行のあいだは protect の agent が always-on とみなされる)。
+2. ~~`sleep_after` の既定~~ → 決定(2026-11-27): 既定は `0`(off)。眠らせたい人だけが値を書く。
+3. ~~指揮役(設定 projects の宛先)を既定で always-on にするか~~ → 決定(2026-11-27): する。指揮役は書かなくても眠らせない。
 
 ## 確認できていないこと・推測
 
