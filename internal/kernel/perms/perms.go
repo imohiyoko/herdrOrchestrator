@@ -1,6 +1,6 @@
 // Package perms は tb の認可(主体 × 操作 × 対象 → allow / ask / deny。ADR 0006 / ADR 0007。taskboard/lib/perms.sh)。
 // 既定は taskboard/perms/commands.tbl(コマンド)と ops.tbl(コマンドの中の操作)。どちらも埋め込み。人が変えるのは設定 policy の行だけ(<主体> <操作> <対象> = <効果>)。
-// 当たる行のうち、いちばん厳しい効果を採る。人は常に通る。
+// 主体の細かい層(agent 名 > @役割・glob > *)が広い層と既定の表を上書きし、同じ層の中では当たる行のいちばん厳しい効果を採る(ADR 0009)。人は常に通る。
 package perms
 
 import (
@@ -162,11 +162,31 @@ func (m Matcher) targetMatch(db *sql.DB, session, who, target, t string) int {
 	return m.name(db, session, target, t)
 }
 
+// 主体の書き方の層(広い順)。既定の表はこの下の層で、当たる行があれば必ず上書きされる。
+const (
+	LevelAll        = iota // *(system:* も)
+	LevelRole              // @<役割>、agent 名の glob(w*、system:sched* など)
+	LevelIndividual        // agent 名そのもの(system:scheduler も)
+	levels
+)
+
+// SubjectLevel は policy の行の主体 s の層。細かい層の行は、広い層の行と既定の表を上書きする(ADR 0009)。
+func SubjectLevel(s string) int {
+	n := strings.TrimPrefix(s, "system:")
+	switch {
+	case n == "*":
+		return LevelAll
+	case strings.HasPrefix(n, "@") || strings.ContainsAny(n, "*?["):
+		return LevelRole
+	}
+	return LevelIndividual
+}
+
 // Judgement は設定 policy の行を当てた結果(bash の PJ_*)。
 type Judgement struct {
-	Best  int    // 確かめられた行のうち、いちばん厳しい効果の順位(無ければ -1)
+	Best  int    // 確かめられた行のあるいちばん細かい層で、いちばん厳しい効果の順位(無ければ -1)
 	BRule string // その行
-	Unk   int    // 役割・関係を確かめられない行のいちばん厳しい順位(締める向きにだけ使う。無ければ -1)
+	Unk   int    // 役割・関係を確かめられない行(Best の層とそれより細かい層)のいちばん厳しい順位(締める向きにだけ使う。無ければ -1)
 	URule string
 	Human bool // 呼び出し元が人(行は見ない)
 }
@@ -188,7 +208,45 @@ func Judge(db *sql.DB, session, who string, whoFn func() (string, error), op, ta
 		j.Human = true
 		return j, "", nil
 	}
+	// 層ごと(主体の書き方の細かさ。SubjectLevel)に、いちばん厳しい効果を集める。最後に、確かめられた行のある
+	// いちばん細かい層で決める(細かい層が広い層と既定の表を上書きする。同じ層の中は厳しい方が勝つ)。
+	var lv [levels]struct {
+		best, unk    int
+		brule, urule string
+	}
+	for i := range lv {
+		lv[i].best, lv[i].unk = -1, -1
+	}
+	hit := func(l, rk int, r string) {
+		if rk > lv[l].best {
+			lv[l].best, lv[l].brule = rk, r
+		}
+	}
+	unk := func(l, rk int, r string) {
+		if rk > lv[l].unk {
+			lv[l].unk, lv[l].urule = rk, r
+		}
+	}
+	fold := func() {
+		top := -1
+		for l := levels - 1; l >= 0; l-- {
+			if lv[l].best >= 0 {
+				top = l
+				break
+			}
+		}
+		if top >= 0 {
+			j.Best, j.BRule = lv[top].best, lv[top].brule
+		}
+		// 役割・関係を確かめられない行は、決めた層と、それより細かい層のものだけが締める(その行が決めた層を上書きしうるため)
+		for l := max(top, 0); l < levels; l++ {
+			if lv[l].unk > j.Unk {
+				j.Unk, j.URule = lv[l].unk, lv[l].urule
+			}
+		}
+	}
 	sys := func() (Judgement, string, error) { // system: の行が当たらなければ人と同じ
+		fold()
 		if j.Best < 0 && (strings.HasPrefix(who, "system:") || (who == Caller && identity.System != "")) {
 			j.Human = true
 		}
@@ -242,9 +300,7 @@ func Judge(db *sql.DB, session, who string, whoFn func() (string, error), op, ta
 			if target != "*" && m.targetMatch(db, session, "", target, tg) != 0 {
 				continue
 			}
-			if rk := Rank(v); rk > j.Best {
-				j.Best, j.BRule = rk, "policy: "+s+" "+o+" "+tg+" = "+v
-			}
+			hit(SubjectLevel(s), Rank(v), "policy: "+s+" "+o+" "+tg+" = "+v)
 			continue
 		}
 		mm := 0
@@ -263,11 +319,11 @@ func Judge(db *sql.DB, session, who string, whoFn func() (string, error), op, ta
 				mm = 2
 			}
 		}
-		rk := Rank(v)
-		if mm == 0 && rk > j.Best {
-			j.Best, j.BRule = rk, "policy: "+s+" "+o+" "+tg+" = "+v
-		} else if mm == 2 && rk > j.Unk {
-			j.Unk, j.URule = rk, "policy: "+s+" "+o+" "+tg+" = "+v+"(役割・関係を確かめられない)"
+		rk, l := Rank(v), SubjectLevel(s)
+		if mm == 0 {
+			hit(l, rk, "policy: "+s+" "+o+" "+tg+" = "+v)
+		} else if mm == 2 {
+			unk(l, rk, "policy: "+s+" "+o+" "+tg+" = "+v+"(役割・関係を確かめられない)")
 		}
 	}
 	return sys()

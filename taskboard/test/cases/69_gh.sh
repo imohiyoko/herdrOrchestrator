@@ -125,6 +125,15 @@ eq "gh policy: read denied for a repo" "$(HERDR_PANE_ID=wG:p2 rc $TB gh comment 
 eq "gh policy: tb agent can gives the same answer" "$($TB agent can rev1 gh:approve o/r | head -1) / $($TB agent can dev1 gh:approve o/r | head -1)" "allow / deny"
 eq "gh: a person is not limited by agent rows" "$($TB gh comment list secret/r 1 >/dev/null 2>&1; echo $?)" "0"
 
+# ---- 細かい主体の行が、広い主体の行と既定を上書きする(agent 名 > glob・@役割 > * > 既定。同じ層の中は厳しい方。ADR 0009)
+printf '* gh:* * = deny\nrev* gh:approve o/* = allow\ndev1 gh:approve o/r = allow\nrev* gh:merge * = deny\nrev1 gh:merge o/r = ask\ndev1 gh:api o/r = allow\ndev1 gh:api o/r = ask\n' >"$TB_POLICY"
+: >"$GH_FAKE_LOG"
+eq "gh layers: a glob row allows over a * deny and the default deny → runs" "$(HERDR_PANE_ID=wG:p1 $TB gh review approve o/r 7 >/dev/null 2>&1; echo $?) $(grep -c -- '--approve' "$GH_FAKE_LOG")" "0 1"
+eq "gh layers: an agent-name row allows over a * deny → runs" "$(HERDR_PANE_ID=wG:p2 $TB gh review approve o/r 8 >/dev/null 2>&1; echo $?) $(grep -c -- '--approve' "$GH_FAKE_LOG")" "0 2"
+eq "gh layers: where only the * row applies, it still denies" "$(HERDR_PANE_ID=wG:p2 rc $TB gh review approve x/r 7 2>/dev/null)" "4"
+eq "gh layers: an agent-name ask overrides a glob deny" "$($TB agent can rev1 gh:merge o/r | head -1) / $($TB agent can rev1 gh:merge x/r | head -1)" "ask / deny"
+eq "gh layers: within one layer the stricter row wins" "$($TB agent can dev1 gh:api o/r | head -1)" "ask"
+
 # ---- tb gh <gh のコマンド>(そのまま渡す。操作は gh:<コマンド>-<サブコマンド>)
 printf 'gh = %s\n' "$TMP/gh-fake" >"$TB_GITHUB_CONF"
 : >"$TB_POLICY"

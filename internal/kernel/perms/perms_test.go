@@ -216,8 +216,8 @@ func TestTierFailsClosedOnUnsearchableDir(t *testing.T) {
 	}
 }
 
-// policy: 当たる行のうちいちばん厳しい効果(行の順は関係ない)。当たる行が無ければ既定。
-// 役割を確かめられない行は締める向きにだけ効く。人は判定しない。操作に当たる行が無ければ呼び出し元を聞かない。
+// policy: 主体の細かい層(agent 名 > glob・@役割 > *)が広い層と既定を上書きし、同じ層の中は厳しい方(行の順は関係ない)。
+// 当たる行が無ければ既定。役割を確かめられない行は締める向きにだけ効く。人は判定しない。操作に当たる行が無ければ呼び出し元を聞かない。
 func TestPolicyStrictestWins(t *testing.T) {
 	f := filepath.Join(t.TempDir(), "policy")
 	body := "w*  cmd:x:a * = allow\n" +
@@ -226,7 +226,12 @@ func TestPolicyStrictestWins(t *testing.T) {
 		"w2  cmd:x:b * = allow\n" +
 		"@lead cmd:x:c * = allow\n" +
 		"@worker cmd:x:d * = deny\n" +
-		"w1  cmd:x:e * = bogus\n"
+		"w1  cmd:x:e * = bogus\n" +
+		"*   cmd:x:f * = deny\n" +
+		"w*  cmd:x:f * = ask\n" +
+		"w1  cmd:x:f * = allow\n" +
+		"w1  cmd:x:g * = allow\n" +
+		"w1  cmd:x:g * = deny\n"
 	if err := os.WriteFile(f, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -236,11 +241,17 @@ func TestPolicyStrictestWins(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	tb := perms.Parse("a cmd:x:a allow allow entry\nb cmd:x:b allow allow entry\nc cmd:x:c deny allow inner\nd cmd:x:d allow allow entry\ne cmd:x:e deny allow inner\nz cmd:x:z allow allow entry\n")
+	tb := perms.Parse("a cmd:x:a allow allow entry\nb cmd:x:b allow allow entry\nc cmd:x:c deny allow inner\nd cmd:x:d allow allow entry\ne cmd:x:e deny allow inner\nf cmd:x:f allow allow entry\ng cmd:x:g allow allow entry\nz cmd:x:z allow allow entry\n")
 	for _, c := range []struct{ op, who, want string }{
 		{"cmd:x:a", "w1", "ask"}, // 広い allow と狭い ask → 厳しい方
 		{"cmd:x:a", "w3", "allow"},
-		{"cmd:x:b", "w2", "ask"},  // 狭い allow でも、広い ask が当たれば厳しい方
+		{"cmd:x:b", "w2", "allow"}, // agent 名の allow は、主体 * の ask を上書きする
+		{"cmd:x:b", "w3", "ask"},
+		{"cmd:x:c", "w2", "deny"},  // 既定 deny のまま(当たる行が無い)
+		{"cmd:x:f", "w1", "allow"}, // agent 名 > glob > *
+		{"cmd:x:f", "w2", "ask"},   // glob が * を上書きする
+		{"cmd:x:f", "x1", "deny"},
+		{"cmd:x:g", "w1", "deny"}, // 同じ層の中は厳しい方
 		{"cmd:x:c", "w1", "deny"}, // @役割を確かめられない allow は緩める向きに使わない(既定 deny のまま)
 		{"cmd:x:d", "w1", "deny"}, // @役割を確かめられない deny は締める向きに効く
 		{"cmd:x:e", "w1", "deny"}, // 知らない効果の行は無視(既定)
@@ -306,5 +317,37 @@ func TestLegacyAsk(t *testing.T) {
 	}
 	if msg := perms.ValidatePolicy("w1 send:task * = ask-human\n"); !strings.Contains(msg, "ask にまとめました") {
 		t.Fatalf("前の効果は書かせない: %q", msg)
+	}
+}
+
+// 既定の表の deny も、層を問わず当たる行で上書きできる(既定は一番下の層)。
+func TestDefaultDenyIsOverridable(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "policy")
+	if err := os.WriteFile(f, []byte("* cmd:x:a * = allow\nw* cmd:x:b * = allow\nw1 cmd:x:c * = allow\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TB_POLICY", f)
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "x.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	tb := perms.Parse("a cmd:x:a deny allow inner\nb cmd:x:b deny allow inner\nc cmd:x:c deny allow inner\n")
+	for _, op := range []string{"cmd:x:a", "cmd:x:b", "cmd:x:c"} {
+		if got, rule := tier(tb, db, op, "w1"); got != "allow" {
+			t.Errorf("%s = %s %s, want allow", op, got, rule)
+		}
+	}
+	if got, _ := tier(tb, db, "cmd:x:c", "w2"); got != "deny" {
+		t.Errorf("cmd:x:c by w2 = %s, want deny(既定)", got)
+	}
+}
+
+func TestSubjectLevel(t *testing.T) {
+	for s, want := range map[string]int{"*": perms.LevelAll, "system:*": perms.LevelAll, "@worker": perms.LevelRole, "w*": perms.LevelRole,
+		"system:sched*": perms.LevelRole, "w1": perms.LevelIndividual, "system:scheduler": perms.LevelIndividual} {
+		if got := perms.SubjectLevel(s); got != want {
+			t.Errorf("SubjectLevel(%q) = %d, want %d", s, got, want)
+		}
 	}
 }

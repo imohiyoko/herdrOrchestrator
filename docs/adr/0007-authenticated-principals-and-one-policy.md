@@ -73,7 +73,7 @@ lead1        approve:agent:stop  ~report      = allow       # 旧 grants の app
 - **操作**: `cmd:<サービス>:<動詞>`(PR 197 の表の操作名)と、コマンドの中の操作(`send:<種別>`、`agent:stop`、`agent:read`、`agent:spawn`、`proxy:<effect>`、`recipe:<名前>` など)。承認する権限は `approve:<操作>`。
 - **対象**: agent 名の glob / `@<役割>` / 関係(`self`、spawn の `~child` `~descendant` `~parent` `~sibling`、組織図の `~report` `~subordinate` `~manager` `~superior` `~peer`)/ `*`。対象の無い操作は `*`。
 - **効果**: `allow`(すぐ実行)/ `ask`(承認が要る。承認できるのは人と、`<承認者> approve:<操作> <依頼者> = allow` に当たる agent)/ `deny`(実行しない。承認でも通らない)。前の `ask-any` / `ask-human` は読むときは `ask` と同じで、書くときは断る。`only-human` は無くなる(`human ... = allow` と、ほかの主体の `deny` で書く)。
-- **決め方**: 当たる行のうち、**いちばん厳しい効果**を採る(上から最初に当たった行、ではない)。こうすると、行の順番で抜け道ができない。`deny` が 1 行でも当たれば止まる。当たる行が無ければ、コードの既定の表(下)で決まる。
+- **決め方**(ADR 0009 で改めた: 主体の細かい層が広い層と既定を上書きし、下の決め方は同じ層の中だけに残す): 当たる行のうち、**いちばん厳しい効果**を採る(上から最初に当たった行、ではない)。こうすると、行の順番で抜け道ができない。`deny` が 1 行でも当たれば止まる。当たる行が無ければ、コードの既定の表(下)で決まる。
 - **既定の表**: PR 197 の `perms/commands.tbl` の既定の列を、`human * * = allow` と「agent の既定」に分けたもの。コマンドの中の操作の既定(今の approvals の既定 ask、delivery の既定など)も、この表に移す。入れた時点の振る舞いは今と同じ。
 - **下限**: PR 197 と同じく列だけ残し、今はすべて `allow`(人の決定)。
 - **policy を書く権限も policy の行で渡す**。人は常に書ける。agent は、書くコマンド(`cmd:config:set` など)に加えて、変わる行ごとに操作 `policy:<その行の操作>`・対象 `<その行の主体>` が許されていること(既定 deny)。例: `worker1 policy:send:* worker2 = allow` なら、worker1 は worker2 の `send:*` の行だけを足し・消しできる。権限の種類を並べた表は持たず、行の操作名をそのまま使うので、あとから足した操作も同じ書き方で絞れる(当初は「human だけ、コードで固定」としたが、運用で決めることにした)。

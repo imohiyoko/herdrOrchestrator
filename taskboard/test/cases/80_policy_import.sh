@@ -13,7 +13,7 @@ eq "import: the ask before the allow is kept" "$(grep -c '^  \* send:task w1 = a
 eq "import: '* = allow' becomes the inner op families, not '* * *'" \
   "$(grep -c '^  \* \* \* = allow' <<<"$out") $(grep -c '^  \* agent:read \* = allow' <<<"$out") $(grep -c '^  \* recipe:\* \* = allow' <<<"$out") $(grep -cE '^  \* (cmd|approve|agent:flag)' <<<"$out")" "0 1 1 0"
 eq "import: grants become allow rows" "$(grep -c '^  lead send:task ~child = allow' <<<"$out")" "1"
-eq "import: a grant under an ask row is flagged" "$(grep -c 'grants 1 行目 lead send:task ~child は' <<<"$out")" "1"
+eq "import: a grant with its own subject overrides a * ask row, so it is not flagged (ADR 0009)" "$(grep -c 'grants 1 行目 lead send:task ~child は' <<<"$out")" "0"
 eq "import: an approvals cmd: row is skipped" "$(printf 'cmd:ticket:list = allow\n' >"$TB_APPROVALS"; env -u HERDR_PANE_ID $TB policy import | grep -c 'cmd: の行は前から効いていない')" "1"
 eq "import: role:change is not given to a role name (a human writes who gets it)" "$(printf 'role:change = allow\n' >"$TB_APPROVALS"; env -u HERDR_PANE_ID $TB policy import 2>&1 | grep -c 'role:change は誰に許すかを決めて policy に直接書く') $(env -u HERDR_PANE_ID $TB policy import 2>&1 | grep -c '@hr')" "1 0"
 eq "import: not from an agent pane" "$(FAKE_AGENTS='[{"pane_id":"wX:p1","name":"x1","agent_session":{"value":"sx"}}]' HERDR_PANE_ID=wX:p1 rc $TB policy import)" "1"

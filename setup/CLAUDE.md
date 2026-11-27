@@ -72,7 +72,7 @@ agent の名前・プロンプト・権限(設定 `policy`。届け方は `deliv
 - 役割に合わせた設定(どれも `tb config edit <キー>` か `tb config set <キー> < 本文`。書く前に差分を見せる):
   - `projects`: 報告の宛先。`*=<指揮役の agent 名>`(既定の宛先)、`<project>=<名前>`、提案の受け手は `proposal=<名前>`(無ければ `*` の名前)。
     `*` の行が無いと宛先が決まらない(コードに既定の名前は無い)。
-  - `policy`: 誰に何を許すか(1 行 `<主体> <操作> <対象> = allow|ask|deny`。当たる行のうちいちばん厳しい効果で決まる)。
+  - `policy`: 誰に何を許すか(1 行 `<主体> <操作> <対象> = allow|ask|deny`。細かい主体(agent 名 > @役割 > *)の行が広い行と既定を上書きし、同じ層の中はいちばん厳しい効果)。
     例 `@sweeper agent:flag * = allow`(止めてよいかの印)、`@hr role:change * = allow`(ロールの付け替え)。どちらも行が無ければ人だけ(role:change は人の承認待ち)。
     承認待ちの承認を任せるなら `<承認者> approve:<元の操作> <依頼者> = allow`
     (例 `@conductor approve:send:task:* ~report = allow` = 直属の部下からの依頼の送信を指揮役が承認できる。`--always` と `--all` 系は人だけ)。
