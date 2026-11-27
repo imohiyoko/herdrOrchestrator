@@ -113,6 +113,7 @@ approval.history         cmd:approval:history         allow       allow       en
 approval.run             cmd:approval:run             allow       allow       entry
 approval.approve         cmd:approval:approve         allow       allow       entry
 approval.reject          cmd:approval:reject          allow       allow       entry
+approval.priority        cmd:approval:priority        allow       allow       entry
 approve                  cmd:approval:approve         allow       allow       entry
 reject                   cmd:approval:reject          allow       allow       entry
 approval.allow           cmd:approval:allow           deny        allow       inner

@@ -14,6 +14,7 @@ import (
 
 	"github.com/imohiyoko/herdrorchestrator/internal/app"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
+	appapproval "github.com/imohiyoko/herdrorchestrator/internal/app/approval"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/server"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/ticket"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/identity"
@@ -104,10 +105,18 @@ func callAppW(db *store.DB, by port.Principal, stderr io.Writer, op string, in, 
 }
 
 // appEnv は tb の入口が API に渡す環境(承認待ちの知らせと報告の届け先は tb のもの)。
+// tbPriority は承認待ちに付ける優先度(TB_PRIORITY。読めなければ normal。送信・agent の操作の承認待ち)。
+func tbPriority() int {
+	if p, err := envPriority(); err == nil {
+		return p
+	}
+	return 1
+}
+
 func appEnv(db *store.DB, stderr io.Writer) *app.Env {
 	// 履歴の「変えた者」は openWrite と eventActorResolve が作ったトリガーのまま(pane:<id> も含め今と同じ)。
 	// コマンドの入口の段は Run の perms.Gate が判定済み。
-	return &app.Env{DB: app.Shared(db), Now: now, PendingQ: pendingQ, Warn: stderr,
+	return &app.Env{DB: app.Shared(db), Now: now, PendingQ: appapproval.PendingQ(tbPriority()), Warn: stderr,
 		EventActor: func(string) string { return "" }, EntryChecked: true,
 		Deliver: func(db *store.DB, id int64) {
 			_ = deliverComment(db, io.Discard, io.Discard, strconv.FormatInt(id, 10))

@@ -16,8 +16,6 @@ import (
 // tb agent spawn: 規則つきの子 agent 作成。判定と作成は API(agent.spawn。internal/app/agent/spawn.go)。
 // ここは引数の読み取りと表示だけ。
 
-func spawnFrozen(db *store.DB) bool { return agent.SpawnFrozen(db) }
-
 // itemText は item_text: 1 行にして [ ] | を ( ) / に。
 func itemText(s string, n int) string {
 	return strings.NewReplacer("[", "(", "]", ")", "|", "/").Replace(util.Oneline(s, n))

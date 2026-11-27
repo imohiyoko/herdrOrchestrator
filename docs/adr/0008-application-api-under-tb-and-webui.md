@@ -313,6 +313,7 @@ ADR 0004 の依存の検査に次を足す。今ある違反は許容リスト�
 - 完了の報告 `ticket.report`(`POST /v1/tickets/{ref}/report`、`tb report <id> | C-<n>`)と受信の既読 `message.read`(`POST /v1/inbox/{id}/read`、`tb inbox-read` の印を付ける所)。報告コメントを作って届ける処理と、宛先の agent 自身だけが印を付ける確かめは API の中。受信の行を読んで出すのは tb に残した。
 - 文脈の整理 `agent.compact.check`(`internal/app/agent` の compact.go。`POST /v1/agents/compact-check`、`tb compact-check`)。transcript の usage を読んで閾値・間隔・policy(`agent:compact:<名前>`)を見て /compact を送り、記録するのは API の中。tb の使われていなかった `recordOpID` は消した。
 - 中身を読む `agent.peek`(`internal/app/agent` の peek.go。`POST /v1/agents/peek`、`tb peek`)。`agent:read:<対象>` の判定と herdr からの読み出し、`read_log` への記録は API の中。tb は引数を確かめて読んだ文字列を出すだけ。
+- 承認待ちの優先度 `approval.priority`(`internal/app/approval` の pending.go。`POST /v1/requests/{id}/priority`、`tb approval priority`)。承認待ちを積んだときの Q-<n> の引き当て・優先度(`TB_PRIORITY`)・決められる agent への知らせ(`approval.PendingQ` / `NotifyApprovers` / `CanDecide`)も tb から API に移し、`server.New` が既定で入れる(Web UI が積んだ承認待ちも知らせる)。tb の入口が ask で止めたコマンドの行の書き込みと、承認済みのコマンドを 1 回だけ動かす印は `internal/requests`(`InsertCmd` / `ClaimRun`)に寄せた。tb の入口の門そのもの(`perms.Gate` の Queue / Record)は段 5 で入口から外すまで tb に残る。
 
 ## 検討した代替案
 
