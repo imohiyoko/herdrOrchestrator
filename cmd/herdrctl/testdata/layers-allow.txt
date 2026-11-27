@@ -46,7 +46,7 @@ sql internal/tbcli/digest.go 36
 sql internal/tbcli/gate.go 1
 sql internal/tbcli/herdrcmd.go 1
 sql internal/tbcli/limits.go 2
-sql internal/tbcli/message.go 21
+sql internal/tbcli/message.go 7
 sql internal/tbcli/modelset.go 2
 sql internal/tbcli/notify.go 10
 sql internal/tbcli/recipe.go 11
