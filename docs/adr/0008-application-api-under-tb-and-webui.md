@@ -309,6 +309,7 @@ ADR 0004 の依存の検査に次を足す。今ある違反は許容リスト�
 - agent の判定フラグと作成の凍結 `agent.flag` / `agent.freeze` / `agent.unfreeze`(`internal/app/agent` の flag.go。`POST /v1/agents/{name}/flag`、`POST /v1/agents/spawn-freeze|spawn-unfreeze`、`tb agent-flag` / `spawn-freeze` / `spawn-unfreeze`)。tb の使われていなかった `opEntry` / `authorizeOp` は消した。
 - リマインダー `reminder.publish` / `reminder.scan`(`internal/app/reminder`。`POST /v1/reminders/publish|scan`、`tb reminder publish` / `scan`(古い名前 `reminders --publish` / `due-scan`))。まとめを作って前回の記録を書く処理と、期限のイベントを残して通知の規則を回す処理は API の中。書かない `list` / `check` と `nudge` は tb に残した。
 - スラッシュコマンドとモデルの切り替え `agent.slash` / `agent.model.set`(`internal/app/agent` の slashop.go / modelsetop.go。`POST /v1/agents/slash|model-set`、`tb slash` / `model-set`)。宛先の解決、agent からの判定(`agent:slash:<コマンド>:<宛先>` / `agent:model:<名前>`)、承認待ち(L-<n>)を積む処理、送信・切り替えは API の中。結果は宛先ごとの tb の 1 行と終了コードで返す。`slash --list` は tb に残した。
+- まとめ送信 `digest.run`(`internal/app/digest`。`POST /v1/digests`、`tb digest`)。未配送の報告・未報告の done・アラート・通知・観測(idle / stuck / 複数チケット / queued / blocked / 子 agent の上限・取り残し)と scheduler の見張り(sched.go。もとの tbcli/schedwatch.go)を集めて宛先ごとに 1 通にまとめ、送れた項目に印を付けるのは API の中。結果は tb の行と終了コードで返す。まとめの一覧(`tb digests`)は tb に残した。
 
 ## 検討した代替案
 

@@ -1,4 +1,4 @@
-package tbcli
+package digest
 
 import (
 	"fmt"
@@ -11,6 +11,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imohiyoko/API/define"
+
+	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
 	"github.com/imohiyoko/herdrorchestrator/internal/jobs"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/config"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/env"
@@ -27,7 +30,7 @@ import (
 // 同じ観測は、状態が変わるまで 1 回だけ(observations の key。条件が外れたら記録を消す)。
 
 // swCfg は sw_cfg: 環境変数 TB_SCHEDWATCH_<キー大文字> > sched-watch.conf > .example > 既定。
-func (d *digestRun) swCfg(key, def string) string {
+func (d *run) swCfg(key, def string) string {
 	if v := os.Getenv("TB_SCHEDWATCH_" + strings.ToUpper(key)); v != "" {
 		return v
 	}
@@ -254,7 +257,7 @@ func swHMS(s string, end bool) int64 {
 var reCommandLine = regexp.MustCompile(`^[[:space:]]*COMMAND=(.*)$`)
 
 // swCommandValues は sw_command_value: conf の COMMAND= の値(引用符の内側、無ければ最初の " #" の前まで)。
-func (d *digestRun) swCommandValues(e jobs.Env, job string) []string {
+func (d *run) swCommandValues(e jobs.Env, job string) []string {
 	body, _, ok := e.Lookup(d.db.DB, d.db.Session, job, false)
 	if !ok {
 		return nil
@@ -329,13 +332,13 @@ func swShow(e jobs.Env, logs, job string) jv.Obj {
 func swStr(o jv.Obj, k string) string { return jqStr(o.Get(k)) }
 
 // collectSched は collect_sched_obs。
-func (d *digestRun) collectSched() error {
+func (d *run) collectSched() error {
 	if d.swCfg("enabled", "1") != "1" {
 		return nil
 	}
 	e := jobs.DefaultEnv()
 	logs := filepath.Join(e.Dir, "logs")
-	if !isDir(logs) || !jobs.IsRegular(e.Show) {
+	if !agent.IsDir(logs) || !jobs.IsRegular(e.Show) {
 		return nil
 	}
 	keys := []string{"disabled_min", "watch_stale_min", "fail_window_min", "fail_min_runs", "fail_rate_pct", "wait_max_min"}
@@ -343,8 +346,8 @@ func (d *digestRun) collectSched() error {
 	vals := make([]int64, len(keys))
 	for i, k := range keys {
 		v := d.swCfg(k, defs[i])
-		if !reDigitsOnly.MatchString(v) {
-			return usage("sched-watch.conf の disabled_min / watch_stale_min / fail_window_min / fail_min_runs / fail_rate_pct / wait_max_min は 0 以上の整数")
+		if !reDigits.MatchString(v) {
+			return define.Errorf(define.CodeInvalidArgument, "sched-watch.conf の disabled_min / watch_stale_min / fail_window_min / fail_min_runs / fail_rate_pct / wait_max_min は 0 以上の整数")
 		}
 		vals[i], _ = strconv.ParseInt(v, 10, 64)
 	}
