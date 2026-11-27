@@ -71,7 +71,7 @@
 
 ### 2. 眠らせる条件(job `agent-sleep`、既定は 5 分ごと)
 
-全部満たすものだけ(1 と 2 は、借用を取ったあと pane を閉じる直前にもう一度確かめる。判定のときから herdr の状態や時刻が変わっていたら閉じない):
+全部満たすものだけ(借用を取ったあと、pane を閉じる直前に 1〜6 をすべてもう一度確かめる。判定のときから 1 つでも変わっていたら閉じず、次の周期で判定し直す。チケットの割り当てや承認の依頼は借用を使わずに書かれるので、確かめ直しは閉じる直前の 1 回にまとめる):
 
 1. herdr の状態が `idle` か `done`。
 2. 最後のプロンプト(`agent_activity.last_prompt_at` と `last_stop_at` の新しいほう)から `sleep_after` 分(設定 limits、既定 120)たっている。
@@ -82,10 +82,10 @@
 
 ### 3. 起こす(`agent.Wake`)
 
-- 呼ぶ場所: `transport.Send` の手前(`message.Deliver`・nudge・承認の結果・`tb flush` が通る)と、scheduler のプロンプト job(`tb system-send` の中)。
+- 呼ぶ場所: `transport.Send` の手前(`message.Deliver`・nudge・承認の結果・`tb flush` が通る)と、scheduler のプロンプト job。scheduler は `herdr agent list` で状態を見て、idle / done でなければ飛ばすので、**状態を見る前に** Wake を呼ぶ(宛先が sleeping なら、権限と delivery の判定を通してから起こし、起きたあとで状態を見る)。
 - 起こすのは `state='sleeping'` の agent だけ。`stopped` は今までどおり起こさない(人や判定役が止めたものを勝手に戻さない)。
 - 順番: delivery の判定(block / hold なら起こさない)→ 借用を取る → **枠の確保**(下)→ 台帳を `sleeping → waking` → `revive`(resume のみ)→ 届け物を最初の指示として送る → 台帳を `running`、outbox を sent にする → 借用を返す。
-- **枠の確保**: `max_running_agents` の検査と、台帳を `waking` にする UPDATE を、1 つのトランザクション(SQLite の `BEGIN IMMEDIATE`。DB 全体で直列になる)で行う。`running` と `waking` を数えて上限なら確保せず、届け物を outbox に残す。別の agent への同時の Wake でも上限を越えない。
+- **枠の確保**: `max_running_agents` の検査と、台帳を `waking` にする UPDATE を、1 つのトランザクション(SQLite の `BEGIN IMMEDIATE`。DB 全体で直列になる)で行う。`running` と `waking` を数えて上限なら確保せず、届け物を outbox に残す。別の agent への同時の Wake でも上限を越えない。**ふつうの起動(`agent.revive`・`agent.new`・`agent.spawn`)も、実際に起動する直前に同じ枠の確保を通す**ようにする(今は申請のときに数えるだけで、`ReviveContext` は数えずに running にしている)。これで、どの経路から起動しても上限を越えない。
 - 同じ agent に同時に 2 つ届いたら、借用を取れたほうだけが起こす。もう一方と、`waking` の宛先への届け物は、送らずに outbox に queued で残す。起動に成功したら flush が古い順に届ける。
 - 上限・借用を取れないときの扱いは経路ごとに今の決まりに合わせる:
 
