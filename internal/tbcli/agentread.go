@@ -13,7 +13,6 @@ import (
 	"github.com/imohiyoko/herdrorchestrator/internal/agents"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
 	"github.com/imohiyoko/herdrorchestrator/internal/approval"
-	"github.com/imohiyoko/herdrorchestrator/internal/kernel/herdr"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/identity"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/jv"
 	"github.com/imohiyoko/herdrorchestrator/internal/message"
@@ -400,7 +399,11 @@ func cmdPeek(args []string, w, stderr io.Writer) error {
 	if err := validAgentName(name); err != nil {
 		return err
 	}
-	by, err := requester()
+	in := agent.PeekReq{Name: name, Lines: lines}
+	if err := agent.ValidPeek(in); err != nil {
+		return appErr(err)
+	}
+	by, err := requesterPrincipal()
 	if err != nil {
 		return err
 	}
@@ -409,50 +412,10 @@ func cmdPeek(args []string, w, stderr io.Writer) error {
 		return err
 	}
 	defer db.Close()
-	logRead := func(status, rule string) {
-		var r any
-		if rule != "" || status == "denied" {
-			r = rule
-		}
-		_, _ = db.Exec(`INSERT INTO main.read_log (herdr_session, reader, target, lines, status, rule, created_at) VALUES (?,?,?,?,?,?,?)`,
-			db.Session, by, name, lines, status, r, nowTS())
+	var r agent.PeekResult
+	if err := callAppEnv(appEnv(db, stderr), by, "agent.peek", in, &r); err != nil {
+		return err
 	}
-	rule := ""
-	if by != "human" && by != name {
-		j := approval.NewJudge(db.DB, db.Session)
-		var v string
-		v, rule = j.Of("agent:read:"+name, by)
-		if v != "allow" {
-			logRead("denied", rule)
-			fmt.Fprintf(stderr, "tb: %s は %s の中身を読めません(%s)。必要なら人が policy に '<主体> agent:read %s = allow'(対象は @<役割> や ~child なども書ける)を足す\n", by, name, rule, name)
-			if v == "deny" {
-				return &exit{4, ""}
-			}
-			return &exit{exitAsk, ""}
-		}
-	}
-	as, err := herdr.Agents()
-	if err != nil {
-		logRead("failed", rule)
-		return die("herdr agent list に失敗しました")
-	}
-	pane := ""
-	for _, a := range as {
-		if a.Name == name {
-			pane = a.PaneID
-			break
-		}
-	}
-	if pane == "" {
-		logRead("failed", rule)
-		return die("%s は herdr で動いていません", name)
-	}
-	out, err := herdr.Call("agent", "read", pane, "--source", "recent", "--lines", strconv.Itoa(lines), "--format", "text")
-	if err != nil {
-		logRead("failed", rule)
-		return die("herdr agent read に失敗しました(%s)", name)
-	}
-	logRead("ok", rule)
-	fmt.Fprintf(w, "%s\n", strings.TrimRight(string(out), "\n"))
+	fmt.Fprintf(w, "%s\n", r.Text)
 	return nil
 }

@@ -312,6 +312,7 @@ ADR 0004 の依存の検査に次を足す。今ある違反は許容リスト�
 - まとめ送信 `digest.run`(`internal/app/digest`。`POST /v1/digests`、`tb digest`)。未配送の報告・未報告の done・アラート・通知・観測(idle / stuck / 複数チケット / queued / blocked / 子 agent の上限・取り残し)と scheduler の見張り(sched.go。もとの tbcli/schedwatch.go)を集めて宛先ごとに 1 通にまとめ、送れた項目に印を付けるのは API の中。結果は tb の行と終了コードで返す。まとめの一覧(`tb digests`)は tb に残した。
 - 完了の報告 `ticket.report`(`POST /v1/tickets/{ref}/report`、`tb report <id> | C-<n>`)と受信の既読 `message.read`(`POST /v1/inbox/{id}/read`、`tb inbox-read` の印を付ける所)。報告コメントを作って届ける処理と、宛先の agent 自身だけが印を付ける確かめは API の中。受信の行を読んで出すのは tb に残した。
 - 文脈の整理 `agent.compact.check`(`internal/app/agent` の compact.go。`POST /v1/agents/compact-check`、`tb compact-check`)。transcript の usage を読んで閾値・間隔・policy(`agent:compact:<名前>`)を見て /compact を送り、記録するのは API の中。tb の使われていなかった `recordOpID` は消した。
+- 中身を読む `agent.peek`(`internal/app/agent` の peek.go。`POST /v1/agents/peek`、`tb peek`)。`agent:read:<対象>` の判定と herdr からの読み出し、`read_log` への記録は API の中。tb は引数を確かめて読んだ文字列を出すだけ。
 
 ## 検討した代替案
 
