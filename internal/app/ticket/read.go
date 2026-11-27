@@ -80,17 +80,17 @@ func badArg(format string, a ...any) error {
 
 func readOps(env *app.Env) []app.Op {
 	return []app.Op{
-		readOp(env, "ticket.tree", "cmd:ticket:tree", "GET /v1/tickets/tree", "チケットの木(tb tree)", tree),
+		readOp(env, "ticket.tree", "cmd:ticket:tree", "GET /v1/tickets/tree", "チケットの木(tb tree)", tree, define.Resource("ticket", "id")),
 		readOp(env, "ticket.labels", "cmd:ticket:labels", "GET /v1/tickets/labels", "ラベルごとの数(tb labels)", labelsText),
 		readOp(env, "ticket.sprints", "cmd:ticket:sprints", "GET /v1/sprints", "スプリントの一覧と進み(tb sprints)", sprints),
 		readOp(env, "ticket.board", "cmd:ticket:board", "GET /v1/sprints/board", "スプリントのボード(tb board)", board),
-		readOp(env, "ticket.history", "cmd:ticket:history", "GET /v1/tickets/{id}/history", "チケット 1 件の履歴(tb history)", history),
+		readOp(env, "ticket.history", "cmd:ticket:history", "GET /v1/tickets/{id}/history", "チケット 1 件の履歴(tb history)", history, define.Resource("ticket", "id")),
 		readOp(env, "ticket.events", "cmd:ticket:events", "GET /v1/ticket-events", "チケットの履歴の最新 N 件を古い順に(tb events)", eventsText),
 	}
 }
 
-// readOp は読むだけの操作(門は入力の確かめだけ。show と同じ)。
-func readOp[In any](env *app.Env, name, authz, route, doc string, f func(*store.DB, tickets.StatusSet, In) (string, error)) app.Op {
+// readOp は読むだけの操作(門は通すだけ。入力は f の中で確かめる)。res は Authz の対象(ticket の ID など)。
+func readOp[In any](env *app.Env, name, authz, route, doc string, f func(*store.DB, tickets.StatusSet, In) (string, error), res ...define.ResourceOption) app.Op {
 	return app.Query(env, name,
 		func(_ context.Context, _ *app.Env, _ string, _ any) app.Decision { return app.Decision{} },
 		func(_ context.Context, in In) (TextResult, error) {
@@ -109,7 +109,7 @@ func readOp[In any](env *app.Env, name, authz, route, doc string, f func(*store.
 			return TextResult{Text: s}, nil
 		},
 		define.Doc(doc),
-		define.Authz(authz),
+		define.Authz(authz, res...),
 		define.Expose(define.Internal, define.REST),
 		define.HTTP(route),
 	)
@@ -280,6 +280,9 @@ func board(db *store.DB, st tickets.StatusSet, in BoardReq) (string, error) {
 	where, qa := "", []any{}
 	if in.Labels != "" {
 		for _, l := range strings.Split(in.Labels, ",") {
+			if l = strings.TrimSpace(l); l == "" {
+				continue
+			}
 			where += " AND EXISTS (SELECT 1 FROM json_each(tasks.labels) WHERE value=?)"
 			qa = append(qa, l)
 		}

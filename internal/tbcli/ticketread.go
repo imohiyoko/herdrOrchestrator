@@ -19,8 +19,6 @@ import (
 )
 
 var (
-	reEventID = regexp.MustCompile(`^E-([0-9]{1,18})$`)
-	reKind    = regexp.MustCompile(`^[a-z_]{1,32}$`)
 	reEvLimit = regexp.MustCompile(`^[0-9]{1,6}$`)
 )
 
@@ -160,7 +158,7 @@ func cmdShow(args []string, w, stderr io.Writer) error {
 // readText は読むだけの操作を呼んで、Text をそのまま出す。
 func readText(db *store.DB, what, op string, in any, w io.Writer) error {
 	var r ticket.TextResult
-	if err := callApp(db, what, op, in, &r); err != nil {
+	if err := callAppNoHerdr(db, what, io.Discard, op, in, &r); err != nil { // 主体で中身の変わらない読むだけの操作(herdr に聞けなくても読める)
 		return err
 	}
 	fmt.Fprint(w, r.Text)
@@ -247,10 +245,7 @@ func cmdSprints(args []string, w, stderr io.Writer) error {
 				return err
 			}
 			if args[i] == "--state" {
-				if !slices.Contains([]string{"planned", "active", "closed"}, v) {
-					return usage("state は planned / active / closed のどれか: %s", v)
-				}
-				in.State = v
+				in.State = v // 値は API が確かめる
 			} else {
 				in.Project = v
 			}
@@ -373,15 +368,9 @@ func cmdEvents(args []string, w, stderr io.Writer) error {
 			}
 			i++
 			switch a {
-			case "--since":
-				if !reEventID.MatchString(v) {
-					return usage("events: --since は E-<数字>: %s", v)
-				}
+			case "--since": // 値は API が確かめる
 				in.Since = v
 			case "--kind":
-				if !reKind.MatchString(v) {
-					return usage("events: --kind が不正です: %s", v)
-				}
 				in.Kind = v
 			case "--limit":
 				n := strings.TrimLeft(v, "0")
