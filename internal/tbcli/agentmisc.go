@@ -14,9 +14,6 @@ import (
 // agent の小さなコマンド(taskboard/lib/agents.sh の cmd_agent-ops / cmd_agent-flag、kinds.sh の cmd_agent-kinds、
 // spawn.sh の cmd_spawn-freeze / cmd_spawn-unfreeze)。
 
-// kindAll は KIND_ALL。
-var kindAll = []string{"claude", "codex", "gemini"}
-
 func cmdAgentKinds(args []string, w, stderr io.Writer) error {
 	for _, k := range kindAll {
 		row := k

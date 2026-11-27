@@ -12,6 +12,7 @@ package app
 
 import (
 	"database/sql"
+	"io"
 	"strconv"
 	"time"
 
@@ -24,9 +25,19 @@ type Env struct {
 	DB func() (*store.DB, func(), error)
 	// Now は今の時刻(UTC の ISO 8601、秒まで)。nil なら時計。
 	Now func() string
+	// Warn は操作の途中の警告(「tb: …」の 1 行ずつ)の書き込み先。tb の入口は標準エラー。nil なら捨てる。
+	Warn io.Writer
 	// PendingQ は、今積んだ承認待ち(source の source_id)の Q-<n> を返し、決められる agent に知らせる(tb の入口が入れる)。
 	// nil なら Q-<n> を引くだけ。
 	PendingQ func(db *sql.DB, source string, sourceID int64) string
+}
+
+// Warner は Env.Warn(無ければ捨てる)。
+func (e *Env) Warner() io.Writer {
+	if e != nil && e.Warn != nil {
+		return e.Warn
+	}
+	return io.Discard
 }
 
 // QOf は承認待ちの行(source の sourceID)の Q-<n>(Env.PendingQ があればそれを使う)。無ければ空。

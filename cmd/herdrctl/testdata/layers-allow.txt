@@ -30,7 +30,7 @@ import internal/webui internal/kernel/herdr
 import internal/webui internal/kernel/store
 import internal/webui internal/sched
 sql internal/tbcli/agentapprove.go 3
-sql internal/tbcli/agentlife.go 13
+sql internal/tbcli/agentlife.go 5
 sql internal/tbcli/agentlist.go 3
 sql internal/tbcli/agentmisc.go 6
 sql internal/tbcli/agentread.go 2
@@ -46,7 +46,7 @@ sql internal/tbcli/digest.go 36
 sql internal/tbcli/gate.go 1
 sql internal/tbcli/herdrcmd.go 1
 sql internal/tbcli/job.go 1
-sql internal/tbcli/limits.go 3
+sql internal/tbcli/limits.go 2
 sql internal/tbcli/message.go 21
 sql internal/tbcli/modelset.go 4
 sql internal/tbcli/notify.go 10

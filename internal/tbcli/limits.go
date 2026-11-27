@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/imohiyoko/herdrorchestrator/internal/agents"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/config"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/herdr"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/jv"
@@ -23,19 +22,6 @@ import (
 var reWatcher = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
 
 // limitsCounts は limits_counts: herdr と台帳を同期して、動作中(台帳で running)と作業中(herdr で working の名前つき agent)を数える。
-// 同期に失敗したら ok=false(台帳の値で数える)。台帳を数えられなくても ok=false。
-func limitsCounts(db *store.DB) (running, working int, ok bool) {
-	live, err := agents.SyncLive(db.DB, db.Session)
-	if e := db.QueryRow(`SELECT COUNT(*) FROM agents WHERE state='running'`).Scan(&running); e != nil {
-		return 0, 0, false
-	}
-	for _, a := range live {
-		if s, _ := a.AgentStatus.(string); s == "working" && agents.NameRE.MatchString(a.Name) {
-			working++
-		}
-	}
-	return running, working, err == nil
-}
 
 // openIncidents は limits_open_incidents: 今ある障害 workspace(ラベル inc-<3 桁>)の数。取れなければ ok=false。
 func openIncidents() (int, bool) {

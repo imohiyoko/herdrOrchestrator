@@ -180,17 +180,6 @@ func isFile(p string) bool {
 	return err == nil && st.Mode().IsRegular()
 }
 
-// kindSupports は kind_supports <kind> <項目>。
-func kindSupports(kind, item string) bool {
-	switch {
-	case kind == "claude":
-		return true
-	case (kind == "codex" || kind == "gemini") && item == "launch":
-		return true
-	}
-	return false
-}
-
 // recordOp は record_op(新しい行): agent_ops に結果を 1 行足す。
 func recordOp(db *store.DB, op, target, args, by string, rc int, result string) {
 	agents.RecordOp(db.DB, db.Session, op, target, args, by, rc, result)

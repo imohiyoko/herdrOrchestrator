@@ -7,6 +7,7 @@ import (
 	"github.com/imohiyoko/API/define"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/app"
+	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/server"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 )
@@ -31,7 +32,15 @@ func appState(err error, pending *app.Pending) string {
 		return "done"
 	}
 	var e *define.Error
-	if errors.As(err, &e) && (e.Code == define.CodeFailedPrecondition || e.Code == define.CodeInvalidArgument) {
+	if !errors.As(err, &e) {
+		return "error"
+	}
+	for _, r := range e.Reasons { // tb の終了コードが 1・2 以外(4・10・11・12)の失敗は、前と同じく error
+		if _, ok := agent.ExitReasons[r]; ok {
+			return "error"
+		}
+	}
+	if e.Code == define.CodeFailedPrecondition || e.Code == define.CodeInvalidArgument {
 		return "refused"
 	}
 	return "error"
