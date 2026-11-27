@@ -78,7 +78,7 @@
 2. 最後のプロンプト(`agent_activity.last_prompt_at` と `last_stop_at` の新しいほう)から `sleep_after` 分(設定 limits)たっている。既定は `0` で、`0` のあいだは誰も眠らせない(job も何もしない)。使いたい人だけが値を書く(目安は 120)。
 3. 担当の `active` / `review` / `blocked` のチケットが無い。承認待ちの依頼(agent_ops・approvals の pending)を出していない。
 4. `always-on` に当たらない。
-5. kind が resume に対応している(`KindRequire(kind, "resume")`)。会話の session が台帳にある。
+5. kind が resume に対応している(`KindRequire(kind, "resume")`)。会話の session が台帳にある。閉じる直前の確かめ直しでは、session ID を herdr(`agent get` の `agent_session`)から取り直して台帳に書く。`/new` や `/clear` で会話が変わったあと、同期より先に眠らせても、古い会話を resume しないようにするため。
 6. 自分の子(`spawned_by`)が動いていない(子からの報告を受ける親は起きておく)。
 
 ### 3. 起こす(`agent.Wake`)
