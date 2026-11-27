@@ -261,3 +261,30 @@ func TestTicketAddUpdate(t *testing.T) {
 		t.Errorf("変更なし: %v", e)
 	}
 }
+
+func TestTicketCommentReopen(t *testing.T) {
+	env := ticketFixture(t, "")
+	if _, e := callOp[ticket.CommentResult](t, env, app.Agent("w1"), "ticket.comment", ticket.CommentReq{TaskID: "T-p-001", Kind: "done", Text: "x"}); e == nil || e.Code != define.CodeInvalidArgument {
+		t.Errorf("done は成果物が要る: %v", e)
+	}
+	res, e := callOp[ticket.CommentResult](t, env, app.Agent("w1"), "ticket.comment", ticket.CommentReq{TaskID: "T-p-001", Kind: "progress", Text: "半分", Deliverables: " a , ,b"})
+	if e != nil || res.State != "queued" || res.ID == 0 {
+		t.Fatalf("comment: %+v %v", res, e)
+	}
+	if got := q1(t, env, `SELECT from_name||' '||deliverables FROM comments WHERE id=?`, res.ID); got != `w1 ["a","b"]` {
+		t.Errorf("報告した者と成果物: %q", got)
+	}
+	// C-3 は対応済みの blocked(fixture)
+	if _, e := callOp[ticket.ReopenResult](t, env, app.Agent("w1"), "ticket.reopen", ticket.ReopenReq{ID: "3"}); e == nil || e.Code != define.CodePermissionDenied {
+		t.Errorf("agent は戻せない: %v", e)
+	}
+	if r, e := callOp[ticket.ReopenResult](t, env, app.Human(), "ticket.reopen", ticket.ReopenReq{ID: "3", Note: "まだ"}); e != nil || r.NotResolved {
+		t.Fatalf("reopen: %+v %v", r, e)
+	}
+	if got := q1(t, env, `SELECT actor||' '||new FROM task_events WHERE kind='comment_reopened'`); got != "human まだ" {
+		t.Errorf("履歴: %q", got)
+	}
+	if r, e := callOp[ticket.ReopenResult](t, env, app.Human(), "ticket.reopen", ticket.ReopenReq{ID: "3"}); e != nil || !r.NotResolved {
+		t.Errorf("二度目: %+v %v", r, e)
+	}
+}

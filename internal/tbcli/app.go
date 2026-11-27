@@ -30,6 +30,15 @@ func callApp(db *store.DB, what, op string, in, out any) error {
 	return callAppAs(db, by, op, in, out)
 }
 
+// callAppEnv は入口で作った環境 env で、主体 by として操作 op を呼ぶ。
+func callAppEnv(env *app.Env, by port.Principal, op string, in, out any) error {
+	c, err := server.New(env)
+	if err != nil {
+		return err
+	}
+	return appErr(c.Call(context.Background(), by, op, in, out))
+}
+
 // callAppWarn は callApp に、操作の途中の警告の書き込み先(標準エラー)を足したもの。
 func callAppWarn(db *store.DB, what string, stderr io.Writer, op string, in, out any) error {
 	by, err := callerPrincipal(what)

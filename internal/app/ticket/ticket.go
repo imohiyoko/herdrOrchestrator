@@ -9,6 +9,7 @@ import (
 	"github.com/imohiyoko/API/define"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/app"
+	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
 )
 
 // ResolveReq は ticket.resolve の入力。
@@ -46,7 +47,7 @@ func Ops(env *app.Env) []app.Op {
 		define.Expose(define.Internal, define.REST),
 		define.HTTP("POST /v1/comments/{id}/resolve"),
 	)
-	return append([]app.Op{resolve, getOp(env), countOp(env), moveOp(env), rmOp(env)}, append(append(stateOps(env), linkOps(env)...), editOps(env)...)...)
+	return append([]app.Op{resolve, getOp(env), countOp(env), moveOp(env), rmOp(env)}, append(append(stateOps(env), linkOps(env)...), append(editOps(env), commentOp(env), reopenOp(env))...)...)
 }
 
 func resolveComment(env *app.Env, in ResolveReq) (ResolveResult, error) {
@@ -85,3 +86,64 @@ func resolveComment(env *app.Env, in ResolveReq) (ResolveResult, error) {
 
 // internal は DB などの失敗を、文言を保ったまま internal のエラーにする(tb は今と同じく文言を出して 1 で終わる)。
 func internal(err error) error { return define.Errorf(define.CodeInternal, "%s", err.Error()) }
+
+// ReopenReq は ticket.reopen の入力(ticket.resolve の逆)。
+type ReopenReq struct {
+	ID   string `api:"id,path"` // 報告の番号(C- を除いた数字)
+	Note string `api:"note,optional"`
+}
+
+// ReopenResult は ticket.reopen の結果。NotResolved は対応済みではなかった(何も変えていない)。
+type ReopenResult struct {
+	ID          string       `api:"id" json:"id"`
+	NotResolved bool         `api:"not_resolved" json:"not_resolved"`
+	Pending     *app.Pending `api:"pending,optional" json:"pending,omitempty"`
+}
+
+// SetPending は app.PendingSetter の実装。
+func (r *ReopenResult) SetPending(p *app.Pending) { r.Pending = p }
+
+func reopenOp(env *app.Env) app.Op {
+	return app.Command(env, "ticket.reopen",
+		app.Cmd("cmd:ticket:reopen", "tb reopen"),
+		func(ctx context.Context, in ReopenReq) (ReopenResult, error) { return reopenComment(env, who(ctx), in) },
+		define.Doc("対応済みの question / blocked の報告を未対応に戻す(tb reopen)"),
+		define.Authz("cmd:ticket:reopen", define.Resource("comment", "id")),
+		define.Expose(define.Internal, define.REST),
+		define.HTTP("POST /v1/comments/{id}/reopen"),
+	)
+}
+
+func reopenComment(env *app.Env, who string, in ReopenReq) (ReopenResult, error) {
+	ref := in.ID
+	if !reDigits.MatchString(ref) {
+		return ReopenResult{}, define.Errorf(define.CodeInvalidArgument, "reopen: ID は C-<数字>: %s", ref)
+	}
+	if len([]rune(in.Note)) > noteMax {
+		return ReopenResult{}, define.Errorf(define.CodeInvalidArgument, "reopen: 理由は %d 字まで", noteMax)
+	}
+	db, done, err := env.DB()
+	if err != nil {
+		return ReopenResult{}, internal(err)
+	}
+	defer done()
+	var kind, tid string
+	var at sql.NullString
+	err = db.QueryRow(`SELECT kind, resolved_at, task_id FROM comments WHERE id=`+ref).Scan(&kind, &at, &tid)
+	if err == sql.ErrNoRows {
+		return ReopenResult{}, define.Errorf(define.CodeNotFound, "報告が見つかりません: C-%s", ref)
+	}
+	if err != nil {
+		return ReopenResult{}, internal(err)
+	}
+	if kind != "question" && kind != "blocked" {
+		return ReopenResult{}, define.Errorf(define.CodeFailedPrecondition, "未対応に戻せるのは question / blocked だけです(C-%s は %s)", ref, kind)
+	}
+	if at.String == "" {
+		return ReopenResult{ID: ref, NotResolved: true}, nil
+	}
+	if err := tickets.ReopenComment(db, ref, tid, in.Note, env.ActorOf(who), env.NowString()); err != nil {
+		return ReopenResult{}, internal(err)
+	}
+	return ReopenResult{ID: ref}, nil
+}

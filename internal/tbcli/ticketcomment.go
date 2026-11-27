@@ -6,8 +6,8 @@ package tbcli
 import (
 	"github.com/imohiyoko/herdrorchestrator/internal/app/ticket"
 
-	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -16,131 +16,42 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/imohiyoko/herdrorchestrator/internal/kernel/config"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/jv"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
-	"github.com/imohiyoko/herdrorchestrator/internal/kernel/transport"
-	"github.com/imohiyoko/herdrorchestrator/internal/kernel/util"
 	"github.com/imohiyoko/herdrorchestrator/internal/message"
-	"github.com/imohiyoko/herdrorchestrator/internal/notify"
 	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
 )
 
 var (
 	commentKinds = []string{"done", "progress", "question", "blocked"}
 	reDigits     = regexp.MustCompile(`^[0-9]+$`)
-	reSpawnedBy  = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 	reCRef       = regexp.MustCompile(`^C-[0-9]+$`)
 )
 
-// joinDeliverables は jq の '.deliverables | fromjson | join(", ")'(読めなければ ok=false)。
-func joinDeliverables(s string) (string, bool) {
-	vs, err := jv.DecodeAll([]byte(s))
-	if err != nil || len(vs) != 1 {
-		return "", false
-	}
-	arr, ok := vs[0].([]any)
-	if !ok {
-		return "", false
-	}
-	parts := make([]string, len(arr))
-	for i, v := range arr {
-		s, ok := v.(string)
-		if !ok {
-			return "", false
-		}
-		parts[i] = s
-	}
-	return strings.Join(parts, ", "), true
-}
+func joinDeliverables(s string) (string, bool) { return tickets.JoinDeliverables(s) }
 
 // deliverComment は deliver_comment: 報告コメントを指揮役へ届ける。戻り値は 0 / 10 / 11(transport.Send と同じ)。
 func deliverComment(db *store.DB, w, stderr io.Writer, ref string) error {
 	if !reDigits.MatchString(ref) {
 		return usage("コメント ID は C-<数字>")
 	}
-	var tid, kind, text, dels, name, pane string
-	var delivered sql.NullString
-	err := db.QueryRow(`SELECT task_id, kind, text, deliverables, from_name, from_pane, delivered_at FROM comments WHERE id=`+ref).
-		Scan(&tid, &kind, &text, &dels, &name, &pane, &delivered)
-	if err == sql.ErrNoRows {
-		return die("コメントが見つかりません: C-%s", ref)
+	d, err := message.DeliverComment(db, ref, now(), stderr)
+	var nf *message.ErrCommentNotFound
+	if errors.As(err, &nf) {
+		return die("%s", nf.Error())
 	}
 	if err != nil {
 		return err
 	}
-	if delivered.String != "" {
-		fmt.Fprintf(w, "C-%s は配送済みです(%s)\n", ref, delivered.String)
+	if d.Already != "" {
+		fmt.Fprintf(w, "C-%s は配送済みです(%s)\n", ref, d.Already)
 		return nil
 	}
-	var project string
-	_ = db.QueryRow(`SELECT project FROM tasks WHERE id=?`, tid).Scan(&project)
-	target := message.TargetFor(db.DB, db.Session, project)
-	// tb agent-spawn で立てた子なら、指揮官が親にも伝えられるよう親の名前を付ける
-	var sby string
-	_ = db.QueryRow(`SELECT COALESCE(spawned_by,'') FROM agents WHERE name=?`, name).Scan(&sby)
-	if reSpawnedBy.MatchString(sby) {
-		sby = "spawned_by: " + sby + " "
-	} else {
-		sby = ""
+	if d.RC != 0 {
+		return &exit{d.RC, ""}
 	}
-	d := ""
-	if kind == "done" {
-		d, _ = joinDeliverables(dels)
-	}
-	msg := "[from: " + name + " / " + pane + " / " + tid + " / " + kind + "] " + sby + util.Oneline(text, 200)
-	if d != "" {
-		msg += " / 成果物: " + util.Oneline(d, 300)
-	}
-	msg += " (詳細: tb comments " + tid + ")"
-	if rc := transport.Send(db.DB, db.Session, target, msg, "C-"+ref, "comment", stderr); rc != transport.Sent {
-		return &exit{rc, ""}
-	}
-	// 配送済みの印とタスクの報告済みは一緒に書く(片方だけ残ると、次の tb report が同じ報告を作り直して送る)
-	if err := commentMarkDelivered(db, ref, now()); err != nil {
-		return err
-	}
-	fmt.Fprintf(w, "C-%s delivered to %s\n", ref, target)
+	fmt.Fprintf(w, "C-%s delivered to %s\n", ref, d.Target)
 	return nil
-}
-
-// commentMarkDelivered は配送の記録: delivered_at を書き、comment_marks_reported(done の報告コメントが届いたら、
-// そのタスク(done のもの)を報告済みにする)を同じトランザクションで行う。ref は数字だけ(呼び出し側で確かめてある)。
-func commentMarkDelivered(db *store.DB, ref, ts string) error {
-	st := tickets.LoadStatuses(db.DB, db.Session)
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.Exec(`UPDATE main.comments SET delivered_at=? WHERE herdr_session=? AND id=?`, ts, db.Session, ref); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`UPDATE main.tasks SET reported_at=?1, updated_at=?1
-		WHERE herdr_session=?2 AND status IN (`+st.SQLList("done")+`) AND reported_at IS NULL
-		AND id=(SELECT task_id FROM comments WHERE id=?3 AND kind='done')`, ts, db.Session, ref); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
-// commentNotify は notify_hook_comment: 外への通知を積む(失敗しても止めない)。
-func commentNotify(db *store.DB, cid int64) {
-	var tid, kind, text, name, dels string
-	if db.QueryRow(`SELECT task_id, kind, text, from_name, deliverables FROM comments WHERE id=?`, cid).Scan(&tid, &kind, &text, &name, &dels) != nil {
-		return
-	}
-	q := notify.New(db.DB, db.Session)
-	switch kind {
-	case "question", "blocked":
-		q.Emit(notify.Event{Type: kind, Ref: "C-" + strconv.FormatInt(cid, 10), A: tid, B: name, C: text})
-	case "done":
-		d, ok := joinDeliverables(dels)
-		if !ok {
-			return
-		}
-		q.Emit(notify.Event{Type: "done", Ref: tid, A: tid, B: text, C: d})
-	}
 }
 
 // commentJSON は tb comments --json の 1 行(deliverables を JSON に、id を C-<n> に)。
@@ -159,7 +70,7 @@ func commentRows(db *store.DB, w io.Writer, where string, args ...any) error {
 // cmdComment は tb comment <task-id> --kind K --text T [--deliverables a,b] [--json]。
 // 終了コード: 0 配送済み / 10 宛先使用中で未配送 / 11 送信失敗 / 3 報告者を特定できず未保存 / 2 使い方 / 1 その他。
 func cmdComment(args []string, w, stderr io.Writer) error {
-	db, st, err := openWrite(stderr)
+	db, _, err := openWrite(stderr)
 	if err != nil {
 		return err
 	}
@@ -198,68 +109,39 @@ func cmdComment(args []string, w, stderr io.Writer) error {
 		*p = v
 		i++
 	}
-	if !contains(commentKinds, kind) {
-		return usage("comment: --kind は %s のどれか", strings.Join(commentKinds, " "))
-	}
-	if blank(text) {
-		return usage("comment: --text が必要です")
-	}
-	darr := []string{}
-	if dels != "" {
-		for _, d := range strings.Split(dels, ",") {
-			if d = config.Trim(d); d != "" {
-				darr = append(darr, d)
-			}
-		}
-	}
-	if kind == "done" && len(darr) == 0 {
-		return usage("comment: done は --deliverables(成果物)が必須です")
-	}
-	if err := requireTask(db, tid); err != nil {
-		return err
+	sp := tickets.CommentSpec{TaskID: tid, Kind: kind, Text: text, Deliverables: dels}
+	if _, err := tickets.CheckComment(db, sp); err != nil {
+		return ticketErr(err)
 	}
 	l, err := label(db, stderr)
 	if err != nil {
 		return err
 	}
-	r, err := db.Exec(`INSERT INTO main.comments (herdr_session, task_id, kind, text, deliverables, from_name, from_pane, from_session, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, db.Session, tid, kind, text, strArray(darr), l.Name, l.Pane, l.Session, now())
+	env := appEnv(db, stderr)
+	env.Reporter = func(string) (string, string, string) { return l.Name, l.Pane, l.Session }
+	if v, ok := os.LookupEnv("TB_IMMEDIATE_KINDS"); ok {
+		env.ImmediateKinds = v
+	}
+	by, err := callerPrincipal("tb comment")
 	if err != nil {
 		return err
 	}
-	cid, _ := r.LastInsertId()
-	commentNotify(db, cid)
-	rulesHook(db, st)
-	state, rc := "queued", 0
-	imm := "question blocked"
-	if v, ok := os.LookupEnv("TB_IMMEDIATE_KINDS"); ok && v != "" {
-		imm = v
+	var res ticket.CommentResult
+	if err := callAppEnv(env, by, "ticket.comment", ticket.CommentReq{TaskID: tid, Kind: kind, Text: text, Deliverables: dels}, &res); err != nil {
+		return err
 	}
-	if strings.Contains(" "+imm+" ", " "+kind+" ") { // 人の判断待ちはすぐ送る。それ以外は tb digest でまとめて送る
-		if err := deliverComment(db, io.Discard, stderr, strconv.FormatInt(cid, 10)); err != nil {
-			e, ok := err.(*exit)
-			if !ok {
-				return err
-			}
-			rc = e.code
-			if e.msg != "" {
-				return err
-			}
-		}
-		state = "delivered"
-		if rc != 0 {
-			state = "saved-undelivered"
-		}
+	if res.Pending != nil {
+		return pendingExit(w, res.Pending)
 	}
 	if js {
-		if err := commentRows(db, w, "id=?", cid); err != nil {
+		if err := commentRows(db, w, "id=?", res.ID); err != nil {
 			return err
 		}
 	} else {
-		fmt.Fprintf(w, "C-%d %s\n", cid, state)
+		fmt.Fprintf(w, "C-%d %s\n", res.ID, res.State)
 	}
-	if rc != 0 {
-		return &exit{rc, ""}
+	if res.RC != 0 {
+		return &exit{res.RC, ""}
 	}
 	return nil
 }
@@ -379,7 +261,7 @@ func cmdResolve(args []string, w, stderr io.Writer) error {
 	return nil
 }
 
-// cmdReopen は tb reopen C-<n> [-m 理由]: tb resolve の逆。戻したことは task_events の comment_reopened に残す。
+// cmdReopen は tb reopen C-<n> [-m 理由]: tb resolve の逆。中身は ticket.reopen。戻したことは task_events の comment_reopened に残す。
 func cmdReopen(args []string, w, stderr io.Writer) error {
 	db, _, err := openWrite(stderr)
 	if err != nil {
@@ -390,57 +272,17 @@ func cmdReopen(args []string, w, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := requireHuman("tb reopen"); err != nil {
+	var res ticket.ReopenResult
+	if err := callApp(db, "tb reopen", "ticket.reopen", ticket.ReopenReq{ID: ref, Note: note}, &res); err != nil {
 		return err
 	}
-	var kind, tid string
-	var at sql.NullString
-	err = db.QueryRow(`SELECT kind, resolved_at, task_id FROM comments WHERE id=`+ref).Scan(&kind, &at, &tid)
-	if err == sql.ErrNoRows {
-		return die("報告が見つかりません: C-%s", ref)
+	if res.Pending != nil {
+		return pendingExit(w, res.Pending)
 	}
-	if err != nil {
-		return err
-	}
-	if kind != "question" && kind != "blocked" {
-		return die("未対応に戻せるのは question / blocked だけです(C-%s は %s)", ref, kind)
-	}
-	if at.String == "" {
+	if res.NotResolved {
 		fmt.Fprintf(w, "C-%s は対応済みではありません(未対応のまま)\n", ref)
 		return nil
 	}
-	var hasEv int
-	_ = db.QueryRow(`SELECT COUNT(*) FROM main.sqlite_master WHERE type='table' AND name='task_events'`).Scan(&hasEv)
-	ctx := context.Background()
-	conn, err := db.Conn(ctx)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		return err
-	}
-	commit := false
-	defer func() {
-		if !commit {
-			_, _ = conn.ExecContext(ctx, "ROLLBACK")
-		}
-	}()
-	// 読んでから書くまでの間に resolve し直されても、実際に外した時刻を old に残す(外すものが無ければ event は作らない)
-	_ = conn.QueryRowContext(ctx, `SELECT resolved_at FROM comments WHERE id=?`, ref).Scan(&at)
-	if _, err := conn.ExecContext(ctx, `UPDATE main.comments SET resolved_at=NULL, resolved_note=NULL WHERE herdr_session=? AND id=? AND resolved_at IS NOT NULL`, db.Session, ref); err != nil {
-		return err
-	}
-	if hasEv > 0 {
-		if _, err := conn.ExecContext(ctx, `INSERT INTO main.task_events (herdr_session, task_id, kind, old, new, actor, ref, created_at)
-			SELECT ?, ?, 'comment_reopened', ?, NULLIF(?,''), ?, ?, ? WHERE changes() > 0`, db.Session, tid, at.String, note, eventActorDefault(), "C-"+ref, now()); err != nil {
-			return err
-		}
-	}
-	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
-		return err
-	}
-	commit = true
 	fmt.Fprintf(w, "C-%s reopened\n", ref)
 	return nil
 }
