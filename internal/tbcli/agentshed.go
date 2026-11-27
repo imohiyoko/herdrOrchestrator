@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/agents"
+	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 	"github.com/imohiyoko/herdrorchestrator/internal/message"
 )
@@ -110,9 +111,12 @@ func cmdAgentShed(args []string, w, stderr io.Writer) error {
 		}
 		add("analyst", name)
 	}
-	for _, name := range sqlNames(db, `SELECT a.name FROM agents a WHERE a.state='running' AND a.spawned_by IS NOT NULL
-      AND (COALESCE((SELECT p.state FROM agents p WHERE p.name=a.spawned_by),'stopped')!='running'
-           OR EXISTS (SELECT 1 FROM tasks t WHERE t.id=a.spawn_task AND t.status IN (`+closed+`))) ORDER BY a.name`) {
+	// 親(agent_parents)が 1 体以上いて全員が動いていない子と、立てた親(spawned_by)がいて任されたタスクが終わった子
+	orphans := agent.Orphans(db.DB)
+	orphans = append(orphans, sqlNames(db, `SELECT a.name FROM agents a WHERE a.state='running' AND a.spawned_by IS NOT NULL
+      AND EXISTS (SELECT 1 FROM tasks t WHERE t.id=a.spawn_task AND t.status IN (`+closed+`))`)...)
+	slices.Sort(orphans)
+	for _, name := range orphans {
 		if name != "" {
 			add("orphan", name)
 		}

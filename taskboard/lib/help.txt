@@ -242,6 +242,9 @@ tb agent model set <名前|@役割|--all> <モデル> [--dry-run]   idle/done �
   別名(古い名前): tb model-set
 tb agent model set <名前|@役割|--all> --reset [--dry-run]    台帳のモデルを消す(次の起動から config の role-models の既定)
   別名(古い名前): tb model-set
+tb agent parent add <子> <親>   子に親を足す(親は何体でも。人か、policy で agent:parent <子> を allow された agent。承認待ちには積まない)。
+                                   親子が輪になる追加は断る。spawn・agent-new で立てた子は、立てた親(spawned_by)が最初の親になる
+tb agent parent rm <子> <親>    子から親を外す。親が 1 体もいない子は orphan にならない(親が 1 体以上いて全員止まったときだけ tb agent shed の orphan)
 tb agent compact check [--dry-run] [--apply]   idle/done で文脈が大きい agent に /compact を送る(既定 dry-run。config/compact.conf と policy の agent:compact <名前>)
   別名(古い名前): tb compact-check
 tb agent slash <コマンド> <agent 名|@役割>... [--apply]   許可リスト(config/slash.conf)のスラッシュコマンドを idle/done の agent に送る(既定 dry-run)。
@@ -287,7 +290,7 @@ tb limits mode normal|lean|minimal   まとめて絞る・戻す(人だけ。値
 tb limits get <キー>               今の値だけを出す
 tb limits check incident-open|running   上限の検査だけ(0 ok / 4 上限 / 1 確かめられない)。agent をまとめて起動するスクリプトが、作る前に呼ぶ
 tb limits watcher-enabled <名前>   watchers に入っていれば終了コード 0、無ければ 1(scheduler のジョブのガード用)
-tb agent shed [--count N] [--json]   絞る(止める)候補を、完了済みで待機中 → 止めてよい判定(stale でない)→ 解析役・親が終わった子 の順に一覧にする。
+tb agent shed [--count N] [--json]   絞る(止める)候補を、完了済みで待機中 → 止めてよい判定(stale でない)→ 解析役・親が全員止まったかタスクが終わった子 の順に一覧にする。
   別名(古い名前): tb agent-shed
                                    読み取り専用(何も止めない)。各行に実行する tb agent-stop <名前> を出す(止めてよい判定が無いものは --force 付き。人だけ)
 

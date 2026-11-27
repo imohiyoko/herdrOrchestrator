@@ -251,7 +251,7 @@ func runImport(cp *store.DB, dstPath, session, mark string, dry bool) (string, e
 			return "", err
 		}
 	}
-	for _, tbl := range []string{"agent_activity", "observations", "tb_flags", "notify_seen"} {
+	for _, tbl := range []string{"agent_activity", "observations", "tb_flags", "notify_seen", "agent_parents"} {
 		c, err := cols(tbl)
 		if err != nil {
 			return "", err

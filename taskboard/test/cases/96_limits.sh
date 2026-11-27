@@ -195,7 +195,8 @@ sqlite3 "$TB_DB" "INSERT INTO agents (name, herdr_session, state, killable, crea
 for t in zdone busy1 adone; do $TB add -p sh -t "work $t" --owner "$t" >/dev/null; done
 shsql() { sqlite3 "$TB_DB" "$@"; }
 shsql "UPDATE tasks SET status='done' WHERE owner_agent IN ('zdone','adone'); UPDATE tasks SET status='in_progress' WHERE owner_agent='busy1';
-       UPDATE agents SET spawned_by='gone-parent', spawn_task='T-none-001' WHERE name='kid1';"
+       UPDATE agents SET spawned_by='gone-parent', spawn_task='T-none-001' WHERE name='kid1';
+       INSERT INTO agent_parents (herdr_session, child, parent, added_at) SELECT herdr_session, name, spawned_by, 't' FROM agents WHERE name='kid1';"
 $TB agent-flag kill1 --killable yes --reason 'finished' >/dev/null; $TB agent-flag kill0 --killable no --reason 'in use' >/dev/null
 out=$($TB agent-shed)
 eq "agent-shed: candidates in the design's order" "$(awk '{print $1":"$2}' <<<"$out" | tr '\n' ' ')" "done-idle:zdone killable:kill1 analyst:analyst-A9 orphan:kid1 "
