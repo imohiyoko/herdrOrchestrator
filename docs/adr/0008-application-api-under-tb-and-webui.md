@@ -304,6 +304,7 @@ ADR 0004 の依存の検査に次を足す。今ある違反は許容リスト�
 - まだ残るもの: report / pending / comments の読み取りと、tasks.go の読み込み。outbox / inbox の一覧と inbox の既読。
 - アラート `alert.raise` / `alert.dispatch` / `alert.approve` / `alert.result` / `alert.close`(`internal/app/alert`。`POST /v1/alerts`、`/v1/alerts/{id}/<動詞>`、`tb alert` / `alert-dispatch` / `alert-approve` / `alert-result` / `alert-close`)。指紋での重複の数え上げ・解析役の起動(承認・上限・`max_running_agents`)・結果の受け取りと指揮官への配送・解析役に止めてよい印を付けるのは API の中。報告者は `Env.Reporter`(tb は pane の中だけ herdr から引く)。承認と閉じるのは人だけで、API の中でも断る。報告ファイルを読むのと一覧(`tb alerts`)は tb に残した。
 - 役割 `agent.role.write` / `agent.role.edit` / `agent.role.unset` / `agent.role.set`(`internal/app/agent` の role.go。`PUT` / `DELETE /v1/roles/{name}`、`POST /v1/roles/{name}/edit`、`PUT /v1/agents/{name}/role`、`tb role-write` / `role-edit` / `role-unset` / `role-set`)。自分の持つ役割と role:change を許す役割は人だけが扱う確かめ、policy の role:change の判定(ask は理由 `approval_required` で tb は 20)、台帳のロールの書き換えと記録は API の中。人として扱うのは人だけ(system:* は agent と同じ確かめを受ける)。役割の配布(`role-broadcast` / `role-context`)と一覧は tb に残した。
+- 通知 `notify.on` / `notify.off` / `notify.test` / `notify.flush` / `notify.ack` / `notify.event`(`internal/app/notify`。`POST /v1/notify/<動詞>`、`/v1/notify/events/{id}/ack`、`tb notify on|off|test|flush|ack|event`)。設定 notify の書き換え(`WriteConf`)、試しの通知、送り切り、ack の hash の確かめは API の中。ack は notifier agent か人だけ(呼び手は `Env.Reporter`)、ほかは人だけ。状態・一覧・規則の表示と `notify rules run` は tb に残した。
 
 ## 検討した代替案
 

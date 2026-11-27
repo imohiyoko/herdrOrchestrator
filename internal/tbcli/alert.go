@@ -75,8 +75,8 @@ func sqlText(v any) string {
 	return jv.Scalar(jvValue(v))
 }
 
-// alertReporter は pane の中なら herdr から引いた報告者(pane の持ち主)を操作に渡す。pane の外なら nil(人か cli)。
-func alertReporter(db *store.DB, stderr io.Writer) (func(string) (string, string, string), error) {
+// paneReporter は pane の中なら herdr から引いた報告者(pane の持ち主)を操作に渡す(alert / notify ack)。pane の外なら nil(人か cli)。
+func paneReporter(db *store.DB, stderr io.Writer) (func(string) (string, string, string), error) {
 	if os.Getenv("HERDR_PANE_ID") == "" {
 		return nil, nil
 	}
@@ -89,7 +89,7 @@ func alertReporter(db *store.DB, stderr io.Writer) (func(string) (string, string
 
 // alertCall は alert.* を呼ぶ(報告者は pane の中なら herdr から引いたもの)。
 func alertCall(db *store.DB, what string, stderr io.Writer, op string, in, out any) error {
-	rep, err := alertReporter(db, stderr)
+	rep, err := paneReporter(db, stderr)
 	if err != nil {
 		return err
 	}
