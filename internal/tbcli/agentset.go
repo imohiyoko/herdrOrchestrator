@@ -21,7 +21,7 @@ import (
 var agentsetVerbs = map[string]cmdFunc{
 	"add": cmdAgentsetAdd, "rm": cmdAgentsetRm, "list": cmdAgentsetList, "show": cmdAgentsetShow,
 	"up": cmdAgentsetUp, "down": cmdAgentsetDown, "status": cmdAgentsetStatus, "scale": cmdAgentsetScale,
-	"run": cmdAgentsetRun, "reap": cmdAgentsetReap,
+	"run": cmdAgentsetRun, "reap": cmdAgentsetReap, "autoscale": cmdAgentsetAutoscale,
 }
 
 var agentsetService = service{name: "agentset", one: agentsetVerbs, help: agentsetUsageText}
@@ -40,6 +40,7 @@ tb agentset status <セット> [--json]   メンバーごとの状態・pane・�
 tb agentset scale <セット> <メンバー> <N|+N|-N>   数を変えられるメンバーの動いている数を変える(同じ workspace に足す・手の空いたものから止める)
 tb agentset run <セット> <メンバー> --task T [--brief B]   job 型(mode = job)のメンバーをタスク T のために 1 体立てる(人だけ)
 tb agentset reap <セット>   タスクが終わった job を止め、親が全員止まったメンバーを on_parent_exit で片付ける
+tb agentset autoscale <セット> [--dry-run]   scale_out / scale_in を書いたメンバーの条件を 1 回評価して増やす・減らす(人だけ)
 `
 
 // appCaller は agentset.Caller(同じプロセスで API を呼ぶ)。
@@ -343,5 +344,30 @@ func cmdAgentsetReap(args []string, w, stderr io.Writer) error {
 	if err == nil && len(lines) == 0 {
 		fmt.Fprintln(w, "片付けるものはありません")
 	}
+	return agentsetLines(lines, err, w, stderr)
+}
+
+func cmdAgentsetAutoscale(args []string, w, stderr io.Writer) error {
+	dry := false
+	rest := args[:0:0]
+	for _, a := range args {
+		switch {
+		case a == "--dry-run":
+			dry = true
+		case strings.HasPrefix(a, "-"):
+			return usage("agentset autoscale: 不明なオプション %s", a)
+		default:
+			rest = append(rest, a)
+		}
+	}
+	if len(rest) > 1 {
+		return usage("agentset autoscale: 不明な引数 %s", rest[1])
+	}
+	db, d, c, by, err := agentsetLoad(rest, "autoscale", stderr)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	lines, err := agentset.Autoscale(context.Background(), c, by, d, dry)
 	return agentsetLines(lines, err, w, stderr)
 }

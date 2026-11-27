@@ -50,6 +50,11 @@ type Member struct {
 	// Every と Say は schedule(every <N>m|<N>h: <本文>): up で scheduler のジョブ agentset-<セット>-<メンバー> を書き、down で消す
 	Every int // 分(0 なら schedule なし)
 	Say   string
+	// Out・In・Queue・Step は自動スケール(autoscale.go。tb agentset autoscale が評価する)
+	Out   []Cond
+	In    []Cond
+	Queue Queue
+	Step  int
 }
 
 // JobName は schedule を書いたメンバーの scheduler のジョブの名前。
@@ -196,6 +201,28 @@ func Parse(name, body string) (Def, error) {
 				return d, fmt.Errorf("%d 行目: mode は job だけ: %s", ln, v)
 			}
 			m.Mode = v
+		case "scale_out", "scale_in":
+			c, err := parseCond(v)
+			if err != nil {
+				return d, fmt.Errorf("%d 行目: %s", ln, err)
+			}
+			if k == "scale_out" {
+				m.Out = append(m.Out, c)
+			} else {
+				m.In = append(m.In, c)
+			}
+		case "queue":
+			q, err := parseQueue(v)
+			if err != nil {
+				return d, fmt.Errorf("%d 行目: %s", ln, err)
+			}
+			m.Queue = q
+		case "scale_step":
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 1 || n > 100 {
+				return d, fmt.Errorf("%d 行目: scale_step は 1 から 100 の数: %s", ln, v)
+			}
+			m.Step = n
 		case "max":
 			if v == "unlimited" {
 				m.Max = -1
@@ -207,7 +234,7 @@ func Parse(name, body string) (Def, error) {
 			}
 			m.Max = n
 		default:
-			return d, fmt.Errorf("%d 行目: メンバーのキーは role / model / kind / cwd / prompt / count / max / mode / parent / schedule: %s", ln, k)
+			return d, fmt.Errorf("%d 行目: メンバーのキーは role / model / kind / cwd / prompt / count / max / mode / parent / schedule / scale_out / scale_in / queue / scale_step: %s", ln, k)
 		}
 	}
 	if err := sc.Err(); err != nil {
@@ -250,6 +277,16 @@ func (d Def) check() error {
 	for _, m := range d.Members {
 		if m.Every > 0 && m.Scalable() {
 			return fmt.Errorf("メンバー %s の schedule は count = 1 で max の無いメンバーだけ(送り先の agent が 1 体に決まらない)", m.Name)
+		}
+		if len(m.Out)+len(m.In) > 0 {
+			if m.Mode == "job" {
+				return fmt.Errorf("メンバー %s: job 型は scale_out / scale_in を書けません(タスクごとに tb agentset run で立てる)", m.Name)
+			}
+			if m.Max == 0 {
+				return fmt.Errorf("メンバー %s: scale_out / scale_in には max が要ります(増やす上限。count が減らす下限)", m.Name)
+			}
+		} else if m.Step != 0 || m.Queue != (Queue{}) {
+			return fmt.Errorf("メンバー %s: queue / scale_step は scale_out か scale_in と一緒に書きます", m.Name)
 		}
 		if l := m.Limit(); l >= 0 && m.Count > l {
 			return fmt.Errorf("メンバー %s の count(%d)が max(%d)を超えています", m.Name, m.Count, l)
