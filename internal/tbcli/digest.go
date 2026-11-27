@@ -10,6 +10,7 @@ import (
 
 	"github.com/imohiyoko/herdrorchestrator/internal/agents"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
+	appalert "github.com/imohiyoko/herdrorchestrator/internal/app/alert"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/capv"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/herdr"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/jv"
@@ -359,7 +360,7 @@ func cmdDigest(args []string, w, stderr io.Writer) error {
 	}
 	if !dry {
 		_ = flushOutbox(db, nil, io.Discard, io.Discard) // 積まれた下りの送信も届ける(結果は outbox / messages に残る)
-		alertDispatchAll(db)                             // 承認・上限待ちのアラートを進める
+		appalert.DispatchAll(db)                         // 承認・上限待ちのアラートを進める
 		var ps []int64
 		_ = qrows(db.DB, `SELECT id FROM proposals WHERE delivered_at IS NULL AND status='open' ORDER BY id`, nil, func(_ []string, v []any) error {
 			if n, ok := v[0].(int64); ok {

@@ -55,7 +55,7 @@ type FlushResult struct {
 func (r *FlushResult) SetPending(p *app.Pending) { r.Pending = p }
 
 // ReasonNoSender は送信者を herdr から決められなかった(tb は理由を出して 3)。
-const ReasonNoSender = "no_sender"
+const ReasonNoSender = app.ReasonNoSender
 
 // Ops は送信の操作。
 func Ops(env *app.Env) []app.Op {

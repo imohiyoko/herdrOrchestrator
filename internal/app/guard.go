@@ -35,6 +35,9 @@ type Gate func(ctx context.Context, env *Env, who string, in any) Decision
 // ReasonApprovalRequired は、ask だが承認待ちに積めなかったときの拒否の理由(tb は終了コード 20 にする)。
 const ReasonApprovalRequired = "approval_required"
 
+// ReasonNoSender は呼び手(送信者・報告者)を herdr から決められなかった(tb は理由を出し終えて 3)。
+const ReasonNoSender = "no_sender"
+
 // Cmd は commands.tbl の場所が inner の行(cmd:<サービス>:<動詞>)の門。tb の require_human と同じ判定と文言。
 // what は tb の文面("tb resolve" など。止めたときの文言に入る)。
 func Cmd(op, what string) Gate {

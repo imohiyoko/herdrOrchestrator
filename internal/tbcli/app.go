@@ -14,7 +14,6 @@ import (
 
 	"github.com/imohiyoko/herdrorchestrator/internal/app"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
-	appmessage "github.com/imohiyoko/herdrorchestrator/internal/app/message"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/server"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/ticket"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/identity"
@@ -158,7 +157,7 @@ func appErr(err error) error {
 	switch {
 	case slices.Contains(e.Reasons, ticket.ReasonQuiet): // 理由は標準エラーに出し終えている
 		return &exit{exitErr, ""}
-	case slices.Contains(e.Reasons, appmessage.ReasonNoSender): // 送信者を決められなかった理由は label が出し終えている
+	case slices.Contains(e.Reasons, app.ReasonNoSender): // 送信者を決められなかった理由は label が出し終えている
 		return &exit{exitLbl, ""}
 	case e.Code == define.CodePermissionDenied && slices.Contains(e.Reasons, app.ReasonApprovalRequired):
 		return &exit{20, msg}

@@ -5,6 +5,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	appalert "github.com/imohiyoko/herdrorchestrator/internal/app/alert"
 	"io"
 	"log/slog"
 
@@ -29,6 +30,7 @@ func Ops(env *app.Env) []app.Op {
 	ops = append(ops, job.Ops(env)...)
 	ops = append(ops, approval.Ops(env)...)
 	ops = append(ops, appconfig.Ops(env)...)
+	ops = append(ops, appalert.Ops(env)...)
 	ops = append(ops, appmessage.Ops(env)...)
 	return ops
 }

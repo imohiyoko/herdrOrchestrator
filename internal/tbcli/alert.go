@@ -1,27 +1,16 @@
 package tbcli
 
 import (
-	"crypto/sha256"
-	"database/sql"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
-	"github.com/imohiyoko/herdrorchestrator/internal/approval"
-	"github.com/imohiyoko/herdrorchestrator/internal/kernel/config"
-	"github.com/imohiyoko/herdrorchestrator/internal/kernel/env"
+	appalert "github.com/imohiyoko/herdrorchestrator/internal/app/alert"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/jv"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
-	"github.com/imohiyoko/herdrorchestrator/internal/kernel/transport"
-	"github.com/imohiyoko/herdrorchestrator/internal/kernel/util"
-	"github.com/imohiyoko/herdrorchestrator/internal/limits"
-	"github.com/imohiyoko/herdrorchestrator/internal/message"
-	"github.com/imohiyoko/herdrorchestrator/internal/notify"
 )
 
 // アラートと解析役(taskboard/lib/alerts.sh の alert / alerts / alert-*)。
@@ -60,20 +49,6 @@ func alertRow(db *store.DB, id int64) jv.Obj {
 	return rows[0]
 }
 
-func alertStatus(db *store.DB, id int64) string {
-	var s sql.NullString
-	_ = db.QueryRow(`SELECT status FROM alerts WHERE id=?`, id).Scan(&s)
-	return s.String
-}
-
-func alertSetStatus(db *store.DB, id int64, st string) {
-	_, _ = db.Exec(`UPDATE main.alerts SET status=? WHERE herdr_session=? AND id=?`, st, db.Session, id)
-}
-
-func alertQueued(db *store.DB, id int64, note string) {
-	_, _ = db.Exec(`UPDATE main.alerts SET status='queued', note=? WHERE herdr_session=? AND id=?`, note, db.Session, id)
-}
-
 // jqStr は jq の文字列埋め込み \(.x) の値(null は "null")。
 func jqStr(v any) string {
 	if v == nil {
@@ -93,18 +68,38 @@ func objStr(o jv.Obj, k string) string {
 
 func withAid(o jv.Obj) jv.Obj { return o.Set("id", "A-"+jv.Scalar(o.Get("id"))) }
 
-func alertNotify(db *store.DB, typ string, id int64) {
-	o := alertRow(db, id)
-	if o == nil {
-		return
+func sqlText(v any) string {
+	if v == nil {
+		return ""
 	}
-	e := notify.Event{Type: typ, Ref: "A-" + strconv.FormatInt(id, 10)}
-	if typ == "alert_raised" {
-		e.A, e.B, e.C = objStr(o, "title"), objStr(o, "source"), objStr(o, "body")
-	} else {
-		e.Sev, e.A, e.B, e.C = objStr(o, "severity"), objStr(o, "title"), objStr(o, "result_summary"), objStr(o, "result_path")
+	return jv.Scalar(jvValue(v))
+}
+
+// alertReporter は pane の中なら herdr から引いた報告者(pane の持ち主)を操作に渡す。pane の外なら nil(人か cli)。
+func alertReporter(db *store.DB, stderr io.Writer) (func(string) (string, string, string), error) {
+	if os.Getenv("HERDR_PANE_ID") == "" {
+		return nil, nil
 	}
-	notify.New(db.DB, db.Session).Emit(e)
+	l, err := label(db, stderr)
+	if err != nil {
+		return nil, err
+	}
+	return func(string) (string, string, string) { return l.Name, l.Pane, l.Session }, nil
+}
+
+// alertCall は alert.* を呼ぶ(報告者は pane の中なら herdr から引いたもの)。
+func alertCall(db *store.DB, what string, stderr io.Writer, op string, in, out any) error {
+	rep, err := alertReporter(db, stderr)
+	if err != nil {
+		return err
+	}
+	by, err := callerPrincipal(what)
+	if err != nil {
+		return err
+	}
+	env := appEnv(db, stderr)
+	env.Reporter = rep
+	return callAppEnv(env, by, op, in, out)
 }
 
 // cmdAlert は tb alert: 見張り役が登録する(緊急度は解析役が決める)。同じ指紋の未解決があれば件数を増やすだけ。
@@ -155,131 +150,19 @@ func cmdAlert(args []string, w, stderr io.Writer) error {
 		return err
 	}
 	defer db.Close()
-	src, spane := "cli", ""
-	if os.Getenv("HERDR_PANE_ID") != "" {
-		l, err := label(db, stderr)
-		if err != nil {
-			return err
-		}
-		src, spane = l.Name, l.Pane
-	}
-	sum := sha256.Sum256([]byte(or(key, title)))
-	fp := hex.EncodeToString(sum[:])[:16]
-	ts := nowTS()
-	var dup sql.NullInt64
-	_ = db.QueryRow(`SELECT id FROM alerts WHERE fingerprint=? AND status NOT IN ('analyzed','closed') ORDER BY id DESC LIMIT 1`, fp).Scan(&dup)
-	var id int64
-	state := "new"
-	if dup.Valid {
-		if _, err := db.Exec(`UPDATE main.alerts SET count=count+1, last_seen=? WHERE herdr_session=? AND id=?`, ts, db.Session, dup.Int64); err != nil {
-			return err
-		}
-		id, state = dup.Int64, "duplicate"
-	} else {
-		// ビュー経由では last_insert_rowid() が使えないので、同じトランザクションで振った番号を読む
-		tx, err := db.Begin()
-		if err != nil {
-			return err
-		}
-		_, err = tx.Exec(`INSERT INTO main.alerts (herdr_session, fingerprint, title, body, source, source_pane, status, count, first_seen, last_seen)
-			VALUES (?, ?, ?, ?, ?, NULLIF(?,''), 'new', 1, ?, ?)`, db.Session, fp, title, body, src, spane, ts, ts)
-		if err == nil {
-			err = tx.QueryRow(`SELECT MAX(alert_no) FROM main.alert_details`).Scan(&id)
-		}
-		if err != nil {
-			_ = tx.Rollback()
-			return err
-		}
-		if err := tx.Commit(); err != nil {
-			return err
-		}
-	}
-	if state == "new" {
-		alertNotify(db, "alert_raised", id)
-		_ = alertDispatchOne(db, id)
+	var r appalert.RaiseResult
+	if err := alertCall(db, "tb alert", stderr, "alert.raise", appalert.RaiseReq{Title: title, Body: body, Key: key}, &r); err != nil {
+		return err
 	}
 	if json {
+		id, _ := validAid(r.ID)
 		if o := alertRow(db, id); o != nil {
 			fmt.Fprintln(w, jv.Compact(withAid(o)))
 		}
 		return nil
 	}
-	fmt.Fprintf(w, "A-%d %s %s\n", id, state, alertStatus(db, id))
+	fmt.Fprintf(w, "%s %s %s\n", r.ID, r.State, r.Status)
 	return nil
-}
-
-// alertDispatchOne は alert_dispatch_one: 解析役を起動する。新規で policy の alert:analyze が allow でなければ awaiting-approval。上限なら queued。
-func alertDispatchOne(db *store.DB, id int64) int {
-	st := alertStatus(db, id)
-	if st != "new" && st != "queued" && st != "approved" {
-		return 0
-	}
-	if st == "new" {
-		if v, _ := approval.NewJudge(db.DB, db.Session).Of("alert:analyze", ""); v != "allow" {
-			alertSetStatus(db, id, "awaiting-approval")
-			return 0
-		}
-	}
-	var busy int64
-	_ = db.QueryRow(`SELECT COUNT(*) FROM alerts WHERE status='analyzing'`).Scan(&busy)
-	amax := envOr("TB_ANALYST_MAX", "2")
-	ls := limits.Load(db.DB, db.Session)
-	if v, _, ok := ls.Raw("analyst_max"); ok { // limits で設定されていれば TB_ANALYST_MAX より優先
-		amax = v
-	}
-	if n, err := strconv.ParseInt(strings.TrimSpace(amax), 10, 64); err == nil && busy >= n { // unlimited は数でないので待たせない
-		alertSetStatus(db, id, "queued")
-		return 0
-	}
-	// 動作中の agent の総数(max_running_agents)。上限なら作らず queued に戻す
-	if limitsRefuseRunning(db, 1, io.Discard) != nil {
-		alertQueued(db, id, "max_running_agents に達しているため待機")
-		return 0
-	}
-	return startAnalyst(db, id)
-}
-
-// startAnalyst は start_analyst: analyst-A<n> を起動して依頼を送る。
-func startAnalyst(db *store.DB, id int64) int {
-	ids := strconv.FormatInt(id, 10)
-	name := "analyst-A" + ids
-	d := envOr("TB_ANALYST_CWD", os.Getenv("TB_ROOT")+"/..")
-	if d == "" || !isDir(d) {
-		alertQueued(db, id, "TB_ANALYST_CWD が無い")
-		return 11
-	}
-	cwd := physDir(d)
-	model := os.Getenv("TB_ANALYST_MODEL")
-	var extra []string
-	if model != "" {
-		extra = []string{"--model", model}
-	}
-	retry := envOr("TB_ANALYST_RETRY_SEC", "3")
-	old, had := os.LookupEnv("TB_SPAWN_RETRY_SEC")
-	_ = os.Setenv("TB_SPAWN_RETRY_SEC", retry)
-	sp, ok := transport.Spawn(env.TBDB(), kindDefault, name, cwd, extra)
-	if had {
-		_ = os.Setenv("TB_SPAWN_RETRY_SEC", old)
-	} else {
-		_ = os.Unsetenv("TB_SPAWN_RETRY_SEC")
-	}
-	if !ok {
-		alertQueued(db, id, sp.Err)
-		return 11
-	}
-	_ = agentRegister(db, name, cwd, model, "", "tb", "unknown", "", kindDefault)
-	_, _ = db.Exec(`UPDATE main.alerts SET status='analyzing', analyst=?, analysis_started_at=?, note=NULL WHERE herdr_session=? AND id=?`, name, nowTS(), db.Session, id)
-	prompt := "[from: tb / alert / A-" + ids + " / task] " + config.Msg(db.DB, db.Session, "alert.analyze",
-		"あなたはアラート A-{id} を解析する agent です。まず tb alerts A-{id} で全文を読み、原因の仮説・根拠・影響範囲・推奨対応をまとめ、緊急度を決めて、tb alert-result A-{id} --severity critical|high|medium|low --summary '<要約>' --report <報告ファイル> で返してください。", "id="+ids)
-	// 起動直後は idle になるまで少し待つ(送るのは idle/done のときだけ)
-	for i := 1; i <= 5; i++ {
-		if transport.Send(db.DB, db.Session, name, prompt, "A-"+ids, "alert", io.Discard) == 0 {
-			return 0
-		}
-		time.Sleep(time.Duration(secEnv("TB_ANALYST_RETRY_SEC", 3) * float64(time.Second)))
-	}
-	_, _ = db.Exec(`UPDATE main.alerts SET note='解析役に依頼を送れていない(tb alert-dispatch で再送)' WHERE herdr_session=? AND id=?`, db.Session, id)
-	return 10
 }
 
 // cmdAlertDispatch は tb alert-dispatch: 承認待ち・上限待ちのアラートを進める。
@@ -289,31 +172,14 @@ func cmdAlertDispatch(args []string, w, stderr io.Writer) error {
 		return err
 	}
 	defer db.Close()
-	alertDispatchAll(db)
-	return qrows(db.DB, `SELECT 'A-'||id, status FROM alerts WHERE status IN ('awaiting-approval','queued','analyzing') ORDER BY id`, nil, func(_ []string, vals []any) error {
-		fmt.Fprintln(w, sqlText(vals[0])+" "+sqlText(vals[1]))
-		return nil
-	})
-}
-
-func sqlText(v any) string {
-	if v == nil {
-		return ""
+	var r appalert.DispatchResult
+	if err := callAppWarn(db, "tb alert-dispatch", stderr, "alert.dispatch", appalert.DispatchReq{}, &r); err != nil {
+		return err
 	}
-	return jv.Scalar(jvValue(v))
-}
-
-func alertDispatchAll(db *store.DB) {
-	var ids []int64
-	_ = qrows(db.DB, `SELECT id FROM alerts WHERE status IN ('new','queued','approved') ORDER BY id`, nil, func(_ []string, vals []any) error {
-		if n, ok := vals[0].(int64); ok {
-			ids = append(ids, n)
-		}
-		return nil
-	})
-	for _, id := range ids {
-		_ = alertDispatchOne(db, id)
+	for _, a := range r.Alerts {
+		fmt.Fprintln(w, a.ID+" "+a.Status)
 	}
+	return nil
 }
 
 // cmdAlertApprove は tb alert-approve A-<n> [--always]: 人が解析役の起動を承認する。
@@ -321,8 +187,7 @@ func cmdAlertApprove(args []string, w, stderr io.Writer) error {
 	if len(args) < 1 {
 		return usage("alert-approve A-<n> [--always]")
 	}
-	id, err := validAid(args[0])
-	if err != nil {
+	if _, err := validAid(args[0]); err != nil {
 		return err
 	}
 	always := len(args) > 1 && args[1] == "--always"
@@ -334,15 +199,17 @@ func cmdAlertApprove(args []string, w, stderr io.Writer) error {
 		return err
 	}
 	defer db.Close()
-	if alertStatus(db, id) != "awaiting-approval" {
-		return die("A-%d は承認待ちではありません", id)
+	var r appalert.StatusResult
+	if err := callAppWarn(db, "tb alert-approve", stderr, "alert.approve", appalert.IDReq{ID: args[0], Always: always}, &r); err != nil {
+		return err
 	}
-	alertSetStatus(db, id, "approved")
-	if always && setApproval(db, "allow", "alert:analyze", io.Discard, io.Discard) == nil {
+	if r.Pending != nil {
+		return pendingExit(w, r.Pending)
+	}
+	if r.Always {
 		fmt.Fprintln(w, "alert:analyze = allow(今後は承認なし)")
 	}
-	_ = alertDispatchOne(db, id)
-	fmt.Fprintf(w, "A-%d %s\n", id, alertStatus(db, id))
+	fmt.Fprintf(w, "%s %s\n", r.ID, r.Status)
 	return nil
 }
 
@@ -376,8 +243,8 @@ func cmdAlertResult(args []string, w, stderr io.Writer) error {
 			return usage("alert-result: 不明な引数 %s", args[i])
 		}
 	}
-	if sev == "" || strings.Contains(sev, " ") || !strings.Contains(" "+alertSeverities+" ", " "+sev+" ") {
-		return usage("alert-result: --severity は %s のどれか(緊急度は解析役が決める)", alertSeverities)
+	if sev == "" || strings.Contains(sev, " ") || !strings.Contains(" "+appalert.Severities+" ", " "+sev+" ") {
+		return usage("alert-result: --severity は %s のどれか(緊急度は解析役が決める)", appalert.Severities)
 	}
 	if blank(summary) {
 		return usage("alert-result: --summary が必要です")
@@ -387,23 +254,8 @@ func cmdAlertResult(args []string, w, stderr io.Writer) error {
 		return err
 	}
 	defer db.Close()
-	row := alertRow(db, id)
-	if row == nil {
+	if alertRow(db, id) == nil {
 		return die("アラートが見つかりません: A-%d", id)
-	}
-	by := "human"
-	if os.Getenv("HERDR_PANE_ID") != "" {
-		l, err := label(db, stderr)
-		if err != nil {
-			return err
-		}
-		if l.Name != objStr(row, "analyst") {
-			return die("A-%d の解析役ではありません(%s)", id, l.Name)
-		}
-		by = l.Name
-	}
-	if objStr(row, "status") == "closed" {
-		return die("A-%d は閉じています", id)
 	}
 	rtext := ""
 	if report != "" {
@@ -411,37 +263,13 @@ func cmdAlertResult(args []string, w, stderr io.Writer) error {
 			return die("--report を読めません: %s", report)
 		}
 	}
-	ts := nowTS()
-	if _, err := db.Exec(`UPDATE main.alerts SET status='analyzed', severity=?, result_summary=?, result_report=NULLIF(?,''),
-		result_path=NULLIF(?,''), result_by=?, analyzed_at=? WHERE herdr_session=? AND id=?`, sev, summary, rtext, report, by, ts, db.Session, id); err != nil {
+	var r appalert.StatusResult
+	in := appalert.ResultReq{ID: args[0], Severity: sev, Summary: summary, Report: rtext, ReportPath: report}
+	if err := alertCall(db, "tb alert-result", stderr, "alert.result", in, &r); err != nil {
 		return err
 	}
-	alertNotify(db, "alert_result", id)
-	alertDeliver(db, id)
-	// 解析役は結果を返したら用済み: 止めてよい印を付ける(停止は tb agent-stop)
-	if by != "human" {
-		_, _ = db.Exec(`UPDATE main.agents SET killable='yes', killable_reason=?, killable_by='tb', killable_at=?,
-			killable_session=session_id WHERE herdr_session=? AND name=?`, fmt.Sprintf("A-%d の解析結果を返した", id), nowTS(), db.Session, by)
-	}
-	alertDispatchAll(db) // 枠が空いたので待ちを進める
-	fmt.Fprintf(w, "A-%d analyzed\n", id)
+	fmt.Fprintf(w, "%s %s\n", r.ID, r.Status)
 	return nil
-}
-
-// alertDeliver は alert_deliver: 解析結果を指揮官へ(使用中なら tb digest が回収する)。
-func alertDeliver(db *store.DB, id int64) {
-	o := alertRow(db, id)
-	if o == nil || objStr(o, "result_delivered_at") != "" {
-		return
-	}
-	ids := strconv.FormatInt(id, 10)
-	target := message.TargetFor(db.DB, db.Session, "*")
-	msg := "[alert A-" + ids + " analyzed / " + jqStr(o.Get("severity")) + "] " + util.Oneline(jqStr(o.Get("title")), 80) + " — " +
-		util.Oneline(jqStr(o.Get("result_summary")), 300) + " (全文: tb alerts A-" + ids + ")"
-	if transport.Send(db.DB, db.Session, target, msg, "A-"+ids, "alert", io.Discard) != 0 {
-		return
-	}
-	_, _ = db.Exec(`UPDATE main.alerts SET result_delivered_at=? WHERE herdr_session=? AND id=?`, nowTS(), db.Session, id)
 }
 
 // cmdAlertClose は tb alert-close A-<n>: 人が閉じる。
@@ -449,8 +277,7 @@ func cmdAlertClose(args []string, w, stderr io.Writer) error {
 	if len(args) != 1 {
 		return usage("alert-close A-<n>")
 	}
-	id, err := validAid(args[0])
-	if err != nil {
+	if _, err := validAid(args[0]); err != nil {
 		return err
 	}
 	if err := requireHuman("tb alert-close"); err != nil {
@@ -461,8 +288,12 @@ func cmdAlertClose(args []string, w, stderr io.Writer) error {
 		return err
 	}
 	defer db.Close()
-	if _, err := db.Exec(`UPDATE main.alerts SET status='closed', closed_at=? WHERE herdr_session=? AND id=?`, nowTS(), db.Session, id); err != nil {
+	var r appalert.StatusResult
+	if err := callAppWarn(db, "tb alert-close", stderr, "alert.close", appalert.IDReq{ID: args[0]}, &r); err != nil {
 		return err
+	}
+	if r.Pending != nil {
+		return pendingExit(w, r.Pending)
 	}
 	fmt.Fprintln(w, args[0]+" closed")
 	return nil
