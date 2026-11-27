@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	apprecipe "github.com/imohiyoko/herdrorchestrator/internal/app/recipe"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/jv"
 	"github.com/imohiyoko/herdrorchestrator/internal/recipe"
 	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
@@ -60,48 +61,28 @@ func cmdRecipeSet(args []string, w, stderr io.Writer) error {
 	} else if body, err = readStdin(); err != nil {
 		return err
 	}
-	r, why := recipe.Parse(body)
-	if why != "" {
+	if _, why := recipe.Parse(body); why != "" { // 誤りは行ごとに出す(API の中でも同じ確かめをする)
 		for _, l := range strings.Split(why, "\n") {
 			fmt.Fprintf(stderr, "tb: recipe-set: %s\n", l)
 		}
 		fmt.Fprintln(stderr, "tb: recipe-set: 登録しませんでした")
 		return &exit{exitUsage, ""}
 	}
-	var old string
-	exists := db.QueryRow(`SELECT body FROM recipes WHERE name=?`, name).Scan(&old) == nil
-	how := "add"
-	var oldv any
-	if exists {
-		how, oldv = "update", old
-	}
-	ts := nowTS()
-	tx, err := db.Begin()
-	if err != nil {
+	var r apprecipe.SetResult
+	if err := callAppWarn(db, "tb recipe-set", stderr, "recipe.set", apprecipe.SetReq{Name: name, Body: body}, &r); err != nil {
 		return err
 	}
-	_, err = tx.Exec(`INSERT INTO main.recipes (herdr_session, name, body, risk, steps, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, 'human', ?)
-      ON CONFLICT(herdr_session, name) DO UPDATE SET body=excluded.body, risk=excluded.risk, steps=excluded.steps,
-        updated_by=excluded.updated_by, updated_at=excluded.updated_at`, db.Session, name, body, r.Risk, len(r.Steps), ts)
-	if err == nil {
-		_, err = tx.Exec(`INSERT INTO main.recipe_changes (herdr_session, name, how, old_body, new_body, risk, changed_by, changed_at) VALUES (?, ?, ?, ?, ?, ?, 'human', ?)`,
-			db.Session, name, how, oldv, body, r.Risk, ts)
-	}
-	if err != nil {
-		tx.Rollback()
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return err
+	if r.Pending != nil {
+		return pendingExit(w, r.Pending)
 	}
 	if r.Decl != "" && r.Decl != r.Risk {
 		fmt.Fprintf(stderr, "tb: recipe-set: 宣言 risk %s は、中の部品の最大 %s より低いので %s にしました\n", r.Decl, r.Risk, r.Risk)
 	}
-	what := "added"
-	if how == "update" {
-		what = "updated"
+	what := "updated"
+	if r.Added {
+		what = "added"
 	}
-	fmt.Fprintf(w, "%s %s (risk %s, steps %d, op recipe:%s:<対象>)\n", name, what, r.Risk, len(r.Steps), name)
+	fmt.Fprintf(w, "%s %s (risk %s, steps %d, op recipe:%s:<対象>)\n", name, what, r.Risk, r.Steps, name)
 	return nil
 }
 
@@ -121,25 +102,12 @@ func cmdRecipeRm(args []string, w, stderr io.Writer) error {
 	if err := requireHuman("tb recipe-rm"); err != nil {
 		return err
 	}
-	var old string
-	if db.QueryRow(`SELECT body FROM recipes WHERE name=?`, name).Scan(&old) != nil {
-		return die("レシピが登録されていません: %s", name)
-	}
-	tx, err := db.Begin()
-	if err != nil {
+	var r apprecipe.RmResult
+	if err := callAppWarn(db, "tb recipe-rm", stderr, "recipe.rm", apprecipe.NameReq{Name: name}, &r); err != nil {
 		return err
 	}
-	_, err = tx.Exec(`DELETE FROM main.recipes WHERE herdr_session=? AND name=?`, db.Session, name)
-	if err == nil {
-		_, err = tx.Exec(`INSERT INTO main.recipe_changes (herdr_session, name, how, old_body, new_body, risk, changed_by, changed_at) VALUES (?, ?, 'rm', ?, NULL, NULL, 'human', ?)`,
-			db.Session, name, old, nowTS())
-	}
-	if err != nil {
-		tx.Rollback()
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return err
+	if r.Pending != nil {
+		return pendingExit(w, r.Pending)
 	}
 	fmt.Fprintf(w, "%s removed\n", name)
 	return nil

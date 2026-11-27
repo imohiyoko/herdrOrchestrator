@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imohiyoko/herdrorchestrator/internal/app"
+	apprecipe "github.com/imohiyoko/herdrorchestrator/internal/app/recipe"
 	"github.com/imohiyoko/herdrorchestrator/internal/approval"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/herdr"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/jv"
@@ -627,23 +629,7 @@ func runRowOf(db *store.DB, id int64) (runRow, bool) {
 
 // runnerClose は _runner_close: 状態を from から st に変え(変わったときだけ)、recipe_end を残す。actor が空なら依頼者。
 func runnerClose(db *store.DB, id int64, st, why, from, actor string) {
-	row, ok := runRowOf(db, id)
-	if !ok {
-		return
-	}
-	res, err := db.Exec(`UPDATE main.recipe_runs SET status=?, result=?, finished_at=? WHERE herdr_session=? AND id=? AND status=?`, st, why, nowTS(), db.Session, id, from)
-	if err != nil {
-		return
-	}
-	if n, _ := res.RowsAffected(); n != 1 {
-		return
-	}
-	nw := st + ": " + why
-	if st == "done" {
-		nw = "done"
-	}
-	_, _ = db.Exec(`INSERT INTO main.task_events (herdr_session, task_id, kind, old, new, actor, ref, created_at) VALUES (?,?,'recipe_end',?,?,?,?,?)`,
-		db.Session, row.task, fmt.Sprintf("R-%d", id), nw, or(actor, row.requester), "E-"+row.eid, nowTS())
+	apprecipe.RunClose(&app.Env{Now: now}, db, id, st, why, from, actor)
 }
 
 func int64Rows(db *store.DB, q string, args ...any) []int64 {
@@ -820,30 +806,13 @@ func cmdRecipeCancel(args []string, w, stderr io.Writer) error {
 		return err
 	}
 	defer db.Close()
-	id, perr := strconv.ParseInt(idS, 10, 64)
-	row, ok := runRowOf(db, id)
-	if perr != nil || !ok {
-		return die("実行の依頼が見つかりません: R-%s", idS)
-	}
-	by, err := requester()
+	by, err := requesterPrincipal()
 	if err != nil {
 		return err
 	}
-	if by != "human" && by != row.requester {
-		return die("R-%s を取り消せるのは人と、頼んだ agent(%s)だけです", idS, row.requester)
-	}
-	if row.status != "queued" {
-		return die("R-%s は待ち行列にありません(%s)", idS, row.status)
-	}
-	who := by
-	if by == "human" {
-		who = "人"
-	}
-	runnerClose(db, id, "cancelled", who+"が取り消し", "queued", by)
-	var cur string
-	_ = db.QueryRow(`SELECT status FROM recipe_runs WHERE id=?`, id).Scan(&cur)
-	if cur != "cancelled" {
-		return die("R-%s は待ち行列にありません(ほかで決まりました)", idS)
+	var r apprecipe.CancelResult
+	if err := callAppEnv(appEnv(db, stderr), by, "recipe.cancel", apprecipe.CancelReq{ID: args[0]}, &r); err != nil {
+		return err
 	}
 	fmt.Fprintf(w, "R-%s cancelled\n", idS)
 	return nil
