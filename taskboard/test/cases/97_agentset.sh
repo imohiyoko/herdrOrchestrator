@@ -139,7 +139,7 @@ $TB agentset up au >/dev/null 2>&1
 as_sql "INSERT INTO tasks (id, project, title, status, owner_agent, created_at, updated_at, herdr_session) VALUES ('T-au-001','au','a','todo',NULL,'t','t','default'),('T-au-002','au','b','todo',NULL,'t','t','default'),('T-au-003','au','c','todo','x','t','t','default'),('T-zz-001','zz','d','todo',NULL,'t','t','default');"
 eq "agentset autoscale --dry-run: shows the decision, changes nothing" \
   "$($TB agentset autoscale au --dry-run) $(as_sql "SELECT COUNT(*) FROM agents WHERE name LIKE 'au-%';")" \
-  "au-w: queue=2 live=1 idle=1 busy=0 blocked=0: scale_out(queue > 1) → +1(--dry-run なので変えません) 1"
+  "au-w: queue=2 live=1 idle=1 busy=0 blocked=0: scale_out(queue > 1) → +1(2 体に)(--dry-run なので変えません) 1"
 eq "agentset autoscale: scale_out adds one" "$($TB agentset autoscale au | grep -c '^au-w-2: ') $(as_sql "SELECT killable FROM agents WHERE name='au-w-2';")" "1 yes"
 eq "agentset autoscale: at max stays" "$($TB agentset autoscale au | grep -c 'max(2)なのでそのまま')" "1"
 as_sql "UPDATE tasks SET status='done' WHERE id IN ('T-au-001','T-au-002');"

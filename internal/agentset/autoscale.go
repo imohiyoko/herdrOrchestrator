@@ -333,13 +333,16 @@ func Autoscale(ctx context.Context, c Caller, by port.Principal, d Def, dry bool
 			out = append(out, Line{Name: name, Out: head})
 			continue
 		}
-		spec := fmt.Sprintf("%+d", n)
+		// Scale には +n / -n ではなく、決めたときの数から求めた体数を渡す。
+		// 手で流した分と定期の分が重なっても、2 回目は「もうその数」で何もしない(count を下回らない・max を超えない)。
+		target := v["live"] + n
+		say := fmt.Sprintf("%+d(%d 体に)", n, target)
 		if dry {
-			out = append(out, Line{Name: name, Out: head + " → " + spec + "(--dry-run なので変えません)"})
+			out = append(out, Line{Name: name, Out: head + " → " + say + "(--dry-run なので変えません)"})
 			continue
 		}
-		out = append(out, Line{Name: name, Out: head + " → " + spec})
-		lines, err := Scale(ctx, c, by, d, m.Name, spec)
+		out = append(out, Line{Name: name, Out: head + " → " + say})
+		lines, err := Scale(ctx, c, by, d, m.Name, strconv.Itoa(target))
 		if ms != nil && err == nil { // 変えたら、for はもう一度数え直す
 			ms.Last, ms.Since = now.UTC().Format(time.RFC3339), nil
 		}

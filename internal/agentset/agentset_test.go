@@ -103,14 +103,15 @@ func TestParse(t *testing.T) {
 
 // fakeAPI は agent.list / new / revive / stop の呼び出しを記録し、台帳の代わりに状態を持つ。
 type fakeAPI struct {
-	agents map[string]agent.AgentInfo
-	calls  []string
-	max    int
-	fail   string // この名前の new を失敗させる
-	n      int
-	tasks  map[string]ticket.GetResult // ticket.get の答え(無ければ not_found)
-	jobs   map[string]string           // job.set / job.rm
-	queue  int                         // ticket.count の答え
+	agents  map[string]agent.AgentInfo
+	calls   []string
+	max     int
+	fail    string // この名前の new を失敗させる
+	n       int
+	tasks   map[string]ticket.GetResult // ticket.get の答え(無ければ not_found)
+	jobs    map[string]string           // job.set / job.rm
+	queue   int                         // ticket.count の答え
+	onCount func()                      // ticket.count のときに流す(重なった実行の真似)
 }
 
 func (f *fakeAPI) Call(_ context.Context, by port.Principal, op string, in, out any) error {
@@ -198,6 +199,9 @@ func (f *fakeAPI) Call(_ context.Context, by port.Principal, op string, in, out 
 		delete(f.jobs, q.Name)
 		set(job.Result{Name: q.Name, Changed: ok})
 	case "ticket.count":
+		if f.onCount != nil {
+			f.onCount()
+		}
 		set(ticket.CountResult{Count: f.queue})
 	case "ticket.get":
 		t, ok := f.tasks[in.(ticket.GetReq).ID]
@@ -685,6 +689,29 @@ func TestAutoscale(t *testing.T) {
 	}
 }
 
+// 判断のあとで別の実行がもう減らしていたら、count を下回って止めない(決めたときの体数を目標にする)。
+func TestAutoscaleOverlap(t *testing.T) {
+	d, _ := Parse("as", scaled)
+	ctx, by := context.Background(), port.Principal{}
+	f := &fakeAPI{agents: map[string]agent.AgentInfo{
+		"as-w-1": {Name: "as-w-1", State: "running", Live: true, Pane: "w0:p1", Status: "idle"},
+		"as-w-2": {Name: "as-w-2", State: "running", Live: true, Pane: "w0:p2", Status: "idle"},
+	}, max: -1, queue: 0}
+	f.onCount = func() { // 数えたあと、Scale の前に別の実行が as-w-2 を止めた
+		a := f.agents["as-w-2"]
+		a.Live, a.State = false, "stopped"
+		f.agents["as-w-2"] = a
+		f.onCount = nil
+	}
+	lines, err := Autoscale(ctx, f, by, d, false, nil, time.Time{})
+	if err != nil || !f.agents["as-w-1"].Live {
+		t.Fatalf("count(1)を下回った: %v %+v", err, lines)
+	}
+	if !strings.Contains(lines[0].Out, "-1(1 体に)") || !strings.Contains(lines[len(lines)-1].Out, "1 体のまま") {
+		t.Errorf("%+v", lines)
+	}
+}
+
 func TestAutoscaleForCooldown(t *testing.T) {
 	d, err := Parse("as", "[member w]\ncount = 1\nmax = 5\nscale_out = queue > 2 for 10m\nscale_in = queue == 0 for 1h\nscale_cooldown = 15m\n")
 	if err != nil {
@@ -800,7 +827,7 @@ func TestJobs(t *testing.T) {
 		"[member w]\nmax = 3\nscale_at = funday 09:00: 1\n",
 		"[member w]\nmax = 3\nscale_at = at 2026-02-30 09:00: 1\n",
 		"[member w]\nmax = 3\nscale_at = weekdays 09:00: 4\n", // max を超える
-		"[member w]\nscale_at = weekdays 09:00: 1\n",           // 数を変えられない
+		"[member w]\nscale_at = weekdays 09:00: 1\n",          // 数を変えられない
 		"[member w]\nmax = 3\nscale_at = weekdays 09:00\n",
 		"autoscale_every = 0m\n[member w]\nmax = 2\n",
 		"[member autoscale]\nmax = 2\n",
