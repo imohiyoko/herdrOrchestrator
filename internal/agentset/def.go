@@ -27,6 +27,11 @@ type Def struct {
 	OnParentExit string
 	Members      []Member
 	Adopt        []Adopt
+	// AutoscaleEvery は autoscale_every(分)。条件を書いたメンバーがいれば、up がこの間隔で tb agentset autoscale を流すジョブを書く。
+	// 既定 5、0 は書かない(off)
+	AutoscaleEvery int
+	// TB は scheduler のジョブの COMMAND に書く tb の場所(呼ぶ側が入れる。空なら PATH の tb)
+	TB string
 }
 
 // Adopt は [adopt] の 1 行(すでに動いている agent をセットの子にする。up で親を足し、down で外す。止めない)。
@@ -56,6 +61,8 @@ type Member struct {
 	Queue    Queue
 	Step     int
 	Cooldown int // scale_cooldown(分)。前に数を変えてからこの分は変えない
+	// ScaleAt は scale_at(<時刻>: <数>)。その時刻にこの数にする(up が scheduler のジョブを書く)
+	ScaleAt []ScaleAt
 }
 
 // JobName は schedule を書いたメンバーの scheduler のジョブの名前。
@@ -94,7 +101,7 @@ var later = map[string]bool{"panes_per_workspace": true}
 // Parse は定義の本文を読む。書式は「キー = 値」の行と、メンバーごとの段落 [member <名前>]。
 // # で始まる行と、空白のあとの「# 」から行末はコメント。
 func Parse(name, body string) (Def, error) {
-	d := Def{Name: name}
+	d := Def{Name: name, AutoscaleEvery: 5}
 	if !ReName.MatchString(name) {
 		return d, fmt.Errorf("セットの名前は英小文字で始まり、英小文字・数字・_ の 16 字以内: %s", name)
 	}
@@ -159,6 +166,16 @@ func Parse(name, body string) (Def, error) {
 				d.Cwd = v
 			case "parent":
 				d.Parent = v
+			case "autoscale_every":
+				if v == "off" {
+					d.AutoscaleEvery = 0
+					break
+				}
+				n, err := parseMinutes(v)
+				if err != nil {
+					return d, fmt.Errorf("%d 行目: autoscale_every は <N>m か <N>h(1 分から 24 時間)か off: %s", ln, v)
+				}
+				d.AutoscaleEvery = n
 			case "on_parent_exit":
 				switch v {
 				case "keep", "grandparent", "set-parent", "stop":
@@ -167,7 +184,7 @@ func Parse(name, body string) (Def, error) {
 				}
 				d.OnParentExit = v
 			default:
-				return d, fmt.Errorf("%d 行目: セットのキーは workspace / cwd / parent / on_parent_exit: %s", ln, k)
+				return d, fmt.Errorf("%d 行目: セットのキーは workspace / cwd / parent / on_parent_exit / autoscale_every: %s", ln, k)
 			}
 			continue
 		}
@@ -218,6 +235,15 @@ func Parse(name, body string) (Def, error) {
 				return d, fmt.Errorf("%d 行目: %s", ln, err)
 			}
 			m.Queue = q
+		case "scale_at":
+			a, err := parseScaleAt(v)
+			if err != nil {
+				return d, fmt.Errorf("%d 行目: %s", ln, err)
+			}
+			if len(m.ScaleAt) >= scaleAtMax {
+				return d, fmt.Errorf("%d 行目: scale_at はメンバーごとに %d 行まで", ln, scaleAtMax)
+			}
+			m.ScaleAt = append(m.ScaleAt, a)
 		case "scale_cooldown":
 			n, err := parseMinutes(v)
 			if err != nil {
@@ -241,7 +267,7 @@ func Parse(name, body string) (Def, error) {
 			}
 			m.Max = n
 		default:
-			return d, fmt.Errorf("%d 行目: メンバーのキーは role / model / kind / cwd / prompt / count / max / mode / parent / schedule / scale_out / scale_in / queue / scale_step / scale_cooldown: %s", ln, k)
+			return d, fmt.Errorf("%d 行目: メンバーのキーは role / model / kind / cwd / prompt / count / max / mode / parent / schedule / scale_out / scale_in / queue / scale_step / scale_cooldown / scale_at: %s", ln, k)
 		}
 	}
 	if err := sc.Err(); err != nil {
@@ -294,6 +320,17 @@ func (d Def) check() error {
 			}
 		} else if m.Step != 0 || m.Cooldown != 0 || m.Queue != (Queue{}) {
 			return fmt.Errorf("メンバー %s: queue / scale_step / scale_cooldown は scale_out か scale_in と一緒に書きます", m.Name)
+		}
+		if m.Name == "autoscale" {
+			return fmt.Errorf("メンバーの名前 autoscale は使えません(セットのジョブ agentset-%s-autoscale と重なる)", d.Name)
+		}
+		if len(m.ScaleAt) > 0 && (!m.Scalable() || m.Mode == "job") {
+			return fmt.Errorf("メンバー %s: scale_at は数を変えられるメンバー(max を書いた。job 型は除く)だけ", m.Name)
+		}
+		for _, a := range m.ScaleAt {
+			if l := m.Limit(); l >= 0 && a.N > l {
+				return fmt.Errorf("メンバー %s: scale_at の数(%d)が max(%d)を超えています", m.Name, a.N, l)
+			}
 		}
 		if l := m.Limit(); l >= 0 && m.Count > l {
 			return fmt.Errorf("メンバー %s の count(%d)が max(%d)を超えています", m.Name, m.Count, l)

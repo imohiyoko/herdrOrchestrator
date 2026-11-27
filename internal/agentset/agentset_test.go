@@ -758,3 +758,75 @@ func TestAutoscaleState(t *testing.T) {
 		t.Errorf("rm で状態も消す: %v", err)
 	}
 }
+
+func TestJobs(t *testing.T) {
+	d, err := Parse("js", "autoscale_every = 2m\n[member lead]\nschedule = every 30m: 見る\n[member w]\ncount = 1\nmax = 4\nscale_out = queue > 2\nscale_at = weekdays 09:00: 3\nscale_at = at 2026-12-01 18:00: 0\nscale_at = mon,fri 07:30: 2\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.TB = "/opt/herdr/taskboard/bin/tb"
+	var names []string
+	bodies := map[string]string{}
+	for _, j := range d.Jobs() {
+		names = append(names, j.Name)
+		bodies[j.Name] = j.Body
+	}
+	if strings.Join(names, ",") != "agentset-js-lead,agentset-js-autoscale,agentset-js-w-at1,agentset-js-w-at2,agentset-js-w-at3" {
+		t.Fatalf("names: %v", names)
+	}
+	for n, want := range map[string]string{
+		"agentset-js-autoscale": "COMMAND='\"/opt/herdr/taskboard/bin/tb\" agentset autoscale js'\nCOMMAND_TIMEOUT=600\nWINDOW=00:00-23:59\nINTERVAL_MIN=2\n",
+		"agentset-js-w-at1":     "COMMAND='\"/opt/herdr/taskboard/bin/tb\" agentset scale js w 3'\nCOMMAND_TIMEOUT=600\nWINDOW=09:00-09:00\nINTERVAL_MIN=1440\nDAYS=\"weekdays\"\n",
+		"agentset-js-w-at2":     "AT=\"2026-12-01 18:00\"\n",
+		"agentset-js-w-at3":     "DAYS=\"mon fri\"\n",
+	} {
+		if !strings.Contains(bodies[n], want) {
+			t.Errorf("%s:\n%s\nwant %q", n, bodies[n], want)
+		}
+	}
+	d.TB = "/x/it's/tb"
+	if b := d.Jobs()[1].Body; !strings.Contains(b, "COMMAND='tb agentset autoscale js'") {
+		t.Errorf("引用できない場所は PATH の tb: %s", b)
+	}
+	if d2, _ := Parse("js", "autoscale_every = off\n[member w]\nmax = 2\nscale_out = queue > 1\n"); len(d2.Jobs()) != 0 {
+		t.Errorf("off は書かない: %+v", d2.Jobs())
+	}
+	if d3, _ := Parse("js", "[member w]\nmax = 2\nscale_out = queue > 1\n"); len(d3.Jobs()) != 1 || !strings.Contains(d3.Jobs()[0].Body, "INTERVAL_MIN=5") {
+		t.Errorf("既定は 5 分: %+v", d3.Jobs())
+	}
+	for _, bad := range []string{
+		"[member w]\nmax = 3\nscale_at = 09:00: 1\n",
+		"[member w]\nmax = 3\nscale_at = weekdays 25:00: 1\n",
+		"[member w]\nmax = 3\nscale_at = funday 09:00: 1\n",
+		"[member w]\nmax = 3\nscale_at = at 2026-02-30 09:00: 1\n",
+		"[member w]\nmax = 3\nscale_at = weekdays 09:00: 4\n", // max を超える
+		"[member w]\nscale_at = weekdays 09:00: 1\n",           // 数を変えられない
+		"[member w]\nmax = 3\nscale_at = weekdays 09:00\n",
+		"autoscale_every = 0m\n[member w]\nmax = 2\n",
+		"[member autoscale]\nmax = 2\n",
+	} {
+		if _, err := Parse("js", bad); err == nil {
+			t.Errorf("断るはず: %q", bad)
+		}
+	}
+}
+
+func TestUpDownJobs(t *testing.T) {
+	d, _ := Parse("uj", "[member w]\ncount = 1\nmax = 3\nscale_out = queue > 2\nscale_at = daily 09:00: 2\n")
+	ctx, by := context.Background(), port.Principal{}
+	f := &fakeAPI{agents: map[string]agent.AgentInfo{}, max: -1, jobs: map[string]string{"agentset-uj-w-at5": "old"}}
+	if _, err := Up(ctx, f, by, d); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for n := range f.jobs {
+		got = append(got, n)
+	}
+	slices.Sort(got)
+	if strings.Join(got, ",") != "agentset-uj-autoscale,agentset-uj-w-at1" {
+		t.Fatalf("up のあとのジョブ(古い at5 は消す): %v", got)
+	}
+	if _, err := Down(ctx, f, by, d, true); err != nil || len(f.jobs) != 0 {
+		t.Fatalf("down で全部消す: %v %v", err, f.jobs)
+	}
+}
