@@ -60,7 +60,8 @@
 
 - `agents.state` に `sleeping` と `waking` を足す(`running` / `sleeping` / `waking` / `stopped`)。`sleeping` の意味は「pane は無いが、仕組みが起こしてよい」。`waking` は「起こしている途中で、まだ届けられない」。
 - `agent_ops.op` に `sleep` / `wake` を足す。誰が・何の届け物で起こしたか(`args` に outbox の ID など)を残す。
-- 眠らせるときに置き場所(tab・workspace)を `agents` に残す。
+- 眠らせるときに置き場所(tab・workspace)を `agents` に残す。これは戻す先の手がかりで、起こすときにその workspace がまだあるかを確かめ、無ければ新しく作る。眠っている agent のために workspace を残しておく(消さない印を付ける)ことはしない(空の workspace が画面に残るため)。
+- **pane の ID は眠りをまたいで持ち越さない**。herdr は閉じた pane の ID を別の pane に使い回しうるので、眠らせるときに `agents.pane_id` を空にする。`agent_activity` を `pane_id` で突き合わせている所(`agents/life.go` の stale 判定、Web UI の agents・notify)は、`session_id` での一致を先に見て、`pane_id` での一致は `running` の agent に限る。起こしたら `pane_id` を新しい値で書く(今の revive と同じ)。agent を指すときの鍵は名前のままで、送り先・呼び出し元の確かめは pane をその場で herdr から引き直す(今のまま)。
 - agent ごとの **借用(lease)** を 1 行で持つ(表 `agent_leases`: 名前・持ち主・期限)。届け物・眠り・起こすの 3 つは、状態の確認から外への操作(送信、pane を閉じる、起動)が終わるまでを、この借用の中で行う。取るのは条件つきの INSERT / UPDATE(空いているか、期限が切れているときだけ)。
 
 ### 1a. 借用の決まり
