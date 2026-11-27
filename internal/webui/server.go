@@ -505,7 +505,7 @@ func (s *Server) get(q *rq, path, query string) {
 		out := strings.Replace(string(b), "__BASE__", base, 1)
 		out = strings.Replace(out, "__POLL__", strconv.Itoa(NotifyPollSec*1000), 1)
 		s.send(q, 200, []byte(out), js)
-	case "/refresh.js", "/filter.js", "/docs.js":
+	case "/refresh.js", "/filter.js", "/docs.js", "/nav.js":
 		s.staticFile(q, path[1:], js)
 	case "/static/mermaid.min.js":
 		s.staticFile(q, "mermaid.min.js", js)

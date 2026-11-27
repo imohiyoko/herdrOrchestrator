@@ -154,6 +154,9 @@ func TestLoginFlow(t *testing.T) {
 	if r := do(t, ts, "GET", B+"/refresh.js", ck, nil); r.code != 200 || r.h.Get("Content-Type") != "text/javascript; charset=utf-8" {
 		t.Fatalf("refresh.js %d", r.code)
 	}
+	if r := do(t, ts, "GET", B+"/nav.js", ck, nil); r.code != 200 || !strings.Contains(r.body, "herdr-nav-collapsed") {
+		t.Fatalf("nav.js %d", r.code)
+	}
 	if r := do(t, ts, "GET", B+"/notify.js", ck, nil); !strings.Contains(r.body, `var BASE = "/s/default"`) || !strings.Contains(r.body, "15000") {
 		t.Fatalf("notify.js: %.300s", r.body)
 	}
