@@ -314,6 +314,7 @@ ADR 0004 の依存の検査に次を足す。今ある違反は許容リスト�
 - 文脈の整理 `agent.compact.check`(`internal/app/agent` の compact.go。`POST /v1/agents/compact-check`、`tb compact-check`)。transcript の usage を読んで閾値・間隔・policy(`agent:compact:<名前>`)を見て /compact を送り、記録するのは API の中。tb の使われていなかった `recordOpID` は消した。
 - 中身を読む `agent.peek`(`internal/app/agent` の peek.go。`POST /v1/agents/peek`、`tb peek`)。`agent:read:<対象>` の判定と herdr からの読み出し、`read_log` への記録は API の中。tb は引数を確かめて読んだ文字列を出すだけ。
 - 承認待ちの優先度 `approval.priority`(`internal/app/approval` の pending.go。`POST /v1/requests/{id}/priority`、`tb approval priority`)。承認待ちを積んだときの Q-<n> の引き当て・優先度(`TB_PRIORITY`)・決められる agent への知らせ(`approval.PendingQ` / `NotifyApprovers` / `CanDecide`)も tb から API に移した(tb の入口が `Env.PendingQ` に入れる。Web UI は別の herdr セッションも扱い、要求の中で herdr を呼ばないよう、まだ入れない)。tb の入口が ask で止めたコマンドの行の書き込みと、承認済みのコマンドを 1 回だけ動かす印は `internal/requests`(`InsertCmd` / `ClaimRun`)に寄せた。tb の入口の門そのもの(`perms.Gate` の Queue / Record)は段 5 で入口から外すまで tb に残る。
+- 旧形式の DB の取り込み `config.db.import`(`internal/app/config` の dbimport.go。`POST /v1/config/db-import`、`tb db-import`)。旧 DB の確かめ・写しの移行・1 つのトランザクションでの取り込みは API の中。門は commands.tbl の inner の行 `cmd:config:db-import`(既定は人だけ)を `app.Cmd` で判定する。tb は引数を読んで結果を出すだけ。
 
 ## 検討した代替案
 
