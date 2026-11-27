@@ -250,25 +250,31 @@ ADR 0004 の依存の検査に次を足す。今ある違反は許容リスト�
 - 最初の操作 `ticket.resolve`(`internal/app/ticket`)。`tb resolve` は引数を読み、呼び出し元を主体にして `Invoke` で呼び、結果を今の文言と終了コードにする。Web UI の「対応済みにする」は `runTB` をやめ、同じ操作を同じプロセスで人として呼ぶ。
 - 依存と層の検査(`cmd/herdrctl/layers_test.go`): herdrctl の依存に grpc・protobuf・YAML・imohiyoko/API の `cli` が無いこと、入口(tbcli・webui)の内部 import と SQL の数を許容リスト(`cmd/herdrctl/testdata/layers-allow.txt`)と比べる。増えても減っても落ち、減ったら `-update` で許容リストを減らす。
 
-## 段 1 で入れたもの(2026-11-27、途中)
+## 段 1 で入れたもの(2026-11-27)
 
 - `internal/app/agent`: `agent.stop`(#280)、`agent.revive` / `agent.restart`(#282)、`agent.new`(#283)。門は policy の `agent:<操作>:<名前>` で、ask は `agent_ops` に積んで `L-<n>` を返す(`opGate`)。作成は、まだ台帳に無い agent を要求された役割で `@<役割>` と比べる(`opGateRole`)。tb の該当の動詞は引数を読んで操作を呼び、結果を今の文言と終了コードにする。Web UI の停止・復活・作成は、同じセッションなら同じプロセスで呼ぶ(ほかのセッションは herdr の呼び出し先がプロセスの環境で決まるので、まだ tb の子プロセス)。
 - herdr の呼び出しに上限(`HERDR_CALL_TIMEOUT_SEC`、既定 60 秒)と、要求の期限(`herdr.CallContext`)を通した。期限を過ぎたら pane を閉じない・起動しない。
 - agent セット向けに、`agent.new` に親(`Parent`。台帳の `spawned_by`)と置き場所(`Pane`: 既存の pane を分ける `Split` + `Direction`、か名前を付けた新しい workspace `Workspace`)を足した。どちらも人だけが指定できる(agent からの依頼は承認待ちを通るが、承認後の実行は置き場所を持たないため)。結果に起動した pane と workspace を返す。分けるのは `herdr pane split <pane> --direction right|down --cwd <dir> --no-focus`(herdr の SKILL.md で確かめた形)。
 - 親は「立てた親」1 つだけを作成時に入れる。親を足す・外す(多対多。別スレッドで設計中)は、`spawned_by` を立てた親として残す形なので、ここと両立する。
 
-### 段 1 の残りを段 3 に回す
+### 段 1 の続き(2026-11-27)
 
-- 承認・却下(`tb agent-approve` / `agent-reject`)と規則つきの子の作成(`tb agent-spawn`)は、承認待ちの Q-<n> の部品(`requests` の記録、承認者・依頼者への知らせ。tbcli の request.go・approvers.go)と、チケットのコメントの配達(spawn の知らせ)に依存している。`app/agent` に移すと、それらを Env のフックで渡すことになり、フックを持たない Web UI からは知らせが落ちる。
-- そこで、承認・却下・spawn は段 3 で承認の部品(`app/approval`)と一緒に移す。それまで Web UI の承認・却下は tb の子プロセスのまま。agent セットは作成・停止・復活だけを使うので、これを待たずに作れる。
-- 一覧(`tb agents` / `agent-ops`)の読み取りは、Web UI の読み込みを移す段で一緒に移す。agent セットが使う最小の読み取り(`agent.list`: 台帳の状態・herdr で動いているか・pane・親・動作中の数と上限)だけは先に入れた。
+- 規則つきの子の作成 `agent.spawn`(#293): spawn-policy の読み取り・規則の検査・名前・最初の指示・承認待ちへの積み方を `app/agent/spawn.go` に移した。承認待ちを指揮官に知らせる報告の配達は、Env の新しいフック `Deliver`(tb の入口が配達の関数を入れる)。フックの無い入口では知らせが届かないので、Web UI から spawn を呼ぶ段で配達を `app` の下に移す。
+- 承認・却下 `agent.approve` / `agent.reject`(#295): 承認者の確かめ(人か、policy の approve:agent:… を許された依頼者以外の agent)、再検査、1 回だけ実行する印、実行と記録、Q-<n> の記録、依頼した agent への知らせ(`transport.Send`)まで API がする。スラッシュコマンドとモデルの切り替えの承認と `--always`(policy を書く)は、まだ tb の中(API は `use_tb` で断る)。これらは段 3 で policy の書き込みと一緒に移す。
+- 親を足す・外す `agent.parent.add` / `agent.parent.rm`(#290): 表 `agent_parents`(030、`spawned_by` から埋める)。`spawned_by` は立てた親(上限・深さ・記録)のまま。`tb agent shed` の orphan は、親が 1 体以上いて全員止まったときだけ。承認・報告を「親のうち誰か」に回すのは別の設計(多対多の親)。
+- job の書き込み `job.set` / `job.rm`(#292、段 3 の先取り): `tb job set` / `rm` と同じ権限と確かめ(scheduler が読めるか)。agent セットの schedule が使う。チケットの読み取り `ticket.get`(#289)も先に入れた。
+- まだ残るもの: 一覧(`tb agents` / `agent-ops`)の読み取りの全部と、Web UI の agents 画面を同じプロセスで呼ぶこと。agent セットが使う最小の読み取り `agent.list` は入れた(今の親 `Parents` も返す)。
 
 ### agent セット(`internal/agentset`、`tb agentset`)
 
 - 入口の 1 つとして作った。`agent.list` / `agent.new` / `agent.revive` / `agent.stop` を呼ぶだけで、台帳や store を直接触らない(層の検査で入口として扱う)。
 - 定義は DB の設定ではなくファイル(`TB_AGENTSETS` か、DB と同じ所の `agentsets/<セット>.conf`)。書くのは人だけ(`tb agentset add` は inner の require_human)。
 - `up` は外の親と上限を先に確かめ、だめなら 1 体も立てない。親から順に、1 体目は workspace(label はセット名)、残りはその pane を分けて置く。動いているメンバーはそのまま、止まっているメンバーは同じ workspace に戻す(`agent.revive` にも置き場所を足した)。`down` は子から順に止め、外の親は止めない。止めてよい(killable)の判定は `tb agent stop` と同じで、判定の無いメンバーは `--force` が要る。
-- まだ入れていないもの: 定期実行の指示(schedule。job の部品が段 3)、`[adopt]` と親が止まったときの付け替え(親の足し・外しの設計待ち)、scale / run(job 型)。定義に書いてあれば黙って無視せず断る。
+- 数を変える `scale`(#288): count が 2 以上か max(数か unlimited)を書いたメンバーは `<セット>-<メンバー>-<N>`。増やすときは止まっている番号から戻し、足りなければ同じ workspace に新しい番号で足す(killable=yes)。減らすときは番号の大きい順に、止めてよく未完了のタスクが無いものだけを止める。
+- job 型(`mode = job`、#289): `tb agentset run <セット> <メンバー> --task T` がタスク 1 つに 1 体立て(spawn_task=T、killable=yes)、`tb agentset reap` がタスクの終わった(か消えた)agent を止める。定期の片付けは scheduler の COMMAND 型のジョブに `tb agentset reap <セット>` を書く。
+- `[adopt]` と `on_parent_exit`(#291): `[adopt]` の `<agent> -> <親>` は動いている agent に up で親を足し、down で外す(止めない)。`on_parent_exit = keep | grandparent | set-parent | stop`(既定 keep)は、親が全員止まったメンバーと adopt の agent を reap で付け替えるか止める。
+- 定期の指示 `schedule = every <N>m|<N>h: <本文>`(#292): up が scheduler のジョブ `agentset-<セット>-<メンバー>`(TARGET はその agent、終日)を書き、down で消す。
+- まだ入れていないもの: `panes_per_workspace`(1 つの workspace に入れる pane の数)、決まった規則での自動スケール(scheduler から scale を呼ぶ規則)、Web UI のセットごとの表示。定義に書いてあれば黙って無視せず断る。
 
 ## 検討した代替案
 
