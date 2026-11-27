@@ -297,7 +297,9 @@ ADR 0004 の依存の検査に次を足す。今ある違反は許容リスト�
 - 状態の定義 `ticket.status.add` / `ticket.status.rm`(人だけが既定の inner の行)。中身は `internal/tickets/statusdef.go`、設定のファイルの書き込みは `config.WriteFile`。Web UI の状態の定義の画面も同じプロセスで呼ぶ。
 - ジョブ `job.set` / `job.unset` / `job.rm`(`internal/app/job`)に tb の選択肢(`--settings` / `--shared`、rm の行が無ければ断る・ログを消す)を足し、tb の `job set` / `edit` / `unset` / `rm` は API を呼ぶだけにした。scheduler が本文を受け付けないときは書かずに理由(`Rejected`)を返す。置き場所は `Env.SchedDir` / `SchedShow` / `SchedLogs`(空なら tb と同じ既定。Web UI は自分の見ている所を入れる)。
 - Web UI のジョブの上書き設定・定義の保存・ジョブを消す・agent の操作の承認と却下は `runTB` をやめ、同じプロセスで人として呼ぶ(agent の承認はほかのセッションだけ tb の子プロセスのまま。herdr の呼び先がプロセスの環境で決まるため)。
-- まだ残るもの: report / pending / comments の読み取りと、tasks.go の読み込み。Web UI の承認(approval)と policy の保存の `runTB`。
+- 承認 `approval.approve` / `approval.reject`(`POST /v1/requests/{id}/<動詞>`、`tb approval approve|reject Q-<n>`、前の O-<n> も)と承認制の行 `approval.allow` / `approval.ask`。中身(送信の承認と配送、ask で止まったコマンドを依頼者に返すか依頼者として実行する、policy の行の書き込み)は `internal/requests` に移した。agent の操作の承認待ちは `agent.Decide` に渡し、`--always` も agent.approve で扱う(tb の中の承認の実装は無くなった)。tb agent-approve / reject の入口の行(`cmd:agent:<動詞>`)は approval の側でも判定する。途中の出力は `Env.Out` に流すか結果に集め、承認したコマンドを動かす子は `Env.ChildEnv` / `TbCmd`(Web UI はこのチェックアウトの tb)。policy の書き込みの確かめは主体で行う `perms.RequirePolicyWriteAs`。Web UI の承認の画面も同じプロセスで呼ぶ。
+- tb はまだ `internal/requests` を直接読む(承認待ちの一覧・履歴・`approval run`・承認済みの子の確かめ)。層テストの許容リストに残している。
+- まだ残るもの: report / pending / comments の読み取りと、tasks.go の読み込み。Web UI の policy の保存の `runTB`。
 
 ## 検討した代替案
 

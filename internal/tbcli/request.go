@@ -20,8 +20,8 @@ import (
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/herdr"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/identity"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/perms"
-	"github.com/imohiyoko/herdrorchestrator/internal/requests"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
+	"github.com/imohiyoko/herdrorchestrator/internal/requests"
 )
 
 var reQID = requests.ReQID

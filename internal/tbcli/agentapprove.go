@@ -95,7 +95,3 @@ func agentOpAction(db *store.DB, o opRow) string {
 	}
 	return "agent:" + o.op + ":" + o.target
 }
-
-
-
-

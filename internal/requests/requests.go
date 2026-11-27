@@ -30,7 +30,9 @@ func (e *Refused) Error() string { return e.Msg }
 
 func refuse(format string, a ...any) error { return &Refused{Msg: fmt.Sprintf(format, a...)} }
 
-func usage(format string, a ...any) error { return &Refused{Msg: fmt.Sprintf(format, a...), Usage: true} }
+func usage(format string, a ...any) error {
+	return &Refused{Msg: fmt.Sprintf(format, a...), Usage: true}
+}
 
 // Now は記録に残す時刻(UTC の ISO 8601、秒まで)。
 var Now = func() string { return time.Now().UTC().Format("2006-01-02T15:04:05Z") }
@@ -197,7 +199,9 @@ func (a Approver) Label() string {
 }
 
 // IsHuman は who(perms の主体の書き方)が承認では人として扱われるか(人の端末・scheduler などの system:<名前>)。
-func IsHuman(who string) bool { return who == "" || who == "human" || strings.HasPrefix(who, "system:") }
+func IsHuman(who string) bool {
+	return who == "" || who == "human" || strings.HasPrefix(who, "system:")
+}
 
 // CheckApprover は approver_check <コマンド名> <元の操作名(空 = 人だけ)> <依頼者>: who が決めてよいか。
 func CheckApprover(j *approval.Judge, cmd, who, act, by string) (Approver, error) {

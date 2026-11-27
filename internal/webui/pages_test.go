@@ -666,7 +666,7 @@ exit 0
 		{url.Values{"op": {"exception"}, "id": {"3"}}, 400, "", "Q-3 は policy が拒否したもの(denied)ではありません(rejected)"}, // 上で却下した,
 		{url.Values{"op": {"reject"}, "id": {"4"}}, 400, "", "Q-4 は承認待ちではありません(done)"},
 		{url.Values{"op": {"approve"}, "id": {"10"}}, 400, "", "Q-10 は承認待ちではありません(approved)"},
-		{url.Values{"op": {"approve"}, "id": {"5"}}, 400, "", "Q-5 が見つかりません"}, // ほかのセッションのもの
+		{url.Values{"op": {"approve"}, "id": {"5"}}, 400, "", "Q-5 が見つかりません"},                                  // ほかのセッションのもの
 		{url.Values{"op": {"approve"}, "id": {"1"}}, 302, "/s/default/approvals?decided=Q-1&done=approve", ""}, // 依頼した agent に知らせ、依頼者が実行する
 		{url.Values{"op": {"approve"}, "id": {"x"}}, 400, "", "番号が不正です"},
 		{url.Values{"op": {"bogus"}, "id": {"3"}}, 404, "", ""},

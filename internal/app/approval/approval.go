@@ -167,4 +167,3 @@ func refused(err error) error {
 	}
 	return define.Errorf(define.CodeInternal, "%s", err.Error())
 }
-
