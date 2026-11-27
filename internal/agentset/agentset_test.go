@@ -71,7 +71,7 @@ func TestParse(t *testing.T) {
 		"[member a]\nmax = 0\n":                            "max は 1 以上の数か unlimited",
 		"[member a]\ncount = 0\n":                          "count は 1 以上",
 		"[member a]\nschedule = every 30m\n":               "schedule はまだ使えません",
-		"[adopt]\nw -> a\n":                                "[adopt]",
+		"[member a]\n[adopt]\nw -> Bad\n":                  "[adopt] の w の親",
 		"[member a]\nfoo = 1\n":                            "メンバーのキーは",
 		"foo = 1\n[member a]\n":                            "セットのキーは",
 		"[member a]\n[member a]\n":                         "2 回あります",
@@ -138,7 +138,11 @@ func (f *fakeAPI) Call(_ context.Context, by port.Principal, op string, in, out 
 			return &define.Error{Code: define.CodeUnavailable, Message: q.Name + " を起動できません"}
 		}
 		p := pane(q.Pane)
-		f.agents[q.Name] = agent.AgentInfo{Name: q.Name, State: "running", Live: true, Pane: p, Parent: q.Parent, Task: q.Task}
+		a := agent.AgentInfo{Name: q.Name, State: "running", Live: true, Pane: p, Parent: q.Parent, Task: q.Task}
+		if q.Parent != "" {
+			a.Parents = []string{q.Parent}
+		}
+		f.agents[q.Name] = a
 		set(agent.NewResult{Name: q.Name, Out: q.Name + " started", Pane: p})
 	case "agent.revive":
 		q := in.(agent.ReviveReq)
@@ -153,6 +157,22 @@ func (f *fakeAPI) Call(_ context.Context, by port.Principal, op string, in, out 
 		a.State, a.Live = "stopped", false
 		f.agents[q.Name] = a
 		set(agent.StopResult{Name: q.Name, Out: q.Name + " stopped"})
+	case "agent.parent.add", "agent.parent.rm":
+		q := in.(agent.ParentReq)
+		a, ok := f.agents[q.Name]
+		if !ok {
+			return &define.Error{Code: define.CodeNotFound, Message: "agent が台帳にいません: " + q.Name}
+		}
+		if op == "agent.parent.add" {
+			if !slices.Contains(a.Parents, q.Parent) {
+				a.Parents = append(a.Parents, q.Parent)
+				slices.Sort(a.Parents)
+			}
+		} else {
+			a.Parents = slices.DeleteFunc(a.Parents, func(p string) bool { return p == q.Parent })
+		}
+		f.agents[q.Name] = a
+		set(agent.ParentResult{Name: q.Name, Parents: a.Parents, Changed: true})
 	case "ticket.get":
 		t, ok := f.tasks[in.(ticket.GetReq).ID]
 		if !ok {
@@ -439,5 +459,82 @@ func TestJob(t *testing.T) {
 	}
 	if lines, err := Reap(ctx, f, by, d); err != nil || len(lines) != 0 {
 		t.Errorf("何も止めない: %v %+v", err, lines)
+	}
+}
+
+func TestAdoptParentExit(t *testing.T) {
+	if _, err := Parse("a", "[member l]\n[adopt]\na-x -> l\n"); err == nil || !strings.Contains(err.Error(), "メンバーの名前の形") {
+		t.Errorf("メンバーの名前の adopt: %v", err)
+	}
+	for body, want := range map[string]string{
+		"[member l]\n[adopt]\nw\n":                  "<agent> -> <親>",
+		"[member l]\n[adopt]\nw -> ~set\n":          "セットの parent",
+		"[member l]\n[adopt]\nw -> l\nw -> l\n":     "2 回",
+		"on_parent_exit = later\n[member l]\n":      "on_parent_exit",
+		"on_parent_exit = set-parent\n[member l]\n": "セットの parent",
+		"[member l]\n[bogus]\n":                     "[adopt]",
+	} {
+		if _, err := Parse("a", body); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: %v(want %q)", body, err, want)
+		}
+	}
+	d, err := Parse("a", "parent = top\non_parent_exit = grandparent\n[member l]\nparent = boss\n[member w]\nparent = l\n[adopt]\nold -> l\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ext := d.External(); !slices.Equal(ext, []string{"boss", "old"}) {
+		t.Errorf("external: %q", ext)
+	}
+	ctx, by := context.Background(), port.Principal{}
+	f := &fakeAPI{agents: map[string]agent.AgentInfo{
+		"top":  {Name: "top", State: "running", Live: true},
+		"boss": {Name: "boss", State: "running", Live: true, Parents: []string{"top"}},
+		"old":  {Name: "old", State: "running", Live: true},
+	}, max: -1}
+	lines, err := Up(ctx, f, by, d)
+	if err != nil || !slices.Equal(f.agents["old"].Parents, []string{"a-l"}) {
+		t.Fatalf("up adopt: %v %+v %+v", err, lines, f.agents["old"])
+	}
+	// もう一度 up しても親は足さない
+	f.calls = nil
+	if _, err := Up(ctx, f, by, d); err != nil || slices.ContainsFunc(ops(f), func(c string) bool { return strings.HasPrefix(c, "agent.parent") }) {
+		t.Errorf("up again: %v %q", err, ops(f))
+	}
+	rows, _ := Status(ctx, f, by, d)
+	if len(rows) != 3 || rows[2].Name != "old" || rows[2].Member != "~adopt" || rows[2].Parent != "a-l" || rows[2].Diff {
+		t.Errorf("status: %+v", rows)
+	}
+	// keep 以外: 親が全員止まったら、止まった親の親(top)を足す
+	boss := f.agents["boss"]
+	boss.Live, boss.State = false, "stopped"
+	f.agents["boss"] = boss
+	lines, err = Reap(ctx, f, by, d)
+	if err != nil || len(lines) != 1 || lines[0].Name != "a-l" || !slices.Equal(f.agents["a-l"].Parents, []string{"boss", "top"}) {
+		t.Fatalf("grandparent: %v %+v %+v", err, lines, f.agents["a-l"])
+	}
+	if lines, _ := Reap(ctx, f, by, d); len(lines) != 0 {
+		t.Errorf("2 回目は何もしない: %+v", lines)
+	}
+	// stop
+	d.OnParentExit = "stop"
+	l := f.agents["a-l"]
+	l.Live, l.State = false, "stopped"
+	f.agents["a-l"] = l
+	lines, _ = Reap(ctx, f, by, d)
+	if len(lines) != 2 || f.agents["a-w"].Live || f.agents["old"].Live {
+		t.Errorf("stop: %+v", lines)
+	}
+	// down は adopt の親を外し、adopt の agent は止めない
+	o := f.agents["old"]
+	o.Live, o.State = true, "running"
+	f.agents["old"] = o
+	f.calls = nil
+	if _, err := Down(ctx, f, by, d, false); err != nil || len(f.agents["old"].Parents) != 0 || !f.agents["old"].Live {
+		t.Errorf("down: %v %+v %q", err, f.agents["old"], ops(f))
+	}
+	// keep(既定)は何もしない
+	d.OnParentExit = ""
+	if lines, _ := d.parentExit(ctx, f, by, f.agents); lines != nil {
+		t.Errorf("keep: %+v", lines)
 	}
 }

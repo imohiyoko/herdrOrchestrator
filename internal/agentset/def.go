@@ -21,7 +21,18 @@ type Def struct {
 	Workspace string // workspace の label(空ならセットの名前)
 	Cwd       string // メンバーの既定の作業ディレクトリ(空なら tb の既定)
 	Parent    string // セットの上に付く既存の agent(メンバーの parent = ~set で使う)
-	Members   []Member
+	// OnParentExit は親が全員止まったメンバー・adopt の agent の扱い(tb agentset reap で行う):
+	// keep(既定。そのまま。tb agent shed の orphan に出る)/ grandparent(止まった親の親を足す。いなければセットの parent)/
+	// set-parent(セットの parent を足す)/ stop(止める)
+	OnParentExit string
+	Members      []Member
+	Adopt        []Adopt
+}
+
+// Adopt は [adopt] の 1 行(すでに動いている agent をセットの子にする。up で親を足し、down で外す。止めない)。
+type Adopt struct {
+	Agent  string
+	Parent string // メンバー名 / ~set / 既存の agent 名
 }
 
 // Member はセットのメンバー(同じ役割の agent を Count 体)。
@@ -57,7 +68,7 @@ var (
 )
 
 // まだ入れていない項目(設計案の段 4 以降)。書いてあれば断る(黙って無視しない)。
-var later = map[string]bool{"schedule": true, "on_parent_exit": true, "panes_per_workspace": true}
+var later = map[string]bool{"schedule": true, "panes_per_workspace": true}
 
 // Parse は定義の本文を読む。書式は「キー = 値」の行と、メンバーごとの段落 [member <名前>]。
 // # で始まる行と、空白のあとの「# 」から行末はコメント。
@@ -67,6 +78,7 @@ func Parse(name, body string) (Def, error) {
 		return d, fmt.Errorf("セットの名前は英小文字で始まり、英小文字・数字・_ の 16 字以内: %s", name)
 	}
 	var m *Member
+	adopt := false
 	countSet := map[string]bool{}
 	sc := bufio.NewScanner(strings.NewReader(body))
 	sc.Buffer(make([]byte, 64*1024), 1<<20)
@@ -81,12 +93,14 @@ func Parse(name, body string) (Def, error) {
 			if !ok || len(f) == 0 {
 				return d, fmt.Errorf("%d 行目: 段落の見出しは [member <名前>]: %s", ln, line)
 			}
-			if f[0] != "member" {
-				if f[0] == "adopt" {
-					return d, fmt.Errorf("%d 行目: [adopt](動いている agent をセットの子にする)はまだ使えません(親の足し・外しのあとに入れます)", ln)
-				}
-				return d, fmt.Errorf("%d 行目: 段落の見出しは [member <名前>]: %s", ln, line)
+			if len(f) == 1 && f[0] == "adopt" {
+				m, adopt = nil, true
+				continue
 			}
+			if f[0] != "member" {
+				return d, fmt.Errorf("%d 行目: 段落の見出しは [member <名前>] か [adopt]: %s", ln, line)
+			}
+			adopt = false
 			if len(f) != 2 || !reMember.MatchString(f[1]) {
 				return d, fmt.Errorf("%d 行目: メンバーの名前は英小文字で始まり、英小文字・数字・_ の 12 字以内: %s", ln, line)
 			}
@@ -97,6 +111,15 @@ func Parse(name, body string) (Def, error) {
 			}
 			d.Members = append(d.Members, Member{Name: f[1], Count: 1})
 			m = &d.Members[len(d.Members)-1]
+			continue
+		}
+		if adopt {
+			a, p, ok := strings.Cut(line, "->")
+			a, p = strings.TrimSpace(a), strings.TrimSpace(p)
+			if !ok || a == "" || p == "" {
+				return d, fmt.Errorf("%d 行目: [adopt] の行は「<agent> -> <親>」: %s", ln, line)
+			}
+			d.Adopt = append(d.Adopt, Adopt{Agent: a, Parent: p})
 			continue
 		}
 		k, v, ok := strings.Cut(line, "=")
@@ -115,8 +138,15 @@ func Parse(name, body string) (Def, error) {
 				d.Cwd = v
 			case "parent":
 				d.Parent = v
+			case "on_parent_exit":
+				switch v {
+				case "keep", "grandparent", "set-parent", "stop":
+				default:
+					return d, fmt.Errorf("%d 行目: on_parent_exit は keep / grandparent / set-parent / stop: %s", ln, v)
+				}
+				d.OnParentExit = v
 			default:
-				return d, fmt.Errorf("%d 行目: セットのキーは workspace / cwd / parent: %s", ln, k)
+				return d, fmt.Errorf("%d 行目: セットのキーは workspace / cwd / parent / on_parent_exit: %s", ln, k)
 			}
 			continue
 		}
@@ -225,6 +255,38 @@ func (d Def) check() error {
 			}
 		}
 	}
+	if d.OnParentExit == "set-parent" && d.Parent == "" {
+		return fmt.Errorf("on_parent_exit = set-parent には、セットの parent が要ります")
+	}
+	own := map[string]bool{}
+	for _, m := range d.Members {
+		own[m.Name] = true
+	}
+	seenAdopt := map[string]bool{}
+	for _, a := range d.Adopt {
+		if !agent.ValidName(a.Agent) {
+			return fmt.Errorf("[adopt] の agent の名前: %s", a.Agent)
+		}
+		if strings.HasPrefix(a.Agent, d.Name+"-") {
+			return fmt.Errorf("[adopt] の %s はセットのメンバーの名前の形(%s-…)です。メンバーは adopt しません", a.Agent, d.Name)
+		}
+		if seenAdopt[a.Agent] {
+			return fmt.Errorf("[adopt] に %s が 2 回あります", a.Agent)
+		}
+		seenAdopt[a.Agent] = true
+		switch p := a.Parent; {
+		case p == "~set":
+			if d.Parent == "" {
+				return fmt.Errorf("[adopt] の %s -> ~set には、セットの parent が要ります", a.Agent)
+			}
+		case own[p]:
+			if pm, _ := d.member(p); pm.Scalable() {
+				return fmt.Errorf("[adopt] の %s の親 %s は count = 1 で max の無いメンバーにしてください", a.Agent, p)
+			}
+		case !agent.ValidName(p) || p == a.Agent:
+			return fmt.Errorf("[adopt] の %s の親はメンバー名・~set・agent の名前のどれか: %s", a.Agent, p)
+		}
+	}
 	// 輪: メンバーの親をたどって、同じメンバーに戻らないこと
 	for _, m := range d.Members {
 		seen := map[string]bool{m.Name: true}
@@ -296,20 +358,23 @@ func (d Def) Plan() []Instance {
 }
 
 // ParentAgent はメンバーの親の agent の名前(~set はセットの parent、メンバー名はその agent。空なら親なし)。
-func (d Def) ParentAgent(m Member) string {
+func (d Def) ParentAgent(m Member) string { return d.parentName(m.Parent) }
+
+// parentName は定義の親の書き方(メンバー名 / ~set / agent 名)を agent の名前にする。
+func (d Def) parentName(p string) string {
 	switch {
-	case m.Parent == "~set":
+	case p == "~set":
 		return d.Parent
-	case m.Parent == "":
+	case p == "":
 		return ""
 	}
-	if pm, ok := d.member(m.Parent); ok {
+	if pm, ok := d.member(p); ok {
 		return pm.agentNames(d.Name)[0]
 	}
-	return m.Parent
+	return p
 }
 
-// External はセットの外の親(定義に書かれた既存の agent)。起動の前に台帳にいるか確かめる。
+// External はセットの外の agent(定義に書かれた親と、[adopt] の agent とその親)。起動の前に台帳にいるか確かめる。
 func (d Def) External() []string {
 	plan := d.Plan()
 	own := map[string]bool{}
@@ -321,6 +386,14 @@ func (d Def) External() []string {
 		if in.Parent != "" && !own[in.Parent] {
 			own[in.Parent] = true
 			out = append(out, in.Parent)
+		}
+	}
+	for _, a := range d.Adopt {
+		for _, n := range []string{a.Agent, d.parentName(a.Parent)} {
+			if !own[n] {
+				own[n] = true
+				out = append(out, n)
+			}
 		}
 	}
 	return out

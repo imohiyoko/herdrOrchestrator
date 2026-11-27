@@ -40,7 +40,7 @@ tb agentset down <セット> [--force]   メンバーを子から順に止める
 tb agentset status <セット> [--json]   メンバーごとの状態・pane・親
 tb agentset scale <セット> <メンバー> <N|+N|-N>   数を変えられるメンバーの動いている数を変える(同じ workspace に足す・手の空いたものから止める)
 tb agentset run <セット> <メンバー> --task T [--brief B]   job 型(mode = job)のメンバーをタスク T のために 1 体立てる(人だけ)
-tb agentset reap <セット>   job 型のメンバーのうち、タスクが終わった(done / cancelled)ものを止める
+tb agentset reap <セット>   タスクが終わった job を止め、親が全員止まったメンバーを on_parent_exit で片付ける
 `
 
 // appCaller は agentset.Caller(同じプロセスで API を呼ぶ)。
@@ -277,7 +277,7 @@ func cmdAgentsetStatus(args []string, w, stderr io.Writer) error {
 	}
 	for _, r := range rows {
 		diff := ""
-		if r.State == "running" && r.Parent != r.Want {
+		if r.Diff {
 			diff = "\t定義の親は " + dash(r.Want)
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s%s\n", r.Name, r.Member, r.State, dash(r.Pane), dash(r.Parent), diff)
@@ -342,7 +342,7 @@ func cmdAgentsetReap(args []string, w, stderr io.Writer) error {
 	defer db.Close()
 	lines, err := agentset.Reap(context.Background(), c, by, d)
 	if err == nil && len(lines) == 0 {
-		fmt.Fprintln(w, "止める job はありません")
+		fmt.Fprintln(w, "片付けるものはありません")
 	}
 	return agentsetLines(lines, err, w, stderr)
 }
