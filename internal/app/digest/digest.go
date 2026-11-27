@@ -35,6 +35,7 @@ type item struct {
 }
 
 type run struct {
+	env               *app.Env
 	db                *store.DB
 	st                tickets.StatusSet
 	items             []item
@@ -395,7 +396,7 @@ func Run(env *app.Env, db *store.DB, dry bool) (RunResult, error) {
 			_, _ = proposal.Deliver(db.DB, db.Session, p, io.Discard)
 		}
 	}
-	d := &run{db: db, st: st, itemMax: capv.Env("TB_DIGEST_ITEM_MAX", 160),
+	d := &run{env: env, db: db, st: st, itemMax: capv.Env("TB_DIGEST_ITEM_MAX", 160),
 		idleMin: atoi(idle), stuckMin: atoi(stuck), queuedSec: atoi(queued),
 		dt: message.TargetFor(db.DB, db.Session, "*")}
 	if err := d.collect(); err != nil {
@@ -431,8 +432,10 @@ func Run(env *app.Env, db *store.DB, dry bool) (RunResult, error) {
 			continue
 		}
 		res, err := db.Exec(`INSERT INTO main.digests (herdr_session, target, item_count, body, created_at) VALUES (?, ?, 0, '', ?)`, db.Session, t, nowTS())
-		if err != nil {
-			return out, define.Errorf(define.CodeInternal, "%s", err.Error())
+		if err != nil { // 送り済みの宛先の行は残す。この宛先の項目は次回に持ち越す
+			fmt.Fprintf(stderr, "tb: digest: %s へのまとめを記録できません: %v\n", t, err)
+			out.Code = max(out.Code, 1)
+			continue
 		}
 		didN, _ := res.LastInsertId()
 		did := strconv.FormatInt(didN, 10)

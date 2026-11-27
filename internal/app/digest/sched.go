@@ -336,8 +336,18 @@ func (d *run) collectSched() error {
 	if d.swCfg("enabled", "1") != "1" {
 		return nil
 	}
+	// 置き場所は Env.SchedDir / SchedShow / SchedLogs(Web UI は自分の見ている所を入れる)。空なら tb と同じ既定
 	e := jobs.DefaultEnv()
+	if d.env.SchedDir != "" {
+		e.Dir = d.env.SchedDir
+	}
+	if d.env.SchedShow != "" {
+		e.Show = d.env.SchedShow
+	}
 	logs := filepath.Join(e.Dir, "logs")
+	if d.env.SchedLogs != "" {
+		logs = d.env.SchedLogs
+	}
 	if !agent.IsDir(logs) || !jobs.IsRegular(e.Show) {
 		return nil
 	}
