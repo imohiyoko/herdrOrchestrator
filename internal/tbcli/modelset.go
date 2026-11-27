@@ -1,7 +1,6 @@
 package tbcli
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"regexp"
@@ -10,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/agents"
+	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
 	"github.com/imohiyoko/herdrorchestrator/internal/approval"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/herdr"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
@@ -17,130 +17,22 @@ import (
 )
 
 // モデルの切り替え(taskboard/lib/models.sh の cmd_model-set / model_set_precheck / model_set_run / do_model_set)。
-// 承認待ち(op=revive、args.model_set=1)の承認は、まだ bash の tb agent-approve が実行する。
+// 承認待ち(op=revive、args.model_set=1)の承認は API の agent.approve(--always だけは tb agent-approve)。
 
 const modelCacheNote = "注意: モデルを変えると、その会話のプロンプトキャッシュは使えなくなります(切り替えた直後の 1 回は、会話の全体を読み直す分の費用がかかります)"
 
 var reModelSel = regexp.MustCompile(`^[A-Za-z0-9*?._+-]{1,64}$`)
 
-func liveStatus(a herdr.Agent) string {
-	s, _ := a.AgentStatus.(string)
-	return s
-}
+// 実行の本体は app/agent(承認後の実行を API でもするため。ADR 0008)。ここは tbcli の名前の包み。
+func liveStatus(a herdr.Agent) string { return agent.LiveStatus(a) }
 
-// modelSetPrecheck は model_set_precheck: 承認の前に分かる結果。0 なら計画、3(skipped)か 12(not supported)なら理由。
 func modelSetPrecheck(db *store.DB, live []herdr.Agent, name, model string, reset bool) (int, string) {
-	reg := agentRegRow(db, name)
-	a, isLive := liveOf(live, name)
-	if !reg.ok && !isLive {
-		if msg, other := otherSession(db, name); other {
-			return 3, "skipped (" + msg + ")"
-		}
-		return 3, "skipped (台帳にありません)"
-	}
-	kind := reg.kind
-	if !reg.ok {
-		kind = kindDefault
-	}
-	old := reg.model
-	if reset {
-		if old == "" {
-			return 3, "skipped (台帳にモデルがありません)"
-		}
-		return 0, "reset (" + old + " -> 役割の既定 " + roleModelFor(db, name, "") + ")"
-	}
-	if kind != "claude" {
-		return 12, "not supported (kind=" + kind + " はモデルの切り替えに対応していません)"
-	}
-	if !modelRE.MatchString(model) {
-		return 12, "not supported (kind=" + kind + " のモデル名として使えません: " + model + ")"
-	}
-	if old == model {
-		return 3, "skipped (すでに " + model + ")"
-	}
-	if isLive {
-		if st := liveStatus(a); st != "idle" && st != "done" {
-			return 3, "skipped (" + or(st, "状態不明") + "。idle か done のときだけ切り替えます)"
-		}
-		return 0, "change (" + or(old, "既定") + " -> " + model + "、止めて同じ会話で再開)"
-	}
-	return 0, "change (" + or(old, "既定") + " -> " + model + "、停止中なので台帳だけ)"
+	return agent.ModelSetPrecheck(db, live, name, model, reset)
 }
 
-// doModelSet は do_model_set: 1 体を切り替える。0=changed 3=skipped 11=herdr の失敗 12=not supported
-func doModelSet(db *store.DB, name, model, by string, stderr io.Writer) opResult {
-	live, err := agents.SyncLive(db.DB, db.Session) // 承認後の実行でも、今の状態で判断する
-	if err != nil {
-		return opResult{code: 11, out: "herdr agent list に失敗しました"}
-	}
-	reg := agentRegRow(db, name)
-	a, isLive := liveOf(live, name)
-	if !reg.ok && !isLive {
-		if msg, other := otherSession(db, name); other {
-			return opResult{code: 3, out: msg}
-		}
-		return opResult{code: 3, out: name + " は台帳にありません"}
-	}
-	kind := reg.kind
-	if !reg.ok {
-		kind = kindDefault
-	}
-	if kind != "claude" {
-		return opResult{code: 12, out: "not supported (kind=" + kind + " はモデルの切り替えに対応していません)"}
-	}
-	if !modelRE.MatchString(model) {
-		return opResult{code: 12, out: "not supported (kind=" + kind + " のモデル名として使えません: " + model + ")"}
-	}
-	old := reg.model
-	if !isLive { // 止まっている: 台帳の値だけを変える(次の tb agent-revive から効く)
-		_, _ = db.Exec(`UPDATE main.agents SET model=?, updated_at=? WHERE herdr_session=? AND name=?`, model, nowTS(), db.Session, name)
-		return opResult{code: 0, out: "changed (" + or(old, "既定") + " -> " + model + "。停止中のため、次の tb agent-revive " + name + " から効きます)"}
-	}
-	if st := liveStatus(a); st != "idle" && st != "done" {
-		return opResult{code: 3, out: "skipped (" + or(st, "状態不明") + "。idle か done のときだけ切り替えます)"}
-	}
-	if old == model {
-		return opResult{code: 3, out: "skipped (すでに " + model + ")"}
-	}
-	pane, sess := a.PaneID, a.AgentSession.Value
-	if sess == "" {
-		sess = reg.sess
-	}
-	switch {
-	case pane == "":
-		return opResult{code: 3, out: "skipped (pane が分かりません)"}
-	case sess == "":
-		return opResult{code: 3, out: "skipped (session id が台帳にありません。同じ会話に戻れないので止めません)"}
-	case reg.cwd == "" || !isDir(reg.cwd):
-		return opResult{code: 3, out: "skipped (作業ディレクトリがありません: " + or(reg.cwd, "未記録") + "。同じ会話に戻れないので止めません)"}
-	}
-	if r := closePane(db, name, pane, sess); r != nil {
-		return *r
-	}
-	_, _ = agents.SyncLive(db.DB, db.Session)
-	if rev := doAgentRevive(db, name, false, model, "", by, stderr); rev.code != 0 {
-		return opResult{code: 11, out: name + " を停止しましたが、" + model + " での復活に失敗: " + rev.out + "。停止のままです。戻すなら: tb agent-revive " + name + " --model " + model}
-	}
-	return opResult{code: 0, out: "changed (" + or(old, "既定") + " -> " + model + "、同じ会話で再開)"}
-}
-
-// modelSetRun は model_set_run: 承認後にも使う実行の本体。
 func modelSetRun(db *store.DB, name, args, by string, stderr io.Writer) opResult {
-	var a struct {
-		Reset int    `json:"reset"`
-		Model string `json:"model"`
-	}
-	_ = json.Unmarshal([]byte(args), &a)
-	if a.Reset == 1 {
-		_, _ = db.Exec(`UPDATE main.agents SET model=NULL, updated_at=? WHERE herdr_session=? AND name=?`, nowTS(), db.Session, name)
-		d := roleModelFor(db, name, "")
-		use := "agent の CLI の既定"
-		if d != "" {
-			use = "役割の既定 " + d
-		}
-		return opResult{code: 0, out: "reset (台帳のモデルを消しました。次の起動・復活から " + use + " を使います)"}
-	}
-	return doModelSet(db, name, a.Model, by, stderr)
+	r := agent.ModelSetRun(db, name, args, by, stderr)
+	return opResult{code: r.Code, out: r.Out}
 }
 
 func cmdModelSet(args []string, w, stderr io.Writer) error {
