@@ -75,7 +75,7 @@ _cat_problems() {
   _need "role:change" active
   _need "alert:analyze" active
   _need "recipe:example:example" active
-  for op in read comment review approve merge api auth-token pr-list; do _need "gh:$op:example/repo" active; done
+  for op in read comment review approve merge api-get api-write api-graphql api-admin auth-token pr-list; do _need "gh:$op:example/repo" active; done
   for op in fetch pull ls-remote clone push push-force; do _need "git:$op:example/repo" active; done
   # tb gh / tb git の既定の表の行(gh:<…> / git:<…>。最後の gh:* を除く)は、それぞれ同じ名前の行(<操作>:*)がカタログにある
   local k

@@ -12,8 +12,8 @@ import (
 )
 
 // tb gh <gh の引数...>: 専用のコマンド(comment / review / pr merge)以外の gh のコマンドを、そのまま gh に渡す。
-// 操作名は gh:<コマンド>-<サブコマンド>(例: gh:issue-create、gh:run-list、gh:api)、対象は owner/repo。
-// 既定は perms/ops.tbl(読み取りは allow、ほかは ask、認証・秘密・設定・api は deny)。
+// 操作名は gh:<コマンド>-<サブコマンド>(例: gh:issue-create、gh:run-list。gh api は api.go の gh:api-<種類>)、対象は owner/repo。
+// 既定は perms/ops.tbl(読み取りは allow、ほかは ask、認証・秘密・設定は deny)。
 
 // repoless はリポジトリを対象にしないコマンド(対象は空。policy の対象 * の行だけが当たる)。
 var repoless = map[string]bool{"search": true, "status": true, "gist": true, "org": true, "project": true, "codespace": true,
@@ -107,17 +107,6 @@ func targetOf(args []string, n int) (repo, problem string) {
 	}
 	cmd := args[0]
 	switch {
-	case cmd == "api":
-		for _, a := range args[1:] {
-			if strings.HasPrefix(a, "-") {
-				continue
-			}
-			if m := reAPIRepo.FindStringSubmatch(a); m != nil && ValidRepo(m[1]) {
-				return m[1], ""
-			}
-			return "", "" // repos/<owner>/<repo>/... 以外のパス(user など)は、対象なし
-		}
-		return "", ""
 	case cmd == "repo":
 		// gh repo view|clone|fork|edit|delete|... [<owner>/<repo>]。create / list は owner だけのこともある
 		if len(args) > n && !strings.HasPrefix(args[n], "-") {
@@ -155,11 +144,23 @@ func (s *Svc) passthrough(args []string) error {
 			return usage("gh %s %s は %s を使ってください(approve と本文の扱いを分けているため)", args[0], args[1], to)
 		}
 	}
-	repo, problem := targetOf(args, n)
-	if problem != "" {
+	what := "tb gh " + strings.Join(args[:n], " ")
+	var repo, problem string
+	if args[0] == "api" {
+		var c apiCall
+		if c, problem = parseAPI(args); problem == "" {
+			if flag, _ := repoFlag(args); flag != "" {
+				problem = "gh api に -R は使えません(対象はパスの repos/<owner>/<repo>)"
+			}
+		}
+		if problem != "" {
+			return usage("gh api: %s", problem)
+		}
+		op, repo = apiOp(c), apiTarget(c)
+		what = "tb gh api " + c.method + " " + c.path
+	} else if repo, problem = targetOf(args, n); problem != "" {
 		return usage("gh %s: %s", strings.Join(args[:n], " "), problem)
 	}
-	what := "tb gh " + strings.Join(args[:n], " ")
 	if err := s.Authorize(op, repo, what); err != nil {
 		return err
 	}
