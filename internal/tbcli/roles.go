@@ -214,8 +214,8 @@ func roleWriteArgs(args []string) (name string, shared bool, err error) {
 	return name, shared, nil
 }
 
-// rolePrincipal は役割を書く呼び手(requester と同じく、pane の中なら herdr から引いた agent、外なら人)。
-func rolePrincipal() (port.Principal, error) {
+// requesterPrincipal は requester の呼び手(pane の中なら herdr から引いた agent、外なら人。役割・レシピの取り消し)。
+func requesterPrincipal() (port.Principal, error) {
 	by, err := requester()
 	if err != nil {
 		return port.Principal{}, err
@@ -228,7 +228,7 @@ func rolePrincipal() (port.Principal, error) {
 
 // rolePut は role_put: 役割の本文を書く(agent.role.write。人か、policy で role:change を許された agent)。
 func rolePut(db *store.DB, name, body, how string, shared bool, w, stderr io.Writer) error {
-	by, err := rolePrincipal()
+	by, err := requesterPrincipal()
 	if err != nil {
 		return err
 	}
@@ -297,7 +297,7 @@ func cmdRoleUnset(args []string, w, stderr io.Writer) error {
 	if err := requireHuman("tb role-unset"); err != nil {
 		return err
 	}
-	by, err := rolePrincipal()
+	by, err := requesterPrincipal()
 	if err != nil {
 		return err
 	}
@@ -345,7 +345,7 @@ func cmdRoleSet(args []string, w, stderr io.Writer) error {
 		return err
 	}
 	defer db.Close()
-	by, err := rolePrincipal()
+	by, err := requesterPrincipal()
 	if err != nil {
 		return err
 	}
