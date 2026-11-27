@@ -58,12 +58,11 @@ sql internal/tbcli/roles.go 8
 sql internal/tbcli/schedwatch.go 2
 sql internal/tbcli/slash.go 1
 sql internal/tbcli/tbcli.go 1
-sql internal/tbcli/ticket.go 6
+sql internal/tbcli/ticket.go 5
 sql internal/tbcli/ticketcomment.go 26
 sql internal/tbcli/ticketedit.go 29
 sql internal/tbcli/ticketread.go 20
-sql internal/tbcli/ticketrm.go 9
-sql internal/tbcli/ticketstate.go 10
+sql internal/tbcli/ticketstate.go 6
 sql internal/tbcli/ticketwrite.go 15
 sql internal/webui/agents.go 5
 sql internal/webui/approvals.go 10

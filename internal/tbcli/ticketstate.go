@@ -4,6 +4,7 @@ package tbcli
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -11,64 +12,31 @@ import (
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/jv"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 	"github.com/imohiyoko/herdrorchestrator/internal/notify"
+	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
 )
 
 // specialTicketGuard は special_ticket_guard: アラート・提案のチケットの状態は、それぞれのコマンドだけが変える。
-// rowQuerier は *sql.DB と *sql.Tx(トランザクションの中でも確かめられるように)。
-type rowQuerier interface {
-	QueryRow(query string, args ...any) *sql.Row
-}
-
-func specialTicketGuard(db rowQuerier, id, op string) error {
-	var w string
-	err := db.QueryRow(`SELECT 'A-'||alert_no FROM alert_details WHERE task_id=?1 UNION ALL SELECT 'P-'||proposal_no FROM proposal_details WHERE task_id=?1 LIMIT 1`, id).Scan(&w)
-	if err != nil {
-		return nil // 行が無い・表が無い(古い DB)
-	}
-	switch {
-	case strings.HasPrefix(w, "A-"):
-		return die("%s はアラート %s のチケットです。状態は tb alert-approve / alert-result / alert-close %s で変えます(閉じるのは人だけ。%s では変えません)", id, w, w, op)
-	case strings.HasPrefix(w, "P-"):
-		return die("%s は提案 %s のチケットです。状態は tb proposal resolve %s で変えます(%s では変えません)", id, w, w, op)
-	}
-	return nil
+func specialTicketGuard(db tickets.RowQuerier, id, op string) error {
+	return ticketErr(tickets.SpecialGuard(db, id, op))
 }
 
 // taskStatus は require_task のあとの .status。
 func taskStatus(db *store.DB, id string) (string, error) {
-	var st string
-	err := db.QueryRow(`SELECT status FROM tasks WHERE id=?`, id).Scan(&st)
-	if err == sql.ErrNoRows {
-		return "", die("タスクが見つかりません: %s", id)
+	st, err := tickets.StatusOf(db.DB, id)
+	return st, ticketErr(err)
+}
+
+// ticketErr は tickets の断り(Refused)を tb の die にする。
+func ticketErr(err error) error {
+	var r *tickets.Refused
+	if errors.As(err, &r) {
+		return die("%s", r.Msg)
 	}
-	return st, err
+	return err
 }
 
 // taskDoneHook は notify_hook notify_hook_task_done: 完了の通知を積む(失敗しても止めない)。
-func taskDoneHook(db *store.DB, id string) {
-	var summary sql.NullString
-	var dels string
-	if db.QueryRow(`SELECT summary, deliverables FROM tasks WHERE id=?`, id).Scan(&summary, &dels) != nil {
-		return
-	}
-	vs, err := jv.DecodeAll([]byte(dels))
-	if err != nil || len(vs) != 1 {
-		return
-	}
-	arr, ok := vs[0].([]any)
-	if !ok {
-		return
-	}
-	parts := make([]string, len(arr))
-	for i, v := range arr {
-		s, ok := v.(string)
-		if !ok {
-			return // jq の join は文字列以外で失敗する
-		}
-		parts[i] = s
-	}
-	notify.New(db.DB, db.Session).Emit(notify.Event{Type: "done", Ref: id, A: id, B: summary.String, C: strings.Join(parts, ", ")})
-}
+func taskDoneHook(db *store.DB, id string) { notify.TaskDone(db.DB, db.Session, id) }
 
 // cmdClaim は tb claim <id> --owner <name> [--session <sid>] [--account <acct>]。
 func cmdClaim(args []string, w, stderr io.Writer) error {

@@ -43,6 +43,18 @@ func Cmd(op, what string) Gate {
 	}
 }
 
+// Entry は commands.tbl の場所が entry の行(cmd:<サービス>:<動詞>)の門。Authorizer は ask を通すだけなので、
+// ask(承認待ちに積む)と deny の文言・記録はここで tb の入口と同じにする。
+// tb の入口はコマンドを読む前に同じ行を判定している(perms.Gate)ので、Env.EntryChecked のときは二重に判定・記録しない。
+func Entry(op, what string) Gate {
+	return func(_ context.Context, env *Env, who string, _ any) Decision {
+		if env != nil && env.EntryChecked {
+			return Decision{}
+		}
+		return enforce(env, who, op, "", what)
+	}
+}
+
 // enforce は主体 who の op を policy で判定し、perms.EnforceAs の結果を Decision にする。
 func enforce(env *Env, who, op, target, what string) Decision {
 	tier, rule, err := judge(env, who, op, target)

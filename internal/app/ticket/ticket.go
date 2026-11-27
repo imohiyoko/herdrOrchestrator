@@ -46,7 +46,7 @@ func Ops(env *app.Env) []app.Op {
 		define.Expose(define.Internal, define.REST),
 		define.HTTP("POST /v1/comments/{id}/resolve"),
 	)
-	return []app.Op{resolve, getOp(env), countOp(env)}
+	return []app.Op{resolve, getOp(env), countOp(env), moveOp(env), rmOp(env)}
 }
 
 func resolveComment(env *app.Env, in ResolveReq) (ResolveResult, error) {

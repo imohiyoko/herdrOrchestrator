@@ -14,6 +14,7 @@ import (
 	"database/sql"
 	"io"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
@@ -32,6 +33,24 @@ type Env struct {
 	PendingQ func(db *sql.DB, source string, sourceID int64) string
 	// Deliver は、今書いた報告(comments の id)を宛先(指揮官など)に届ける(tb の入口が入れる。best effort)。nil なら届けない。
 	Deliver func(db *store.DB, commentID int64)
+	// EventActor は、チケットの履歴(task_events)に残す「変えた者」を主体 who から決める。
+	// 空を返すと、入口が作った履歴のトリガーをそのまま使う(tb の入口: pane から引いた名前か pane:<id>)。
+	// nil なら主体から決める(agent は名前、それ以外は human。tb の event_actor_default と同じ)。
+	EventActor func(who string) string
+	// EntryChecked は、入口がコマンドの入口の段(commands.tbl の entry の行)を判定済み(tb の入口。perms.Gate)。
+	// true なら Entry の門は判定も記録もしない。
+	EntryChecked bool
+}
+
+// EventActorOf は主体 who の履歴の「変えた者」(Env.EventActor があればそれ)。空なら入口のトリガーをそのまま使う。
+func (e *Env) EventActorOf(who string) string {
+	if e != nil && e.EventActor != nil {
+		return e.EventActor(who)
+	}
+	if who == "" || who == humanID || strings.HasPrefix(who, sysPrefix) {
+		return humanID
+	}
+	return who
 }
 
 // Warner は Env.Warn(無ければ捨てる)。
