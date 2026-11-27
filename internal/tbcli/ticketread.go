@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/activity"
-	"github.com/imohiyoko/herdrorchestrator/internal/kernel/config"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/jv"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
@@ -266,29 +265,7 @@ func cmdTree(args []string, w, stderr io.Writer) error {
 }
 
 // definedLabels は defined_labels: 設定 labels の「ラベル, 説明」(書いた順)。設定が無ければ ok=false。
-func definedLabels(db *store.DB) ([][2]string, bool) {
-	body, _, ok := config.Lookup(db.DB, db.Session, "labels")
-	if !ok {
-		return nil, false
-	}
-	var out [][2]string
-	for _, line := range strings.Split(body, "\n") {
-		if i := strings.IndexByte(line, '#'); i >= 0 {
-			line = line[:i]
-		}
-		line = config.Trim(line)
-		if line == "" {
-			continue
-		}
-		k, v, has := strings.Cut(line, "=")
-		k = config.Trim(k)
-		if has {
-			v = config.Trim(v)
-		}
-		out = append(out, [2]string{k, v})
-	}
-	return out, true
-}
+func definedLabels(db *store.DB) ([][2]string, bool) { return tickets.DefinedLabels(db) }
 
 // cmdLabels は tb labels [-p project] [--defined] [--json]。
 func cmdLabels(args []string, w, stderr io.Writer) error {

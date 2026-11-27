@@ -292,7 +292,8 @@ ADR 0004 の依存の検査に次を足す。今ある違反は許容リスト�
 - Web UI の「状態を変える」(/task-status)と「チケットを消す」(/task-rm)は `runTB` をやめ、同じ操作を同じプロセスで人として呼ぶ(`callEdit`)。断ったときは「断りました: <理由>」と出す。
 - 状態を動かす `ticket.claim` / `ticket.done` / `ticket.block` / `ticket.cancel`(`POST /v1/tickets/{id}/<動詞>`、`tb claim` / `done` / `block` / `cancel`)。中身は `internal/tickets/state.go`。
 - リンク `ticket.link` / `ticket.unlink` とスプリント `ticket.sprint.add` / `start` / `close`(中身は `internal/tickets/link.go`)。Web UI のボードのスプリントの操作も同じプロセスで呼ぶ。リンクの作った者(`created_by`)は `Env.ActorName`(tb は今の actor_name)。
-- まだ残るもの: add / update / comment と、Web UI の状態の定義(edits.go の `runTB`)、tasks.go の読み込み。
+- 作る・変える `ticket.add`(`POST /v1/tickets`)と `ticket.update`(`PATCH /v1/tickets/{id}`)。中身(ラベル・外部リンク・親子の規則・採番)は `internal/tickets/edit.go`。update の入力は tb の引数の順の変更の並び(`tickets.Change`)で、検査の順と文言も tb と同じ。
+- まだ残るもの: comment と、Web UI の状態の定義(edits.go の `runTB`)、tasks.go の読み込み。
 
 ## 検討した代替案
 

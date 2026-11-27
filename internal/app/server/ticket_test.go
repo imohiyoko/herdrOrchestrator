@@ -12,6 +12,7 @@ import (
 	"github.com/imohiyoko/herdrorchestrator/internal/app"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/ticket"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/perms"
+	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
 )
 
 // ticketFixture は fixture に、チケット T-p-001(in_progress)・T-p-002(親)・T-p-003(T-p-002 の子)を足したもの。
@@ -231,5 +232,32 @@ func TestTicketLinkSprint(t *testing.T) {
 	}
 	if _, e := callOp[ticket.SprintResult](t, env, app.Human(), "ticket.sprint.close", ticket.SprintReq{ID: "S-x"}); e == nil || e.Code != define.CodeInvalidArgument {
 		t.Errorf("不正な ID: %v", e)
+	}
+}
+
+func TestTicketAddUpdate(t *testing.T) {
+	env := ticketFixture(t, "")
+	res, e := callOp[ticket.AddResult](t, env, app.Agent("w1"), "ticket.add", ticket.AddReq{Project: "p", Title: "新しい", Labels: []string{"b,a"}, Parent: "T-p-002"})
+	if e != nil || res.ID != "T-p-004" {
+		t.Fatalf("add: %+v %v", res, e)
+	}
+	if got := q1(t, env, `SELECT type||' '||priority||' '||labels||' '||parent_id FROM tasks WHERE id='T-p-004'`); got != `task medium ["a","b"] T-p-002` {
+		t.Errorf("add の中身: %q", got)
+	}
+	if _, e := callOp[ticket.AddResult](t, env, app.Human(), "ticket.add", ticket.AddReq{Project: "p", Title: "x", Type: "subtask"}); e == nil || e.Code != define.CodeInvalidArgument || !strings.Contains(e.Message, "--parent") {
+		t.Errorf("subtask に親が要る: %v", e)
+	}
+	up := ticket.UpdateReq{ID: "T-p-004", Changes: []tickets.Change{{Field: "status", Value: "done"}, {Field: "add-label", Value: "c"}, {Field: "priority", Value: "high"}}}
+	if _, e := callOp[ticket.UpdateResult](t, env, app.Human(), "ticket.update", up); e != nil {
+		t.Fatalf("update: %v", e)
+	}
+	if got := q1(t, env, `SELECT status||' '||priority||' '||labels FROM tasks WHERE id='T-p-004'`); got != `done high ["a","b","c"]` {
+		t.Errorf("update の中身: %q", got)
+	}
+	if _, e := callOp[ticket.UpdateResult](t, env, app.Human(), "ticket.update", ticket.UpdateReq{ID: "T-p-002", Changes: []tickets.Change{{Field: "parent", Value: "T-p-004"}}}); e == nil || !strings.Contains(e.Message, "循環") {
+		t.Errorf("親子の循環: %v", e)
+	}
+	if _, e := callOp[ticket.UpdateResult](t, env, app.Human(), "ticket.update", ticket.UpdateReq{ID: "T-p-002"}); e == nil || e.Code != define.CodeInvalidArgument {
+		t.Errorf("変更なし: %v", e)
 	}
 }
