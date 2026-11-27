@@ -43,6 +43,19 @@ type Env struct {
 	// ActorName は、記録に残す「した者」の名前(リンクの created_by など)を主体 who から決める。
 	// nil なら主体から(agent は名前、それ以外は human)。tb の入口は pane から引いた名前(actor_name)を入れる。
 	ActorName func(who string) string
+	// Reporter は報告コメントの報告した者(名前・pane・セッション)を主体 who から決める。
+	// nil なら主体から(agent は名前、それ以外は human。pane とセッションは空)。tb の入口は herdr から引いたもの(resolve_label)を入れる。
+	Reporter func(who string) (name, pane, session string)
+	// ImmediateKinds は書いたらすぐ届ける報告コメントの種類(空白区切り)。空なら "question blocked"(tb の TB_IMMEDIATE_KINDS)。
+	ImmediateKinds string
+}
+
+// ReporterOf は主体 who の報告した者(Env.Reporter があればそれ)。
+func (e *Env) ReporterOf(who string) (name, pane, session string) {
+	if e != nil && e.Reporter != nil {
+		return e.Reporter(who)
+	}
+	return e.ActorOf(who), "", ""
 }
 
 // ActorOf は主体 who の「した者」の名前(Env.ActorName があればそれ)。

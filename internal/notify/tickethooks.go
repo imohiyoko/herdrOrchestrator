@@ -5,9 +5,8 @@ package notify
 
 import (
 	"database/sql"
-	"strings"
+	"strconv"
 
-	"github.com/imohiyoko/herdrorchestrator/internal/kernel/jv"
 	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
 )
 
@@ -18,23 +17,30 @@ func TaskDone(db *sql.DB, session, id string) {
 	if db.QueryRow(`SELECT summary, deliverables FROM tasks WHERE id=?`, id).Scan(&summary, &dels) != nil {
 		return
 	}
-	vs, err := jv.DecodeAll([]byte(dels))
-	if err != nil || len(vs) != 1 {
-		return
-	}
-	arr, ok := vs[0].([]any)
+	d, ok := tickets.JoinDeliverables(dels)
 	if !ok {
 		return
 	}
-	parts := make([]string, len(arr))
-	for i, v := range arr {
-		s, ok := v.(string)
+	New(db, session).Emit(Event{Type: "done", Ref: id, A: id, B: summary.String, C: d})
+}
+
+// Comment は notify_hook_comment: 報告コメント cid の外への通知を積む(失敗しても止めない)。
+func Comment(db *sql.DB, session string, cid int64) {
+	var tid, kind, text, name, dels string
+	if db.QueryRow(`SELECT task_id, kind, text, from_name, deliverables FROM comments WHERE id=?`, cid).Scan(&tid, &kind, &text, &name, &dels) != nil {
+		return
+	}
+	q := New(db, session)
+	switch kind {
+	case "question", "blocked":
+		q.Emit(Event{Type: kind, Ref: "C-" + strconv.FormatInt(cid, 10), A: tid, B: name, C: text})
+	case "done":
+		d, ok := tickets.JoinDeliverables(dels)
 		if !ok {
 			return
 		}
-		parts[i] = s
+		q.Emit(Event{Type: "done", Ref: tid, A: tid, B: text, C: d})
 	}
-	New(db, session).Emit(Event{Type: "done", Ref: id, A: id, B: summary.String, C: strings.Join(parts, ", ")})
 }
 
 // TicketRules は通知の規則を流す(失敗しても止めない)。

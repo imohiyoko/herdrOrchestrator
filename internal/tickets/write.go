@@ -4,12 +4,14 @@ package tickets
 // 履歴(task_events)のトリガーは呼ぶ側が先に作っておく(SetupEvents)。
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"slices"
 	"strings"
 
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/config"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/jv"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 )
@@ -226,4 +228,110 @@ func childIDs(tx *sql.Tx, session, id string) ([]string, error) {
 		out = append(out, k)
 	}
 	return out, rows.Err()
+}
+
+// JoinDeliverables は jq の '.deliverables | fromjson | join(", ")'(読めなければ ok=false)。
+func JoinDeliverables(s string) (string, bool) {
+	vs, err := jv.DecodeAll([]byte(s))
+	if err != nil || len(vs) != 1 {
+		return "", false
+	}
+	arr, ok := vs[0].([]any)
+	if !ok {
+		return "", false
+	}
+	parts := make([]string, len(arr))
+	for i, v := range arr {
+		s, ok := v.(string)
+		if !ok {
+			return "", false
+		}
+		parts[i] = s
+	}
+	return strings.Join(parts, ", "), true
+}
+
+
+// CommentKinds は報告コメントの種類。
+var CommentKinds = []string{"done", "progress", "question", "blocked"}
+
+// Reporter は報告した者(herdr から引いた名前・pane・セッション)。
+type Reporter struct{ Name, Pane, Session string }
+
+// CommentSpec は報告コメント(Deliverables は tb の --deliverables と同じカンマ区切り)。
+type CommentSpec struct {
+	TaskID, Kind, Text, Deliverables string
+}
+
+// CheckComment は tb comment の入力の検査(タスクがあるかまで)。成果物の並びを返す。
+func CheckComment(db *store.DB, sp CommentSpec) ([]string, error) {
+	if err := NeedID(sp.TaskID); err != nil {
+		return nil, err
+	}
+	if !slices.Contains(CommentKinds, sp.Kind) {
+		return nil, invalid("comment: --kind は %s のどれか", strings.Join(CommentKinds, " "))
+	}
+	if strings.TrimFunc(sp.Text, config.IsSpace) == "" {
+		return nil, invalid("comment: --text が必要です")
+	}
+	darr := []string{}
+	if sp.Deliverables != "" {
+		for _, d := range strings.Split(sp.Deliverables, ",") {
+			if d = config.Trim(d); d != "" {
+				darr = append(darr, d)
+			}
+		}
+	}
+	if sp.Kind == "done" && len(darr) == 0 {
+		return nil, invalid("comment: done は --deliverables(成果物)が必須です")
+	}
+	return darr, requireTask(db, sp.TaskID)
+}
+
+// AddComment は報告コメントを書き、番号を返す(入力は CheckComment で確かめてある)。
+func AddComment(db *store.DB, sp CommentSpec, dels []string, by Reporter, now string) (int64, error) {
+	r, err := db.Exec(`INSERT INTO main.comments (herdr_session, task_id, kind, text, deliverables, from_name, from_pane, from_session, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, db.Session, sp.TaskID, sp.Kind, sp.Text, StrArray(dels), by.Name, by.Pane, by.Session, now)
+	if err != nil {
+		return 0, err
+	}
+	return r.LastInsertId()
+}
+
+// ReopenComment は報告 C-<ref>(チケット tid)の対応済みを外し、外したことを履歴の comment_reopened に残す(actor は戻した者)。
+// 読んでから書くまでの間に resolve し直されても、実際に外した時刻を old に残す(外すものが無ければ履歴は作らない)。
+func ReopenComment(db *store.DB, ref, tid, note, actor, now string) error {
+	var hasEv int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM main.sqlite_master WHERE type='table' AND name='task_events'`).Scan(&hasEv)
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return err
+	}
+	commit := false
+	defer func() {
+		if !commit {
+			_, _ = conn.ExecContext(ctx, "ROLLBACK")
+		}
+	}()
+	var at sql.NullString
+	_ = conn.QueryRowContext(ctx, `SELECT resolved_at FROM comments WHERE id=?`, ref).Scan(&at)
+	if _, err := conn.ExecContext(ctx, `UPDATE main.comments SET resolved_at=NULL, resolved_note=NULL WHERE herdr_session=? AND id=? AND resolved_at IS NOT NULL`, db.Session, ref); err != nil {
+		return err
+	}
+	if hasEv > 0 {
+		if _, err := conn.ExecContext(ctx, `INSERT INTO main.task_events (herdr_session, task_id, kind, old, new, actor, ref, created_at)
+			SELECT ?, ?, 'comment_reopened', ?, NULLIF(?,''), ?, ?, ? WHERE changes() > 0`, db.Session, tid, at.String, note, actor, "C-"+ref, now); err != nil {
+			return err
+		}
+	}
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return err
+	}
+	commit = true
+	return nil
 }
