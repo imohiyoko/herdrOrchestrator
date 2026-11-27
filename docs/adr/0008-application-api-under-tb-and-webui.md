@@ -303,6 +303,7 @@ ADR 0004 の依存の検査に次を足す。今ある違反は許容リスト�
 - 送信 `message.send`(`POST /v1/messages`)と `message.flush`(`internal/app/message`)。中身(入力の確かめ・受け付けの判定・outbox への書き込み・配送・届けたあとの読み直し)は `internal/message`(send.go)。送信者は `Env.Reporter`(tb は herdr から引いたもの。決められなければ理由 `no_sender`、tb は 3)。
 - まだ残るもの: report / pending / comments の読み取りと、tasks.go の読み込み。outbox / inbox の一覧と inbox の既読。
 - アラート `alert.raise` / `alert.dispatch` / `alert.approve` / `alert.result` / `alert.close`(`internal/app/alert`。`POST /v1/alerts`、`/v1/alerts/{id}/<動詞>`、`tb alert` / `alert-dispatch` / `alert-approve` / `alert-result` / `alert-close`)。指紋での重複の数え上げ・解析役の起動(承認・上限・`max_running_agents`)・結果の受け取りと指揮官への配送・解析役に止めてよい印を付けるのは API の中。報告者は `Env.Reporter`(tb は pane の中だけ herdr から引く)。承認と閉じるのは人だけで、API の中でも断る。報告ファイルを読むのと一覧(`tb alerts`)は tb に残した。
+- 役割 `agent.role.write` / `agent.role.unset` / `agent.role.set`(`internal/app/agent` の role.go。`PUT` / `DELETE /v1/roles/{name}`、`PUT /v1/agents/{name}/role`、`tb role-write` / `role-edit` / `role-unset` / `role-set`)。自分の持つ役割と role:change を許す役割は人だけが扱う確かめ、policy の role:change の判定(ask は理由 `approval_required` で tb は 20)、台帳のロールの書き換えと記録は API の中。役割の配布(`role-broadcast` / `role-context`)と一覧は tb に残した。
 
 ## 検討した代替案
 
