@@ -33,8 +33,8 @@ type ReportResult struct {
 func reportOp(env *app.Env) app.Op {
 	return app.Command(env, "ticket.report", app.Entry("cmd:message:report", "tb report"),
 		func(_ context.Context, in ReportReq) (ReportResult, error) { return report(env, in) },
-		define.Doc("完了の報告を指揮役へ届ける(tb report。C-<n> なら未配送の報告の再送)"),
-		define.Authz("cmd:message:report", define.Resource("ticket", "ref")),
+		define.Doc("完了の報告を指揮役へ届ける(tb report。C-<n> なら未配送の報告の再送)。届けられなかったときは成功の応答で code に 10(宛先が使用中)か 11(送信の失敗)が入る"),
+		define.Authz("cmd:message:report"),
 		define.Expose(define.Internal, define.REST),
 		define.HTTP("POST /v1/tickets/{ref}/report"),
 	)

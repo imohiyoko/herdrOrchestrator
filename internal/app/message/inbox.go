@@ -2,6 +2,7 @@ package message
 
 import (
 	"context"
+	"database/sql"
 	"strconv"
 	"strings"
 
@@ -44,15 +45,17 @@ func readOp(env *app.Env) app.Op {
 			}
 			defer done()
 			var one int
-			if db.QueryRow(`SELECT 1 FROM inbox WHERE id=? AND recipient=?`, iid, who).Scan(&one) != nil {
+			if err := db.QueryRow(`SELECT 1 FROM inbox WHERE id=? AND recipient=?`, iid, who).Scan(&one); err == sql.ErrNoRows {
 				return ReadResult{}, define.Errorf(define.CodeNotFound, "inbox に見つかりません: I-%s", num)
+			} else if err != nil {
+				return ReadResult{}, define.Errorf(define.CodeInternal, "%s", err.Error())
 			}
 			res, err := db.Exec(`UPDATE main.inbox SET read_at=? WHERE herdr_session=? AND id=? AND recipient=? AND read_at IS NULL`, env.NowString(), db.Session, iid, who)
 			if err != nil {
 				return ReadResult{}, define.Errorf(define.CodeInternal, "%s", err.Error())
 			}
 			n, _ := res.RowsAffected()
-			return ReadResult{ID: "I-" + num, Marked: n == 1}, nil
+			return ReadResult{ID: "I-" + strconv.FormatInt(iid, 10), Marked: n == 1}, nil
 		},
 		define.Doc("受信に読んだ印を付ける(tb inbox-read。宛先の agent 自身だけ)"),
 		define.Authz("cmd:message:read", define.Resource("inbox", "id")),
