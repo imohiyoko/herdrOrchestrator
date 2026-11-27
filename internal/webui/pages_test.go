@@ -1,6 +1,7 @@
 package webui
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -575,19 +576,12 @@ func TestPagesHTTP(t *testing.T) {
 	}
 }
 
+// 報告を対応済みにする(POST /resolve)。書き込みはアプリケーション API の ticket.resolve を同じプロセスで呼ぶ(ADR 0008)。
+// 主体はログインした人(pane があっても見ない。herdr にも聞かない)。
 func TestResolvePost(t *testing.T) {
 	pagesFixture(t)
-	dir := t.TempDir()
-	log := filepath.Join(dir, "args")
-	hc := filepath.Join(dir, "herdrctl")
-	os.WriteFile(hc, []byte(`#!/bin/sh
-[ "$1 $2" = "tb --features" ] && { echo "policy-ops auth"; exit 0; }
-echo "$* | db=$TB_DB pane=${HERDR_PANE_ID-unset}" >>"`+log+`"
-case "$3" in C-2) echo "C-2 はすでに対応済みです";; C-3) echo "tb: だめ" >&2; exit 1;; esac
-exit 0
-`), 0o755)
-	t.Setenv("TB_HERDRCTL", hc)
 	t.Setenv("HERDR_PANE_ID", "%9")
+	t.Setenv("HERDR_BIN", "/nonexistent/herdr") // herdr に聞いたら失敗する
 	ts, srv := testServer(t)
 	srv.Auth.Setup("alice", "correcthorse12")
 	ck, _ := srv.Auth.CreateSession()
@@ -603,20 +597,29 @@ exit 0
 		loc  string
 	}{
 		{url.Values{"id": {"1"}, "back": {"/inbox"}, "note": {"  メモ  "}}, 302, "/s/default/inbox?resolved=done"},
-		{url.Values{"id": {"2"}, "back": {"/tasks/T-p-1"}}, 302, "/s/default/tasks/T-p-1?resolved=already"},
-		{url.Values{"id": {"3"}, "back": {"https://evil/"}}, 302, "/s/default/inbox?resolved=error"},
+		{url.Values{"id": {"1"}, "back": {"/tasks/T-p-1"}}, 302, "/s/default/tasks/T-p-1?resolved=already"},
+		{url.Values{"id": {"6"}}, 302, "/s/default/inbox?resolved=already"},
+		{url.Values{"id": {"8"}, "back": {"https://evil/"}}, 302, "/s/default/inbox?resolved=error"}, // progress は対応済みにできない
+		{url.Values{"id": {"5"}}, 302, "/s/default/inbox?resolved=error"},                            // ほかのセッションの報告
+		{url.Values{"id": {"999"}}, 302, "/s/default/inbox?resolved=error"},
 		{url.Values{"id": {"x"}}, 400, ""},
 	} {
 		if r := post(c.form); r.code != c.code || r.loc != c.loc {
 			t.Errorf("%v: %d %s", c.form, r.code, r.loc)
 		}
 	}
-	got, _ := os.ReadFile(log)
-	want := "tb resolve C-1 -m メモ | db=" + os.Getenv("WEBUI_TB_DB") + " pane=unset\n" +
-		"tb resolve C-2 | db=" + os.Getenv("WEBUI_TB_DB") + " pane=unset\n" +
-		"tb resolve C-3 | db=" + os.Getenv("WEBUI_TB_DB") + " pane=unset\n"
-	if string(got) != want {
-		t.Errorf("tb に渡したもの:\n%s\nwant:\n%s", got, want)
+	db, err := sql.Open("sqlite", os.Getenv("WEBUI_TB_DB"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var note sql.NullString
+	var n int
+	if err := db.QueryRow(`SELECT resolved_note FROM comments WHERE id=1 AND resolved_at IS NOT NULL`).Scan(&note); err != nil || note.String != "メモ" {
+		t.Errorf("C-1 の記録: %v %q", err, note.String)
+	}
+	if db.QueryRow(`SELECT COUNT(*) FROM comments WHERE id IN (5, 8) AND resolved_at IS NOT NULL`).Scan(&n); n != 0 {
+		t.Errorf("対応済みにしてはいけない報告が %d 件", n)
 	}
 	if r := do(t, ts, "POST", "/s/default/resolve", "", url.Values{"csrf": {tok}, "id": {"1"}}); r.code != 302 || r.loc != "/s/default/login" {
 		t.Errorf("未ログイン: %d %s", r.code, r.loc)

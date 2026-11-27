@@ -4,6 +4,8 @@ package tbcli
 // tasks.sh の report / pending)。
 
 import (
+	"github.com/imohiyoko/herdrorchestrator/internal/app/ticket"
+
 	"context"
 	"database/sql"
 	"fmt"
@@ -351,6 +353,7 @@ func commentRefArgs(name, what string, args []string) (ref, note string, err err
 }
 
 // cmdResolve は tb resolve C-<n> [-m メモ]: 人が question / blocked の報告を対応済みにする。
+// 中身はアプリケーション API の ticket.resolve(ADR 0008)。ここは引数を読み、呼び出し元を主体にして呼び、結果を今の文言にする。
 func cmdResolve(args []string, w, stderr io.Writer) error {
 	db, _, err := openWrite(stderr)
 	if err != nil {
@@ -361,27 +364,16 @@ func cmdResolve(args []string, w, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := requireHuman("tb resolve"); err != nil {
+	var res ticket.ResolveResult
+	if err := callApp(db, "tb resolve", "ticket.resolve", ticket.ResolveReq{ID: ref, Note: note}, &res); err != nil {
 		return err
 	}
-	var kind string
-	var at sql.NullString
-	err = db.QueryRow(`SELECT kind, resolved_at FROM comments WHERE id=`+ref).Scan(&kind, &at)
-	if err == sql.ErrNoRows {
-		return die("報告が見つかりません: C-%s", ref)
+	if res.Pending != nil {
+		return &exit{20, res.Pending.Message}
 	}
-	if err != nil {
-		return err
-	}
-	if kind != "question" && kind != "blocked" {
-		return die("対応済みにできるのは question / blocked だけです(C-%s は %s)", ref, kind)
-	}
-	if at.String != "" {
-		fmt.Fprintf(w, "C-%s はすでに対応済みです(%s)\n", ref, at.String)
+	if res.Already {
+		fmt.Fprintf(w, "C-%s はすでに対応済みです(%s)\n", ref, res.ResolvedAt)
 		return nil
-	}
-	if _, err := db.Exec(`UPDATE main.comments SET resolved_at=?, resolved_note=NULLIF(?,'') WHERE herdr_session=? AND id=`+ref+` AND resolved_at IS NULL`, now(), note, db.Session); err != nil {
-		return err
 	}
 	fmt.Fprintf(w, "C-%s resolved\n", ref)
 	return nil

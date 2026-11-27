@@ -29,6 +29,8 @@ pm_labels=$( (grep -rhoE --include='*.go' --exclude='*_test.go' '[rR]equireHuman
   | sed -E 's/^[^"]*"tb //; s/" *\+ *[A-Za-z_.]+$/*/; s/"$//'
   # 文面を引数で渡すもの(setSpawnFrozen(..., "tb " + cmd))
   grep -rhoE --include='*.go' 'setSpawnFrozen\(args, w, stderr, "[01]", "[^"]+"' "$PM_ROOT/../internal" | sed -E 's/.*"([^"]+)"$/\1/'
+  # アプリケーション API の操作の門(internal/app の Check が返す 操作名, 対象, "tb <語...>"。ADR 0008)
+  grep -rhoE --include='*.go' --exclude='*_test.go' '"cmd:[a-z-]+:[a-z-]+", "[^"]*", "tb [^"]+"' "$PM_ROOT/../internal/app" | sed -E 's/.*"tb ([^"]+)"$/\1/'
   # setApproval は "tb " + val。val は tb approval allow|ask の sub(approval.go の setApproval(db, sub, ...))と、呼び出しの "allow"
   if grep -q 'setApproval(db, sub, ' "$PM_ROOT/../internal/tbcli/approval.go"; then printf '%s\n' allow ask; fi ) | grep -vx '\*' | sort -u)
 pm_inner=$(pm_rows | awk '$5 == "inner" {print $1}' | sort -u)
