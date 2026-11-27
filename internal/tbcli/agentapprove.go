@@ -16,8 +16,8 @@ import (
 	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
 )
 
-// 承認待ちの操作(L-<n>)の承認と却下(taskboard/lib/agents.sh の cmd_agent-approve / cmd_agent-reject と
-// lib/slash.sh の slash_approve)。承認できるのは人か、grants の approve:agent:… で許された agent。
+// 承認待ちの操作(L-<n>)の承認のうち、tb の中で扱うもの: スラッシュコマンド(slash_approve)、モデルの切り替え(tb model-set)と
+// --always(今後は承認なし)。ほかの承認と却下は API(agent.approve / agent.reject。internal/app/agent/approve.go)。
 
 var reLid = regexp.MustCompile(`^L-[0-9]+$`)
 
@@ -278,51 +278,5 @@ func slashApprove(db *store.DB, o opRow, always bool, ap approver, w, stderr io.
 	if rr != 0 {
 		return &exit{11, ""}
 	}
-	return nil
-}
-
-func agentRejectImpl(args []string, w, stderr io.Writer) error {
-	if len(args) != 1 {
-		return usage("agent-reject L-<n>")
-	}
-	id, err := validLid(args[0])
-	if err != nil {
-		return err
-	}
-	db, _, err := openCmd(stderr)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	j := approval.NewJudge(db.DB, db.Session)
-	o, ok := opRowOf(db, id)
-	if !ok {
-		if _, err := approverCheck(j, "tb agent-reject", "", ""); err != nil {
-			return err
-		}
-		return die("L-%d は承認待ちではありません", id)
-	}
-	ap, err := approverCheck(j, "tb agent-reject", agentOpAction(db, o), o.by)
-	if err != nil {
-		return err
-	}
-	if o.stat != "pending" {
-		return die("L-%d は承認待ちではありません", id)
-	}
-	// agent は処理中(印のある)の行を却下できない。人は、途中で止まって印だけ残った行も片付けられる
-	free := " AND decided_at IS NULL"
-	if ap.name == "human" {
-		free = ""
-	}
-	res, err := db.Exec(`UPDATE main.agent_ops SET status='rejected', result=COALESCE(result,'')||?, decided_at=? WHERE herdr_session=? AND id=? AND status='pending'`+free,
-		" / "+ap.label()+"が却下", nowTS(), db.Session, id)
-	if err != nil {
-		return err
-	}
-	if n, _ := res.RowsAffected(); n != 1 {
-		return die("L-%d はほかの承認者が処理中か、すでに決まっています", id)
-	}
-	recordDecision(db, "agent_ops", id, "rejected", ap.name)
-	fmt.Fprintf(w, "L-%d rejected\n", id)
 	return nil
 }

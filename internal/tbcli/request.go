@@ -20,6 +20,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/imohiyoko/herdrorchestrator/internal/app"
+	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
 	"github.com/imohiyoko/herdrorchestrator/internal/approval"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/herdr"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/identity"
@@ -449,15 +451,59 @@ func reject(db *store.DB, args []string, w io.Writer) error {
 }
 
 func cmdAgentApprove(args []string, w, stderr io.Writer) error {
+	if len(args) >= 1 && reLid.MatchString(args[0]) && !(len(args) > 1 && args[1] == "--always") && !agentOpUsesTB(args[0], stderr) {
+		if len(args) > 1 {
+			return usage("agent-approve L-<n> [--always]")
+		}
+		return agentDecide("agent.approve", args[0], w, stderr) // 決まったことの知らせは API が送る
+	}
 	err := agentApproveImpl(args, w, stderr)
 	agentDecidedNotice(args, "approve", err)
 	return err
 }
 
 func cmdAgentReject(args []string, w, stderr io.Writer) error {
-	err := agentRejectImpl(args, w, stderr)
-	agentDecidedNotice(args, "reject", err)
-	return err
+	if len(args) != 1 {
+		return usage("agent-reject L-<n>")
+	}
+	if _, err := validLid(args[0]); err != nil {
+		return err
+	}
+	return agentDecide("agent.reject", args[0], w, stderr)
+}
+
+// agentOpUsesTB は L-<n> がスラッシュコマンドかモデルの切り替えの承認待ち(tb の中で承認する)か。読めなければ false(API が断る)。
+func agentOpUsesTB(lid string, stderr io.Writer) bool {
+	id, err := validLid(lid)
+	if err != nil {
+		return false
+	}
+	db, _, err := openCmd(stderr)
+	if err != nil {
+		return false
+	}
+	defer db.Close()
+	o, ok := agent.OpRowOf(db, id)
+	return ok && agent.UseTB(o)
+}
+
+// agentDecide は agent.approve / agent.reject を今の主体として呼ぶ。
+func agentDecide(op, lid string, w, stderr io.Writer) error {
+	db, _, err := openCmd(stderr)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	who, err := requester()
+	if err != nil {
+		return err
+	}
+	var res agent.DecideResult
+	if err := callAppW(db, app.PrincipalOf(who), stderr, op, agent.DecideReq{ID: lid}, &res); err != nil {
+		return err
+	}
+	fmt.Fprintln(w, res.Out)
+	return nil
 }
 
 func agentDecidedNotice(args []string, sub string, err error) {
