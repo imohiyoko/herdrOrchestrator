@@ -48,6 +48,9 @@ type Env struct {
 	Reporter func(who string) (name, pane, session string)
 	// ImmediateKinds は書いたらすぐ届ける報告コメントの種類(空白区切り)。空なら "question blocked"(tb の TB_IMMEDIATE_KINDS)。
 	ImmediateKinds string
+	// SchedDir / SchedShow / SchedLogs は scheduler の置き場所(jobs/・settings/ の親、本文を確かめる show.sh、ログ)。
+	// 空なら tb と同じ(TB_SCHED_DIR / TB_SCHED_SHOW / LOG_DIR、無ければ <TB_ROOT>/../scheduler)。Web UI は自分の見ている所を入れる。
+	SchedDir, SchedShow, SchedLogs string
 }
 
 // ReporterOf は主体 who の報告した者(Env.Reporter があればそれ)。

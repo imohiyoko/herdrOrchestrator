@@ -1823,7 +1823,7 @@ _jb = re.search(r'name=action value=conf><input type=hidden name=base value="([^
 check("ジョブの定義: 本文の編集欄(今の本文)", _jb and "<textarea name=conf" in jp and "朝のまとめを出してください" in jp)
 _jf = {"action": "conf", "base": _jb.group(1) if _jb else ""}
 r = ec.raw("POST", "/jobs/ej", {**_jf, "conf": "echo hi\n", "csrf": ec.csrf("/jobs/ej")})
-check("ジョブの定義: scheduler が読めない本文は書かない(理由を見せる)", r[0] == 400 and "tb が断りました" in r[2]
+check("ジョブの定義: scheduler が読めない本文は書かない(理由を見せる)", r[0] == 400 and "断りました: scheduler がこの本文を受け付けません" in r[2]
       and edb("SELECT body FROM config WHERE key='sched-job:ej'") == [(_conf,)], r[2][-400:])
 _new = _conf.replace("朝のまとめ", "夕方のまとめ")
 r = ec.raw("POST", "/jobs/ej", {**_jf, "conf": _new.replace("\n", "\r\n"), "csrf": ec.csrf("/jobs/ej")})

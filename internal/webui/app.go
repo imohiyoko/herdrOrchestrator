@@ -3,6 +3,7 @@ package webui
 import (
 	"errors"
 	"os"
+	"path/filepath"
 
 	"github.com/imohiyoko/API/define"
 
@@ -19,7 +20,24 @@ func appClient(sess string) (*server.Client, error) {
 	if d := os.Getenv("TB_SCHEMA_DIR"); d != "" {
 		opt = &store.Options{Schema: os.DirFS(d)}
 	}
-	return server.New(&app.Env{DB: app.OpenStore(TBDB(), sess, opt)})
+	env := &app.Env{DB: app.OpenStore(TBDB(), sess, opt)}
+	env.SchedDir, env.SchedShow, env.SchedLogs = schedPaths()
+	return server.New(env)
+}
+
+// schedPaths は Web UI が見ている scheduler の置き場所(jobs/・settings/ の親、show.sh、ログ)。jobTBCmd が tb に渡すものと同じ。
+// jobs/ と settings/ の親が揃わなければ dir は空(tb の既定)。show.sh は TB_SCHED_SHOW か、このチェックアウトの scheduler のもの。
+func schedPaths() (dir, show, logs string) {
+	jobs, _ := filepath.Abs(schedJobs())
+	sets, _ := filepath.Abs(schedSettings())
+	if filepath.Base(jobs) == "jobs" && filepath.Base(sets) == "settings" && filepath.Dir(jobs) == filepath.Dir(sets) {
+		dir = filepath.Dir(jobs)
+	}
+	if show = os.Getenv("TB_SCHED_SHOW"); show == "" {
+		show = filepath.Join(HerdrRoot(), "scheduler", "bin", "show.sh")
+	}
+	logs, _ = filepath.Abs(SchedLogs())
+	return dir, show, logs
 }
 
 // appState は操作の結果 → 画面に出す結果(rcState と同じ分け方)。

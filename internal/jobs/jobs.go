@@ -201,3 +201,11 @@ func History(db *sql.DB, session, key string, fn func(cols []string, vals []any)
 	return store.Each(db, `SELECT id, herdr_session, how, changed_by, changed_at, CASE WHEN body IS NULL THEN '(消した)' ELSE length(body) || ' 文字' END
     FROM main.config_changes WHERE key=? AND herdr_session IN (?, '*') ORDER BY id DESC LIMIT 50`, []any{key, session}, fn)
 }
+
+// LogDir は scheduler がログを書く所(tick と同じく LOG_DIR > <scheduler>/logs)。
+func LogDir(e Env) string {
+	if d := os.Getenv("LOG_DIR"); d != "" {
+		return d
+	}
+	return filepath.Join(e.Dir, "logs")
+}

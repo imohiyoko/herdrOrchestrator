@@ -239,23 +239,14 @@ func jobChange(db *store.DB, e jobs.Env, sub string, args []string, w, stderr io
 		return err
 	}
 	key := jobs.Key(a.job, a.settings)
+	var r job.Result
 	var body string
 	switch sub {
 	case "unset":
-		which := "このセッションの行"
-		if a.shared {
-			which = "共通の行"
-		}
-		if ok, err := config.HasRow(db.DB, db.Session, key, a.shared); err != nil {
-			return err
-		} else if !ok {
-			return die("%s の DB の行はありません(%s)", key, which)
-		}
-		if err := config.Unset(db.DB, db.Session, key, a.shared); err != nil {
+		if err := callApp(db, "tb job unset", "job.unset", job.UnsetReq{Name: a.job, Settings: a.settings, Shared: a.shared}, &r); err != nil {
 			return err
 		}
-		_, src, _ := e.Lookup(db.DB, db.Session, a.job, a.settings)
-		fmt.Fprintf(w, "%s: %s\n", key, src)
+		fmt.Fprintf(w, "%s: %s\n", key, r.Source)
 		return nil
 	case "set":
 		if stdinIsTTY() {
@@ -270,36 +261,15 @@ func jobChange(db *store.DB, e jobs.Env, sub string, args []string, w, stderr io
 			return err
 		}
 	}
-	// scheduler が読めることを確かめてから書く(設定なら今の定義と組み合わせて)
-	var conf, settings string
-	if a.settings {
-		c, _, ok := e.Lookup(db.DB, db.Session, a.job, false)
-		if !ok {
-			return die("ジョブ %s の定義が DB にありません(先に tb job set %s か tb job import %s で置く)", a.job, a.job, a.job)
-		}
-		conf, settings = c, body
-	} else {
-		conf = body
-		if s, _, ok := e.Lookup(db.DB, db.Session, a.job, true); ok {
-			settings = s
-		}
-	}
-	if conf == "" {
-		return die("本文が空です")
-	}
-	ok, last, err := e.Check(a.job, conf, settings)
-	if err != nil {
-		return die("一時ディレクトリを作れません")
-	}
-	if !ok {
-		fmt.Fprintf(stderr, "tb: scheduler がこの本文を受け付けません: %s\n", last)
-		return die("%s は書きませんでした", key)
-	}
-	if err := config.DBPut(db.DB, db.Session, key, body, sub, a.shared, ""); err != nil {
+	// scheduler が読めることを確かめてから書く(API の job.set)
+	if err := callApp(db, "tb job "+sub, "job.set", job.SetReq{Name: a.job, Body: body, Settings: a.settings, Shared: a.shared, How: sub}, &r); err != nil {
 		return err
 	}
-	_, src, _ := e.Lookup(db.DB, db.Session, a.job, a.settings)
-	fmt.Fprintf(w, "%s: %s\n", key, src)
+	if r.Rejected != "" {
+		fmt.Fprintf(stderr, "tb: scheduler がこの本文を受け付けません: %s\n", r.Rejected)
+		return die("%s は書きませんでした", key)
+	}
+	fmt.Fprintf(w, "%s: %s\n", key, r.Source)
 	return nil
 }
 
@@ -437,7 +407,7 @@ func jobHistory(db *store.DB, args []string, w io.Writer) error {
 	})
 }
 
-// jobRm は tb job rm: ジョブの定義(sched-job:<job>)と上書き設定(sched-settings:<job>)の行を消す。
+// jobRm は tb job rm: ジョブの定義(sched-job:<job>)と上書き設定(sched-settings:<job>)の行を消す(API の job.rm)。
 // どのセッションにも行が残らなければ、scheduler のログ(logs/<job>.log)も消す(--keep-log で残す)。履歴(config_changes)は残す。
 func jobRm(db *store.DB, e jobs.Env, args []string, w io.Writer) error {
 	keepLog := false
@@ -463,62 +433,27 @@ func jobRm(db *store.DB, e jobs.Env, args []string, w io.Writer) error {
 	if a.shared {
 		which = "共通の行"
 	}
-	// 定義と上書き設定は 1 つのトランザクションで消す(片方だけ残さない)
-	var gone []string
-	tx, err := db.Begin()
-	if err != nil {
+	var r job.Result
+	if err := callApp(db, "tb job rm", "job.rm", job.RmReq{Name: a.job, Shared: a.shared, Strict: true, RemoveLog: !keepLog}, &r); err != nil {
 		return err
 	}
-	defer tx.Rollback()
-	for _, st := range []bool{false, true} {
-		key := jobs.Key(a.job, st)
-		ok, err := config.UnsetTx(tx, db.Session, key, a.shared)
-		if err != nil {
-			return err
-		}
-		if ok {
-			gone = append(gone, key)
-		}
-	}
-	if len(gone) == 0 {
-		return die("ジョブ %s の DB の行はありません(%s)", a.job, which)
-	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	fmt.Fprintf(w, "%s: %s を消しました(%s)\n", a.job, strings.Join(gone, " と "), which)
-	if _, src, ok := e.Lookup(db.DB, db.Session, a.job, false); ok {
+	fmt.Fprintf(w, "%s: %s を消しました(%s)\n", a.job, strings.Join(r.Gone, " と "), which)
+	if r.Found {
 		hint := ""
-		if strings.HasPrefix(src, "db:") && !a.shared {
+		if strings.HasPrefix(r.Source, "db:") && !a.shared {
 			hint = "(共通の行は tb job rm " + a.job + " --shared で消す)"
 		}
-		fmt.Fprintf(w, "%s: まだ %s の定義で動きます%s\n", a.job, src, hint)
+		fmt.Fprintf(w, "%s: まだ %s の定義で動きます%s\n", a.job, r.Source, hint)
 	} else if jobs.IsRegular(e.JobFile(a.job)) {
 		fmt.Fprintf(w, "%s: jobs/%s.conf は残しています(SCHED_FILE_FALLBACK=1 のときだけ読まれる)\n", a.job, a.job)
 	}
-	var left int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM main.config WHERE key=?`, jobs.Key(a.job, false)).Scan(&left); err != nil {
-		return err
+	if r.LogFailed != "" {
+		return die("%s を消せません(DB の行は消しました)", r.LogFailed)
 	}
-	if keepLog || left > 0 {
-		return nil
-	}
-	log := filepath.Join(jobLogDir(e), a.job+".log")
-	if jobs.IsRegular(log) && !jobs.IsLink(log) {
-		if err := os.Remove(log); err != nil {
-			return die("%s を消せません(DB の行は消しました)", log)
-		}
-		fmt.Fprintf(w, "%s: ログ %s を消しました\n", a.job, log)
+	if r.LogRemoved != "" {
+		fmt.Fprintf(w, "%s: ログ %s を消しました\n", a.job, r.LogRemoved)
 	}
 	return nil
-}
-
-// jobLogDir は scheduler がログを書く所(tick と同じく LOG_DIR > <scheduler>/logs)。
-func jobLogDir(e jobs.Env) string {
-	if d := os.Getenv("LOG_DIR"); d != "" {
-		return d
-	}
-	return filepath.Join(e.Dir, "logs")
 }
 
 // jobRun は tb job run <job>: API の job.run(時刻に関係なく今すぐ 1 回)。動かなかった回(skipped_* / failed)は 1。
