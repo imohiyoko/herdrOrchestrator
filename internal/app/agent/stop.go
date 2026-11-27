@@ -51,7 +51,7 @@ func stopOp(env *app.Env) app.Op {
 		func(ctx context.Context, in StopReq) (StopResult, error) {
 			who := by(ctx)
 			return withDB(env, func(db *store.DB) (StopResult, error) {
-				r := Stop(db, tickets.LoadStatuses(db.DB, db.Session), in.Name, in.Force, who)
+				r := StopContext(ctx, db, tickets.LoadStatuses(db.DB, db.Session), in.Name, in.Force, who)
 				agents.RecordOp(db.DB, db.Session, "stop", in.Name, stopArgs(in), who, r.Code, r.Out)
 				if err := r.Err(); err != nil {
 					return StopResult{}, err
@@ -68,7 +68,12 @@ func stopOp(env *app.Env) app.Op {
 
 // Stop は do_agent_stop: 門を通ったあとの停止(承認後の実行・recipe からも呼ぶ)。by は依頼した主体。
 func Stop(db *store.DB, st tickets.StatusSet, name string, force bool, by string) Result {
-	live, err := agents.SyncLive(db.DB, db.Session)
+	return StopContext(context.Background(), db, st, name, force, by)
+}
+
+// StopContext は Stop に ctx を足したもの。ctx の期限を過ぎたら、herdr を止めて pane を閉じずに失敗する(11)。
+func StopContext(ctx context.Context, db *store.DB, st tickets.StatusSet, name string, force bool, by string) Result {
+	live, err := agents.SyncLiveContext(ctx, db.DB, db.Session)
 	if err != nil {
 		return Result{11, "herdr agent list に失敗しました"}
 	}
@@ -101,7 +106,10 @@ func Stop(db *store.DB, st tickets.StatusSet, name string, force bool, by string
 			return Result{1, name + " は止めてよいと判定されていません(killable=" + k + extra + ")。判定役に付けてもらうか(tb agent-flag)、人が --force で止めます"}
 		}
 	}
-	if !agents.ClosePane(db.DB, db.Session, name, pane, sess) {
+	if ctx.Err() != nil {
+		return Result{Code: 11, Out: name + " を止める前に時間切れになりました(何も変えていません)"}
+	}
+	if !agents.ClosePaneContext(ctx, db.DB, db.Session, name, pane, sess) {
 		return Result{11, "pane " + pane + " を閉じられません"}
 	}
 	_ = db.QueryRow(`SELECT COALESCE(session_id,'') FROM agents WHERE name=?`, name).Scan(&sess)

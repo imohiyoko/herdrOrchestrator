@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"context"
 	"database/sql"
 	"time"
 
@@ -37,7 +38,12 @@ func Killable(db *sql.DB, session, name string) string {
 
 // ClosePane は agent_close_pane: pane を閉じて台帳を stopped にする(session は残す)。閉じられなければ false。
 func ClosePane(db *sql.DB, session, name, pane, sess string) bool {
-	if _, err := herdr.Call("pane", "close", pane); err != nil {
+	return ClosePaneContext(context.Background(), db, session, name, pane, sess)
+}
+
+// ClosePaneContext は ClosePane に ctx を足したもの。ctx の期限を過ぎていれば閉じない。
+func ClosePaneContext(ctx context.Context, db *sql.DB, session, name, pane, sess string) bool {
+	if _, err := herdr.CallContext(ctx, "pane", "close", pane); err != nil {
 		return false
 	}
 	ts := nowTS()

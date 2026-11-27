@@ -83,7 +83,12 @@ func Sync(db *sql.DB, session string) error {
 // SyncLive は Sync と同じに台帳を合わせ、読んだ herdr agent list(bash の LIVE_AGENTS)も返す。
 // 一覧が読めて台帳の書き込みだけ失敗したときは、一覧とエラーの両方を返す。
 func SyncLive(db *sql.DB, session string) ([]herdr.Agent, error) {
-	out, err := herdr.Call("agent", "list")
+	return SyncLiveContext(context.Background(), db, session)
+}
+
+// SyncLiveContext は SyncLive に ctx を足したもの(期限を過ぎたら herdr を止めて失敗する)。
+func SyncLiveContext(ctx context.Context, db *sql.DB, session string) ([]herdr.Agent, error) {
+	out, err := herdr.CallContext(ctx, "agent", "list")
 	if err != nil {
 		return nil, err
 	}

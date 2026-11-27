@@ -29,7 +29,11 @@ func callTimeout() time.Duration {
 }
 
 func command(args ...string) (*exec.Cmd, context.CancelFunc) {
-	ctx, cancel := context.WithTimeout(context.Background(), callTimeout())
+	return commandContext(context.Background(), args...)
+}
+
+func commandContext(parent context.Context, args ...string) (*exec.Cmd, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(parent, callTimeout())
 	c := exec.CommandContext(ctx, Bin(), args...)
 	c.WaitDelay = 2 * time.Second // 孫プロセスが出力を開いたままでも待ち続けない
 	return c, cancel
@@ -38,6 +42,16 @@ func command(args ...string) (*exec.Cmd, context.CancelFunc) {
 // Call は herdr を引数そのままで実行し、標準出力を返す(標準エラーは捨てる。herdr_call 2>/dev/null と同じ)。
 func Call(args ...string) ([]byte, error) {
 	c, cancel := command(args...)
+	defer cancel()
+	return c.Output()
+}
+
+// CallContext は Call に ctx を足したもの。ctx の期限か取り消しで子プロセスを止めて失敗する(上限 HERDR_CALL_TIMEOUT_SEC も効く)。
+func CallContext(ctx context.Context, args ...string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	c, cancel := commandContext(ctx, args...)
 	defer cancel()
 	return c.Output()
 }
