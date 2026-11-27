@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -198,7 +199,9 @@ func TestAgentNewGate(t *testing.T) {
 	db.QueryRow(`SELECT args FROM main.agent_ops WHERE status='pending'`).Scan(&args)
 	db.QueryRow(`SELECT count(*) FROM main.agents`).Scan(&n)
 	done()
-	if want := `{"cwd":"` + agent.PhysDir(cwd) + `","prompt":"やって <b>","killable":"unknown"}`; args != want && args != `{"cwd":"`+cwd+`","prompt":"やって <b>","killable":"unknown"}` {
+	var got struct{ Cwd, Prompt, Killable string }
+	if err := json.Unmarshal([]byte(args), &got); err != nil || (got.Cwd != cwd && got.Cwd != agent.PhysDir(cwd)) || got.Prompt != "やって <b>" || got.Killable != "unknown" ||
+		!strings.HasPrefix(args, `{"cwd":`) || !strings.HasSuffix(args, `"prompt":"やって <b>","killable":"unknown"}`) {
 		t.Errorf("承認後の実行に使う引数: %s", args)
 	}
 	if n != 0 {
