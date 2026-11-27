@@ -33,9 +33,13 @@ type ModelSetReq struct {
 // ModelSetResult は宛先ごとの 1 行(tb の出力のまま)と終了コード
 // (0 / 1 = 1 体だけで切り替えなかった / 11 = 失敗があった / 12 = 対応していない / 20 = 承認待ちを積んだ)。
 type ModelSetResult struct {
-	Lines []string `api:"lines" json:"lines"`
-	Code  int      `api:"code" json:"code"`
+	Lines   []string     `api:"lines" json:"lines"`
+	Code    int          `api:"code" json:"code"`
+	Pending *app.Pending `api:"pending,optional" json:"pending,omitempty"`
 }
+
+// SetPending は app.PendingSetter。
+func (r *ModelSetResult) SetPending(p *app.Pending) { r.Pending = p }
 
 // ValidModelSet は agent.model.set の入力の確かめ(tb は開く前に呼ぶ)。
 func ValidModelSet(in ModelSetReq) error {
@@ -133,16 +137,16 @@ func modelSetAll(env *app.Env, db *store.DB, who string, in ModelSetReq) (ModelS
 			skipped++
 			continue
 		}
-		opArgs := `{"model_set":1`
+		kv := []any{"model_set", 1}
 		if reset {
-			opArgs += `,"reset":1`
+			kv = append(kv, "reset", 1)
 		} else {
-			opArgs += `,"model":` + jsonStr(model)
+			kv = append(kv, "model", model)
 		}
 		if all { // --all の承認待ちは人だけが決める(tb agent-approve)
-			opArgs += `,"all":1`
+			kv = append(kv, "all", 1)
 		}
-		opArgs += "}"
+		opArgs := jsonArgs(kv...)
 		// 先に、承認に回す前に分かる「対応していない」「今は切り替えない」を見る(--dry-run の計画もここで出す)
 		r, line := ModelSetPrecheck(db, live, n, model, reset)
 		if r != 0 {
@@ -180,8 +184,10 @@ func modelSetAll(env *app.Env, db *store.DB, who string, in ModelSetReq) (ModelS
 		if hold {
 			res, err := db.Exec(`INSERT INTO main.agent_ops (herdr_session, op, target, args, requested_by, status, result, created_at) VALUES (?, 'revive', ?, ?, ?, 'pending', ?, ?)`,
 				db.Session, n, opArgs, who, why, env.NowString())
-			if err != nil {
-				return ModelSetResult{}, define.Errorf(define.CodeInternal, "%s", err.Error())
+			if err != nil { // 切り替え済みの宛先の行は残す
+				add(n + " failed(agent_ops に書けません: " + err.Error() + ")")
+				failed++
+				continue
 			}
 			lid, _ := res.LastInsertId()
 			q := env.QOf(db.DB, "agent_ops", lid)

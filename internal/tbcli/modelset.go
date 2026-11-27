@@ -7,7 +7,6 @@ import (
 
 	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/herdr"
-	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 )
 
 // モデルの切り替え(taskboard/lib/models.sh の cmd_model-set / model_set_precheck / model_set_run / do_model_set)。
@@ -15,15 +14,6 @@ import (
 
 // 実行の本体は app/agent(承認後の実行を API でもするため。ADR 0008)。ここは tbcli の名前の包み。
 func liveStatus(a herdr.Agent) string { return agent.LiveStatus(a) }
-
-func modelSetPrecheck(db *store.DB, live []herdr.Agent, name, model string, reset bool) (int, string) {
-	return agent.ModelSetPrecheck(db, live, name, model, reset)
-}
-
-func modelSetRun(db *store.DB, name, args, by string, stderr io.Writer) opResult {
-	r := agent.ModelSetRun(db, name, args, by, stderr)
-	return opResult{code: r.Code, out: r.Out}
-}
 
 func cmdModelSet(args []string, w, stderr io.Writer) error {
 	u := "model-set <名前 | @役割 | --all> <モデル> [--dry-run] | model-set <名前 | @役割 | --all> --reset [--dry-run]"
@@ -62,6 +52,9 @@ func cmdModelSet(args []string, w, stderr io.Writer) error {
 	var r agent.ModelSetResult
 	if err := callAppEnv(appEnv(db, stderr), by, "agent.model.set", in, &r); err != nil {
 		return err
+	}
+	if r.Pending != nil {
+		return pendingExit(w, r.Pending)
 	}
 	for _, l := range r.Lines {
 		fmt.Fprintln(w, l)

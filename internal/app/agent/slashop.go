@@ -1,11 +1,8 @@
 package agent
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/imohiyoko/API/define"
 
@@ -26,9 +23,13 @@ type SlashReq struct {
 
 // SlashResult は宛先ごとの 1 行(tb の出力のまま)と終了コード(0 / 4 = deny があった / 11 = 送れなかった / 20 = 承認待ちを積んだ)。
 type SlashResult struct {
-	Lines []string `api:"lines" json:"lines"`
-	Code  int      `api:"code" json:"code"`
+	Lines   []string     `api:"lines" json:"lines"`
+	Code    int          `api:"code" json:"code"`
+	Pending *app.Pending `api:"pending,optional" json:"pending,omitempty"`
 }
+
+// SetPending は app.PendingSetter。
+func (r *SlashResult) SetPending(p *app.Pending) { r.Pending = p }
 
 // ValidSlash は agent.slash の入力の確かめ(tb は開く前に呼ぶ)。
 func ValidSlash(in SlashReq) error {
@@ -69,15 +70,6 @@ func slashOp(env *app.Env) app.Op {
 		define.Expose(define.Internal, define.REST),
 		define.HTTP("POST /v1/agents/slash"),
 	)
-}
-
-// jsonStr は文字列の JSON(HTML の文字は逃がさない。jq -nc と同じ)。
-func jsonStr(v string) string {
-	var b bytes.Buffer
-	e := json.NewEncoder(&b)
-	e.SetEscapeHTML(false)
-	_ = e.Encode(v)
-	return strings.TrimRight(b.String(), "\n")
 }
 
 func slashPending(env *app.Env, db *store.DB, target, args, who, result string) (int64, string, error) {
@@ -128,7 +120,7 @@ func slashRun(env *app.Env, db *store.DB, who string, in SlashReq) (SlashResult,
 			}
 			return out, nil
 		}
-		id, q, err := slashPending(env, db, "*", `{"command":`+jsonStr(cmd)+`,"args":`+jsonStr(e.Args)+`,"all":1}`, who, "slash --all は常に人の承認")
+		id, q, err := slashPending(env, db, "*", jsonArgs("command", cmd, "args", e.Args, "all", 1), who, "slash --all は常に人の承認")
 		if err != nil {
 			return SlashResult{}, err
 		}
@@ -155,9 +147,11 @@ func slashRun(env *app.Env, db *store.DB, who string, in SlashReq) (SlashResult,
 					add("%s would-ask(approval: agent:slash:%s:%s is ask)", t.Name, cmd, t.Name)
 					continue
 				}
-				id, q, err := slashPending(env, db, t.Name, `{"command":`+jsonStr(cmd)+`,"args":`+jsonStr(e.Args)+`}`, who, "認可: "+rule)
-				if err != nil {
-					return SlashResult{}, err
+				id, q, err := slashPending(env, db, t.Name, jsonArgs("command", cmd, "args", e.Args), who, "認可: "+rule)
+				if err != nil { // 送り済みの宛先の行は残す
+					add("%s failed(%s)", t.Name, err.Error())
+					out.Code = 11
+					continue
 				}
 				add("%s pending L-%d %s (承認待ち: tb approval approve %s)", t.Name, id, q, q)
 				if out.Code == 0 || out.Code == 20 {

@@ -116,6 +116,9 @@ func cmdSlash(args []string, w, stderr io.Writer) error {
 	if err := callAppEnv(appEnv(db, stderr), by, "agent.slash", in, &r); err != nil {
 		return err
 	}
+	if r.Pending != nil {
+		return pendingExit(w, r.Pending)
+	}
 	for _, l := range r.Lines {
 		fmt.Fprintln(w, l)
 	}
