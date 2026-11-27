@@ -263,6 +263,8 @@ ADR 0004 の依存の検査に次を足す。今ある違反は許容リスト�
 - 承認・却下 `agent.approve` / `agent.reject`(#295): 承認者の確かめ(人か、policy の approve:agent:… を許された依頼者以外の agent)、再検査、1 回だけ実行する印、実行と記録、Q-<n> の記録、依頼した agent への知らせ(`transport.Send`)まで API がする。スラッシュコマンドとモデルの切り替えの承認と `--always`(policy を書く)は、まだ tb の中(API は `use_tb` で断る)。これらは段 3 で policy の書き込みと一緒に移す。
 - 親を足す・外す `agent.parent.add` / `agent.parent.rm`(#290): 表 `agent_parents`(030、`spawned_by` から埋める)。`spawned_by` は立てた親(上限・深さ・記録)のまま。`tb agent shed` の orphan は、親が 1 体以上いて全員止まったときだけ。承認・報告を「親のうち誰か」に回すのは別の設計(多対多の親)。
 - job の書き込み `job.set` / `job.rm`(#292、段 3 の先取り): `tb job set` / `rm` と同じ権限と確かめ(scheduler が読めるか)。agent セットの schedule が使う。チケットの読み取り `ticket.get`(#289)も先に入れた。
+- 自動スケールの条件に使う読み取り(#297): `ticket.count`(project・label・状態の分類・担当なしで絞った数)と、`agent.list` の `status`(herdr の agent_status)。
+- job を今すぐ動かす `job.run`(#302、`POST /v1/jobs/{name}/run`、`tb job run`): 中身は `herdrctl sched tick --now <job>`。時刻は見ず、ENABLED・GATE・SKIP_IF・ロックは毎分の回と同じ。既定は人だけ(policy の `cmd:job:run` で agent にも許せる)。scheduler を通さず、API を呼べば job が動く。
 - まだ残るもの: 一覧(`tb agents` / `agent-ops`)の読み取りの全部と、Web UI の agents 画面を同じプロセスで呼ぶこと。agent セットが使う最小の読み取り `agent.list` は入れた(今の親 `Parents` も返す)。
 
 ### agent セット(`internal/agentset`、`tb agentset`)
@@ -274,7 +276,11 @@ ADR 0004 の依存の検査に次を足す。今ある違反は許容リスト�
 - job 型(`mode = job`、#289): `tb agentset run <セット> <メンバー> --task T` がタスク 1 つに 1 体立て(spawn_task=T、killable=yes)、`tb agentset reap` がタスクの終わった(か消えた)agent を止める。定期の片付けは scheduler の COMMAND 型のジョブに `tb agentset reap <セット>` を書く。
 - `[adopt]` と `on_parent_exit`(#291): `[adopt]` の `<agent> -> <親>` は動いている agent に up で親を足し、down で外す(止めない)。`on_parent_exit = keep | grandparent | set-parent | stop`(既定 keep)は、親が全員止まったメンバーと adopt の agent を reap で付け替えるか止める。
 - 定期の指示 `schedule = every <N>m|<N>h: <本文>`(#292): up が scheduler のジョブ `agentset-<セット>-<メンバー>`(TARGET はその agent、終日)を書き、down で消す。
-- まだ入れていないもの: `panes_per_workspace`(1 つの workspace に入れる pane の数)、決まった規則での自動スケール(scheduler から scale を呼ぶ規則)、Web UI のセットごとの表示。定義に書いてあれば黙って無視せず断る。
+- 時刻で書く schedule(#304): `schedule = at YYYY-MM-DD HH:MM: <本文>`(1 回だけ)と `schedule = <曜日> HH:MM: <本文>`。
+- 条件での自動スケール(#298・#301・#303): メンバーに `scale_out` / `scale_in`(`<値> <比べ方> <数>` を and でつなぐ。値は queue / live / idle / busy / blocked)、`queue`、`scale_step`、`scale_cooldown`、条件の後ろの `for <N>m` を書く。`tb agentset autoscale <セット>` が 1 回評価して `Scale` を呼ぶ(増やすのは max まで、減らすのは count まで)。状態(当たり始めた時刻・前に変えた時刻)は `agentsets/.autoscale/<セット>.json`。
+- 自動スケールは job に乗せる(#303): 条件があれば up がジョブ `agentset-<セット>-autoscale`(`autoscale_every` ごと。既定 5m)を書く。時刻で数を決める `scale_at = <時刻>: <数>` は、行ごとにジョブ `agentset-<セット>-<メンバー>-at<N>` にする。down は全部消し、up は定義から外したジョブを消す。どの job も `tb job run` / `POST /v1/jobs/{name}/run` で今すぐ動かせる。
+- scheduler の側(#299・#302): 1 回だけのジョブ `AT=`、呼ばれたときだけのジョブ `MANUAL=1`、DB のジョブをすべて毎分読み直す `dispatch.sh --all`(セットが足したジョブも、dispatch を登録し直さずに動く)。Web UI の上のバーは「job」(#300)。
+- まだ入れていないもの: `panes_per_workspace`(1 つの workspace に入れる pane の数)、Web UI のセットごとの表示と job を今すぐ動かすボタン。定義に書いてあれば黙って無視せず断る。
 
 ## 検討した代替案
 
