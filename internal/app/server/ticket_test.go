@@ -188,3 +188,48 @@ func TestTicketState(t *testing.T) {
 		t.Errorf("履歴の変えた者: %q", got)
 	}
 }
+
+func TestTicketLinkSprint(t *testing.T) {
+	env := ticketFixture(t, "")
+	if res, e := callOp[ticket.LinkResult](t, env, app.Agent("w1"), "ticket.link", ticket.LinkReq{From: "T-p-001", Type: "blocks", To: "T-p-002"}); e != nil || !res.Added {
+		t.Fatalf("link: %+v %v", res, e)
+	}
+	if got := q1(t, env, `SELECT created_by FROM task_links WHERE from_id='T-p-001'`); got != "w1" {
+		t.Errorf("created_by: %q", got)
+	}
+	if _, e := callOp[ticket.LinkResult](t, env, app.Human(), "ticket.link", ticket.LinkReq{From: "T-p-002", Type: "blocks", To: "T-p-001"}); e == nil || e.Code != define.CodeInvalidArgument || !strings.Contains(e.Message, "循環") {
+		t.Errorf("循環: %v", e)
+	}
+	if res, e := callOp[ticket.LinkResult](t, env, app.Human(), "ticket.link", ticket.LinkReq{From: "T-p-001", Type: "blocks", To: "T-p-002"}); e != nil || res.Added {
+		t.Errorf("二度目は既にある: %+v %v", res, e)
+	}
+	if _, e := callOp[ticket.LinkResult](t, env, app.Human(), "ticket.unlink", ticket.LinkReq{From: "T-p-001", Type: "relates", To: "T-p-002"}); e == nil || e.Code != define.CodeFailedPrecondition {
+		t.Errorf("無いリンク: %v", e)
+	}
+	if _, e := callOp[ticket.LinkResult](t, env, app.Human(), "ticket.unlink", ticket.LinkReq{From: "T-p-001", Type: "blocks", To: "T-p-002"}); e != nil {
+		t.Errorf("unlink: %v", e)
+	}
+
+	if _, e := callOp[ticket.SprintResult](t, env, app.Human(), "ticket.sprint.add", ticket.SprintAddReq{Project: "p", Name: "s", Start: "2026-12-02", End: "2026-12-01"}); e == nil || e.Code != define.CodeInvalidArgument {
+		t.Errorf("終了が開始より前: %v", e)
+	}
+	sp, e := callOp[ticket.SprintResult](t, env, app.Human(), "ticket.sprint.add", ticket.SprintAddReq{Project: "p", Name: "s"})
+	if e != nil || sp.ID == "" {
+		t.Fatalf("sprint.add: %+v %v", sp, e)
+	}
+	if _, e := callOp[ticket.SprintResult](t, env, app.Human(), "ticket.sprint.start", ticket.SprintReq{ID: sp.ID}); e != nil {
+		t.Fatalf("start: %v", e)
+	}
+	if _, e := callOp[ticket.SprintResult](t, env, app.Human(), "ticket.sprint.start", ticket.SprintReq{ID: sp.ID}); e == nil || !strings.Contains(e.Message, "planned") {
+		t.Errorf("二度目の start: %v", e)
+	}
+	db, done, _ := env.DB()
+	db.Exec(`UPDATE main.tasks SET sprint_id=` + strings.TrimPrefix(sp.ID, "S-") + ` WHERE id IN ('T-p-001','T-p-002')`)
+	done()
+	if res, e := callOp[ticket.SprintResult](t, env, app.Human(), "ticket.sprint.close", ticket.SprintReq{ID: sp.ID}); e != nil || res.Moved != 2 {
+		t.Fatalf("close: %+v %v", res, e)
+	}
+	if _, e := callOp[ticket.SprintResult](t, env, app.Human(), "ticket.sprint.close", ticket.SprintReq{ID: "S-x"}); e == nil || e.Code != define.CodeInvalidArgument {
+		t.Errorf("不正な ID: %v", e)
+	}
+}

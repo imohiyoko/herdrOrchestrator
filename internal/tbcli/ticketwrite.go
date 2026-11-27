@@ -4,13 +4,12 @@ package tbcli
 // 履歴(task_events)は bash と同じく接続ごとの一時トリガーで残す(tickets.SetupEvents)。
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"io"
 	"os"
-	"strings"
 
+	"github.com/imohiyoko/herdrorchestrator/internal/app/ticket"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/config"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/identity"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
@@ -18,7 +17,6 @@ import (
 	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
 )
 
-var linkTypes = []string{"blocks", "relates", "duplicates"}
 
 // eventActorDefault は event_actor_default: pane からなら pane:<id>、人の端末なら human。
 func eventActorDefault() string {
@@ -67,43 +65,27 @@ func openWrite(stderr io.Writer) (*store.DB, tickets.StatusSet, error) {
 	return db, st, nil
 }
 
-func linkArgs(db *store.DB, name string, a []string) error {
+func linkArgs(name string, a []string) error {
 	if len(a) != 3 {
 		return usage("%s <from-id> blocks|relates|duplicates <to-id>", name)
 	}
-	if err := needID(a[0]); err != nil {
-		return err
-	}
-	if err := needID(a[2]); err != nil {
-		return err
-	}
-	ok := false
-	for _, t := range linkTypes {
-		ok = ok || t == a[1]
-	}
-	if !ok {
-		return usage("リンクの種類は %s のどれか: %s", strings.Join(linkTypes, " "), a[1])
-	}
-	if a[0] == a[2] {
-		return usage("自分自身とはリンクできません: %s", a[0])
-	}
-	if err := requireTask(db, a[0]); err != nil {
-		return err
-	}
-	return requireTask(db, a[2])
+	return nil
 }
 
-// cmdLink は tb link <from> blocks|relates|duplicates <to>。
+// cmdLink は tb link <from> blocks|relates|duplicates <to>。中身はアプリケーション API の ticket.link。
 func cmdLink(args []string, w, stderr io.Writer) error {
-	db, st, err := openWrite(stderr)
+	db, _, err := openWrite(stderr)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	if err := linkArgs(db, "link", args); err != nil {
+	if err := linkArgs("link", args); err != nil {
 		return err
 	}
 	from, typ, to := args[0], args[1], args[2]
+	if err := ticketErr(tickets.LinkCheck(db, "link", from, typ, to)); err != nil {
+		return err
+	}
 	by, err := actorName(db, stderr)
 	if err != nil {
 		return err
@@ -111,47 +93,14 @@ func cmdLink(args []string, w, stderr io.Writer) error {
 	if err := eventActorResolve(db); err != nil {
 		return err
 	}
-	// blocks は、to から blocks をたどって from に着くなら循環。検査と挿入は 1 つの書き込みトランザクションで行う
-	ctx := context.Background()
-	conn, err := db.Conn(ctx)
-	if err != nil {
+	var res ticket.LinkResult
+	if err := callAppActor(db, "tb link", by, "ticket.link", ticket.LinkReq{From: from, Type: typ, To: to}, &res); err != nil {
 		return err
 	}
-	defer conn.Close()
-	db.RaceHook()
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		return err
+	if res.Pending != nil {
+		return pendingExit(w, res.Pending)
 	}
-	commit := false
-	defer func() {
-		if !commit {
-			_, _ = conn.ExecContext(ctx, "ROLLBACK")
-		}
-	}()
-	if typ == "blocks" {
-		var cyc int
-		err := conn.QueryRowContext(ctx, `SELECT EXISTS (WITH RECURSIVE r(id) AS (SELECT ?1 UNION SELECT l.to_id FROM task_links l JOIN r ON l.from_id=r.id WHERE l.link_type='blocks')
-			SELECT 1 FROM r WHERE id=?2)`, to, from).Scan(&cyc)
-		if err != nil {
-			return err
-		}
-		if cyc != 0 {
-			return usage("blocks が循環します: %s → %s", from, to)
-		}
-	}
-	r, err := conn.ExecContext(ctx, `INSERT OR IGNORE INTO main.task_links (from_id, link_type, to_id, created_by, created_at, herdr_session)
-		VALUES (?, ?, ?, ?, ?, ?)`, from, typ, to, by, now(), db.Session)
-	if err != nil {
-		return err
-	}
-	n, _ := r.RowsAffected()
-	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
-		return err
-	}
-	commit = true
-	conn.Close()
-	rulesHook(db, st)
-	if n == 1 {
+	if res.Added {
 		fmt.Fprintf(w, "%s %s %s\n", from, typ, to)
 	} else {
 		fmt.Fprintf(w, "%s %s %s(既にあります)\n", from, typ, to)
@@ -159,53 +108,52 @@ func cmdLink(args []string, w, stderr io.Writer) error {
 	return nil
 }
 
-// cmdUnlink は tb unlink <from> <種類> <to>。
+// cmdUnlink は tb unlink <from> <種類> <to>。中身は ticket.unlink。
 func cmdUnlink(args []string, w, stderr io.Writer) error {
-	db, st, err := openWrite(stderr)
+	db, _, err := openWrite(stderr)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	if err := linkArgs(db, "unlink", args); err != nil {
+	if err := linkArgs("unlink", args); err != nil {
 		return err
 	}
 	if err := eventActorResolve(db); err != nil {
 		return err
 	}
-	r, err := db.Exec(`DELETE FROM main.task_links WHERE herdr_session=? AND from_id=? AND link_type=? AND to_id=?`, db.Session, args[0], args[1], args[2])
-	if err != nil {
+	var res ticket.LinkResult
+	if err := callApp(db, "tb unlink", "ticket.unlink", ticket.LinkReq{From: args[0], Type: args[1], To: args[2]}, &res); err != nil {
 		return err
 	}
-	if n, _ := r.RowsAffected(); n != 1 {
-		return die("そのリンクはありません: %s %s %s", args[0], args[1], args[2])
+	if res.Pending != nil {
+		return pendingExit(w, res.Pending)
 	}
-	rulesHook(db, st)
 	fmt.Fprintf(w, "unlinked %s %s %s\n", args[0], args[1], args[2])
 	return nil
 }
 
-// cmdSprintAdd は tb sprint-add -p <project> -n <名前> [--start D] [--end D] [--goal G] → S-<n>。
+// cmdSprintAdd は tb sprint-add -p <project> -n <名前> [--start D] [--end D] [--goal G] → S-<n>。中身は ticket.sprint.add。
 func cmdSprintAdd(args []string, w, stderr io.Writer) error {
 	db, _, err := openWrite(stderr)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	var project, name, start, end, goal string
+	var in ticket.SprintAddReq
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		var p *string
 		switch a {
 		case "-p", "--project":
-			p = &project
+			p = &in.Project
 		case "-n", "--name":
-			p = &name
+			p = &in.Name
 		case "--start":
-			p = &start
+			p = &in.Start
 		case "--end":
-			p = &end
+			p = &in.End
 		case "--goal":
-			p = &goal
+			p = &in.Goal
 		default:
 			return usage("sprint-add: 不明な引数 %s", a)
 		}
@@ -219,41 +167,24 @@ func cmdSprintAdd(args []string, w, stderr io.Writer) error {
 		*p = v
 		i++
 	}
-	if project == "" {
-		return usage("sprint-add: -p <project> が必要です")
-	}
-	if err := needProject(project); err != nil {
+	var res ticket.SprintResult
+	if err := callApp(db, "tb sprint-add", "ticket.sprint.add", in, &res); err != nil {
 		return err
 	}
-	if blank(name) {
-		return usage("sprint-add: -n <名前> が必要です")
+	if res.Pending != nil {
+		return pendingExit(w, res.Pending)
 	}
-	if start != "" && end != "" && end < start {
-		return usage("sprint-add: --end は --start より後にする")
-	}
-	r, err := db.Exec(`INSERT INTO main.sprints (project, name, goal, start_date, end_date, created_at, herdr_session)
-		VALUES (?, ?, NULLIF(?,''), NULLIF(?,''), NULLIF(?,''), ?, ?)`, project, name, goal, start, end, now(), db.Session)
-	if err != nil {
-		return err
-	}
-	id, _ := r.LastInsertId()
-	fmt.Fprintf(w, "S-%d\n", id)
+	fmt.Fprintln(w, res.ID)
 	return nil
 }
 
-// sprintRow は sprint_row: このセッションのスプリントの state と project。
-func sprintRow(db *sql.DB, id string) (state, project string, err error) {
-	if err := needSprint(id); err != nil {
-		return "", "", err
-	}
-	err = db.QueryRow(`SELECT state, project FROM sprints WHERE id=`+strings.TrimPrefix(id, "S-")).Scan(&state, &project)
-	if err == sql.ErrNoRows {
-		return "", "", die("スプリントが見つかりません: %s", id)
-	}
-	return state, project, err
+// sprintForTask は sprint_for_task: タスクを入れられるスプリントの番号。
+func sprintForTask(db *sql.DB, id, project string) (string, error) {
+	n, err := tickets.SprintForTask(db, id, project)
+	return n, ticketErr(err)
 }
 
-// cmdSprintStart は tb sprint-start S-<n>: planned → active(同じ project の active は 1 つだけ)。
+// cmdSprintStart は tb sprint-start S-<n>: planned → active(同じ project の active は 1 つだけ)。中身は ticket.sprint.start。
 func cmdSprintStart(args []string, w, stderr io.Writer) error {
 	db, _, err := openWrite(stderr)
 	if err != nil {
@@ -263,53 +194,20 @@ func cmdSprintStart(args []string, w, stderr io.Writer) error {
 	if len(args) != 1 {
 		return usage("sprint-start S-<n>")
 	}
-	id := args[0]
-	st, project, err := sprintRow(db.DB, id)
-	if err != nil {
+	var res ticket.SprintResult
+	if err := callApp(db, "tb sprint-start", "ticket.sprint.start", ticket.SprintReq{ID: args[0]}, &res); err != nil {
 		return err
 	}
-	if st != "planned" {
-		return die("planned のスプリントだけ始められます(%s): %s", st, id)
+	if res.Pending != nil {
+		return pendingExit(w, res.Pending)
 	}
-	r, err := db.Exec(`UPDATE main.sprints SET state='active', started_at=?
-		WHERE herdr_session=? AND id=`+strings.TrimPrefix(id, "S-")+` AND state='planned'
-		AND NOT EXISTS (SELECT 1 FROM sprints WHERE project=? AND state='active')`, now(), db.Session, project)
-	if err != nil {
-		return err
-	}
-	if n, _ := r.RowsAffected(); n != 1 {
-		return die("project %s には active なスプリントがあります(先に tb sprint-close)", project)
-	}
-	fmt.Fprintf(w, "%s active\n", id)
+	fmt.Fprintf(w, "%s active\n", args[0])
 	return nil
 }
 
-// sprintForTask は sprint_for_task: タスクを入れられるスプリントの番号。
-func sprintForTask(db *sql.DB, id, project string) (string, error) {
-	if err := needSprint(id); err != nil {
-		return "", err
-	}
-	n := strings.TrimPrefix(id, "S-")
-	var st, p string
-	err := db.QueryRow(`SELECT state, project FROM sprints WHERE id=`+n).Scan(&st, &p)
-	if err == sql.ErrNoRows {
-		return "", die("スプリントが見つかりません: %s", id)
-	}
-	if err != nil {
-		return "", err
-	}
-	if p != project {
-		return "", usage("スプリント %s は project %s のものです(タスクは %s)", id, p, project)
-	}
-	if st == "closed" {
-		return "", usage("閉じたスプリントには入れられません: %s", id)
-	}
-	return n, nil
-}
-
-// cmdSprintClose は tb sprint-close S-<n> [--carry S-<m>]: 閉じる。終わっていないタスクは S-<m>(無ければバックログ)へ。
+// cmdSprintClose は tb sprint-close S-<n> [--carry S-<m>]: 閉じる。終わっていないタスクは S-<m>(無ければバックログ)へ。中身は ticket.sprint.close。
 func cmdSprintClose(args []string, w, stderr io.Writer) error {
-	db, sts, err := openWrite(stderr)
+	db, _, err := openWrite(stderr)
 	if err != nil {
 		return err
 	}
@@ -329,71 +227,17 @@ func cmdSprintClose(args []string, w, stderr io.Writer) error {
 		carry = v
 		i++
 	}
-	st, project, err := sprintRow(db.DB, id)
-	if err != nil {
+	var res ticket.SprintResult
+	if err := callApp(db, "tb sprint-close", "ticket.sprint.close", ticket.SprintReq{ID: id, Carry: carry}, &res); err != nil {
 		return err
 	}
-	if st == "closed" {
-		return die("すでに閉じています: %s", id)
-	}
-	to := "NULL"
-	if carry != "" {
-		if carry == id {
-			return usage("sprint-close: 同じスプリントには移せません")
-		}
-		if to, err = sprintForTask(db.DB, carry, project); err != nil {
-			return err
-		}
-	}
-	n := strings.TrimPrefix(id, "S-")
-	// 閉じる側・移す先が閉じていないことを書く時点で確かめる(並行した close と競っても二重に動かさない)
-	ok := "EXISTS (SELECT 1 FROM main.sprints WHERE herdr_session=?1 AND id=" + n + " AND state!='closed')"
-	if to != "NULL" {
-		ok += " AND EXISTS (SELECT 1 FROM main.sprints WHERE herdr_session=?1 AND id=" + to + " AND state!='closed')"
-	}
-	ctx := context.Background()
-	conn, err := db.Conn(ctx)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-	db.RaceHook()
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		return err
-	}
-	commit := false
-	defer func() {
-		if !commit {
-			_, _ = conn.ExecContext(ctx, "ROLLBACK")
-		}
-	}()
-	ts := now()
-	r, err := conn.ExecContext(ctx, "UPDATE main.tasks SET sprint_id="+to+", updated_at=?2 WHERE herdr_session=?1 AND sprint_id="+n+
-		" AND status NOT IN ("+sts.SQLList("done", "cancelled")+") AND "+ok, db.Session, ts)
-	if err != nil {
-		return err
-	}
-	moved, _ := r.RowsAffected()
-	r, err = conn.ExecContext(ctx, "UPDATE main.sprints SET state='closed', closed_at=?2 WHERE herdr_session=?1 AND id="+n+" AND "+ok, db.Session, ts)
-	if err != nil {
-		return err
-	}
-	closed, _ := r.RowsAffected()
-	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
-		return err
-	}
-	commit = true
-	if closed != 1 {
-		dest := carry
-		if dest == "" {
-			dest = "移す先"
-		}
-		return die("sprint-close: %s か %s が並行して閉じられました", id, dest)
+	if res.Pending != nil {
+		return pendingExit(w, res.Pending)
 	}
 	dest := carry
 	if dest == "" {
 		dest = "バックログ"
 	}
-	fmt.Fprintf(w, "%s closed(未完了 %d 件を %s へ)\n", id, moved, dest)
+	fmt.Fprintf(w, "%s closed(未完了 %d 件を %s へ)\n", id, res.Moved, dest)
 	return nil
 }
