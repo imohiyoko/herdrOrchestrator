@@ -43,6 +43,7 @@ var doneMsg = map[string]string{
 	"approve":      "承認しました。結果は一覧の状態で確かめてください(ask で止まったコマンドは、依頼した agent が 1 回だけ実行します)。",
 	"reject":       "却下しました。",
 	"exception":    "deny を例外として 1 回だけ許可しました。依頼した agent が 1 回だけ実行できます。",
+	"always":       "承認しました。この操作は今後は承認なしで通ります(policy に allow を書きました。戻すときは権限の画面か tb approval ask)。",
 }
 
 func doneNotice(c pageCtx) string {
