@@ -30,7 +30,7 @@ eq "webui の画面だけ → webui の組と internal/webui" "$(q '[.suites, .g
 eq "Go のテストだけ → そのパッケージのテストだけ(組・配布物は流さない)" "$(q '[.suites, .go, .snapshot]' internal/webui/testdata/pages.json)" '[[],["./internal/webui"],false]'
 eq "internal/webui のコード → webui と、Go を文字で読む tb のケースだけ(tb の組全部は流さない)" \
   "$(q '[.suites, (.go | index("./internal/webui") != null), (.go | index("./internal/tbcli")), .snapshot]' internal/webui/server.go)" \
-  '[["taskboard-only:69_pr_contract.sh,83_parts.sh,93_prqueue.sh,99_layout.sh","webui"],true,null,true]'
+  '[["taskboard-only:03_perms.sh,69_pr_contract.sh,83_parts.sh,93_prqueue.sh,99_layout.sh","webui"],true,null,true]'
 eq "tb のコード → tb を呼ぶ組すべて" "$(q .suites internal/tbcli/run.go)" "[\"misc\",$TB4,\"webui\",\"scheduler\"]"
 eq "tb のコード → 依存する側の Go のテスト" "$(q '.go | (index("./internal/tbcli") != null and index("./cmd/herdrctl") != null)' internal/tbcli/run.go)" "true"
 eq "依存の根(store) → 使う側の Go のテストへ広がる" "$(q '.go | (index("./internal/webui") != null and index("./internal/tbcli") != null)' internal/kernel/store/store.go)" "true"
@@ -47,7 +47,7 @@ if [[ -n $OPT ]]; then
   eq "任意の部品: そのディレクトリ" "$(q '[.suites, .go]' "$OPT/x.py")" "[[\"$OPT\"],[]]"
   eq "任意の部品: 名前を出してよい README では流さない" "$(q .suites README.md)" "[]"
 fi
-eq "Go のテストだけでも、Go を文字で読む tb のケースは流す" "$(q .suites internal/pr/conf_test.go)" '["taskboard-only:69_pr_contract.sh,83_parts.sh,93_prqueue.sh,99_layout.sh"]'
+eq "Go のテストだけでも、Go を文字で読む tb のケースは流す" "$(q .suites internal/pr/conf_test.go)" '["taskboard-only:03_perms.sh,69_pr_contract.sh,83_parts.sh,93_prqueue.sh,99_layout.sh"]'
 eq "配布物に入るファイル → 配布物のビルド" "$(q '[.suites, .snapshot]' LICENSE README.md)" '[[],true]'
 eq "tb のケース → misc も(test_affected がケースを見る)" "$(q .suites taskboard/test/cases/14_cancel.sh | jq -c 'index("misc") != null')" "true"
 eq "scheduler のジョブの例 → tb の組も(ケースが読む)" "$(q .suites scheduler/jobs/watch.conf.example | jq -c 'map(select(startswith("taskboard"))) | length')" "4"
@@ -67,9 +67,9 @@ TBS='map(select(startswith("taskboard")))'
 eq "記録: 変えた関数を通るユニットだけ(Go を文字で読むケースも)" "$(cm $'internal/reminder/nudge.go\t*Nudge.Run' "$TMP/map.json" "[(.suites | $TBS), (.notes | length)]" internal/reminder/nudge.go)" \
   '[["taskboard-only:03_perms.sh,65_nudge.sh,69_pr_contract.sh,83_parts.sh,93_prqueue.sh,99_layout.sh"],1]'
 eq "記録: 記録に無い関数(どのユニットも通らない)→ tb は Go を文字で読むケースだけ" "$(cm $'internal/reminder/nudge.go\tnope' "$TMP/map.json" ".suites | $TBS" internal/reminder/nudge.go)" \
-  '["taskboard-only:69_pr_contract.sh,83_parts.sh,93_prqueue.sh,99_layout.sh"]'
+  '["taskboard-only:03_perms.sh,69_pr_contract.sh,83_parts.sh,93_prqueue.sh,99_layout.sh"]'
 eq "記録: 関数を変えていない(tests/funcdiff が何も出さない)" "$(cm '' "$TMP/map.json" ".suites | $TBS" internal/reminder/nudge.go)" \
-  '["taskboard-only:69_pr_contract.sh,83_parts.sh,93_prqueue.sh,99_layout.sh"]'
+  '["taskboard-only:03_perms.sh,69_pr_contract.sh,83_parts.sh,93_prqueue.sh,99_layout.sh"]'
 eq "記録: どのユニットも通る関数 → tb の組全部と同じユニット" "$(cm $'internal/tbcli/tbcli.go\tRun' "$TMP/map.json" ".suites | $TBS | .[0] | split(\",\") | length" internal/tbcli/tbcli.go)" "$(jq '.units | length' "$TMP/map.json")"
 eq "記録: 関数で言い切れない変更 → tb の組全部" "$(cm $'internal/reminder/nudge.go\t*' "$TMP/map.json" "[(.suites | $TBS), (.notes[0] | test(\"言い切れない\"))]" internal/reminder/nudge.go)" "[[$TB4],true]"
 eq "記録: Go のパッケージの .go でないファイル(埋め込み)→ tb の組全部" "$(cm '' "$TMP/map.json" ".suites | $TBS" internal/reminder/nudge.go taskboard/schema/999_x.sql)" "[$TB4]"

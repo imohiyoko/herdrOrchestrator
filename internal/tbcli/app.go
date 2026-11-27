@@ -1,0 +1,77 @@
+package tbcli
+
+import (
+	"context"
+	"errors"
+	"os"
+	"slices"
+
+	"github.com/imohiyoko/API/define"
+	"github.com/imohiyoko/API/port"
+
+	"github.com/imohiyoko/herdrorchestrator/internal/app"
+	"github.com/imohiyoko/herdrorchestrator/internal/app/server"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/identity"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
+)
+
+// callApp はアプリケーション API の操作 op を、今の呼び出し元を主体にして呼ぶ(ADR 0008)。
+// db は入口で開いた DB(操作もこれを使う)。what は止めたときの文言に入る tb の文面("tb resolve" など)。
+// エラーは今の tb の終了コードと文言にする。
+func callApp(db *store.DB, what, op string, in, out any) error {
+	by, err := callerPrincipal(what)
+	if err != nil {
+		return err
+	}
+	c, err := server.New(&app.Env{DB: app.Shared(db), Now: now})
+	if err != nil {
+		return err
+	}
+	return appErr(c.Call(context.Background(), by, op, in, out))
+}
+
+// callerPrincipal は今の呼び出し元の主体(入口の確かめ。perms.EnforceTarget と同じ決め方)。
+// pane の中なら pane の agent(agent がいなければ人)、pane の外なら system:<名前>(TB_SYSTEM)か人。
+// 呼び出し元の確かめ(identity.Authenticate)は Run の入口で済んでいる。
+func callerPrincipal(what string) (port.Principal, error) {
+	pane := os.Getenv("HERDR_PANE_ID")
+	if pane == "" {
+		if identity.System != "" {
+			return app.System(identity.System), nil
+		}
+		return app.Human(), nil
+	}
+	n, err := identity.PaneOwnerName(pane)
+	if err != nil {
+		return port.Principal{}, &exit{exitErr, what + ": herdr agent list に失敗したため、人の端末からの実行か確かめられません"}
+	}
+	if n == "" {
+		return app.Human(), nil
+	}
+	return app.Agent(n), nil
+}
+
+// appErr は操作のエラー(*define.Error)を tb の終了コードと文言にする。
+// 承認が要るが積めなかった = 20、使い方の誤り = 2、主体を確かめられない = 3、ほか = 1。
+func appErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	var e *define.Error
+	if !errors.As(err, &e) {
+		return err
+	}
+	msg := e.Message
+	if msg == "" {
+		msg = string(e.Code)
+	}
+	switch {
+	case e.Code == define.CodePermissionDenied && slices.Contains(e.Reasons, app.ReasonApprovalRequired):
+		return &exit{20, msg}
+	case e.Code == define.CodeInvalidArgument:
+		return &exit{exitUsage, msg}
+	case e.Code == define.CodeUnauthenticated:
+		return &exit{3, msg}
+	}
+	return &exit{exitErr, msg}
+}

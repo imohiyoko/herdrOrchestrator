@@ -1,6 +1,9 @@
 package webui
 
 import (
+	"github.com/imohiyoko/herdrorchestrator/internal/app"
+	"github.com/imohiyoko/herdrorchestrator/internal/app/ticket"
+
 	"bytes"
 	"context"
 	"fmt"
@@ -293,20 +296,23 @@ func runTB(sess string, timeout time.Duration, args ...string) (int, string) {
 }
 
 // resolveComment は question / blocked の報告を対応済みにする。返り値: done | already | error。
+// アプリケーション API の ticket.resolve を同じプロセスで呼ぶ(ADR 0008。tb resolve と同じ操作)。主体はログインした人。
 func resolveComment(sess string, cid int, note string) string {
 	note = strings.TrimFunc(note, pyIsSpace)
 	if utf8.RuneCountInString(note) > noteMax {
 		note = string([]rune(note)[:noteMax])
 	}
-	args := []string{"resolve", "C-" + strconv.Itoa(cid)}
-	if note != "" {
-		args = append(args, "-m", note)
-	}
-	rc, out := runTB(sess, 15*time.Second, args...)
-	if rc != 0 {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	c, err := appClient(sess)
+	if err != nil {
 		return "error"
 	}
-	if strings.Contains(out, "すでに") {
+	var res ticket.ResolveResult
+	if err := c.Call(ctx, app.Human(), "ticket.resolve", ticket.ResolveReq{ID: strconv.Itoa(cid), Note: note}, &res); err != nil || res.Pending != nil {
+		return "error"
+	}
+	if res.Already {
 		return "already"
 	}
 	return "done"

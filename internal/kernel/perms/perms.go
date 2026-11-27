@@ -321,6 +321,40 @@ func (t *Table) Tier(db *sql.DB, session, op, target string, who func() (string,
 	return tier, rule, nil
 }
 
+// TierFor は主体 who("human" / agent 名 / "system:<名前>")に効くコマンドの操作の効果と根拠(ADR 0008)。
+// Tier と違い、主体は引数だけで決め、pane や identity.System を見ない(アプリケーション API の門が使う)。
+func (t *Table) TierFor(db *sql.DB, session, who, op, target string) (tier, rule string) {
+	r, ok := t.byOp[op]
+	if !ok {
+		return "deny", "(表に無い操作: deny)"
+	}
+	if who == "human" {
+		return "allow", "(人は常に通る)"
+	}
+	if who == "" || who == Caller {
+		return "deny", "(主体が無い: deny)"
+	}
+	j, readErr, _ := Judge(db, session, who, nil, op, target, Matcher{})
+	if readErr != "" {
+		return "deny", "(設定 policy を読めない: " + readErr + ")"
+	}
+	if j.Human { // system: の行が当たらなかった system
+		return "allow", "(" + who + " に当たる system: の行が無いので、人と同じく通る)"
+	}
+	return j.Resolve(r.Default, "既定 "+r.Default, r.Floor)
+}
+
+// TierFor は commands.tbl の表での Table.TierFor。
+func TierFor(db *sql.DB, session, who, op, target string) (tier, rule string) {
+	return std.TierFor(db, session, who, op, target)
+}
+
+// RowOf は commands.tbl の操作名 op の行(無ければ false)。
+func RowOf(op string) (Row, bool) {
+	r, ok := std.byOp[op]
+	return r, ok
+}
+
 // opRow は ops.tbl の 1 行(コマンドの中の操作の既定。上から最初に当たった行)。
 type opRow struct{ pat, def string }
 
@@ -421,6 +455,8 @@ func valid(v string) bool {
 type Denied struct {
 	Code int
 	Msg  string
+	// Queued は ask で承認待ちに積んだときの ID(Q-<n>)。積んでいなければ空。
+	Queued string
 }
 
 func (d *Denied) Error() string { return d.Msg }
@@ -461,23 +497,49 @@ func EnforceTarget(op, target, tier, rule, what string) error {
 	if pane != "" {
 		var err error
 		if n, err = identity.PaneOwnerName(pane); err != nil {
-			return &Denied{1, what + ": herdr agent list に失敗したため、人の端末からの実行か確かめられません"}
+			return &Denied{Code: 1, Msg: what + ": herdr agent list に失敗したため、人の端末からの実行か確かめられません"}
 		}
 	}
 	if n == "" {
 		return nil
 	}
+	return enforceName(n, op, target, tier, rule, what)
+}
+
+// EnforceAs は EnforceTarget の、主体を引数で受け取る形(ADR 0008。pane や identity.System を見ない)。
+// who は "human" / agent 名 / "system:<名前>"。人は常に通る。空(主体が無い)は止める。効果は TierFor で決めたもの。
+func EnforceAs(who, op, target, tier, rule, what string) error {
+	if Approved && (tier == "allow" || tier == "ask" || (tier == "deny" && ApprovedDeny != "" && op == ApprovedDeny)) {
+		return nil
+	}
+	if who == "human" {
+		return nil
+	}
+	if who == "" || who == Caller { // 主体の無い呼び出しは通さない(fail-closed)
+		return &Denied{Code: 1, Msg: what + ": 呼び出し元の主体が無いため実行しません"}
+	}
+	if tier == "allow" {
+		if Record != nil {
+			Record("allow", op, target, rule, what)
+		}
+		return nil
+	}
+	return enforceName(who, op, target, tier, rule, what)
+}
+
+// enforceName は agent(または system:<名前>)n の呼び出しを ask / deny で止める(allow は呼ぶ側で通してある)。
+func enforceName(n, op, target, tier, rule, what string) error {
 	switch tier {
 	case "ask":
 		msg := what + " は承認が要ります(" + op + " = " + tier + "。" + rule + ")"
 		if Queue != nil {
 			id, err := Queue(op, target, rule, what)
 			if err != nil {
-				return &Denied{20, msg + "。承認待ちに積めませんでした(" + err.Error() + ")。人が自分の端末で実行してください(agent '" + n + "')"}
+				return &Denied{Code: 20, Msg: msg + "。承認待ちに積めませんでした(" + err.Error() + ")。人が自分の端末で実行してください(agent '" + n + "')"}
 			}
-			return &Denied{20, msg + "。承認待ち " + id + " に積みました(承認されると知らせが届き、tb approval run " + id + " で 1 回だけ実行できます。決まったかは tb approval history --mine でも見られます)(agent '" + n + "')"}
+			return &Denied{Code: 20, Msg: msg + "。承認待ち " + id + " に積みました(承認されると知らせが届き、tb approval run " + id + " で 1 回だけ実行できます。決まったかは tb approval history --mine でも見られます)(agent '" + n + "')", Queued: id}
 		}
-		return &Denied{20, msg + "。承認待ちに積めないため実行しません。人が自分の端末で実行してください(agent '" + n + "')"}
+		return &Denied{Code: 20, Msg: msg + "。承認待ちに積めないため実行しません。人が自分の端末で実行してください(agent '" + n + "')"}
 	}
 	note := ""
 	if Record != nil && !strings.HasPrefix(op, "cmd:?:") {
@@ -486,9 +548,9 @@ func EnforceTarget(op, target, tier, rule, what string) error {
 		}
 	}
 	if strings.HasPrefix(rule, "policy:") {
-		return &Denied{1, what + " は実行できません(" + op + " = deny。" + rule + ")(agent '" + n + "')" + note}
+		return &Denied{Code: 1, Msg: what + " は実行できません(" + op + " = deny。" + rule + ")(agent '" + n + "')" + note}
 	}
-	return &Denied{1, what + " は人が自分の端末で実行します(agent '" + n + "' の pane からは実行できません)" + note}
+	return &Denied{Code: 1, Msg: what + " は人が自分の端末で実行します(agent '" + n + "' の pane からは実行できません)" + note}
 }
 
 // HumanPane は今の呼び出しが pane の外(人の端末)か。pane があっても agent がいなければ人だが、それは Enforce が herdr に聞いて決める。
@@ -561,7 +623,7 @@ func callerFn(what string) func() (string, error) {
 		}
 		n, err := identity.PaneOwnerName(identityPane())
 		if err != nil {
-			return "", &Denied{1, what + ": herdr agent list に失敗したため、呼び出し元を確かめられません"}
+			return "", &Denied{Code: 1, Msg: what + ": herdr agent list に失敗したため、呼び出し元を確かめられません"}
 		}
 		if n == "" {
 			return "human", nil

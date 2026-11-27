@@ -154,6 +154,7 @@ type NewResult struct {
     1. **入口の段(`cmd:<サービス>:<動詞>`)は `port.Authorizer`**: 各操作の `define.Authz` の操作名を、今 `taskboard/perms/commands.tbl` で入口(`entry`)の判定に使っている `cmd:` の名前にする(`agent.new` → `cmd:agent:new`)。herdr の Authorizer は policy の効果が `deny` なら拒否、`allow` と `ask` なら通す。これで Web UI など tb の入口(`perms.Gate`)を通らない呼び出しでも `cmd:` の行が効く。tb の入口の `Gate` は移した動詞では二重になるが、結果は同じなので、段 5 で入口からは外す。
     2. **操作の中の判定(`agent:new:<名前>` など)と `ask` はハンドラーの手前の門**: herdr の操作はすべて `app.Guard(判定の作り方, ハンドラー)` で包んで登録する。門は主体(`define.PrincipalFrom`)と入力から操作名と対象を作り、policy を 3 つの効果で判定する: `deny` は `*define.Error`(`permission_denied`)、`ask` はハンドラーを呼ばずに承認待ちに積み `Pending` を持つ結果を返す、`allow` だけがハンドラーを呼ぶ。入口の段(1)の `ask` も、この門が同じく承認待ちにする(Authorizer は `ask` を通すだけで、実行させない)。
     - `Guard` を使わずに登録した操作が無いことを、レジストリを走査するテストで CI に検査させる。
+    - 段 0 で決めた分け方: commands.tbl の場所が `entry` の行は Authorizer が判定し(`deny` だけ拒否)、`inner` の行(今 `require_human` で確かめている `cmd:ticket:resolve` など)は Authorizer では通して `Guard` が判定する。止めたときの文言・記録(Q-<n>)・承認待ちを tb と同じにするため。
 - **承認待ちは結果の 1 つ**: 「承認待ちに積んだ」は失敗ではなく `Pending` を持つ結果として返す。`Pending` は経路(agent の操作の待ち `L-<n>` か、コマンドの入口の `ask` の `Q-<n>` か)と番号を持ち、tb の入口は経路ごとに今の文言を再現する: agent の操作は今どおり終了コード 20 と `L-<n> pending …`、コマンドの入口の `ask` は今どおり `Q-<n>` を含む説明。2 つを共通の文言にまとめない。
 - **環境は注入**: DB、セッション、herdr のアダプタ、時計は `app.Env`(または各サービスの構造体)で渡す。テストでは疑似の herdr と一時 DB を入れる。
 - **読み取りも API**: 一覧・詳細は `app/<サービス>` の読み取り関数(`ticket.List(ctx, by, Filter)` など)。画面向けの集計(Web UI の一覧の JOIN など)も、その表を持つサービスの読み取り関数に置く。
@@ -241,6 +242,13 @@ ADR 0004 の依存の検査に次を足す。今ある違反は許容リスト�
 
 - agent セット(`internal/agentset`、`tb agentset`)は段 1 のあとに作る。セットは `app/agent` を呼ぶ入口の 1 つで、tb を別プロセスで呼ばない。
 - 設計案の「公開コマンドを呼ぶ」は「公開の API を呼ぶ」に読み替える。本体に足す部品(既存の workspace に pane で置く起動、親の付け替え)は段 1 で `app/agent` に入れる。
+
+## 段 0 で入れたもの(2026-11-27)
+
+- `internal/app`: 主体の写し(`human` → user / `human`、agent → service_account / `agent:<名前>`、system → service_account / `system:<名前>`)、プロセス内の短命のトークン(`Tokens`。Authenticator)、`Authorizer`、`Guard`(`app.Command` / `app.Query` だけが操作を作り、`app.Registry` は Guard を通さない操作を断る)、`Pending`。
+- `internal/kernel/perms`: 主体を引数で受け取る `TierFor` と `EnforceAs`(pane や `identity.System` を見ない)。今の `EnforceTarget` は pane から主体を決めて同じ中身を呼ぶ。
+- 最初の操作 `ticket.resolve`(`internal/app/ticket`)。`tb resolve` は引数を読み、呼び出し元を主体にして `Invoke` で呼び、結果を今の文言と終了コードにする。Web UI の「対応済みにする」は `runTB` をやめ、同じ操作を同じプロセスで人として呼ぶ。
+- 依存と層の検査(`cmd/herdrctl/layers_test.go`): herdrctl の依存に grpc・protobuf・YAML・imohiyoko/API の `cli` が無いこと、入口(tbcli・webui)の内部 import と SQL の数を許容リスト(`cmd/herdrctl/testdata/layers-allow.txt`)と比べる。増えても減っても落ち、減ったら `-update` で許容リストを減らす。
 
 ## 検討した代替案
 

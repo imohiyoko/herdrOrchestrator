@@ -74,7 +74,7 @@ GO_EXTRA=(
 # tb のケースのうち読むものを、関数の記録(TB_COVMAP の files)で選ぶファイル。記録が無ければ tb の組全部(tb help で読む。Web UI などは読まない)
 TB_FILES=(taskboard/lib/help.txt)
 # Go のコードを文字として読む tb のケース(internal/ の .go が変わったら、*_test.go でも、tb の組を流さないときもこれだけ流す)
-TB_SOURCE_CASES=(69_pr_contract.sh 83_parts.sh 93_prqueue.sh 99_layout.sh)
+TB_SOURCE_CASES=(03_perms.sh 69_pr_contract.sh 83_parts.sh 93_prqueue.sh 99_layout.sh)
 CORE_SUITES=(misc taskboard webui scheduler setup)
 # core のうち、任意の部品の名前を出してよいファイル(部品の一覧と、全体の README)
 NAME_OK=(tests/run-all.sh README.md)

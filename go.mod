@@ -3,6 +3,7 @@ module github.com/imohiyoko/herdrorchestrator
 go 1.26.0
 
 require (
+	github.com/imohiyoko/API v0.0.0-20261126202840-dbb630517ed6
 	golang.org/x/crypto v0.43.0
 	modernc.org/sqlite v1.62.0
 )
