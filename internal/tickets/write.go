@@ -251,7 +251,6 @@ func JoinDeliverables(s string) (string, bool) {
 	return strings.Join(parts, ", "), true
 }
 
-
 // CommentKinds は報告コメントの種類。
 var CommentKinds = []string{"done", "progress", "question", "blocked"}
 

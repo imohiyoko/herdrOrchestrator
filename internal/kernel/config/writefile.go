@@ -8,7 +8,9 @@ import (
 // ErrSymlink は書き先がシンボリックリンクのとき(書かない)。
 type ErrSymlink struct{ Path string }
 
-func (e *ErrSymlink) Error() string { return filepath.Base(e.Path) + " がシンボリックリンクです: " + e.Path }
+func (e *ErrSymlink) Error() string {
+	return filepath.Base(e.Path) + " がシンボリックリンクです: " + e.Path
+}
 
 // WriteFile は設定のファイル f を body で置き換える(一時ファイルに書いて rename。権限は今のファイルのまま。末尾に改行を足す)。
 func WriteFile(f, body string) error {
@@ -40,4 +42,3 @@ func WriteFile(f, body string) error {
 	}
 	return os.Rename(tmp.Name(), f)
 }
-

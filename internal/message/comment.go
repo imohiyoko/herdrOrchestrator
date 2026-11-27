@@ -30,7 +30,9 @@ type CommentDelivery struct {
 // ErrCommentNotFound はコメントが無いとき(文言は tb と同じ)。
 type ErrCommentNotFound struct{ Ref string }
 
-func (e *ErrCommentNotFound) Error() string { return "コメントが見つかりません: C-" + e.Ref }
+func (e *ErrCommentNotFound) Error() string {
+	return "コメントが見つかりません: C-" + e.Ref
+}
 
 // DeliverComment は報告コメント C-<ref>(ref は数字だけ。呼ぶ側で確かめる)を指揮役へ届ける。warn は送信の警告の書き込み先。
 // 届いたら配送済みの印とタスクの報告済みを一緒に書く(片方だけ残ると、次の tb report が同じ報告を作り直して送る)。
@@ -96,4 +98,3 @@ func MarkCommentDelivered(db *store.DB, ref, ts string) error {
 	}
 	return tx.Commit()
 }
-

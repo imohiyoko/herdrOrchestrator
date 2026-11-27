@@ -176,7 +176,6 @@ func OpClaim(db *store.DB, now string, id int64, by string) error {
 	return nil
 }
 
-
 func decideOp(env *app.Env, approve bool) app.Op {
 	name, sub, cmd, verb := "agent.reject", "reject", "tb agent-reject", "reject"
 	if approve {
