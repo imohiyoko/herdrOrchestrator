@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"slices"
+	"strconv"
 
 	"github.com/imohiyoko/API/define"
 	"github.com/imohiyoko/API/port"
@@ -36,11 +37,19 @@ func callAppAs(db *store.DB, by port.Principal, op string, in, out any) error {
 
 // callAppW は callAppAs に、操作の途中の警告の書き込み先(標準エラー)を足したもの。
 func callAppW(db *store.DB, by port.Principal, stderr io.Writer, op string, in, out any) error {
-	c, err := server.New(&app.Env{DB: app.Shared(db), Now: now, PendingQ: pendingQ, Warn: stderr})
+	c, err := server.New(appEnv(db, stderr))
 	if err != nil {
 		return err
 	}
 	return appErr(c.Call(context.Background(), by, op, in, out))
+}
+
+// appEnv は tb の入口が API に渡す環境(承認待ちの知らせと報告の届け先は tb のもの)。
+func appEnv(db *store.DB, stderr io.Writer) *app.Env {
+	return &app.Env{DB: app.Shared(db), Now: now, PendingQ: pendingQ, Warn: stderr,
+		Deliver: func(db *store.DB, id int64) {
+			_ = deliverComment(db, io.Discard, io.Discard, strconv.FormatInt(id, 10))
+		}}
 }
 
 // pendingExit は承認待ちの結果を今の tb の形にする: agent の操作の待ち(L-<n>)は標準出力に 1 行で 20、

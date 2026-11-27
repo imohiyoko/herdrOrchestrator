@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/agents"
+	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/capv"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/herdr"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/jv"
@@ -268,28 +269,28 @@ func (d *digestRun) collectSpawn() {
 		return
 	}
 	_ = agents.Sync(db.DB, db.Session)
-	p := loadSpawnPolicy(db)
+	p := agent.LoadSpawnPolicy(db)
 	var current []string
 	var n int
 	_ = db.QueryRow(`SELECT COUNT(*) FROM agents WHERE spawned_by IS NOT NULL AND state='running'`).Scan(&n)
-	if p.total > 0 && n >= p.total-1 {
+	if p.Total() > 0 && n >= p.Total()-1 {
 		key := fmt.Sprintf("spawnlimit:total:%d", n)
 		current = append(current, key)
 		if !d.seen(key) {
 			d.add(d.dt, "obs", "spawn", key, "", "spawnlimit", "spawn 観測 / 全体",
-				fmt.Sprintf("子 agent が %d 体動いている(上限 %d。tb agents で確認、止めるのは tb agent-stop)", n, p.total))
+				fmt.Sprintf("子 agent が %d 体動いている(上限 %d。tb agents で確認、止めるのは tb agent-stop)", n, p.Total()))
 		}
 	}
 	for _, r := range strRows(db, `SELECT spawned_by, COUNT(*) FROM agents WHERE spawned_by IS NOT NULL AND state='running' GROUP BY spawned_by ORDER BY spawned_by`) {
 		parent, c := r[0], atoi(r[1])
-		if parent == "" || !(p.per > 0 && c >= p.per-1) {
+		if parent == "" || !(p.PerParent() > 0 && c >= p.PerParent()-1) {
 			continue
 		}
 		key := fmt.Sprintf("spawnlimit:%s:%d", parent, c)
 		current = append(current, key)
 		if !d.seen(key) {
 			d.add(d.dt, "obs", "spawn", key, "", "spawnlimit", "spawn 観測 / "+parent,
-				fmt.Sprintf("%s の子が %d 体動いている(1 体の親あたりの上限 %d)", parent, c, p.per))
+				fmt.Sprintf("%s の子が %d 体動いている(1 体の親あたりの上限 %d)", parent, c, p.PerParent()))
 		}
 	}
 	for _, r := range strRows(db, `SELECT a.name, a.spawned_by, a.spawn_task, t.status, t.project FROM agents a JOIN tasks t ON t.id=a.spawn_task
