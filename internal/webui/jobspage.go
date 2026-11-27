@@ -55,6 +55,9 @@ func (s *Server) pageJobs(q *rq, c pageCtx) (string, string) {
 			if info.at != "" {
 				sched = "1 回だけ " + E(info.at)
 			}
+			if info.manual {
+				sched = "呼ばれたときだけ(tb job run)"
+			}
 			if info.overridden {
 				sched += " <span class=note>(Web UI で変更済み)</span>"
 			}
@@ -365,6 +368,10 @@ func (s *Server) pageJobDraft(q *rq, name, csrf, errMsg string, saved bool, done
 		`<button type=submit>conf の値に戻す</button></form>`
 	if info.at != "" { // 1 回だけのジョブ: 間隔・時間帯・曜日のフォームは出さない(日時は定義の AT で変える)
 		form = `<p>1 回だけ <b>` + E(info.at) + `</b>(TZ ` + E(info.tz) + `)に動くジョブです。日時を変えるには、下の定義の <code>AT=</code> を直します。` +
+			`一時停止は定義に <code>ENABLED=0</code> を書きます。</p>`
+	}
+	if info.manual {
+		form = `<p>呼ばれたときだけ動くジョブです(<code>MANUAL=1</code>)。<code>tb job run ` + E(name) + `</code> か <code>POST /v1/jobs/` + E(qn) + `/run</code> で動きます。` +
 			`一時停止は定義に <code>ENABLED=0</code> を書きます。</p>`
 	}
 	what := "コマンドを実行する"

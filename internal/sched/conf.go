@@ -13,7 +13,7 @@ var ConfKeys = map[string]bool{
 	"TARGET": true, "PROMPT": true, "PROMPT_FILE": true, "PROMPT_RULES": true, "PROMPT_CMD": true, "PROMPT_CMD_TIMEOUT": true,
 	"PROMPT_VARS": true, "PROMPT_VAR_TIMEOUT": true, "COMMAND": true, "COMMAND_TIMEOUT": true, "GATE": true, "GATE_TIMEOUT": true,
 	"WINDOW": true, "START": true, "END": true, "INTERVAL_MIN": true, "INTERVAL_SEC": true, "DAYS": true, "SKIP_IF": true,
-	"TZ": true, "ENABLED": true, "WATCHER": true, "OWNER": true, "AT": true,
+	"TZ": true, "ENABLED": true, "WATCHER": true, "OWNER": true, "AT": true, "MANUAL": true,
 }
 
 var reConfName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)

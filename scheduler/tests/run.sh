@@ -262,6 +262,17 @@ ok "show.sh: 繰り返しのジョブの at は null" "$(bash bin/show.sh t | jq
 SCHED_INTERVAL_MIN=1 check "AT: SCHED_* の上書きは効かない" skipped_at once "$THU 12:31"
 NOW="$THU 12:30" bash bin/tick.sh once; ok "AT: 実行して記録" "$(last once | jq -r '[.action,.stdout]|join("|")')" "ran|once"
 
+# ---- 呼ばれたときだけ(MANUAL=1)と今すぐ 1 回(tick --now)
+printf '%s\n' "COMMAND='echo manual'" 'MANUAL=1' >"$JOBS_DIR/man.conf"
+printf '%s\n' "COMMAND='echo x'" 'MANUAL=1' 'INTERVAL_MIN=5' >"$JOBS_DIR/manbad.conf"
+check "MANUAL: 毎分の判定では動かない" skipped_manual man "$THU 12:00"
+ok "MANUAL: tick --now で動く(記録に now)" "$(DRY_RUN=1 NOW="$THU 12:00" bash bin/tick.sh --now man | jq -c '[.action,.now]')" '["ran",true]'
+ok "tick --now: 窓の外の繰り返しのジョブも動く" "$(DRY_RUN=1 NOW="$THU 08:00" bash bin/tick.sh --now cmdok | jq -r .action)" ran
+ok "tick --now: AT を過ぎたジョブも動く" "$(DRY_RUN=1 NOW="$THU 13:00" bash bin/tick.sh --now once | jq -r .action)" ran
+ok "tick --now: SKIP_IF は効く" "$(DRY_RUN=1 NOW="$THU 08:00" FAKE_STATE=working bash bin/tick.sh --now t | jq -r .action)" skipped_state
+bash bin/tick.sh manbad >/dev/null 2>&1; ok "MANUAL と INTERVAL_MIN の同時指定はエラー(exit 2)" "$?" 2
+ok "show.sh: manual" "$(bash bin/show.sh man | jq -c '[.manual]') $(bash bin/show.sh t | jq -c '[.manual]')" '[true] [false]'
+
 # ---- dispatch.sh: 複数のジョブを 1 回の起動で(各ジョブはサブシェル。判定と記録は tick.sh と同じ)
 rm -f "$LOG_DIR/cmd.log" "$LOG_DIR/fast.log" "$LOG_DIR/cmdok.log"
 NOW="$THU 12:00" bash bin/dispatch.sh cmd fast cmdok; drc=$?

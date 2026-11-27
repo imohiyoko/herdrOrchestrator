@@ -19,6 +19,7 @@ launchd が `bin/tick.sh <job>` を毎分起動し、時間帯・曜日・間隔
 | `INTERVAL_SEC` | 起動間隔(秒)。`INTERVAL_MIN` の代わりに書く(同じファイルに両方は書けない)。例: `INTERVAL_SEC=30` |
 | `DAYS` | 既定 `daily`。`weekdays` や `"Mon Wed Fri"` |
 | `AT` | 任意。**1 回だけ**動かす日時(`AT="2026-11-28 09:00"`、`AT=2026-11-28T09:00:30`。`TZ` の時刻)。その分(秒まで書けばその秒)にだけ動き、前後は `skipped_at`。繰り返しのキー(`WINDOW` / `START` / `END` / `INTERVAL_*` / `DAYS`)とは同時に書かない。settings で変えられるのは `ENABLED` だけ。その分に Mac が眠っていたなどで起動されなければ、あとからは動かない |
+| `MANUAL` | 任意。`1` で**呼ばれたときだけ**動く(毎分の判定では `skipped_manual`)。`tb job run <job>` か API の `POST /v1/jobs/{name}/run` で動かす。繰り返しのキー・`AT` とは同時に書かない |
 | `SKIP_IF` | 既定 `"working blocked"`。該当する状態ならスキップ。idle/done 以外も送らない |
 | `TZ` | 既定 `Asia/Tokyo`。判定は tick.sh がこの TZ で行う |
 | `ENABLED` | 既定 `1`。`0` で一時停止 |
@@ -185,6 +186,9 @@ bin/install.sh uninstall --dispatch
 - 個別の plist から移るときは、dispatch に入れたジョブの個別の plist を `install.sh uninstall <job>` で外す。
   両方に登録すると同じジョブが二重に動く(`setup/check.sh` が warn を出す)。
 - ジョブ名 `dispatch` は予約済み。
+
+どのジョブも、時刻に関係なく今すぐ 1 回動かせる: `tb job run <job>`(API は `POST /v1/jobs/{name}/run`。中身は `bin/tick.sh --now <job>`)。
+`ENABLED`・`GATE`・`SKIP_IF`・ロックは毎分の回と同じに効き、記録には `"now": true` が付く。既定は人だけ(policy の `cmd:job:run` で agent にも許せる)。
 
 conf を書き換えずに一時的に変えたいときは(Web UI の settings より優先)、環境変数 `SCHED_WINDOW` / `SCHED_START` / `SCHED_END` /
 `SCHED_INTERVAL_MIN` / `SCHED_INTERVAL_SEC` で上書きできる。

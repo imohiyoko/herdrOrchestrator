@@ -27,6 +27,8 @@ type TickEnv struct {
 	LogDir, Herdr, TB string
 	Dry               bool
 	Now, FakeState    string
+	// Force は今すぐ 1 回(tick --now。tb job run・POST /v1/jobs/{name}/run)。時刻・間隔・曜日・AT・MANUAL を見ない。ENABLED・GATE・SKIP_IF・ロックは同じ
+	Force bool
 }
 
 // DefaultTickEnv は lib.sh / tick.sh と同じ既定。
@@ -98,6 +100,9 @@ func (t *ticker) emit(action, reason string) {
 	add("prompt", t.psrc)
 	if t.exitc != nil {
 		kv = append(kv, [2]any{"exit", *t.exitc}, [2]any{"stdout", t.outS}, [2]any{"stderr", t.errS})
+	}
+	if t.Force {
+		kv = append(kv, [2]any{"now", true}) // tick --now(呼ばれて動いた回)
 	}
 	if t.Dry {
 		add("text", t.dryText)
@@ -293,6 +298,12 @@ func (t *ticker) run() (int, error) {
 		return 0, nil
 	}
 	var due []int64
+	if t.Force {
+		return t.fire([]int64{nowE}, nowE, slotHi, faked)
+	}
+	if j.Manual {
+		return quiet("skipped_manual", "MANUAL=1 runs only on request (tb job run)")
+	}
 	if j.At != "" {
 		at, err := ParseAt(j.At, t.loc)
 		if err != nil {

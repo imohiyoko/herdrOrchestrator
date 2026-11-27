@@ -105,4 +105,18 @@ rm -f "$TB_SCHED_DIR/logs/jr.log"
 eq "sched-job rm: not a legacy verb → 2" "$(rc SJA sched-job rm j1)" "2"
 printf '%s\n' "$J1" | SJA job set jr >/dev/null
 eq "job rm from an agent pane → refused" "$(FAKE_AGENTS='[{"pane_id":"wW:p1","name":"worker1","agent_session":{"value":"s"}}]' HERDR_PANE_ID=wW:p1 rc SJA job rm jr) $(SJA job list | grep -c '^jr')" "1 1"
+# job run: 時刻に関係なく今すぐ 1 回(API の job.run)。MANUAL=1 は毎分の判定では動かない
+printf '%s\n' "COMMAND='echo hi-now'" 'MANUAL=1' | SJA job set jm >/dev/null
+out=$(SJA job run jm; echo "rc=$?")
+eq "job run: runs now, prints the record and stdout" "$out" $'jm: ran(exit 0)\nhi-now\nrc=0'
+eq "job run: the log line has now: true" "$(tail -1 "$TB_SCHED_DIR/logs/jm.log" | jq -c '[.action,.now]')" '["ran",true]'
+eq "job run: MANUAL=1 does not run on the minute" "$(HERDR_SESSION=sja DRY_RUN=1 NOW='2026-11-05 12:00' bash "$HERE/../../scheduler/bin/tick.sh" jm | jq -r .action)" "skipped_manual"
+printf '%s\n' "COMMAND='echo no; exit 3'" 'WINDOW=09:00-09:01' 'INTERVAL_MIN=1' | SJA job set jf >/dev/null
+eq "job run: a repeating job runs outside its window; failure → 1" "$(SJA job run jf | head -1; echo "rc=${PIPESTATUS[0]}")" $'jf: failed(exit 3)\nrc=1'
+printf '%s\n' "COMMAND='echo x'" 'MANUAL=1' 'ENABLED=0' | SJA job set jp >/dev/null
+eq "job run: a paused job is not run → 1" "$(SJA job run jp | cut -d'(' -f1; echo "rc=${PIPESTATUS[0]}")" $'jp: skipped_disabled\nrc=1'
+eq "job run: no such job → 1" "$(rc SJA job run nosuch)" "1"
+eq "job run: usage → 2" "$(rc SJA job run)" "2"
+eq "job run from an agent pane → refused" "$(FAKE_AGENTS='[{"pane_id":"wW:p1","name":"worker1","agent_session":{"value":"s"}}]' HERDR_PANE_ID=wW:p1 rc SJA job run jm) $(grep -c . "$TB_SCHED_DIR/logs/jm.log")" "1 1"
+eq "job: MANUAL with WINDOW is refused" "$(printf '%s\n' "COMMAND='echo x'" 'MANUAL=1' 'WINDOW=09:00-10:00' | rc SJA job set jbad)" "1"
 unset TB_SCHED_DIR; export HERDR_PANE_ID=$_saved_pane

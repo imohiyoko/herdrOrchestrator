@@ -203,6 +203,9 @@ tb job set|edit|unset <job> [--settings] [--shared]   DB に書く / 消す(人�
 tb job import [--dry-run] [--shared] [<job> ...]     jobs/*.conf と settings/*.settings を DB に取り込み、ファイルを退かす(人だけ)
 tb job history <job> [--settings]                    変更の履歴
 tb job rm <job> [--shared] [--keep-log]              ジョブを消す(定義と上書き設定の DB の行。どのセッションにも残らなければ logs/<job>.log も消す。人だけ)
+tb job run <job>                                     時刻に関係なく今すぐ 1 回動かす(既定は人だけ。policy の cmd:job:run で agent にも許せる)。ENABLED・GATE・SKIP_IF・ロックは毎分の回と同じ。
+                                                     記録は logs/<job>.log に now: true を付けて残す。動かなかった回(skipped_* / failed)は終了コード 1。API は POST /v1/jobs/{name}/run。
+                                                     MANUAL=1 のジョブは毎分の判定では動かず、これでだけ動く
   別名(古い名前。同じに動く。サブコマンドが無ければ list): tb sched-job
 
 会計役(定期レビュー)→ 設定役(projects の proposal=<名前>、無ければ * の名前):
