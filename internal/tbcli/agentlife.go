@@ -1,6 +1,9 @@
 package tbcli
 
 import (
+	"github.com/imohiyoko/herdrorchestrator/internal/app"
+	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
+
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -89,86 +92,26 @@ func opEntry(db *store.DB, op, target, args, by string, w io.Writer, run func() 
 }
 
 // killableOf は killable_of: protected|yes|no|unknown|stale。
-func killableOf(db *store.DB, name string) string {
-	if _, ok := agents.NewRoles(db.DB, db.Session).ProtectReason(name); ok {
-		return "protected"
-	}
-	var k string
-	_ = db.QueryRow(`SELECT CASE WHEN killable!='yes' THEN killable
-      WHEN killable_session IS NOT NULL AND session_id IS NOT NULL AND killable_session!=session_id THEN 'stale'
-      WHEN EXISTS (SELECT 1 FROM main.agent_activity aa WHERE (aa.session_id=agents.session_id OR (aa.pane_id=agents.pane_id AND aa.herdr_session=agents.herdr_session))
-                   AND julianday(aa.last_prompt_at) > julianday(agents.killable_at)) THEN 'stale'
-      ELSE 'yes' END FROM agents WHERE name=?`, name).Scan(&k)
-	return k
-}
+func killableOf(db *store.DB, name string) string { return agents.Killable(db.DB, db.Session, name) }
 
 // liveOf は live_row: herdr の一覧から名前が一致する 1 件。
-func liveOf(live []herdr.Agent, name string) (herdr.Agent, bool) {
-	for _, a := range live {
-		if a.Name == name {
-			return a, true
-		}
-	}
-	return herdr.Agent{}, false
-}
+func liveOf(live []herdr.Agent, name string) (herdr.Agent, bool) { return agents.LiveOf(live, name) }
 
 // closePane は agent_close_pane: pane を閉じて台帳を stopped にする(session は残す)。閉じられなければ 11。
 func closePane(db *store.DB, name, pane, sess string) *opResult {
-	if _, err := herdr.Call("pane", "close", pane); err != nil {
+	if !agents.ClosePane(db.DB, db.Session, name, pane, sess) {
 		return &opResult{code: 11, out: "pane " + pane + " を閉じられません"}
 	}
-	ts := nowTS()
-	_, _ = db.Exec(`UPDATE main.agents SET state='stopped', stopped_at=?, updated_at=?, pane_id=NULL,
-         session_id=COALESCE(NULLIF(?,''), session_id) WHERE herdr_session=? AND name=?`, ts, ts, sess, db.Session, name)
 	return nil
 }
 
-// doAgentStop は do_agent_stop。
+// doAgentStop は do_agent_stop(中身は app/agent.Stop。承認後の実行・recipe から呼ぶ)。
 func doAgentStop(db *store.DB, st tickets.StatusSet, name string, force bool, by string) opResult {
-	live, err := agents.SyncLive(db.DB, db.Session)
-	if err != nil {
-		return opResult{code: 11, out: "herdr agent list に失敗しました"}
-	}
-	a, ok := liveOf(live, name)
-	if !ok {
-		if msg, other := otherSession(db, name); other {
-			return opResult{code: 1, out: msg}
-		}
-		return opResult{code: 1, out: name + " は動いていません"}
-	}
-	if by == name {
-		return opResult{code: 1, out: "自分自身は止められません"}
-	}
-	pane, sess := a.PaneID, a.AgentSession.Value
-	if pane == "" {
-		return opResult{code: 1, out: name + " の pane が分かりません"}
-	}
-	if k, ok := agents.NewRoles(db.DB, db.Session).ProtectReason(name); ok { // 保護は --force でも越えない
-		return opResult{code: 1, out: name + " は保護されています(" + k + ")。止めるなら、人が tb config edit protect で外してから"}
-	}
-	if !force {
-		k := killableOf(db, name)
-		var open string
-		_ = db.QueryRow(`SELECT COALESCE(group_concat(id, ' '),'') FROM tasks WHERE owner_agent=? AND status IN (`+st.SQLList("active", "review", "blocked")+`)`, name).Scan(&open)
-		if k != "yes" || open != "" {
-			extra := ""
-			if open != "" {
-				extra = "、未完了タスク " + open
-			}
-			return opResult{code: 1, out: name + " は止めてよいと判定されていません(killable=" + k + extra + ")。判定役に付けてもらうか(tb agent-flag)、人が --force で止めます"}
-		}
-	}
-	if r := closePane(db, name, pane, sess); r != nil {
-		return *r
-	}
-	_ = db.QueryRow(`SELECT COALESCE(session_id,'') FROM agents WHERE name=?`, name).Scan(&sess)
-	out := name + " stopped"
-	if sess != "" {
-		out += " (session " + sess + "。tb agent-revive " + name + " で同じ会話から再開できます)"
-	}
-	return opResult{code: 0, out: out}
+	r := agent.Stop(db, st, name, force, by)
+	return opResult{code: r.Code, out: r.Out}
 }
 
+// cmdAgentStop は tb agent-stop <名前> [--force]。中身はアプリケーション API の agent.stop(ADR 0008)。
 func cmdAgentStop(args []string, w, stderr io.Writer) error {
 	if len(args) < 1 || strings.HasPrefix(args[0], "-") {
 		return usage("agent-stop <名前> [--force]")
@@ -183,7 +126,7 @@ func cmdAgentStop(args []string, w, stderr io.Writer) error {
 		}
 		force = true
 	}
-	db, st, err := openCmd(stderr)
+	db, _, err := openCmd(stderr)
 	if err != nil {
 		return err
 	}
@@ -192,14 +135,15 @@ func cmdAgentStop(args []string, w, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if force && by != "human" {
-		return die("--force は人が自分の端末で使います(agent '%s' の pane からは使えません)", by)
+	var res agent.StopResult
+	if err := callAppAs(db, app.PrincipalOf(by), "agent.stop", agent.StopReq{Name: name, Force: force}, &res); err != nil {
+		return err
 	}
-	f := 0
-	if force {
-		f = 1
+	if res.Pending != nil {
+		return pendingExit(w, res.Pending)
 	}
-	return opEntry(db, "stop", name, fmt.Sprintf(`{"force":%d}`, f), by, w, func() opResult { return doAgentStop(db, st, name, force, by) })
+	fmt.Fprintln(w, res.Out)
+	return nil
 }
 
 // ---------- 戻す(revive) ----------

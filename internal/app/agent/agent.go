@@ -1,0 +1,106 @@
+// Package agent は agent のアプリケーション API(ADR 0008 の段 1。tb のサービス agent)。
+//
+// 操作の門は agent の操作の判定(policy の agent:<操作>:<名前>。approval.Judge)で、ask は agent_ops に積んで L-<n> を返す。
+// 結果は agent_ops に決まった行として残す(tb の op_entry と同じ)。
+package agent
+
+import (
+	"context"
+	"strconv"
+
+	"github.com/imohiyoko/API/define"
+
+	"github.com/imohiyoko/herdrorchestrator/internal/app"
+	"github.com/imohiyoko/herdrorchestrator/internal/approval"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
+)
+
+// 拒否の理由(tb は終了コードにする)。
+const (
+	// ReasonOpDenied は policy の agent:<操作> が deny(tb の終了コード 4)。
+	ReasonOpDenied = "op_denied"
+	// ReasonHerdrUnavailable は herdr を呼べない・pane を閉じられない(tb の終了コード 11)。
+	ReasonHerdrUnavailable = "herdr_unavailable"
+)
+
+// Result は操作の実行の結果(tb の opResult。Code は tb の終了コード、Out は文言)。
+type Result struct {
+	Code int
+	Out  string
+}
+
+// Err は結果を操作のエラーにする(成功なら nil)。
+func (r Result) Err() error {
+	switch r.Code {
+	case 0:
+		return nil
+	case 11:
+		return &define.Error{Code: define.CodeUnavailable, Message: r.Out, Reasons: []string{ReasonHerdrUnavailable}}
+	}
+	return &define.Error{Code: define.CodeFailedPrecondition, Message: r.Out}
+}
+
+// opGate は agent の操作 op(stop・revive など)の門: 人は通す。agent は policy の agent:<op>:<名前> で、
+// allow は通す、deny は却下の行を残して拒否、ask は承認待ち(agent_ops の pending の行、L-<n>)に積む。
+// args は承認後の実行に使う引数(agent_ops.args の JSON)。pre は判定の前の確かめ(--force は人だけ、など)。
+func opGate[In any](op string, target func(In) string, args func(In) string, pre func(who string, in In) error) app.Gate {
+	return func(_ context.Context, env *app.Env, who string, v any) app.Decision {
+		in := v.(In)
+		if pre != nil {
+			if err := pre(who, in); err != nil {
+				return app.Decision{Err: err}
+			}
+		}
+		if who == "human" {
+			return app.Decision{}
+		}
+		db, done, err := env.DB()
+		if err != nil {
+			return app.Decision{Err: define.Errorf(define.CodeInternal, "%s", err.Error())}
+		}
+		defer done()
+		t := target(in)
+		val, rule := approval.NewJudge(db.DB, db.Session).Of("agent:"+op+":"+t, who)
+		switch val {
+		case "allow":
+			return app.Decision{}
+		case "deny":
+			ts := env.NowString()
+			_, _ = db.Exec(`INSERT INTO main.agent_ops (herdr_session, op, target, args, requested_by, status, result, created_at, decided_at) VALUES (?,?,?,?,?, 'rejected', ?, ?, ?)`,
+				db.Session, op, t, args(in), who, "認可: "+rule, ts, ts)
+			return app.Decision{Err: &define.Error{Code: define.CodePermissionDenied, Message: "agent:" + op + " " + t + " は実行できません(deny。" + rule + ")", Reasons: []string{ReasonOpDenied}}}
+		}
+		res, err := db.Exec(`INSERT INTO main.agent_ops (herdr_session, op, target, args, requested_by, status, result, created_at) VALUES (?,?,?,?,?, 'pending', ?, ?)`,
+			db.Session, op, t, args(in), who, "認可: "+rule, env.NowString())
+		if err != nil {
+			return app.Decision{Err: define.Errorf(define.CodeInternal, "%s", err.Error())}
+		}
+		id, _ := res.LastInsertId()
+		q := env.QOf(db.DB, "agent_ops", id)
+		lid := "L-" + strconv.FormatInt(id, 10)
+		return app.Decision{Pending: &app.Pending{Route: "L", ID: lid, Message: lid + " pending " + q + " (承認待ち: tb approval approve " + q + ")"}}
+	}
+}
+
+// withDB は env の DB で f を呼ぶ。
+func withDB[T any](env *app.Env, f func(*store.DB) (T, error)) (T, error) {
+	var zero T
+	db, done, err := env.DB()
+	if err != nil {
+		return zero, define.Errorf(define.CodeInternal, "%s", err.Error())
+	}
+	defer done()
+	return f(db)
+}
+
+// by は操作の主体(perms の書き方)。門を通ったあとなので必ずある。
+func by(ctx context.Context) string {
+	p, _ := define.PrincipalFrom(ctx)
+	return app.Who(p)
+}
+
+
+// Ops は agent の操作。
+func Ops(env *app.Env) []app.Op {
+	return []app.Op{stopOp(env)}
+}

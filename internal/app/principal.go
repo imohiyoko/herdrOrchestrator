@@ -49,7 +49,7 @@ func Who(p port.Principal) string {
 			return humanID
 		}
 	case port.PrincipalServiceAccount:
-		if n, ok := strings.CutPrefix(p.ID, agentPrefix); ok && n != "" {
+		if n, ok := strings.CutPrefix(p.ID, agentPrefix); ok && n != "" && n != humanID && !strings.HasPrefix(n, sysPrefix) { // human は予約名(人と区別できない)
 			return n
 		}
 		if strings.HasPrefix(p.ID, sysPrefix) && len(p.ID) > len(sysPrefix) {

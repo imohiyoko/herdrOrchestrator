@@ -23,14 +23,14 @@ func (o Op) Name() string {
 	return s.Name
 }
 
-// Command は更新の操作を、Guard で包んで定義する。
-func Command[In, Out any](env *Env, name string, check Check[In], h func(context.Context, In) (Out, error), opts ...define.Option) Op {
-	return Op{def: define.Command[In, Out](name, opts...).Handle(guard(env, check, h)), guarded: true}
+// Command は更新の操作を、門 gate で包んで定義する。
+func Command[In, Out any](env *Env, name string, gate Gate, h func(context.Context, In) (Out, error), opts ...define.Option) Op {
+	return Op{def: define.Command[In, Out](name, opts...).Handle(guard(env, gate, h)), guarded: true}
 }
 
-// Query は読み取りの操作を、Guard で包んで定義する。
-func Query[In, Out any](env *Env, name string, check Check[In], h func(context.Context, In) (Out, error), opts ...define.Option) Op {
-	return Op{def: define.Query[In, Out](name, opts...).Handle(guard(env, check, h)), guarded: true}
+// Query は読み取りの操作を、門 gate で包んで定義する。
+func Query[In, Out any](env *Env, name string, gate Gate, h func(context.Context, In) (Out, error), opts ...define.Option) Op {
+	return Op{def: define.Query[In, Out](name, opts...).Handle(guard(env, gate, h)), guarded: true}
 }
 
 // Registry は操作を集める。Guard を通さない操作(Op のゼロ値など)があれば error。

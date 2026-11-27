@@ -369,7 +369,7 @@ func cmdResolve(args []string, w, stderr io.Writer) error {
 		return err
 	}
 	if res.Pending != nil {
-		return &exit{20, res.Pending.Message}
+		return pendingExit(w, res.Pending)
 	}
 	if res.Already {
 		fmt.Fprintf(w, "C-%s はすでに対応済みです(%s)\n", ref, res.ResolvedAt)

@@ -39,7 +39,7 @@ const noteMax = 500
 // Ops はチケットの操作。
 func Ops(env *app.Env) []app.Op {
 	resolve := app.Command(env, "ticket.resolve",
-		func(ResolveReq) (string, string, string) { return "cmd:ticket:resolve", "", "tb resolve" },
+		app.Cmd("cmd:ticket:resolve", "tb resolve"),
 		func(ctx context.Context, in ResolveReq) (ResolveResult, error) { return resolveComment(env, in) },
 		define.Doc("question / blocked の報告を対応済みにする(tb resolve)"),
 		define.Authz("cmd:ticket:resolve", define.Resource("comment", "id")),

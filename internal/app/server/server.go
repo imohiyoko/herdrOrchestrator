@@ -13,6 +13,7 @@ import (
 	"github.com/imohiyoko/API/runtime"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/app"
+	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/ticket"
 )
 
@@ -20,6 +21,7 @@ import (
 func Ops(env *app.Env) []app.Op {
 	var ops []app.Op
 	ops = append(ops, ticket.Ops(env)...)
+	ops = append(ops, agent.Ops(env)...)
 	return ops
 }
 

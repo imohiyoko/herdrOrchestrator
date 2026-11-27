@@ -3,6 +3,8 @@ package tbcli
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"slices"
 
@@ -10,6 +12,7 @@ import (
 	"github.com/imohiyoko/API/port"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/app"
+	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/server"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/identity"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
@@ -23,11 +26,26 @@ func callApp(db *store.DB, what, op string, in, out any) error {
 	if err != nil {
 		return err
 	}
-	c, err := server.New(&app.Env{DB: app.Shared(db), Now: now})
+	return callAppAs(db, by, op, in, out)
+}
+
+// callAppAs は主体 by(入口で確かめたもの)として操作 op を呼ぶ。
+func callAppAs(db *store.DB, by port.Principal, op string, in, out any) error {
+	c, err := server.New(&app.Env{DB: app.Shared(db), Now: now, PendingQ: pendingQ})
 	if err != nil {
 		return err
 	}
 	return appErr(c.Call(context.Background(), by, op, in, out))
+}
+
+// pendingExit は承認待ちの結果を今の tb の形にする: agent の操作の待ち(L-<n>)は標準出力に 1 行で 20、
+// コマンドの ask(Q-<n>)は説明を標準エラーに出して 20。
+func pendingExit(w io.Writer, p *app.Pending) error {
+	if p.Route == "L" {
+		fmt.Fprintln(w, p.Message)
+		return &exit{20, ""}
+	}
+	return &exit{20, p.Message}
 }
 
 // callerPrincipal は今の呼び出し元の主体(入口の確かめ。perms.EnforceTarget と同じ決め方)。
@@ -68,6 +86,10 @@ func appErr(err error) error {
 	switch {
 	case e.Code == define.CodePermissionDenied && slices.Contains(e.Reasons, app.ReasonApprovalRequired):
 		return &exit{20, msg}
+	case slices.Contains(e.Reasons, agent.ReasonOpDenied):
+		return &exit{4, msg}
+	case slices.Contains(e.Reasons, agent.ReasonHerdrUnavailable):
+		return &exit{11, msg}
 	case e.Code == define.CodeInvalidArgument:
 		return &exit{exitUsage, msg}
 	case e.Code == define.CodeUnauthenticated:
