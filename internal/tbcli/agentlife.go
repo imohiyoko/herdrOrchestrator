@@ -4,14 +4,12 @@ import (
 	"github.com/imohiyoko/herdrorchestrator/internal/app"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
 
-	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/agents"
-	"github.com/imohiyoko/herdrorchestrator/internal/approval"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/herdr"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
@@ -26,56 +24,6 @@ type opResult struct {
 	code int
 	out  string
 	note string // 最初の指示を送れなかった・確かめられなかった理由(FP_NOTE)
-}
-
-// authorizeOp は authorize_op: 人なら true。agent なら policy の agent:<op> <名前> が allow のとき true、
-// deny なら却下の行を残して 4、それ以外(ask-*)は L-<n> を積んで「承認待ち」を出し、終了コード 20 を返す。
-func authorizeOp(db *store.DB, op, target, args, by string, w io.Writer) (bool, error) {
-	if by == "human" {
-		return true, nil
-	}
-	j := approval.NewJudge(db.DB, db.Session)
-	if op == "new" { // 作成は、名前から推定した役割ではなく要求された役割(--role)で @<役割> を判定する
-		var a struct {
-			Role string `json:"role"`
-		}
-		if json.Unmarshal([]byte(args), &a) == nil && a.Role != "" {
-			j.Roles.Hint(target, a.Role)
-		}
-	}
-	v, rule := j.Of("agent:"+op+":"+target, by)
-	if v == "allow" {
-		return true, nil
-	}
-	if v == "deny" {
-		ts := nowTS()
-		_, _ = db.Exec(`INSERT INTO main.agent_ops (herdr_session, op, target, args, requested_by, status, result, created_at, decided_at) VALUES (?,?,?,?,?, 'rejected', ?, ?, ?)`,
-			db.Session, op, target, args, by, "認可: "+rule, ts, ts)
-		return false, &exit{4, "agent:" + op + " " + target + " は実行できません(deny。" + rule + ")"}
-	}
-	res, err := db.Exec(`INSERT INTO main.agent_ops (herdr_session, op, target, args, requested_by, status, result, created_at) VALUES (?,?,?,?,?, 'pending', ?, ?)`,
-		db.Session, op, target, args, by, "認可: "+rule, nowTS())
-	if err != nil {
-		return false, err
-	}
-	id, _ := res.LastInsertId()
-	q := pendingQ(db.DB, "agent_ops", id)
-	fmt.Fprintf(w, "L-%d pending %s (承認待ち: tb approval approve %s)\n", id, q, q)
-	return false, &exit{20, ""}
-}
-
-// opEntry は op_entry: 承認を確かめて実行し、記録して結果を出す。
-func opEntry(db *store.DB, op, target, args, by string, w io.Writer, run func() opResult) error {
-	if ok, err := authorizeOp(db, op, target, args, by, w); !ok {
-		return err
-	}
-	r := run()
-	recordOp(db, op, target, args, by, r.code, r.out)
-	if r.code != 0 {
-		return &exit{r.code, r.out}
-	}
-	fmt.Fprintln(w, r.out)
-	return nil
 }
 
 // killableOf は killable_of: protected|yes|no|unknown|stale。

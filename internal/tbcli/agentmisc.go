@@ -5,9 +5,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/imohiyoko/herdrorchestrator/internal/agents"
-	"github.com/imohiyoko/herdrorchestrator/internal/approval"
-	"github.com/imohiyoko/herdrorchestrator/internal/kernel/util"
+	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
 	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
 )
 
@@ -101,43 +99,26 @@ func cmdAgentFlag(args []string, w, stderr io.Writer) error {
 			return usage("agent-flag: 不明な引数 %s", args[i])
 		}
 	}
-	if kill != "yes" && kill != "no" && kill != "unknown" {
-		return usage("agent-flag: --killable は yes|no|unknown")
-	}
-	if kill != "unknown" && strings.Trim(why, " \t\n\v\f\r") == "" {
-		return usage("agent-flag: yes / no には --reason が必要です")
+	if err := agent.ValidFlag(kill, why); err != nil {
+		return appErr(err)
 	}
 	db, _, err := openCmd(stderr)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	by, err := requester()
+	by, err := requesterPrincipal()
 	if err != nil {
 		return err
 	}
-	if by != "human" {
-		if _, ok := approval.NewJudge(db.DB, db.Session).GrantOf(by, "agent:flag", name); !ok {
-			return die("判定フラグを付けられるのは人と、policy で agent:flag を許された agent だけです(%s)", by)
-		}
-		if by == name {
-			return die("自分自身の判定は付けられません")
-		}
-	}
-	if err := agents.Sync(db.DB, db.Session); err != nil {
-		return die("herdr agent list に失敗しました")
-	}
-	var state string
-	_ = db.QueryRow(`SELECT state FROM agents WHERE name=?`, name).Scan(&state)
-	if state != "running" {
-		return die("%s は動いていません", name)
-	}
-	ts := nowTS()
-	if _, err := db.Exec(`UPDATE main.agents SET killable=?, killable_reason=NULLIF(?,''), killable_by=?, killable_at=?, killable_session=session_id, updated_at=? WHERE herdr_session=? AND name=?`,
-		kill, util.Oneline(why, 300), by, ts, ts, db.Session, name); err != nil {
+	var r agent.FlagResult
+	if err := callAppEnv(appEnv(db, stderr), by, "agent.flag", agent.FlagReq{Name: name, Killable: kill, Reason: why}, &r); err != nil {
 		return err
 	}
-	fmt.Fprintf(w, "%s killable=%s\n", name, kill)
+	if r.Pending != nil {
+		return pendingExit(w, r.Pending)
+	}
+	fmt.Fprintf(w, "%s killable=%s\n", name, r.Killable)
 	return nil
 }
 
@@ -153,9 +134,16 @@ func setSpawnFrozen(args []string, w, stderr io.Writer, v, cmd, msg string) erro
 	if err := requireHuman("tb " + cmd); err != nil {
 		return err
 	}
-	if _, err := db.Exec(`INSERT INTO main.tb_flags (herdr_session, key, value, set_by, set_at) VALUES (?, 'spawn_frozen', ?, 'human', ?)
-    ON CONFLICT(herdr_session, key) DO UPDATE SET value=excluded.value, set_by=excluded.set_by, set_at=excluded.set_at`, db.Session, v, nowTS()); err != nil {
+	op := "agent.freeze"
+	if v == "0" {
+		op = "agent.unfreeze"
+	}
+	var r agent.FreezeResult
+	if err := callAppWarn(db, "tb "+cmd, stderr, op, agent.FreezeReq{}, &r); err != nil {
 		return err
+	}
+	if r.Pending != nil {
+		return pendingExit(w, r.Pending)
 	}
 	fmt.Fprintln(w, msg)
 	return nil

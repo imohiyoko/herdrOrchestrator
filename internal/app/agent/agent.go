@@ -135,7 +135,8 @@ func by(ctx context.Context) string {
 // Ops は agent の操作。
 func Ops(env *app.Env) []app.Op {
 	ops := []app.Op{newOp(env), listOp(env), orgOp(env), stopOp(env), reviveOp(env), restartOp(env), parentOp(env, true), parentOp(env, false), spawnOp(env), decideOp(env, true), decideOp(env, false)}
-	return append(ops, roleOps(env)...)
+	ops = append(ops, roleOps(env)...)
+	return append(ops, flagOps(env)...)
 }
 
 // ValidName は agent 名として使えるか(英小文字で始まる 32 字以内。human は予約名)。
