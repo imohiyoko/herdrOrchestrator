@@ -440,10 +440,17 @@ func parseSchedule(v string) (int, string, error) {
 		return 0, "", fmt.Errorf("schedule は「every <N>m: <本文>」か「every <N>h: <本文>」: %s", v)
 	}
 	n, err := strconv.Atoi(g[1])
+	limit := 24 * 60
+	if g[2] == "h" {
+		limit = 24
+	}
+	if err != nil || n < 1 || n > limit { // 掛ける前に確かめる(大きな数の桁あふれで範囲に入らないように)
+		return 0, "", fmt.Errorf("schedule の間隔は 1 分から 24 時間まで: %s", v)
+	}
 	if g[2] == "h" {
 		n *= 60
 	}
-	if err != nil || n < 1 || n > 24*60 {
+	if n < 1 || n > 24*60 {
 		return 0, "", fmt.Errorf("schedule の間隔は 1 分から 24 時間まで: %s", v)
 	}
 	say := strings.TrimSpace(g[3])
