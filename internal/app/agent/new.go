@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -112,7 +113,7 @@ func NormalizeCwd(cwd string) string {
 	if strings.HasPrefix(cwd, "~") {
 		cwd = os.Getenv("HOME") + cwd[1:]
 	}
-	if !strings.HasPrefix(cwd, "/") {
+	if !isAbs(cwd) {
 		cwd = envOr("PWD", ".") + "/" + cwd
 	}
 	if IsDir(cwd) {
@@ -120,6 +121,9 @@ func NormalizeCwd(cwd string) string {
 	}
 	return cwd
 }
+
+// isAbs は絶対パスか(tb は / で始まるパス。Go のテストは Windows でも流れるので、その OS の絶対パスも認める)。
+func isAbs(p string) bool { return strings.HasPrefix(p, "/") || filepath.IsAbs(p) }
 
 func (in NewReq) kind() string {
 	if in.Kind == "" {
@@ -182,7 +186,7 @@ func newPre(env *app.Env, who string, in NewReq) error {
 	if r := CheckLaunch(kind, in.Model, ""); r != nil {
 		return r.Err()
 	}
-	if in.Cwd != "" && !strings.HasPrefix(in.Cwd, "/") {
+	if in.Cwd != "" && !isAbs(in.Cwd) {
 		return usageErr("agent-new: --cwd は絶対パスにしてください: %s", in.Cwd)
 	}
 	_, err := withDB(env, func(db *store.DB) (struct{}, error) {
