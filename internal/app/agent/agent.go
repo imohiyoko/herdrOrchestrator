@@ -40,6 +40,8 @@ type Result struct {
 	Code int
 	Out  string
 	Note string // 最初の指示を送れなかった・確かめられなかった理由(FP_NOTE)
+	Pane string // 起動した pane(作成のときだけ)
+	WS   string // 作った workspace(作成で workspace を作ったときだけ)
 }
 
 // Err は結果を操作のエラーにする(成功なら nil)。

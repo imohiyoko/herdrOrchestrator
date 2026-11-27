@@ -274,7 +274,7 @@ func cmdAgentNew(args []string, w, stderr io.Writer) error {
 	}
 	// 入力・役割・上限の確かめと承認は agent.new が行う(承認待ちに積む前に、その kind でできない依頼は止める)
 	in := agent.NewReq{Name: name, Cwd: agent.NormalizeCwd(cwd), Kind: kind, Model: model, Role: role, Prompt: prompt, Killable: kill}
-	var res agent.LifeResult
+	var res agent.NewResult
 	if err := callAppW(db, app.PrincipalOf(by), stderr, "agent.new", in, &res); err != nil {
 		return err
 	}
