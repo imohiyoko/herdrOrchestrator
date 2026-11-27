@@ -18,6 +18,7 @@ launchd が `bin/tick.sh <job>` を毎分起動し、時間帯・曜日・間隔
 | `INTERVAL_MIN` | 起動間隔(分)。窓の始端から刻む |
 | `INTERVAL_SEC` | 起動間隔(秒)。`INTERVAL_MIN` の代わりに書く(同じファイルに両方は書けない)。例: `INTERVAL_SEC=30` |
 | `DAYS` | 既定 `daily`。`weekdays` や `"Mon Wed Fri"` |
+| `AT` | 任意。**1 回だけ**動かす日時(`AT="2026-11-28 09:00"`、`AT=2026-11-28T09:00:30`。`TZ` の時刻)。その分(秒まで書けばその秒)にだけ動き、前後は `skipped_at`。繰り返しのキー(`WINDOW` / `START` / `END` / `INTERVAL_*` / `DAYS`)とは同時に書かない。settings で変えられるのは `ENABLED` だけ。その分に Mac が眠っていたなどで起動されなければ、あとからは動かない |
 | `SKIP_IF` | 既定 `"working blocked"`。該当する状態ならスキップ。idle/done 以外も送らない |
 | `TZ` | 既定 `Asia/Tokyo`。判定は tick.sh がこの TZ で行う |
 | `ENABLED` | 既定 `1`。`0` で一時停止 |
@@ -180,6 +181,7 @@ bin/install.sh uninstall --dispatch
 ```
 
 - ジョブを足す・外すときは `gen-plist.sh --dispatch …` → `install.sh install --dispatch` をやり直す(間隔や時間帯の変更では不要)。
+- `gen-plist.sh --dispatch --all` にすると、毎分その時の DB のジョブをすべて動かす(`tb job set` や `tb agentset up` が足したジョブも、登録し直さずに動く)。
 - 個別の plist から移るときは、dispatch に入れたジョブの個別の plist を `install.sh uninstall <job>` で外す。
   両方に登録すると同じジョブが二重に動く(`setup/check.sh` が warn を出す)。
 - ジョブ名 `dispatch` は予約済み。

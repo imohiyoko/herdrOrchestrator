@@ -222,18 +222,21 @@ launchd_check() {
 JOBS="$ROOT/scheduler/jobs"
 # まとめて動かす 1 本(gen-plist.sh --dispatch。scheduler/bin/dispatch.sh)。登録済みなら、その引数のジョブはそこで動く
 DISPATCH_LABEL="${LABEL_PREFIX}sched-dispatch"
-DISPATCH_JOBS=" "
+DISPATCH_JOBS=" " DISPATCH_ALL=0
 if [ -f "$LA_DIR/$DISPATCH_LABEL.plist" ]; then
   _after=0
   while IFS= read -r _s; do   # dispatch.sh の後ろの <string> がジョブ名
-    if [ $_after = 1 ]; then [[ "$_s" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] && DISPATCH_JOBS="$DISPATCH_JOBS$_s "
+    if [ $_after = 1 ]; then
+      [ "$_s" = --all ] && DISPATCH_ALL=1   # dispatch.sh --all: DB のジョブをすべて
+      [[ "$_s" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] && DISPATCH_JOBS="$DISPATCH_JOBS$_s "
     else case "$_s" in */dispatch.sh) _after=1 ;; esac; fi
   done < <(sed -n 's:.*<string>\(.*\)</string>.*:\1:p' "$LA_DIR/$DISPATCH_LABEL.plist")
   launchd_check "launchd:dispatch" "$DISPATCH_LABEL" "$ROOT/scheduler/generated/$DISPATCH_LABEL.plist"
 fi
 job_launchd_check() {  # $1=job
-  local label="${LABEL_PREFIX}sched-$1"
-  case "$DISPATCH_JOBS" in
+  local label="${LABEL_PREFIX}sched-$1" d=$DISPATCH_JOBS
+  [ $DISPATCH_ALL = 1 ] && d="$d$1 "
+  case "$d" in
     *" $1 "*)
       if [ -f "$LA_DIR/$label.plist" ]; then
         report warn "launchd:$1" "$1 が dispatch と個別の plist の両方に登録されている(二重に動く)" \
