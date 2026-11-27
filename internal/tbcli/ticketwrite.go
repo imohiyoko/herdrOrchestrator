@@ -17,7 +17,6 @@ import (
 	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
 )
 
-
 // eventActorDefault は event_actor_default: pane からなら pane:<id>、人の端末なら human。
 func eventActorDefault() string {
 	if p := os.Getenv("HERDR_PANE_ID"); p != "" {

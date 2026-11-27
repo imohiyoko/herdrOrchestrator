@@ -294,7 +294,8 @@ ADR 0004 の依存の検査に次を足す。今ある違反は許容リスト�
 - リンク `ticket.link` / `ticket.unlink` とスプリント `ticket.sprint.add` / `start` / `close`(中身は `internal/tickets/link.go`)。Web UI のボードのスプリントの操作も同じプロセスで呼ぶ。リンクの作った者(`created_by`)は `Env.ActorName`(tb は今の actor_name)。
 - 作る・変える `ticket.add`(`POST /v1/tickets`)と `ticket.update`(`PATCH /v1/tickets/{id}`)。中身(ラベル・外部リンク・親子の規則・採番)は `internal/tickets/edit.go`。update の入力は tb の引数の順の変更の並び(`tickets.Change`)で、検査の順と文言も tb と同じ。
 - 報告コメント `ticket.comment`(`POST /v1/tickets/{task_id}/comments`)と `ticket.reopen`(`POST /v1/comments/{id}/reopen`)。報告した者は `Env.Reporter`(tb は herdr から引いたもの)、すぐ届ける種類は `Env.ImmediateKinds`(tb は `TB_IMMEDIATE_KINDS`)。配送(`deliver_comment`)は `message.DeliverComment` に移し、tb の report / digest も同じものを使う。外への通知は `notify.Comment`。
-- まだ残るもの: report / pending / comments の読み取りと、Web UI の状態の定義(edits.go の `runTB`)、tasks.go の読み込み。
+- 状態の定義 `ticket.status.add` / `ticket.status.rm`(人だけが既定の inner の行)。中身は `internal/tickets/statusdef.go`、設定のファイルの書き込みは `config.WriteFile`。Web UI の状態の定義の画面も同じプロセスで呼ぶ。
+- まだ残るもの: report / pending / comments の読み取りと、tasks.go の読み込み。
 
 ## 検討した代替案
 

@@ -191,6 +191,10 @@ func remove(env *app.Env, who string, in RmReq) (RmResult, error) {
 
 // refused は tickets の断り(Refused)を型のエラーにする(tb は文言を出して 1 で終わる)。
 func refused(err error) error {
+	var de *define.Error
+	if errors.As(err, &de) {
+		return err
+	}
 	var r *tickets.Refused
 	if !errors.As(err, &r) {
 		return internal(err)

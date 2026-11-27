@@ -1,6 +1,7 @@
 package tbcli
 
 import (
+	"errors"
 	"fmt"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/perms"
 	"io"
@@ -223,33 +224,12 @@ func policyBefore(db *store.DB, shared bool) (string, error) {
 
 // writeConfigFile は config_put のファイルの書き方: 同じディレクトリの一時ファイルに書いて置き換える(今のファイルの権限を保つ)。
 func writeConfigFile(f, body string) error {
-	if st, err := os.Lstat(f); err == nil && st.Mode()&os.ModeSymlink != 0 {
-		return die("%s がシンボリックリンクです: %s", filepath.Base(f), f)
+	err := config.WriteFile(f, body)
+	var sl *config.ErrSymlink
+	if errors.As(err, &sl) {
+		return die("%s", sl.Error())
 	}
-	if err := os.MkdirAll(filepath.Dir(f), 0o755); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(f), filepath.Base(f)+".")
-	if err != nil {
-		return err
-	}
-	mode := os.FileMode(0o644)
-	if st, err := os.Stat(f); err == nil {
-		mode = st.Mode().Perm()
-	}
-	if body != "" {
-		body += "\n"
-	}
-	if _, err := tmp.WriteString(body); err != nil {
-		tmp.Close()
-		os.Remove(tmp.Name())
-		return err
-	}
-	tmp.Close()
-	if err := os.Chmod(tmp.Name(), mode); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), f)
+	return err
 }
 
 var (
