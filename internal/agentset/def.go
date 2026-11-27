@@ -51,10 +51,11 @@ type Member struct {
 	Every int // 分(0 なら schedule なし)
 	Say   string
 	// Out・In・Queue・Step は自動スケール(autoscale.go。tb agentset autoscale が評価する)
-	Out   []Cond
-	In    []Cond
-	Queue Queue
-	Step  int
+	Out      []Cond
+	In       []Cond
+	Queue    Queue
+	Step     int
+	Cooldown int // scale_cooldown(分)。前に数を変えてからこの分は変えない
 }
 
 // JobName は schedule を書いたメンバーの scheduler のジョブの名前。
@@ -217,6 +218,12 @@ func Parse(name, body string) (Def, error) {
 				return d, fmt.Errorf("%d 行目: %s", ln, err)
 			}
 			m.Queue = q
+		case "scale_cooldown":
+			n, err := parseMinutes(v)
+			if err != nil {
+				return d, fmt.Errorf("%d 行目: scale_cooldown は <N>m か <N>h(1 分から 24 時間): %s", ln, v)
+			}
+			m.Cooldown = n
 		case "scale_step":
 			n, err := strconv.Atoi(v)
 			if err != nil || n < 1 || n > 100 {
@@ -234,7 +241,7 @@ func Parse(name, body string) (Def, error) {
 			}
 			m.Max = n
 		default:
-			return d, fmt.Errorf("%d 行目: メンバーのキーは role / model / kind / cwd / prompt / count / max / mode / parent / schedule / scale_out / scale_in / queue / scale_step: %s", ln, k)
+			return d, fmt.Errorf("%d 行目: メンバーのキーは role / model / kind / cwd / prompt / count / max / mode / parent / schedule / scale_out / scale_in / queue / scale_step / scale_cooldown: %s", ln, k)
 		}
 	}
 	if err := sc.Err(); err != nil {
@@ -285,8 +292,8 @@ func (d Def) check() error {
 			if m.Max == 0 {
 				return fmt.Errorf("メンバー %s: scale_out / scale_in には max が要ります(増やす上限。count が減らす下限)", m.Name)
 			}
-		} else if m.Step != 0 || m.Queue != (Queue{}) {
-			return fmt.Errorf("メンバー %s: queue / scale_step は scale_out か scale_in と一緒に書きます", m.Name)
+		} else if m.Step != 0 || m.Cooldown != 0 || m.Queue != (Queue{}) {
+			return fmt.Errorf("メンバー %s: queue / scale_step / scale_cooldown は scale_out か scale_in と一緒に書きます", m.Name)
 		}
 		if l := m.Limit(); l >= 0 && m.Count > l {
 			return fmt.Errorf("メンバー %s の count(%d)が max(%d)を超えています", m.Name, m.Count, l)

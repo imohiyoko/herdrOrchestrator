@@ -3,9 +3,13 @@ package agentset
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/imohiyoko/API/define"
 	"github.com/imohiyoko/API/port"
@@ -37,6 +41,7 @@ type Term struct {
 // Cond は and でつないだ項。
 type Cond struct {
 	Terms []Term
+	For   int    // 分。続けて当たっていたら当たったとみなす(0 ならすぐ)
 	Text  string // 書かれたとおり(出力に添える)
 }
 
@@ -54,7 +59,15 @@ var condOps = []string{">=", "<=", "==", "!=", ">", "<"} // 長いほうから
 
 func parseCond(v string) (Cond, error) {
 	c := Cond{Text: v}
-	for _, part := range strings.Split(v, " and ") {
+	body := v
+	if i := strings.LastIndex(v, " for "); i >= 0 {
+		n, err := parseMinutes(strings.TrimSpace(v[i+5:]))
+		if err != nil {
+			return c, fmt.Errorf("条件の for は <N>m か <N>h(1 分から 24 時間): %s", v)
+		}
+		c.For, body = n, v[:i]
+	}
+	for _, part := range strings.Split(body, " and ") {
 		f := strings.Fields(part)
 		if len(f) != 3 {
 			return c, fmt.Errorf("条件は「<値> <比べ方> <数>」を and でつなぐ(例: queue > 3 and idle == 0): %s", v)
@@ -78,6 +91,23 @@ func parseCond(v string) (Cond, error) {
 		c.Terms = append(c.Terms, t)
 	}
 	return c, nil
+}
+
+// parseMinutes は <N>m / <N>h を分にする(1 分から 24 時間)。
+func parseMinutes(v string) (int, error) {
+	mult := 1
+	switch {
+	case strings.HasSuffix(v, "m"):
+	case strings.HasSuffix(v, "h"):
+		mult = 60
+	default:
+		return 0, fmt.Errorf("bad unit")
+	}
+	n, err := strconv.Atoi(v[:len(v)-1])
+	if err != nil || n < 1 || n > 1440/mult {
+		return 0, fmt.Errorf("bad number")
+	}
+	return n * mult, nil
 }
 
 func parseQueue(v string) (Queue, error) {
@@ -126,13 +156,48 @@ func (c Cond) holds(m map[string]int) bool {
 	return true
 }
 
-func anyHolds(cs []Cond, m map[string]int) (Cond, bool) {
-	for _, c := range cs {
-		if c.holds(m) {
-			return c, true
+// held は条件 c(向き dir の i 番目)が、for の分だけ続けて当たっているか。st があれば当たり始めた時刻を書き、外れたら消す。
+// waiting は当たっているが for に足りないときの残りの分。
+func held(c Cond, key string, v map[string]int, st *MemberState, now time.Time) (ok bool, waiting int) {
+	if !c.holds(v) {
+		if st != nil {
+			delete(st.Since, key)
+		}
+		return false, 0
+	}
+	if c.For == 0 {
+		return true, 0
+	}
+	if st == nil {
+		return false, c.For
+	}
+	if st.Since == nil {
+		st.Since = map[string]string{}
+	}
+	since, err := time.Parse(time.RFC3339, st.Since[key])
+	if err != nil {
+		since = now
+		st.Since[key] = now.UTC().Format(time.RFC3339)
+	}
+	if left := c.For - int(now.Sub(since).Minutes()); left > 0 {
+		return false, left
+	}
+	return true, 0
+}
+
+func anyHeld(cs []Cond, dir string, v map[string]int, st *MemberState, now time.Time) (Cond, bool, string) {
+	var hit Cond
+	ok, wait := false, ""
+	for _, c := range cs { // どれかが当たれば。始まった時刻は全部の条件で書き直す
+		h, left := held(c, dir+":"+c.Text, v, st, now)
+		if h && !ok {
+			hit, ok = c, true
+		}
+		if left > 0 && wait == "" {
+			wait = fmt.Sprintf("%s(%s)は当たっているが for %d 分まであと %d 分", dir, c.Text, c.For, left)
 		}
 	}
-	return Cond{}, false
+	return hit, ok, wait
 }
 
 func (m Member) usesQueue() bool {
@@ -196,35 +261,50 @@ func metricText(m Member, v map[string]int) string {
 
 // Decide は 1 メンバーの判断: 増やす・減らす数(正なら足す、負なら減らす、0 ならそのまま)と理由。
 // scale_out と scale_in が両方当たったら何もしない。増やすのは max まで、減らすのは count まで。
-func Decide(m Member, v map[string]int) (int, string) {
-	out, okOut := anyHolds(m.Out, v)
-	in, okIn := anyHolds(m.In, v)
+// st があれば for(続けて当たっている分)と scale_cooldown(前に変えてからの分)を見る。st が無ければ for のある条件は当たらない。
+func Decide(m Member, v map[string]int, st *MemberState, now time.Time) (int, string) {
+	out, okOut, wOut := anyHeld(m.Out, "scale_out", v, st, now)
+	in, okIn, wIn := anyHeld(m.In, "scale_in", v, st, now)
 	live, step := v["live"], max(m.Step, 1)
+	n, why := 0, ""
 	switch {
 	case okOut && okIn:
 		return 0, "scale_out と scale_in が両方当たるのでそのまま(" + out.Text + " / " + in.Text + ")"
 	case okOut:
-		n := step
+		n = step
 		if l := m.Limit(); l >= 0 {
 			n = min(n, l-live)
 		}
 		if n <= 0 {
 			return 0, "scale_out(" + out.Text + ")が当たるが max(" + strconv.Itoa(m.Limit()) + ")なのでそのまま"
 		}
-		return n, "scale_out(" + out.Text + ")"
+		why = "scale_out(" + out.Text + ")"
 	case okIn:
-		n := min(step, live-m.Count)
-		if n <= 0 {
+		n = -min(step, live-m.Count)
+		if n >= 0 {
 			return 0, "scale_in(" + in.Text + ")が当たるが count(" + strconv.Itoa(m.Count) + ")なのでそのまま"
 		}
-		return -n, "scale_in(" + in.Text + ")"
+		why = "scale_in(" + in.Text + ")"
+	default:
+		if w := cmp.Or(wOut, wIn); w != "" {
+			return 0, w
+		}
+		return 0, "どの条件も当たらない"
 	}
-	return 0, "どの条件も当たらない"
+	if m.Cooldown > 0 && st != nil && st.Last != "" {
+		if last, err := time.Parse(time.RFC3339, st.Last); err == nil {
+			if left := m.Cooldown - int(now.Sub(last).Minutes()); left > 0 {
+				return 0, fmt.Sprintf("%s が当たるが、前に変えてから scale_cooldown(%d 分)まであと %d 分", why, m.Cooldown, left)
+			}
+		}
+	}
+	return n, why
 }
 
 // Autoscale は条件を書いたメンバーごとに 1 回評価し、当たった向きに Scale する(dry なら判断だけ出す)。
 // メンバーの失敗はその行に出し、ほかのメンバーは続ける(最初のエラーを返す)。
-func Autoscale(ctx context.Context, c Caller, by port.Principal, d Def, dry bool) ([]Line, error) {
+// st はセットの状態(for の始まり・前に変えた時刻。呼ぶ側が読み書きする。nil なら for のある条件は当たらない)。
+func Autoscale(ctx context.Context, c Caller, by port.Principal, d Def, dry bool, st *State, now time.Time) ([]Line, error) {
 	ms := d.Autoscaled()
 	if len(ms) == 0 {
 		return nil, &define.Error{Code: define.CodeInvalidArgument, Message: "セット " + d.Name + " には scale_out / scale_in を書いたメンバーがいません"}
@@ -243,7 +323,11 @@ func Autoscale(ctx context.Context, c Caller, by port.Principal, d Def, dry bool
 			first = cmp.Or(first, err)
 			continue
 		}
-		n, why := Decide(m, v)
+		var ms *MemberState
+		if st != nil {
+			ms = st.member(m.Name)
+		}
+		n, why := Decide(m, v, ms, now)
 		head := metricText(m, v) + ": " + why
 		if n == 0 {
 			out = append(out, Line{Name: name, Out: head})
@@ -256,6 +340,9 @@ func Autoscale(ctx context.Context, c Caller, by port.Principal, d Def, dry bool
 		}
 		out = append(out, Line{Name: name, Out: head + " → " + spec})
 		lines, err := Scale(ctx, c, by, d, m.Name, spec)
+		if ms != nil && err == nil { // 変えたら、for はもう一度数え直す
+			ms.Last, ms.Since = now.UTC().Format(time.RFC3339), nil
+		}
 		out = append(out, lines...)
 		if err != nil {
 			if len(lines) == 0 || lines[len(lines)-1].Err == nil {
@@ -265,4 +352,53 @@ func Autoscale(ctx context.Context, c Caller, by port.Principal, d Def, dry bool
 		}
 	}
 	return out, first
+}
+
+// State は自動スケールの状態(メンバーごと)。定義の置き場所の .autoscale/<セット>.json に置く。
+type State struct {
+	Members map[string]*MemberState `json:"members"`
+}
+
+// MemberState はメンバーの状態: Since は条件(scale_out:<条件> など)が当たり始めた時刻、Last は前に数を変えた時刻(RFC 3339)。
+type MemberState struct {
+	Since map[string]string `json:"since,omitempty"`
+	Last  string            `json:"last,omitempty"`
+}
+
+func (s *State) member(n string) *MemberState {
+	if s.Members == nil {
+		s.Members = map[string]*MemberState{}
+	}
+	if s.Members[n] == nil {
+		s.Members[n] = &MemberState{}
+	}
+	return s.Members[n]
+}
+
+func statePath(dir, set string) string { return filepath.Join(dir, ".autoscale", set+".json") }
+
+// LoadState は状態を読む(無い・読めなければ空)。
+func LoadState(dir, set string) *State {
+	st := &State{}
+	if b, err := os.ReadFile(statePath(dir, set)); err == nil {
+		_ = json.Unmarshal(b, st)
+	}
+	return st
+}
+
+// SaveState は状態を書く(一時ファイルから置き換える)。
+func SaveState(dir, set string, st *State) error {
+	p := statePath(dir, set)
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return err
+	}
+	b, err := json.Marshal(st)
+	if err != nil {
+		return err
+	}
+	tmp := p + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, p)
 }
