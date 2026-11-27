@@ -1449,7 +1449,7 @@ r = cl.raw("POST", "/approval-op", {"op": "exception", "id": str(_qd), "confirm"
 check("deny を例外として許可すると approved", r[0] == 302 and r[1].get("Location") == f"/approvals?decided=Q-{_qd}&done=exception"
       and regdb("SELECT status, decided_by FROM requests WHERE id=?", (_qd,)) == [("approved", "human")], str(r[:2]) + str(re.findall(r"<p class=err>.*?</p>", r[2])))
 r = cl.raw("POST", "/approval-op", {"op": "approve", "id": str(_qg), "csrf": _tok})
-check("依頼した agent がいなければ tb が断り、理由を出す", r[0] == 400 and "tb が断りました" in r[2]
+check("依頼した agent がいなければ断り、理由を出す", r[0] == 400 and "断りました: 依頼者" in r[2]
       and regdb("SELECT status FROM requests WHERE id=?", (_qg,)) == [("pending",)], r[2][-400:])
 r = cl.raw("POST", "/approval-op", {"op": "reject", "id": str(_qa), "csrf": _tok})
 check("決まったものは決め直せない", r[0] == 400 and "承認待ちではありません(approved)" in r[2])

@@ -14,19 +14,19 @@ import (
 )
 
 // decideAct は承認の権限の行(approve:<act> <依頼者>)に使う操作名。空なら人だけが決められる。
-// 送信とコマンドは r.act()。agent の操作は承認の入口(tb agent-approve)と同じ agentOpAction で決める。deny の記録は人だけ。
+// 送信とコマンドは r.Act()。agent の操作は承認の入口(tb agent-approve)と同じ agentOpAction で決める。deny の記録は人だけ。
 func decideAct(db *store.DB, r request) string {
-	if r.status == "denied" {
+	if r.Status == "denied" {
 		return ""
 	}
-	if r.source == "agent_ops" {
-		o, ok := opRowOf(db, r.sourceID.Int64)
+	if r.Source == "agent_ops" {
+		o, ok := opRowOf(db, r.SourceID.Int64)
 		if !ok {
 			return ""
 		}
 		return agentOpAction(db, o)
 	}
-	return r.act()
+	return r.Act()
 }
 
 // canDecide は agent who が承認待ち r を決められるか(自分の依頼は決められない。人は常に決められる)。
@@ -34,14 +34,14 @@ func canDecide(db *store.DB, j *approval.Judge, r request, who string) bool {
 	if who == "human" {
 		return true
 	}
-	if who == "" || who == r.requester {
+	if who == "" || who == r.Requester {
 		return false
 	}
 	act := decideAct(db, r)
 	if act == "" {
 		return false
 	}
-	_, ok := j.GrantOf(who, "approve:"+act, r.requester)
+	_, ok := j.GrantOf(who, "approve:"+act, r.Requester)
 	return ok
 }
 
@@ -55,7 +55,7 @@ func notifyApprovers(sdb *sql.DB, session string, qid int64) {
 		return
 	}
 	var n int
-	if sdb.QueryRow(`SELECT count(*) FROM messages WHERE kind='approval-pending' AND ref=?`, r.qid()).Scan(&n) != nil || n > 0 {
+	if sdb.QueryRow(`SELECT count(*) FROM messages WHERE kind='approval-pending' AND ref=?`, r.QID()).Scan(&n) != nil || n > 0 {
 		return
 	}
 	as, err := herdr.Agents()
@@ -67,8 +67,8 @@ func notifyApprovers(sdb *sql.DB, session string, qid int64) {
 		if a.Name == "" || !canDecide(db, j, r, a.Name) {
 			continue
 		}
-		msg := "[tb approval / " + r.qid() + "] " + r.requester + " からの承認待ちです(" + r.op + " " + r.target + ")。tb approval approve " + r.qid() +
-			" か tb approval reject " + r.qid() + " で決めてください(自分が決められる一覧: tb approval list --mine)"
-		transport.Send(sdb, session, a.Name, msg, r.qid(), "approval-pending", io.Discard)
+		msg := "[tb approval / " + r.QID() + "] " + r.Requester + " からの承認待ちです(" + r.Op + " " + r.Target + ")。tb approval approve " + r.QID() +
+			" か tb approval reject " + r.QID() + " で決めてください(自分が決められる一覧: tb approval list --mine)"
+		transport.Send(sdb, session, a.Name, msg, r.QID(), "approval-pending", io.Discard)
 	}
 }

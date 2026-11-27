@@ -96,26 +96,31 @@ func callEdit(sess, op string, in, out any, pending **app.Pending) string {
 		return "実行できませんでした(" + Clean(err.Error()) + ")"
 	}
 	if err := c.Call(ctx, app.Human(), op, in, out); err != nil {
-		msg := ""
-		var e *define.Error
-		if errors.As(err, &e) {
-			msg = e.Message
-			if msg == "" {
-				msg = string(e.Code)
-			}
-		} else {
-			msg = err.Error()
-		}
-		msg = Clean(msg)
-		if utf8.RuneCountInString(msg) > editOutMax {
-			msg = string([]rune(msg)[:editOutMax]) + "…"
-		}
-		return "断りました: " + msg
+		return refusedMsg(err)
 	}
 	if *pending != nil {
 		return "承認待ちに積みました: " + Clean((*pending).Message)
 	}
 	return ""
+}
+
+// refusedMsg は操作のエラーを画面に出す文(「断りました: <理由>」。長ければ切る)。
+func refusedMsg(err error) string {
+	msg := ""
+	var e *define.Error
+	if errors.As(err, &e) {
+		msg = e.Message
+		if msg == "" {
+			msg = string(e.Code)
+		}
+	} else {
+		msg = err.Error()
+	}
+	msg = Clean(msg)
+	if utf8.RuneCountInString(msg) > editOutMax {
+		msg = string([]rune(msg)[:editOutMax]) + "…"
+	}
+	return "断りました: " + msg
 }
 
 // textHash は本文の版(編集を始めたときの本文と、保存するときの本文が同じかを確かめる)。

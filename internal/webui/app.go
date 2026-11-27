@@ -16,13 +16,18 @@ import (
 // appClient はセッション sess の DB(TBDB)でアプリケーション API を呼ぶ口(ADR 0008。runTB の置き換え)。
 // DB は操作ごとに書き込みで開いて閉じる。スキーマの置き場は tb と同じく TB_SCHEMA_DIR で変えられる(テスト用)。
 func appClient(sess string) (*server.Client, error) {
+	return server.New(appEnv(sess))
+}
+
+// appEnv はセッション sess の Web UI の操作の環境(appClient が使う。操作によって足して使う)。
+func appEnv(sess string) *app.Env {
 	var opt *store.Options
 	if d := os.Getenv("TB_SCHEMA_DIR"); d != "" {
 		opt = &store.Options{Schema: os.DirFS(d)}
 	}
 	env := &app.Env{DB: app.OpenStore(TBDB(), sess, opt)}
 	env.SchedDir, env.SchedShow, env.SchedLogs = schedPaths()
-	return server.New(env)
+	return env
 }
 
 // schedPaths は Web UI が見ている scheduler の置き場所(jobs/・settings/ の親、show.sh、ログ)。jobTBCmd が tb に渡すものと同じ。

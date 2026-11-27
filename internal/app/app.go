@@ -51,6 +51,12 @@ type Env struct {
 	// SchedDir / SchedShow / SchedLogs は scheduler の置き場所(jobs/・settings/ の親、本文を確かめる show.sh、ログ)。
 	// 空なら tb と同じ(TB_SCHED_DIR / TB_SCHED_SHOW / LOG_DIR、無ければ <TB_ROOT>/../scheduler)。Web UI は自分の見ている所を入れる。
 	SchedDir, SchedShow, SchedLogs string
+	// Out は操作の途中の出力(tb が標準出力に出す行)をそのまま流す先(tb の入口は標準出力)。nil なら結果に集めて返す。
+	Out io.Writer
+	// ChildEnv は承認したコマンドを依頼者として動かす子(herdrctl tb …)の環境。nil ならこのプロセスの環境。
+	ChildEnv []string
+	// TbCmd は、その子で tb を動かすコマンド(nil ならこのプロセスの herdrctl tb)。Web UI は checkout の tb を入れる。
+	TbCmd []string
 }
 
 // ReporterOf は主体 who の報告した者(Env.Reporter があればそれ)。

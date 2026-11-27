@@ -278,6 +278,9 @@ func ticketStatusRm(args []string, w, stderr io.Writer) error {
 		to = v
 		i++
 	}
+	if err := eventActorResolve(db); err != nil { // 移したチケットの履歴に agent の名前を残す(tb ticket move と同じ)
+		return err
+	}
 	var res ticket.StatusDefResult
 	if err := callAppWarn(db, "tb ticket status rm", stderr, "ticket.status.rm", ticket.StatusRmReq{Name: name, To: to}, &res); err != nil {
 		return err

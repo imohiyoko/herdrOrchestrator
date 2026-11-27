@@ -14,6 +14,7 @@ import (
 
 	"github.com/imohiyoko/herdrorchestrator/internal/app"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
+	"github.com/imohiyoko/herdrorchestrator/internal/app/approval"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/job"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/ticket"
 )
@@ -24,6 +25,7 @@ func Ops(env *app.Env) []app.Op {
 	ops = append(ops, ticket.Ops(env)...)
 	ops = append(ops, agent.Ops(env)...)
 	ops = append(ops, job.Ops(env)...)
+	ops = append(ops, approval.Ops(env)...)
 	return ops
 }
 
