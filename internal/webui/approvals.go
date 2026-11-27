@@ -1,19 +1,25 @@
 package webui
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
+
+	"github.com/imohiyoko/herdrorchestrator/internal/app"
+	appapproval "github.com/imohiyoko/herdrorchestrator/internal/app/approval"
+	"github.com/imohiyoko/herdrorchestrator/internal/app/server"
 )
 
 // approvals.go は Q チケット(requests の Q-<n>)の一覧(/approvals)と、その承認・却下(POST /approval-op)。
 // allow / ask / deny のどれも 1 行の記録なので、誰が依頼し(requester)、何が・誰が決めたか(tier・rule・decided_by)をここで追う。
 // 表示は 2 つ: 一覧(新しい順)とボード(状態ごとの列。スプリントのボードと同じ見た目)。
 // 承認待ち(pending)には承認・却下、policy が拒否したもの(denied)には「例外として 1 回許可」のボタンを出す。
-// 書き込みは tb approval approve / reject Q-<n> が行う(Web UI からは人の操作。deny の例外は tb の側でも人だけ)。
+// 書き込みは API の approval.approve / reject(tb approval approve / reject Q-<n> と同じ操作。Web UI からは人の操作。deny の例外は API の側でも人だけ)。
 
 const approvalsMax = 200 // 1 画面に出す最大件数
 
@@ -347,7 +353,7 @@ func (s *Server) pageApprovals(q *rq, c pageCtx) (string, string) {
 	return "承認(Q チケット)", body
 }
 
-// postApprovalOp は POST /approval-op(Q-<n> の承認・却下・承認して今後は承認なし(--always)と、deny の例外の許可)。書き込みは tb approval が行う。
+// postApprovalOp は POST /approval-op(Q-<n> の承認・却下・承認して今後は承認なし(--always)と、deny の例外の許可)。書き込みは API の approval.approve / reject。
 func (s *Server) postApprovalOp(q *rq, f form) (string, string, string, func(pageCtx) (string, string, string)) {
 	id := f["id"]
 	// 戻り先はボタンを押した画面(絞り込みのまま)。/approvals の中だけ受ける
@@ -396,18 +402,48 @@ func (s *Server) postApprovalOp(q *rq, f form) (string, string, string, func(pag
 	}
 	q.v.close() // tb が書き込むので、読んだ接続は閉じて描き直しで開き直す
 	q.v = nil
-	args := []string{"approval", "approve", "Q-" + id} // deny の例外も approve(tb の側で人だけに限る)
+	// deny の例外も approve(API の側で人だけに限る)。always は承認して、今後は承認なし(policy に * <操作> <対象> = allow。送信と agent の操作だけ)
+	op := "approval.approve"
 	if f["op"] == "reject" {
-		args[1] = "reject"
-	}
-	if f["op"] == "always" { // 承認して、今後は承認なし(policy に * <操作> <対象> = allow。tb の側で送信と agent の操作だけに限る)
-		args = append(args, "--always")
+		op = "approval.reject"
 	}
 	// 依頼者が知らせる相手でないとき(scheduler など)は承認した側(ここ)で実行するので、長めに待つ
-	if rc, out := runTB(q.name, 60*time.Second, args...); rc != 0 {
-		return back, "", tbFail(rc, out), render
+	if msg := approvalCall(q.name, op, appapproval.DecideReq{ID: "Q-" + id, Always: f["op"] == "always"}); msg != "" {
+		return back, "", msg, render
 	}
 	return decided, f["op"], "", render
+}
+
+// approvalCall は承認の操作を同じプロセスで人として呼ぶ(ADR 0008。tb approval approve / reject と同じ操作)。
+// 承認したコマンドを依頼者として動かす子は、前と同じくこの checkout の tb(HERDR_SESSION と TB_DB はこの画面のもの)。
+// 断られたか、実行したものが 0 以外で終わったら画面に出す理由(実行できたら空)。
+func approvalCall(sess, op string, in appapproval.DecideReq) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	env := appEnv(sess)
+	env.TbCmd = []string{"bash", tbPath()}
+	for _, kv := range childEnv(sess) {
+		if k, _, _ := strings.Cut(kv, "="); k != "HERDR_PANE_ID" && k != "TB_DB" {
+			env.ChildEnv = append(env.ChildEnv, kv)
+		}
+	}
+	env.ChildEnv = append(env.ChildEnv, "TB_DB="+TBDB())
+	c, err := server.New(env)
+	if err != nil {
+		return "実行できませんでした(" + Clean(err.Error()) + ")"
+	}
+	var r appapproval.Result
+	if err := c.Call(ctx, app.Human(), op, in, &r); err != nil {
+		return refusedMsg(err)
+	}
+	if r.Exit != 0 {
+		out := Clean(strings.TrimSpace(r.Out + r.Err))
+		if utf8.RuneCountInString(out) > editOutMax {
+			out = string([]rune(out)[:editOutMax]) + "…"
+		}
+		return "承認しましたが、終わりの状態が 0 ではありません(終了コード " + strconv.Itoa(r.Exit) + "): " + out
+	}
+	return ""
 }
 
 // approvalDone は決めたあとの知らせ(?done=approve|reject|exception&decided=Q-<n>)。

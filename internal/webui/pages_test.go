@@ -658,17 +658,16 @@ exit 0
 		loc  string
 		has  string
 	}{
-		{url.Values{"op": {"approve"}, "id": {"3"}}, 302, "/s/default/approvals?decided=Q-3&done=approve", ""},
-		{url.Values{"op": {"reject"}, "id": {"2"}, "back": {"/approvals?view=board&tier=all"}}, 302, "/s/default/approvals?view=board&tier=all&decided=Q-2&done=reject", ""}, // 押した画面の絞り込みのまま戻る
-		{url.Values{"op": {"approve"}, "id": {"12"}, "back": {"https://evil/approvals?x"}}, 302, "/s/default/approvals?decided=Q-12&done=approve", ""},
-		{url.Values{"op": {"exception"}, "id": {"7"}, "confirm": {"1"}}, 302, "/s/default/approvals?decided=Q-7&done=exception", ""},
+		{url.Values{"op": {"reject"}, "id": {"3"}, "back": {"/approvals?view=board&tier=all"}}, 302, "/s/default/approvals?view=board&tier=all&decided=Q-3&done=reject", ""}, // 押した画面の絞り込みのまま戻る
+		{url.Values{"op": {"reject"}, "id": {"12"}, "back": {"https://evil/approvals?x"}}, 302, "/s/default/approvals?decided=Q-12&done=reject", ""},
+		{url.Values{"op": {"exception"}, "id": {"7"}, "confirm": {"1"}}, 400, "", "断りました: Q-7 の中身を読めません"}, // API まで届く(中身の無い記録は実行できない)
 		{url.Values{"op": {"exception"}, "id": {"7"}}, 400, "", "確認のチェック"},
 		{url.Values{"op": {"approve"}, "id": {"7"}}, 400, "", "Q-7 は承認待ちではありません(denied)"},
-		{url.Values{"op": {"exception"}, "id": {"3"}}, 400, "", "Q-3 は policy が拒否したもの(denied)ではありません(pending)"},
+		{url.Values{"op": {"exception"}, "id": {"3"}}, 400, "", "Q-3 は policy が拒否したもの(denied)ではありません(rejected)"}, // 上で却下した,
 		{url.Values{"op": {"reject"}, "id": {"4"}}, 400, "", "Q-4 は承認待ちではありません(done)"},
 		{url.Values{"op": {"approve"}, "id": {"10"}}, 400, "", "Q-10 は承認待ちではありません(approved)"},
 		{url.Values{"op": {"approve"}, "id": {"5"}}, 400, "", "Q-5 が見つかりません"}, // ほかのセッションのもの
-		{url.Values{"op": {"approve"}, "id": {"1"}}, 400, "", "tb が断りました(終了コード 1): tb: 依頼した agent &lt;alpha&gt; がいません"},
+		{url.Values{"op": {"approve"}, "id": {"1"}}, 302, "/s/default/approvals?decided=Q-1&done=approve", ""}, // 依頼した agent に知らせ、依頼者が実行する
 		{url.Values{"op": {"approve"}, "id": {"x"}}, 400, "", "番号が不正です"},
 		{url.Values{"op": {"bogus"}, "id": {"3"}}, 404, "", ""},
 	} {
@@ -677,14 +676,20 @@ exit 0
 			t.Errorf("%v: %d %s %s", c.form, r.code, r.loc, r.body[:min(len(r.body), 300)])
 		}
 	}
-	got, _ := os.ReadFile(log)
-	want := "tb approval approve Q-3 | pane=unset\n" +
-		"tb approval reject Q-2 | pane=unset\n" +
-		"tb approval approve Q-12 | pane=unset\n" +
-		"tb approval approve Q-7 | pane=unset\n" +
-		"tb approval approve Q-1 | pane=unset\n"
-	if string(got) != want {
-		t.Errorf("tb に渡したもの:\n%s\nwant:\n%s", got, want)
+	// 書き込みは API の approval.reject(同じプロセス。tb は呼ばない)
+	if got, _ := os.ReadFile(log); len(got) != 0 {
+		t.Errorf("tb を呼んだ: %s", got)
+	}
+	db, err := store.Open(TBDB(), "default", &store.Options{NoSession: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for id, want := range map[int]string{3: "rejected", 12: "rejected", 1: "approved"} {
+		var st, by string
+		if err := db.QueryRow(`SELECT status, decided_by FROM requests WHERE id=?`, id).Scan(&st, &by); err != nil || st != want || by != "human" {
+			t.Errorf("Q-%d: %s %s %v", id, st, by, err)
+		}
 	}
 	if r := do(t, ts, "GET", "/s/default/approvals?decided=Q-3&done=approve", ck, nil); !strings.Contains(r.body, "Q-3: 承認しました。") {
 		t.Errorf("done の知らせ: %s", r.body[:min(len(r.body), 300)])

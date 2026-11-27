@@ -64,6 +64,21 @@ func callAppActor(db *store.DB, what, actor, op string, in, out any) error {
 	return appErr(c.Call(context.Background(), by, op, in, out))
 }
 
+// callAppIO は callApp に、操作の途中の出力の先(標準出力 w と標準エラー stderr)を足したもの(承認して実行するコマンドの出力など)。
+func callAppIO(db *store.DB, what string, w, stderr io.Writer, op string, in, out any) error {
+	by, err := callerPrincipal(what)
+	if err != nil {
+		return err
+	}
+	env := appEnv(db, stderr)
+	env.Out = w
+	c, err := server.New(env)
+	if err != nil {
+		return err
+	}
+	return appErr(c.Call(context.Background(), by, op, in, out))
+}
+
 // callAppAs は主体 by(入口で確かめたもの)として操作 op を呼ぶ。
 func callAppAs(db *store.DB, by port.Principal, op string, in, out any) error {
 	return callAppW(db, by, nil, op, in, out)

@@ -745,8 +745,7 @@ func RequirePolicyWrite(old, new, what string, openDB func() (*sql.DB, string, f
 	if HumanPane() {
 		return nil
 	}
-	ch := PolicyDiff(old, new)
-	if len(ch) == 0 {
+	if len(PolicyDiff(old, new)) == 0 {
 		return nil
 	}
 	if openDB == nil {
@@ -766,13 +765,22 @@ func RequirePolicyWrite(old, new, what string, openDB func() (*sql.DB, string, f
 	if err != nil {
 		return err
 	}
-	for _, c := range ch {
+	return RequirePolicyWriteAs(db, session, who, old, new, what)
+}
+
+// RequirePolicyWriteAs は RequirePolicyWrite を主体 who("human" / agent 名 / "system:<名前>")で確かめる(アプリケーション API 用)。
+// 人(human)は常に通る。
+func RequirePolicyWriteAs(db *sql.DB, session, who, old, new, what string) error {
+	if who == "human" {
+		return nil
+	}
+	for _, c := range PolicyDiff(old, new) {
 		op, target := "policy:"+c.Op, c.Subject
 		if target == "*" {
 			target = anySubject // Judge は対象 * を「行の対象を見ない」に使うので、主体 * の行は別の印で渡す(当たるのは対象 * の行だけ)
 		}
 		tier, rule := Authorize(db, session, who, op, target, Matcher{})
-		if err := EnforceTarget(op, c.Subject, tier, rule, what+"(変わる行: "+c.Line+")"); err != nil {
+		if err := EnforceAs(who, op, c.Subject, tier, rule, what+"(変わる行: "+c.Line+")"); err != nil {
 			var d *Denied
 			if errors.As(err, &d) && d.Code == 1 && tier == "deny" && !strings.HasPrefix(rule, "policy:") {
 				note := ""

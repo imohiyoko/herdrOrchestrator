@@ -5,18 +5,18 @@ import (
 	"io"
 	"os"
 	"regexp"
-	"slices"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/agents"
+	appapproval "github.com/imohiyoko/herdrorchestrator/internal/app/approval"
 	"github.com/imohiyoko/herdrorchestrator/internal/approval"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/config"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/identity"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/perms"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 	"github.com/imohiyoko/herdrorchestrator/internal/message"
+	"github.com/imohiyoko/herdrorchestrator/internal/requests"
 )
 
 // tb approval(taskboard/lib/approvals.sh)。古い名前 tb approval <操作> / allow / ask / approve / reject も同じに動かす。
@@ -72,10 +72,10 @@ func cmdApproval(args []string, w, stderr io.Writer, legacy string) error {
 			sub = "check" // 古い形: tb approval <操作>
 		}
 	}
-	// 承認待ちは 1 か所で見て決める(ADR 0007 の段 4)。L-<n> は tb agent-approve / agent-reject に渡す
+	// 承認待ちは 1 か所で見て決める(ADR 0007 の段 4。API の approval.approve / reject)。L-<n> は tb agent-approve / agent-reject に渡す
 	// (その入口の門も通す。policy で cmd:agent:approve だけを締めた行を、こちらから迂回させない)
-	if (sub == "approve" || sub == "reject") && len(args) > 0 && strings.HasPrefix(args[0], "Q-") {
-		return requestDecide(sub, args, w, stderr)
+	if (sub == "approve" || sub == "reject") && (len(args) == 0 || !strings.HasPrefix(args[0], "L-")) {
+		return approvalDecide(sub, args, w, stderr)
 	}
 	if sub == "priority" {
 		return requestPriority(args, w, stderr)
@@ -109,12 +109,59 @@ func cmdApproval(args []string, w, stderr io.Writer, legacy string) error {
 			return usage("%s <操作のパターン>", sub)
 		}
 		return setApproval(db, sub, args[0], w, stderr)
-	case "approve":
-		return approve(db, args, w, stderr)
-	default:
-		return reject(db, args, w)
 	}
+	return usage("approval: 不明なサブコマンド %s", sub)
 }
+
+// approvalDecide は tb approval approve|reject Q-<n>(前の O-<n> も): API の approval.approve / reject を呼ぶ。
+func approvalDecide(sub string, args []string, w, stderr io.Writer) error {
+	id := ""
+	if len(args) > 0 {
+		id = args[0]
+	}
+	rest := args[min(len(args), 1):]
+	switch {
+	case reQID.MatchString(id):
+	case strings.HasPrefix(id, "Q-"):
+		return usage("%s Q-<n>", sub)
+	case requests.ReOID.MatchString(id): // 前の名前(tb approve O-<n>)
+		if sub == "reject" && len(rest) > 0 {
+			return usage("reject O-<n>")
+		}
+	case sub == "approve":
+		return usage("approve O-<n> [--always]")
+	default:
+		return usage("reject O-<n>")
+	}
+	always := len(rest) > 0 && (sub == "reject" || rest[0] == "--always")
+	if _, err := callerName(); err != nil {
+		return die("herdr agent list に失敗したため、実行者を特定できません")
+	}
+	db, _, err := openCmd(stderr)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	var r appapproval.Result
+	if err := callAppIO(db, "tb approval "+sub, w, stderr, "approval."+sub, appapproval.DecideReq{ID: id, Always: always}, &r); err != nil {
+		return err
+	}
+	if r.Exit != 0 {
+		return &exit{r.Exit, ""}
+	}
+	return nil
+}
+
+// setApproval は tb approval allow|ask <パターン>(と、承認の --always が書く行): API の approval.allow / ask を呼ぶ。
+func setApproval(db *store.DB, val, pat string, w, stderr io.Writer) error {
+	if err := validAction(pat); err != nil {
+		return err
+	}
+	var r appapproval.Result
+	return callAppIO(db, "tb "+val, w, stderr, "approval."+val, appapproval.PatternReq{Pattern: pat}, &r)
+}
+
+func cutHash(s string) string { return requests.CutHash(s) }
 
 func approvalCheck(db *store.DB, args []string, w, stderr io.Writer) error {
 	if len(args) < 1 {
@@ -185,275 +232,6 @@ func approvalCheck(db *store.DB, args []string, w, stderr io.Writer) error {
 }
 
 func nowTS() string { return time.Now().UTC().Format("2006-01-02T15:04:05Z") }
-
-// setApproval は set_approval: 設定 policy に「* <操作名> <対象> = allow|ask」の行を書く
-// (主体・操作名・対象が同じ行があれば書き換え、無ければ末尾に足す)。書いたあとに、もっと厳しい行が当たっていないか確かめる。
-func setApproval(db *store.DB, val, pat string, w io.Writer, stderr io.Writer) error {
-	if err := validAction(pat); err != nil {
-		return err
-	}
-	if err := requireHuman("tb " + val); err != nil {
-		return err
-	}
-	eff := "ask"
-	if val == "allow" {
-		eff = "allow"
-	}
-	op, target := perms.SplitAct(pat)
-	if target == "" {
-		target = "*"
-	}
-	ops := perms.OpsOf(op)
-	if i := slices.Index(ops, "role:change"); i >= 0 { // 誰に許すかは人が決めて policy に書く(役割の名前をコードで決め打ちしない)
-		if len(ops) == 1 {
-			return die("tb %s: role:change は誰に許すかを決めて policy に直接書く(例: @<役割> role:change * = allow。tb config edit policy)", val)
-		}
-		ops = slices.Delete(slices.Clone(ops), i, i+1)
-		fmt.Fprintf(stderr, "tb: role:change は書きません(誰に許すかを決めて policy に直接書く: tb config edit policy)\n")
-	}
-	if len(ops) == 0 {
-		return die("tb %s: %s はコマンドの中の操作に当たりません(コマンド cmd:・承認の委任 approve:・権限の変更 policy: は policy に直接書く: tb config edit policy)", val, pat)
-	}
-	cur, _, has, readErr := config.LookupStrict(db.DB, db.Session, "policy")
-	if readErr != "" {
-		return die("設定 policy を読めないため書きません(%s)", readErr)
-	}
-	var lines []string
-	if has && cur != "" {
-		lines = strings.Split(cur, "\n")
-	}
-	ts := nowTS()
-	var b strings.Builder
-	done := map[string]bool{}
-	for _, line := range lines {
-		l := config.Trim(cutHash(line))
-		lhs, _, isRule := strings.Cut(l, "=")
-		f := strings.Fields(lhs)
-		hit := ""
-		if isRule && len(f) == 3 && f[2] == target {
-			for _, o := range ops {
-				if f[0] == "*" && f[1] == o {
-					hit = o
-				}
-			}
-		}
-		if hit == "" {
-			b.WriteString(line + "\n")
-			continue
-		}
-		if done[hit] {
-			continue
-		}
-		b.WriteString("* " + hit + " " + target + " = " + eff + "   # " + ts + " に人が変更(tb approval " + val + ")\n")
-		done[hit] = true
-	}
-	body := strings.TrimSuffix(b.String(), "\n")
-	for _, o := range ops {
-		if done[o] {
-			continue
-		}
-		row := "* " + o + " " + target + " = " + eff + "   # " + ts + " に人が追加(tb approval " + val + ")"
-		if body == "" {
-			body = row
-		} else {
-			body += "\n" + row
-		}
-	}
-	if bad := perms.ValidatePolicy(body); bad != "" {
-		fmt.Fprint(stderr, bad)
-		return die("policy の本文に問題があるため書きませんでした")
-	}
-	if err := requirePolicyWrite(cur, body, "tb "+val); err != nil {
-		return err
-	}
-	info, _ := config.Info("policy")
-	if f := os.Getenv(info.Env); f != "" {
-		if err := writeConfigFile(f, body); err != nil {
-			return err
-		}
-	} else if err := config.DBPut(db.DB, db.Session, "policy", body, val, false, ""); err != nil {
-		return err
-	}
-	if _, err := db.Exec(`INSERT INTO main.approval_changes (herdr_session, pattern, value, created_at) VALUES (?, ?, ?, ?)`, db.Session, pat, val, nowTS()); err != nil {
-		return err
-	}
-	for _, o := range ops {
-		fmt.Fprintf(w, "* %s %s = %s\n", o, target, eff)
-	}
-	if val == "allow" && !strings.ContainsAny(pat, "*?") {
-		if tier, rule := approval.NewJudge(db.DB, db.Session).Authorize(pat, ""); tier != "allow" {
-			fmt.Fprintf(stderr, "tb: 注意: もっと厳しい行が当たるため、%s はまだ %s です(%s)\n", pat, tier, rule)
-		}
-	}
-	return nil
-}
-
-func isPosixSpace(r rune) bool {
-	return r == ' ' || r == '\t' || r == '\n' || r == '\v' || r == '\f' || r == '\r'
-}
-
-func cutHash(s string) string {
-	if i := strings.IndexByte(s, '#'); i >= 0 {
-		return s[:i]
-	}
-	return s
-}
-
-// approver は approver_check の結果(human か agent の名前と根拠)。
-type approver struct{ name, rule string }
-
-func (a approver) label() string {
-	if a.name == "human" {
-		return "人"
-	}
-	return "agent " + a.name + "(" + a.rule + ")"
-}
-
-// approverCheck は approver_check <コマンド名> <元の操作名(空 = 人だけ)> <依頼者>。
-func approverCheck(j *approval.Judge, cmd, act, by string) (approver, error) {
-	who := ""
-	if pane := os.Getenv("HERDR_PANE_ID"); pane != "" {
-		n, err := identity.PaneOwnerName(pane)
-		if err != nil {
-			return approver{}, die("herdr agent list に失敗したため、実行者を特定できません")
-		}
-		who = n
-	}
-	if who == "human" {
-		return approver{}, die("agent 名 human は予約名です(人と区別できないため、この agent からの操作は受けません)")
-	}
-	if who == "" {
-		return approver{name: "human"}, nil
-	}
-	if act == "" {
-		return approver{}, die("%s: この承認待ちは人が自分の端末で実行します(agent '%s' の pane からは承認できません)", cmd, who)
-	}
-	if who == by {
-		return approver{}, die("%s: 自分の依頼は承認できません(agent '%s')。人が自分の端末で実行します", cmd, who)
-	}
-	rule, ok := j.GrantOf(who, "approve:"+act, by)
-	if !ok {
-		return approver{}, die("%s は人が自分の端末で実行します(agent '%s' には %s からの %s を承認する許可がありません。policy に '<承認者> approve:<操作> <依頼者> = allow' の行が要ります)", cmd, who, by, act)
-	}
-	return approver{who, rule}, nil
-}
-
-func oidOf(s string) int64 {
-	n, err := strconv.ParseInt(strings.TrimPrefix(s, "O-"), 10, 64)
-	if err != nil {
-		return -1
-	}
-	return n
-}
-
-func approveImpl(db *store.DB, args []string, w, stderr io.Writer) error {
-	if len(args) < 1 || !reOID.MatchString(args[0]) {
-		return usage("approve O-<n> [--always]")
-	}
-	oid := oidOf(args[0])
-	always := len(args) > 1 && args[1] == "--always"
-	j := approval.NewJudge(db.DB, db.Session)
-	o, ok, err := message.GetOutbox(db.DB, oid)
-	if err != nil {
-		return err
-	}
-	id := "O-" + strconv.FormatInt(oid, 10)
-	if !ok { // agent には、あるかどうかも先に言わない
-		if _, err := approverCheck(j, "tb approve", "", ""); err != nil {
-			return err
-		}
-		return die("outbox が見つかりません: %s", id)
-	}
-	act := "send:" + o.Kind + ":" + o.Target
-	ap, err := approverCheck(j, "tb approve", act, o.From)
-	if err != nil {
-		return err
-	}
-	if ap.name != "human" && always {
-		return die("tb approve: --always(今後は承認なしにする)は人だけが使えます")
-	}
-	if o.Status != "pending" {
-		return die("%s は承認待ちではありません(%s)", id, o.Status)
-	}
-	res, err := db.Exec(`UPDATE main.outbox SET status='queued', reason=reason||? WHERE herdr_session=? AND id=? AND status='pending'`,
-		" / "+ap.label()+"が承認 "+nowTS(), db.Session, oid)
-	if err != nil {
-		return err
-	}
-	if n, _ := res.RowsAffected(); n != 1 {
-		return die("%s は承認待ちではありません(ほかで決まりました)", id)
-	}
-	recordDecision(db, "outbox", oid, "approved", ap.name)
-	if always {
-		if err := setApproval(db, "allow", act, io.Discard, stderr); err != nil {
-			return err
-		}
-		fmt.Fprintf(w, "%s = allow(今後は承認なし)\n", act)
-	}
-	flush(w)
-	r := message.Deliver(j, oid, false, io.Discard, stderr)
-	switch r.Code {
-	case 0:
-		switch {
-		case r.Blocked != "":
-			fmt.Fprintf(w, "%s approved but blocked by %s\n", id, o.Target)
-		case r.Held != "":
-			fmt.Fprintf(w, "%s approved and held for %s (%s)\n", id, o.Target, r.Held)
-		default:
-			fmt.Fprintf(w, "%s approved and sent to %s\n", id, o.Target)
-		}
-	case 12:
-		fmt.Fprintf(w, "%s approved but holding failed (queued)\n", id)
-		return &exit{12, ""}
-	case 11:
-		flush(w)
-		fmt.Fprintf(stderr, "tb: %s は承認済みですが宛先 '%s' に届けられません(上の理由を見てください。queued のまま。直したら tb flush)\n", id, o.Target)
-		fmt.Fprintf(w, "%s approved but delivery failed (queued)\n", id)
-		return &exit{11, ""}
-	default:
-		fmt.Fprintf(w, "%s approved (宛先使用中のため queued。tb flush で届く)\n", id)
-	}
-	return nil
-}
-
-func rejectImpl(db *store.DB, args []string, w io.Writer) error {
-	if len(args) != 1 || !reOID.MatchString(args[0]) {
-		return usage("reject O-<n>")
-	}
-	oid := oidOf(args[0])
-	id := "O-" + strconv.FormatInt(oid, 10)
-	j := approval.NewJudge(db.DB, db.Session)
-	o, ok, err := message.GetOutbox(db.DB, oid)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		if _, err := approverCheck(j, "tb reject", "", ""); err != nil {
-			return err
-		}
-		return die("%s は承認待ちではありません", id)
-	}
-	ap, err := approverCheck(j, "tb reject", "send:"+o.Kind+":"+o.Target, o.From)
-	if err != nil {
-		return err
-	}
-	if o.Status != "pending" {
-		return die("%s は承認待ちではありません", id)
-	}
-	lbl := ap.label()
-	res, err := db.Exec(`UPDATE main.outbox SET status='denied', reason=reason||?,
-	       reply_check=CASE WHEN reply_check='ok' THEN ? ELSE reply_check END WHERE herdr_session=? AND id=? AND status='pending'`,
-		" / "+lbl+"が却下 "+nowTS(), lbl+"が却下", db.Session, oid)
-	if err != nil {
-		return err
-	}
-	if n, _ := res.RowsAffected(); n != 1 {
-		return die("%s は承認待ちではありません(ほかで決まりました)", id)
-	}
-	recordDecision(db, "outbox", oid, "rejected", ap.name)
-	fmt.Fprintf(w, "%s rejected\n", id)
-	return nil
-}
 
 // flush は書きかけの標準出力を先に出す(標準エラーとの順を bash と同じにする)。
 func flush(w io.Writer) {

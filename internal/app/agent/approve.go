@@ -16,8 +16,10 @@ import (
 	"github.com/imohiyoko/herdrorchestrator/internal/agents"
 	"github.com/imohiyoko/herdrorchestrator/internal/app"
 	"github.com/imohiyoko/herdrorchestrator/internal/approval"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/config"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/transport"
+	"github.com/imohiyoko/herdrorchestrator/internal/requests"
 	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
 )
 
@@ -30,7 +32,8 @@ var reLid = regexp.MustCompile(`^L-[0-9]+$`)
 
 // DecideReq は agent.approve / agent.reject の入力。
 type DecideReq struct {
-	ID string `api:"id,path"` // L-<n>
+	ID     string `api:"id,path"`         // L-<n>
+	Always bool   `api:"always,optional"` // 承認して、今後は承認なし(policy に * agent:<操作>:<対象> = allow を書く。人だけ。承認のみ)
 }
 
 // DecideResult は agent.approve / agent.reject の結果。
@@ -178,9 +181,9 @@ func OpClaim(db *store.DB, now string, id int64, by string) error {
 
 
 func decideOp(env *app.Env, approve bool) app.Op {
-	name, sub, cmd, verb := "agent.reject", "reject", "tb agent-reject", "reject"
+	name, verb := "agent.reject", "reject"
 	if approve {
-		name, sub, cmd, verb = "agent.approve", "approve", "tb agent-approve", "approve"
+		name, verb = "agent.approve", "approve"
 	}
 	return app.Command(env, name,
 		func(_ context.Context, _ *app.Env, _ string, v any) app.Decision {
@@ -190,41 +193,7 @@ func decideOp(env *app.Env, approve bool) app.Op {
 			return app.Decision{}
 		},
 		func(ctx context.Context, in DecideReq) (DecideResult, error) {
-			who := by(ctx)
-			id, _ := strconv.ParseInt(in.ID[2:], 10, 64)
-			return withDB(env, func(db *store.DB) (DecideResult, error) {
-				j := approval.NewJudge(db.DB, db.Session)
-				o, ok := OpRowOf(db, id)
-				if !ok {
-					if _, err := CheckApprover(j, cmd, who, "", ""); err != nil {
-						return DecideResult{}, err
-					}
-					if approve {
-						return DecideResult{}, define.Errorf(define.CodeNotFound, "操作が見つかりません: L-%d", id)
-					}
-					return DecideResult{}, define.Errorf(define.CodeNotFound, "L-%d は承認待ちではありません", id)
-				}
-				ap, err := CheckApprover(j, cmd, who, OpAction(db, o), o.By)
-				if err != nil {
-					return DecideResult{}, err
-				}
-				if o.Stat != "pending" {
-					if approve {
-						return DecideResult{}, define.Errorf(define.CodeFailedPrecondition, "L-%d は承認待ちではありません(%s)", id, o.Stat)
-					}
-					return DecideResult{}, define.Errorf(define.CodeFailedPrecondition, "L-%d は承認待ちではありません", id)
-				}
-				var r DecideResult
-				if approve {
-					r, err = approveRow(env, db, o, ap)
-				} else {
-					r, err = rejectRow(env, db, o, ap)
-				}
-				if err == nil {
-					NotifyDecided(db, env.NowString(), id, sub, who)
-				}
-				return r, err
-			})
+			return Decide(env, by(ctx), in, approve)
 		},
 		define.Doc("承認待ちの agent の操作 L-<n> を"+map[bool]string{true: "承認して実行する", false: "却下する"}[approve]+"(tb agent "+verb+")"),
 		define.Authz("cmd:agent:"+verb, define.Resource("agent_op", "id")),
@@ -233,13 +202,84 @@ func decideOp(env *app.Env, approve bool) app.Op {
 	)
 }
 
-func approveRow(env *app.Env, db *store.DB, o OpRow, ap Approver) (DecideResult, error) {
+// Decide は承認待ちの agent の操作 in.ID を who(perms の主体の書き方)として承認・却下する(agent.approve / reject の中身。
+// tb approval approve Q-<n> の agent の操作もここに来る)。
+func Decide(env *app.Env, who string, in DecideReq, approve bool) (DecideResult, error) {
+	cmd, sub := "tb agent-reject", "reject"
+	if approve {
+		cmd, sub = "tb agent-approve", "approve"
+	}
+	if !reLid.MatchString(in.ID) {
+		return DecideResult{}, usageErr("操作 ID は L-<数字>: %s", in.ID)
+	}
+	if in.Always && !approve {
+		return DecideResult{}, usageErr("agent-reject L-<n>")
+	}
+	id, _ := strconv.ParseInt(in.ID[2:], 10, 64)
+	return withDB(env, func(db *store.DB) (DecideResult, error) {
+		j := approval.NewJudge(db.DB, db.Session)
+		o, ok := OpRowOf(db, id)
+		if !ok {
+			if _, err := CheckApprover(j, cmd, who, "", ""); err != nil {
+				return DecideResult{}, err
+			}
+			if approve {
+				return DecideResult{}, define.Errorf(define.CodeNotFound, "操作が見つかりません: L-%d", id)
+			}
+			return DecideResult{}, define.Errorf(define.CodeNotFound, "L-%d は承認待ちではありません", id)
+		}
+		ap, err := CheckApprover(j, cmd, who, OpAction(db, o), o.By)
+		if err != nil {
+			return DecideResult{}, err
+		}
+		if in.Always && ap.Name != "human" {
+			return DecideResult{}, define.Errorf(define.CodeFailedPrecondition, "tb agent-approve: --always(今後は承認なしにする)は人だけが使えます")
+		}
+		if o.Stat != "pending" {
+			if approve {
+				return DecideResult{}, define.Errorf(define.CodeFailedPrecondition, "L-%d は承認待ちではありません(%s)", id, o.Stat)
+			}
+			return DecideResult{}, define.Errorf(define.CodeFailedPrecondition, "L-%d は承認待ちではありません", id)
+		}
+		var r DecideResult
+		if approve {
+			r, err = approveRow(env, db, o, ap, in.Always)
+		} else {
+			r, err = rejectRow(env, db, o, ap)
+		}
+		if err == nil {
+			NotifyDecided(db, env.NowString(), id, sub, who)
+		}
+		return r, err
+	})
+}
+
+// alwaysAllow は --always: policy に pat = allow を書き、書けたら知らせの 1 行を返す(書けなくても承認はそのまま)。
+func alwaysAllow(db *store.DB, pat string) string {
+	if requests.SetApproval(db, "allow", pat, io.Discard, io.Discard) != nil {
+		return ""
+	}
+	return pat + " = allow(今後は承認なし)\n"
+}
+
+func approveRow(env *app.Env, db *store.DB, o OpRow, ap Approver, always bool) (DecideResult, error) {
 	id := o.ID
 	if o.Op == "slash" { // スラッシュコマンド: 印を取ってから、今の許可リストで送る
+		cmd := o.Parsed().Command
+		if always && o.Target == "*" {
+			return DecideResult{}, define.Errorf(define.CodeFailedPrecondition, "L-%d: --all の承認に --always は使えません", id)
+		}
 		if err := OpClaim(db, env.NowString(), id, ap.Name); err != nil {
 			return DecideResult{}, err
 		}
 		var b bytes.Buffer
+		if always {
+			// 許可リストで送れないものに allow を書かない(送るかどうかは SlashApproved がもう一度確かめる)
+			body, _, has := config.Lookup(db.DB, db.Session, "slash")
+			if e, r, _ := SlashLookup(body, has, cmd); r == 0 && e.Policy == "allow" {
+				b.WriteString(alwaysAllow(db, "agent:slash:"+cmd+":"+o.Target))
+			}
+		}
 		line, rc := SlashApproved(db, o, ap.Label(), &b)
 		out := strings.TrimRight(b.String()+line, "\n")
 		if err := (Result{Code: rc, Out: out}).Err(); err != nil {
@@ -267,6 +307,14 @@ func approveRow(env *app.Env, db *store.DB, o OpRow, ap Approver) (DecideResult,
 	if err := OpClaim(db, env.NowString(), id, ap.Name); err != nil {
 		return DecideResult{}, err
 	}
+	pre := ""
+	if always {
+		aop := o.Op
+		if a.ModelSet == 1 {
+			aop = "model" // tb model-set の承認待ち(記録は op=revive)
+		}
+		pre = alwaysAllow(db, "agent:"+aop+":"+o.Target)
+	}
 	r := runOp(db, st, o, env.Warner())
 	RecordOpID(db, env.NowString(), id, r.Code, r.Out+" / "+ap.Label()+"が承認")
 	if err := r.Err(); err != nil {
@@ -275,7 +323,7 @@ func approveRow(env *app.Env, db *store.DB, o OpRow, ap Approver) (DecideResult,
 		}
 		return DecideResult{}, err
 	}
-	return DecideResult{ID: "L-" + strconv.FormatInt(id, 10), Out: fmt.Sprintf("L-%d: %s", id, r.Out)}, nil
+	return DecideResult{ID: "L-" + strconv.FormatInt(id, 10), Out: pre + fmt.Sprintf("L-%d: %s", id, r.Out)}, nil
 }
 
 // runOp は run_op: op と args から実行する(承認後の実行。作成・停止・再開)。
