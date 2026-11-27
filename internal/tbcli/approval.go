@@ -133,7 +133,13 @@ func approvalDecide(sub string, args []string, w, stderr io.Writer) error {
 	default:
 		return usage("reject O-<n>")
 	}
-	always := len(rest) > 0 && (sub == "reject" || rest[0] == "--always")
+	if len(rest) > 1 || (len(rest) == 1 && (sub == "reject" || rest[0] != "--always")) {
+		if sub == "reject" {
+			return usage("reject Q-<n>")
+		}
+		return usage("approve Q-<n> [--always]")
+	}
+	always := len(rest) == 1
 	if _, err := callerName(); err != nil {
 		return die("herdr agent list に失敗したため、実行者を特定できません")
 	}

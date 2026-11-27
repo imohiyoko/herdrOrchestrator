@@ -104,7 +104,7 @@ func approveOutbox(db *store.DB, o IO, who string, oid int64, always bool) (int,
 	if err != nil {
 		return 0, err
 	}
-	if ap.Name != "human" && always {
+	if always && (ap.Name != "human" || who != "human") { // scheduler など(system:<名前>)も policy は書かない(tb の require_human と同じ)
 		return 0, refuse("tb approve: --always(今後は承認なしにする)は人だけが使えます")
 	}
 	if ob.Status != "pending" {

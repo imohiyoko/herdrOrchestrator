@@ -418,6 +418,18 @@ func (s *Server) postApprovalOp(q *rq, f form) (string, string, string, func(pag
 // 承認したコマンドを依頼者として動かす子は、前と同じくこの checkout の tb(HERDR_SESSION と TB_DB はこの画面のもの)。
 // 断られたか、実行したものが 0 以外で終わったら画面に出す理由(実行できたら空)。
 func approvalCall(sess, op string, in appapproval.DecideReq) string {
+	if sess != SessionName() {
+		// 送信の配送・agent の操作は herdr を呼ぶ。herdr の呼び出し先はプロセスの環境で決まるので、ほかのセッションは
+		// 前と同じく、HERDR_SESSION を渡した tb の子プロセスで行う(agentDecide と同じ)
+		args := []string{"approval", strings.TrimPrefix(op, "approval."), in.ID}
+		if in.Always {
+			args = append(args, "--always")
+		}
+		if rc, out := runTB(sess, 60*time.Second, args...); rc != 0 {
+			return tbFail(rc, out)
+		}
+		return ""
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	env := appEnv(sess)

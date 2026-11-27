@@ -205,6 +205,9 @@ func IsHuman(who string) bool {
 
 // CheckApprover は approver_check <コマンド名> <元の操作名(空 = 人だけ)> <依頼者>: who が決めてよいか。
 func CheckApprover(j *approval.Judge, cmd, who, act, by string) (Approver, error) {
+	if who == "" {
+		return Approver{}, refuse("%s: 呼び出し元の主体が無いため決めません", cmd)
+	}
 	if IsHuman(who) {
 		return Approver{Name: "human"}, nil
 	}
