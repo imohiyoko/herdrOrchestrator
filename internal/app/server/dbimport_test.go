@@ -2,6 +2,7 @@ package server
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/imohiyoko/API/define"
@@ -20,7 +21,7 @@ func TestConfigDBImportRefused(t *testing.T) {
 	if _, e := callOp[appconfig.DBImportResult](t, env, app.Agent("w1"), "config.db.import", appconfig.DBImportReq{Path: filepath.Join(t.TempDir(), "old.db")}); e == nil || e.Code != define.CodePermissionDenied {
 		t.Errorf("agent: %v", e)
 	}
-	if _, e := callOp[appconfig.DBImportResult](t, env, app.Human(), "config.db.import", appconfig.DBImportReq{Path: dbp}); e == nil || e.Code != define.CodeFailedPrecondition {
+	if _, e := callOp[appconfig.DBImportResult](t, env, app.Human(), "config.db.import", appconfig.DBImportReq{Path: dbp}); e == nil || e.Code != define.CodeFailedPrecondition || !strings.HasPrefix(e.Message, "取り込み先と同じ DB です") {
 		t.Errorf("取り込み先と同じ DB: %v", e)
 	}
 }

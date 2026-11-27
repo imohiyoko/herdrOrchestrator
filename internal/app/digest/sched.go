@@ -16,7 +16,6 @@ import (
 	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
 	"github.com/imohiyoko/herdrorchestrator/internal/jobs"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/config"
-	"github.com/imohiyoko/herdrorchestrator/internal/kernel/env"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/jv"
 	"github.com/imohiyoko/herdrorchestrator/internal/limits"
 )
@@ -310,10 +309,10 @@ func grepWord(line, w string) bool {
 	}
 }
 
-// swShow は show.sh <job> の JSON(読めなければ nil)。
-func swShow(e jobs.Env, logs, job string) jv.Obj {
+// swShow は show.sh <job> の JSON(読めなければ nil)。dbPath と session はジョブを集めた DB とセッション(Web UI では呼び手の環境と違いうる)。
+func swShow(e jobs.Env, logs, job, dbPath, session string) jv.Obj {
 	c := exec.Command("bash", e.Show, job)
-	c.Env = append(os.Environ(), "TB_DB="+env.TBDB(), "JOBS_DIR="+filepath.Join(e.Dir, "jobs"), "LOG_DIR="+logs, "SCHED_SETTINGS_DIR="+filepath.Join(e.Dir, "settings"))
+	c.Env = append(os.Environ(), "TB_DB="+dbPath, "HERDR_SOCKET_PATH=", "HERDR_SESSION="+session, "JOBS_DIR="+filepath.Join(e.Dir, "jobs"), "LOG_DIR="+logs, "SCHED_SETTINGS_DIR="+filepath.Join(e.Dir, "settings"))
 	out, err := c.Output()
 	if err != nil {
 		return nil
@@ -391,7 +390,7 @@ func (d *run) collectSched() error {
 	sort.Strings(names)
 	var cur []string
 	for _, job := range names {
-		cfg := swShow(e, logs, job)
+		cfg := swShow(e, logs, job, d.db.Path, d.db.Session)
 		if cfg == nil {
 			continue
 		}
@@ -506,7 +505,7 @@ func (d *run) collectSched() error {
 		}
 	}
 	// 条件が外れたものは記録を消す(再び当てはまったら、また送る)
-	_, _ = d.db.Exec(`DELETE FROM main.observations WHERE herdr_session=? AND kind IN ('schedoff','schedstale','schedfail','schedwait') AND key NOT IN (`+sqlQuoteList(cur)+`)`, d.db.Session)
+	d.prune(`DELETE FROM main.observations WHERE herdr_session=? AND kind IN ('schedoff','schedstale','schedfail','schedwait') AND key NOT IN (`+sqlQuoteList(cur)+`)`, d.db.Session)
 	return nil
 }
 

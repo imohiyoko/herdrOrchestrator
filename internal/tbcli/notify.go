@@ -361,6 +361,9 @@ func (n *notifyCmd) ack(args []string) error {
 	if err := reporterCall(n.db, "tb notify ack", n.stderr, "notify.ack", appnotify.AckReq{ID: args[0], Hash: hash, MsgID: mid}, &r); err != nil {
 		return err
 	}
+	if r.Pending != nil {
+		return pendingExit(n.w, r.Pending)
+	}
 	if r.Status == "mismatch" {
 		fmt.Fprintf(n.stderr, "%s mismatch\n", r.ID)
 		return &exit{exitErr, ""}

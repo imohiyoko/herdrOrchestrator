@@ -75,9 +75,13 @@ type AckReq struct {
 
 // AckResult は ack の結果。Status は acked か mismatch(本文の hash が送った本文と合わない。tb は 1 で終わる)。
 type AckResult struct {
-	ID     string `api:"id" json:"id"`
-	Status string `api:"status" json:"status"`
+	ID      string       `api:"id" json:"id"`
+	Status  string       `api:"status" json:"status"`
+	Pending *app.Pending `api:"pending,optional" json:"pending,omitempty"`
 }
+
+// SetPending は app.PendingSetter。
+func (r *AckResult) SetPending(p *app.Pending) { r.Pending = p }
 
 // EventReq は notify.event の入力(人が手でインシデントのイベントを積む)。
 type EventReq struct {
@@ -103,7 +107,7 @@ func Ops(env *app.Env) []app.Op {
 		return app.Command(env, "notify."+val, app.Cmd("cmd:notify:"+val, "tb notify "+val),
 			func(ctx context.Context, _ SwitchReq) (SwitchResult, error) {
 				return withDB(env, func(db *store.DB) (SwitchResult, error) {
-					if err := WriteConf(db, "enabled", val); err != nil {
+					if err := WriteConf(db, "enabled", val, who(ctx)); err != nil {
 						return SwitchResult{}, err
 					}
 					return SwitchResult{Enabled: val}, nil
@@ -217,7 +221,7 @@ func field(db *store.DB, id int64, col string) string {
 
 // WriteConf は notify_write_conf: 設定 notify のそのキーの行を置き換える(無ければ足す)。
 // 環境変数で設定のファイルを指していれば、そのファイルに書く。
-func WriteConf(db *store.DB, k, v string) error {
+func WriteConf(db *store.DB, k, v, by string) error {
 	var out []string
 	found := false
 	if body, _, ok := config.Lookup(db.DB, db.Session, "notify"); ok && body != "" {
@@ -241,7 +245,7 @@ func WriteConf(db *store.DB, k, v string) error {
 	if f := os.Getenv(info.Env); f != "" {
 		err = config.WriteFile(f, body)
 	} else {
-		err = config.DBPut(db.DB, db.Session, "notify", body, "notify", false, "")
+		err = config.DBPut(db.DB, db.Session, "notify", body, "notify", false, by)
 	}
 	if err != nil {
 		var sl *config.ErrSymlink
@@ -293,8 +297,11 @@ func Ack(env *app.Env, db *store.DB, who string, in AckReq) (AckResult, error) {
 		return AckResult{}, define.Errorf(define.CodeFailedPrecondition, "N-%s は ack を待っていません(%s)", idS, stt)
 	}
 	if c.Flag("hash_check") && in.Hash != exp {
-		_, _ = db.Exec("UPDATE main.notify_events SET slack_status='mismatch', note='投稿された本文の hash が一致しない' WHERE herdr_session=? AND id=?", db.Session, id)
-		q.Emit(notify.Event{Type: "warning", Ref: "N-" + idS + "-mismatch", A: "N-" + idS + " の投稿内容が送った本文と一致しません。Slack 側を確かめてください"})
+		_, err := db.Exec("UPDATE main.notify_events SET slack_status='mismatch', note='投稿された本文の hash が一致しない' WHERE herdr_session=? AND id=?", db.Session, id)
+		q.Emit(notify.Event{Type: "warning", Ref: "N-" + idS + "-mismatch", A: "N-" + idS + " の投稿内容が送った本文と一致しません。Slack 側を確かめてください"}) // 記録に失敗しても人には知らせる
+		if err != nil {
+			return AckResult{}, define.Errorf(define.CodeInternal, "%s", err.Error())
+		}
 		return AckResult{ID: "N-" + idS, Status: "mismatch"}, nil
 	}
 	if _, err := db.Exec("UPDATE main.notify_events SET slack_status='acked', slack_msg_id=NULLIF(?,''), note=NULL WHERE herdr_session=? AND id=?", in.MsgID, db.Session, id); err != nil {
