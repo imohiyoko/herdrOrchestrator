@@ -100,5 +100,5 @@ func Ops(env *app.Env) []app.Op {
 		define.Expose(define.Internal, define.REST),
 		define.HTTP("DELETE /v1/jobs/{name}"),
 	)
-	return []app.Op{set, rm}
+	return []app.Op{set, rm, runOp(env)}
 }

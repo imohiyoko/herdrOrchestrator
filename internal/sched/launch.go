@@ -157,6 +157,9 @@ func GenPlist(e Env, logDir string, args []string, stdout io.Writer) error {
 		if j.At != "" {
 			what = "1 回だけ " + j.At
 		}
+		if j.Manual {
+			what = "呼ばれたときだけ(MANUAL=1。毎分の判定では動かない)"
+		}
 	}
 	prefix, err := labelPrefix()
 	if err != nil {

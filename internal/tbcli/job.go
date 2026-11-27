@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imohiyoko/herdrorchestrator/internal/app"
+	"github.com/imohiyoko/herdrorchestrator/internal/app/job"
 	"github.com/imohiyoko/herdrorchestrator/internal/jobs"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/config"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/env"
@@ -26,6 +28,7 @@ tb job unset <job> [--settings] [--shared]   DB の行を消す(人だけ)
 tb job import [--dry-run] [--shared] [<job> ...]   jobs/*.conf(と settings/*.settings)を DB に取り込み、ファイルを退かす(人だけ)
 tb job history <job> [--settings]   変更の履歴
 tb job rm <job> [--shared] [--keep-log]   ジョブを消す: 定義と上書き設定の DB の行(人だけ。どのセッションにも残らなければ logs/<job>.log も消す)
+tb job run <job>   時刻に関係なく今すぐ 1 回動かす(既定は人だけ。ENABLED・GATE・SKIP_IF は効く。API は POST /v1/jobs/{name}/run)
 (古い名前 tb sched-job も同じに使える。tb sched-job だけなら list)
 `
 
@@ -83,6 +86,10 @@ func cmdJob(args []string, w, stderr io.Writer, legacy bool) error {
 		return jobImport(db, e, args, w, stderr)
 	case "history":
 		return jobHistory(db, args, w)
+	case "run":
+		if !legacy {
+			return jobRun(db, args, w, stderr)
+		}
 	case "rm":
 		if !legacy { // 新しい動詞は新しい名前だけ(tb sched-job には足さない)
 			return jobRm(db, e, args, w)
@@ -512,4 +519,33 @@ func jobLogDir(e jobs.Env) string {
 		return d
 	}
 	return filepath.Join(e.Dir, "logs")
+}
+
+// jobRun は tb job run <job>: API の job.run(時刻に関係なく今すぐ 1 回)。動かなかった回(skipped_* / failed)は 1。
+func jobRun(db *store.DB, args []string, w, stderr io.Writer) error {
+	if len(args) != 1 || strings.HasPrefix(args[0], "-") {
+		return usage("job run <job>")
+	}
+	who, err := requester()
+	if err != nil {
+		return err
+	}
+	var r job.RunResult
+	if err := callAppW(db, app.PrincipalOf(who), stderr, "job.run", job.RunReq{Name: args[0]}, &r); err != nil {
+		return err
+	}
+	line := r.Name + ": " + r.Action
+	if r.Reason != "" {
+		line += "(" + r.Reason + ")"
+	} else if r.Exit != nil {
+		line += fmt.Sprintf("(exit %d)", *r.Exit)
+	}
+	fmt.Fprintln(w, line)
+	if r.Stdout != "" {
+		fmt.Fprintln(w, r.Stdout)
+	}
+	if !r.OK {
+		return &exit{1, ""}
+	}
+	return nil
 }

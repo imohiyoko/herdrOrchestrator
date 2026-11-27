@@ -658,6 +658,9 @@ func nextRuns(info *jobInfo, n int) ([]string, string) {
 		return nil, unknown
 	}
 	now := nowFn().In(loc)
+	if info.manual {
+		return nil, "呼ばれたときだけ動くジョブです(tb job run / POST /v1/jobs/{name}/run)"
+	}
 	if info.at != "" {
 		at, err := sched.ParseAt(info.at, loc)
 		if err != nil {

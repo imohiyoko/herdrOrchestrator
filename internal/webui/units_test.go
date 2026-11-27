@@ -95,6 +95,11 @@ func TestNextRuns(t *testing.T) {
 	if r, note := nextRuns(once, 5); len(r) != 0 || !strings.Contains(note, "過ぎました") {
 		t.Errorf("AT を過ぎたら予定なし: %v %s", r, note)
 	}
+	man := info()
+	man.manual = true
+	if r, note := nextRuns(man, 5); len(r) != 0 || !strings.Contains(note, "呼ばれたときだけ") {
+		t.Errorf("MANUAL は予定なし: %v %s", r, note)
+	}
 	off := info()
 	off.enabled = false
 	if r, _ := nextRuns(off, 5); len(r) != 0 {
