@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	appnotify "github.com/imohiyoko/herdrorchestrator/internal/app/notify"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/capv"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/config"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
@@ -59,8 +60,12 @@ func cmdNotify(args []string, w, stderr io.Writer) error {
 		if err := requireHuman("tb notify " + sub); err != nil {
 			return err
 		}
-		if err := n.writeConf("enabled", sub); err != nil {
+		var r appnotify.SwitchResult
+		if err := callAppWarn(db, "tb notify "+sub, stderr, "notify."+sub, appnotify.SwitchReq{}, &r); err != nil {
 			return err
+		}
+		if r.Pending != nil {
+			return pendingExit(w, r.Pending)
 		}
 		fmt.Fprintf(w, "notify: enabled = %s\n", sub)
 		if sub == "on" {
@@ -74,14 +79,14 @@ func cmdNotify(args []string, w, stderr io.Writer) error {
 		if err := requireHuman("tb notify test"); err != nil {
 			return err
 		}
-		id, _ := q.Enqueue(notify.Event{Type: "test", Ref: fmt.Sprintf("test-%d-%d", time.Now().Unix(), os.Getpid()), Force: true})
-		if id == 0 {
-			return die("test: イベントを作れませんでした")
+		var r appnotify.TestResult
+		if err := callAppWarn(db, "tb notify test", stderr, "notify.test", appnotify.SwitchReq{}, &r); err != nil {
+			return err
 		}
-		if n.field(id, "slack_status") == "pending" {
-			q.SlackSend(id)
+		if r.Pending != nil {
+			return pendingExit(w, r.Pending)
 		}
-		fmt.Fprintf(w, "N-%d %s %s\n", id, n.field(id, "slack_status"), n.field(id, "text"))
+		fmt.Fprintf(w, "%s %s %s\n", r.ID, r.Status, r.Text)
 		return nil
 	case "dry-run":
 		return n.dryRun(args)
@@ -96,16 +101,17 @@ func cmdNotify(args []string, w, stderr io.Writer) error {
 		if err := requireHuman("tb notify flush"); err != nil {
 			return err
 		}
-		if !q.C.On() {
+		var r appnotify.FlushResult // TB_TODAY が日付でなければ期限のイベントは見ない(今と同じ)
+		if err := callAppWarn(db, "tb notify flush", stderr, "notify.flush", appnotify.FlushReq{Today: os.Getenv("TB_TODAY")}, &r); err != nil {
+			return err
+		}
+		if r.Pending != nil {
+			return pendingExit(w, r.Pending)
+		}
+		if r.Off {
 			fmt.Fprintln(w, "notify: off(何もしません)")
 			return nil
 		}
-		_ = q.Periodic()
-		if td, err := today(); err == nil { // 期限のイベント(tb due-scan。1 日 1 回ずつ)
-			_, _, _ = tickets.DueScan(db.DB, db.Session, st.SQLList("done", "cancelled"), td, 1, "")
-		}
-		_ = q.RunRules() // 通知の規則の取りこぼし
-		q.FlushSlack()
 		fmt.Fprintln(w, "notify: flushed")
 		return nil
 	case "events":
@@ -129,33 +135,6 @@ func (n *notifyCmd) field(id int64, col string) string {
 	var v any
 	_ = n.db.QueryRow("SELECT "+col+" FROM notify_events WHERE id=?", id).Scan(&v)
 	return strings.TrimRight(tickets.Text(v), "\n")
-}
-
-// writeConf は notify_write_conf: 設定 notify のそのキーの行を置き換える(無ければ足す)。人だけが呼ぶ。
-func (n *notifyCmd) writeConf(k, v string) error {
-	var out []string
-	found := false
-	if body, _, ok := config.Lookup(n.db.DB, n.db.Session, "notify"); ok && body != "" {
-		for _, line := range config.Lines(body) {
-			if !strings.HasPrefix(line, "#") && strings.Contains(line, "=") && config.Trim(strings.SplitN(line, "=", 2)[0]) == k {
-				if !found {
-					out = append(out, k+" = "+v)
-					found = true
-				}
-			} else {
-				out = append(out, line)
-			}
-		}
-	}
-	if !found {
-		out = append(out, k+" = "+v)
-	}
-	body := strings.TrimRight(strings.Join(out, "\n"), "\n")
-	info, _ := config.Info("notify")
-	if f := os.Getenv(info.Env); f != "" {
-		return writeConfigFile(f, body)
-	}
-	return config.DBPut(n.db.DB, n.db.Session, "notify", body, "notify", false, "")
 }
 
 func (n *notifyCmd) webhookState() string {
@@ -378,36 +357,15 @@ func (n *notifyCmd) ack(args []string) error {
 	if mid != "" && !reMsgID.MatchString(mid) {
 		return usage("ack: --id は英数字と . _ : / - の 80 字まで")
 	}
-	c := n.q.C
-	if os.Getenv("HERDR_PANE_ID") != "" {
-		l, err := label(n.db, n.stderr)
-		if err != nil {
-			return err
-		}
-		if l.Name != c.Get("notifier_agent") {
-			return die("ack は notifier agent(%s)か人だけが使えます(%s)", c.Get("notifier_agent"), l.Name)
-		}
-	}
-	id, perr := strconv.ParseInt(idS, 10, 64)
-	var stt, exp string
-	if perr != nil || n.db.QueryRow("SELECT slack_status, hash FROM notify_events WHERE id=?", id).Scan(&stt, &exp) != nil {
-		return die("イベントが見つかりません: N-%s", idS)
-	}
-	switch stt {
-	case "awaiting-ack", "failed", "acked", "mismatch":
-	default:
-		return die("N-%s は ack を待っていません(%s)", idS, stt)
-	}
-	if c.Flag("hash_check") && hash != exp {
-		_, _ = n.db.Exec("UPDATE main.notify_events SET slack_status='mismatch', note='投稿された本文の hash が一致しない' WHERE herdr_session=? AND id=?", n.db.Session, id)
-		n.q.Emit(notify.Event{Type: "warning", Ref: "N-" + idS + "-mismatch", A: "N-" + idS + " の投稿内容が送った本文と一致しません。Slack 側を確かめてください"})
-		fmt.Fprintf(n.stderr, "N-%s mismatch\n", idS)
-		return &exit{exitErr, ""}
-	}
-	if _, err := n.db.Exec("UPDATE main.notify_events SET slack_status='acked', slack_msg_id=NULLIF(?,''), note=NULL WHERE herdr_session=? AND id=?", mid, n.db.Session, id); err != nil {
+	var r appnotify.AckResult
+	if err := reporterCall(n.db, "tb notify ack", n.stderr, "notify.ack", appnotify.AckReq{ID: args[0], Hash: hash, MsgID: mid}, &r); err != nil {
 		return err
 	}
-	fmt.Fprintf(n.w, "N-%s acked\n", idS)
+	if r.Status == "mismatch" {
+		fmt.Fprintf(n.stderr, "%s mismatch\n", r.ID)
+		return &exit{exitErr, ""}
+	}
+	fmt.Fprintf(n.w, "%s %s\n", r.ID, r.Status)
 	return nil
 }
 
@@ -426,7 +384,13 @@ func (n *notifyCmd) event(args []string) error {
 	if err := requireHuman("tb notify event"); err != nil {
 		return err
 	}
-	n.q.Emit(notify.Event{Type: typ, Ref: ref, Sev: f["--severity"], A: f["--title"]})
+	var r appnotify.EventResult
+	if err := callAppWarn(n.db, "tb notify event", n.stderr, "notify.event", appnotify.EventReq{Type: typ, Ref: ref, Severity: f["--severity"], Title: f["--title"]}, &r); err != nil {
+		return err
+	}
+	if r.Pending != nil {
+		return pendingExit(n.w, r.Pending)
+	}
 	fmt.Fprintf(n.w, "notify: %s %s\n", typ, ref)
 	return nil
 }

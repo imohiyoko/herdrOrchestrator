@@ -69,9 +69,6 @@ func roleOps(env *app.Env) []app.Op {
 	edit := roleWriteOp(env, "edit", "POST /v1/roles/{name}/edit")
 	unset := app.Command(env, "agent.role.unset", app.Cmd("cmd:agent:role-unset", "tb role-unset"),
 		func(ctx context.Context, in RoleUnsetReq) (RoleResult, error) {
-			if roleWho(ctx) != "human" {
-				return RoleResult{}, define.Errorf(define.CodePermissionDenied, "tb role-unset は人だけが実行できます")
-			}
 			key, err := roleKey(in.Name)
 			if err != nil {
 				return RoleResult{}, err
@@ -83,7 +80,7 @@ func roleOps(env *app.Env) []app.Op {
 				return roleNow(db, in.Name), nil
 			})
 		},
-		define.Doc("役割の定義の DB の行を消す(tb role-unset。人だけ)"),
+		define.Doc("役割の定義の DB の行を消す(tb role-unset。既定は人だけ)"),
 		define.Authz("cmd:agent:role-unset", define.Resource("role", "name")),
 		define.Expose(define.Internal, define.REST),
 		define.HTTP("DELETE /v1/roles/{name}"),

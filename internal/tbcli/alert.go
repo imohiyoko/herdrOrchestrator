@@ -1,7 +1,10 @@
 package tbcli
 
 import (
+	"github.com/imohiyoko/API/port"
+
 	"fmt"
+	"github.com/imohiyoko/herdrorchestrator/internal/app"
 	"io"
 	"os"
 	"regexp"
@@ -75,30 +78,24 @@ func sqlText(v any) string {
 	return jv.Scalar(jvValue(v))
 }
 
-// alertReporter は pane の中なら herdr から引いた報告者(pane の持ち主)を操作に渡す。pane の外なら nil(人か cli)。
-func alertReporter(db *store.DB, stderr io.Writer) (func(string) (string, string, string), error) {
-	if os.Getenv("HERDR_PANE_ID") == "" {
-		return nil, nil
-	}
-	l, err := label(db, stderr)
-	if err != nil {
-		return nil, err
-	}
-	return func(string) (string, string, string) { return l.Name, l.Pane, l.Session }, nil
-}
-
-// alertCall は alert.* を呼ぶ(報告者は pane の中なら herdr から引いたもの)。
-func alertCall(db *store.DB, what string, stderr io.Writer, op string, in, out any) error {
-	rep, err := alertReporter(db, stderr)
-	if err != nil {
-		return err
-	}
-	by, err := callerPrincipal(what)
-	if err != nil {
-		return err
-	}
+// reporterCall は操作 op を、pane の中なら herdr から一度だけ引いた報告者(pane の持ち主)として呼ぶ(alert / notify ack)。
+// pane の外なら Reporter は無く、呼び手は callerPrincipal(人か system)。
+func reporterCall(db *store.DB, what string, stderr io.Writer, op string, in, out any) error {
 	env := appEnv(db, stderr)
-	env.Reporter = rep
+	var by port.Principal
+	if os.Getenv("HERDR_PANE_ID") != "" {
+		l, err := label(db, stderr)
+		if err != nil {
+			return err
+		}
+		env.Reporter = func(string) (string, string, string) { return l.Name, l.Pane, l.Session }
+		by = app.Agent(l.Name)
+	} else {
+		var err error
+		if by, err = callerPrincipal(what); err != nil {
+			return err
+		}
+	}
 	return callAppEnv(env, by, op, in, out)
 }
 
@@ -151,7 +148,7 @@ func cmdAlert(args []string, w, stderr io.Writer) error {
 	}
 	defer db.Close()
 	var r appalert.RaiseResult
-	if err := alertCall(db, "tb alert", stderr, "alert.raise", appalert.RaiseReq{Title: title, Body: body, Key: key}, &r); err != nil {
+	if err := reporterCall(db, "tb alert", stderr, "alert.raise", appalert.RaiseReq{Title: title, Body: body, Key: key}, &r); err != nil {
 		return err
 	}
 	if json {
@@ -265,7 +262,7 @@ func cmdAlertResult(args []string, w, stderr io.Writer) error {
 	}
 	var r appalert.StatusResult
 	in := appalert.ResultReq{ID: args[0], Severity: sev, Summary: summary, Report: rtext, ReportPath: report}
-	if err := alertCall(db, "tb alert-result", stderr, "alert.result", in, &r); err != nil {
+	if err := reporterCall(db, "tb alert-result", stderr, "alert.result", in, &r); err != nil {
 		return err
 	}
 	fmt.Fprintf(w, "%s %s\n", r.ID, r.Status)
