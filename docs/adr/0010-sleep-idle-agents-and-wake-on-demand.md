@@ -122,7 +122,7 @@
 
 ## 段階
 
-- 段 A: 台帳(`sleeping` / `waking`、op の追加、借用の表)、`agent.sleep` / `agent.wake` の操作(中身は Stop / Revive を呼ぶ)、agent-shed の orphan で `sleeping` を親が居ると数える。
+- 段 A: 台帳(`sleeping` / `waking`、op の追加、借用の表)、`agent.sleep` / `agent.wake` の操作(中身は Stop / Revive を呼ぶ)、agent-shed の orphan で `sleeping` と `waking` を親が居ると数える。
 - 段 B: `message.Deliver`・nudge・scheduler を Wake に通す。2 重起動の防止。
 - 段 C: job `agent-sleep`、`always-on` の設定と移行、Web UI。
 
@@ -131,7 +131,7 @@
 ## 他の作業との関係
 
 - **agent セット(ADR 0008 の上の入口)**: セットの起動で「起動するが最初は眠らせておく」を選べると、ワンコマンドで全員を立てても常駐は必要なものだけになる。セットは `agent.new` のあとに `agent.sleep` を呼ぶだけでよい。
-- **多対多の親**: 「親が居るか」の判定は `running` か `sleeping` で行う。子の報告が眠っている親に届くと、親が起きる。
+- **多対多の親**: 「親が居るか」の判定は `running`・`sleeping`・`waking` のどれかで行う。子の報告が眠っている親に届くと、親が起きる。
 
 ## 検討した代替案
 
