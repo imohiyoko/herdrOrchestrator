@@ -1,6 +1,7 @@
 package tbcli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"regexp"
@@ -8,8 +9,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/imohiyoko/herdrorchestrator/internal/app"
 	appmessage "github.com/imohiyoko/herdrorchestrator/internal/app/message"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
+	"github.com/imohiyoko/herdrorchestrator/internal/message"
 	"github.com/imohiyoko/herdrorchestrator/internal/requests"
 	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
 )
@@ -26,8 +29,7 @@ tb message read I-<n> [--json]        1 件を全文で読み、既読にする
 `
 
 var (
-	reReply = regexp.MustCompile(`^O-[0-9]{1,18}$`)
-	reIID   = regexp.MustCompile(`^I-[0-9]+$`)
+	reIID = regexp.MustCompile(`^I-[0-9]+$`)
 )
 
 // cmdMessage は tb message <サブコマンド>。legacy は古い名前(send / flush / outbox / inbox / inbox-read)。
@@ -102,25 +104,34 @@ func send(db *store.DB, args []string, w, stderr io.Writer) error {
 			return usage("send: 不明な引数 %s", a)
 		}
 	}
-	// 入力の確かめ・送信者の決め方・判定と配送は API の message.send(送信者は herdr から引いたもの)
-	env := appEnv(db, stderr)
-	env.Reporter = func(string) (string, string, string) {
-		l, err := label(db, stderr) // 決められなければ理由を標準エラーに出す(tb は 3)
-		if err != nil {
-			return "", "", ""
-		}
-		return l.Name, l.Pane, l.Session
-	}
-	by, err := callerPrincipal("tb message send")
-	if err != nil {
-		if _, lerr := label(db, stderr); lerr != nil { // herdr に届かない: 送信者を決められないこと(3)として返す(前と同じ)
-			return lerr
+	// 入力の確かめは herdr に問い合わせる前に(使い方の誤りは 2。API の message.send でも同じ確かめをする)
+	spec := message.SendSpec{To: target, Text: text, Task: tid, Kind: kind, ReplyTo: reply}
+	if err := message.CheckSend(db.DB, spec); err != nil {
+		var r *message.SendRefused
+		if errors.As(err, &r) {
+			if r.Usage {
+				return usage("%s", r.Msg)
+			}
+			return die("%s", r.Msg)
 		}
 		return err
+	}
+	l, err := label(db, stderr) // 送信者は herdr から(決められなければ理由を出して 3)
+	if err != nil {
+		return err
+	}
+	env := appEnv(db, stderr)
+	env.Reporter = func(string) (string, string, string) { return l.Name, l.Pane, l.Session }
+	by, err := callerPrincipal("tb message send")
+	if err != nil {
+		by = app.Agent(l.Name) // 送信者は決まっている(pane の持ち主)
 	}
 	var r appmessage.SendResult
 	if err := callAppEnv(env, by, "message.send", appmessage.SendReq{To: target, Text: text, Task: tid, Kind: kind, ReplyTo: reply}, &r); err != nil {
 		return err
+	}
+	if r.Pending != nil {
+		return pendingExit(w, r.Pending)
 	}
 	oid := requests.Num(r.ID)
 	rc, held, blocked := r.Code, r.Held, r.Blocked
@@ -190,6 +201,9 @@ func flushOutbox(db *store.DB, args []string, w, stderr io.Writer) error {
 	var r appmessage.FlushResult
 	if err := callAppIO(db, "tb message flush", w, stderr, "message.flush", appmessage.FlushReq{}, &r); err != nil {
 		return err
+	}
+	if r.Pending != nil {
+		return pendingExit(w, r.Pending)
 	}
 	if r.Code != 0 {
 		return &exit{r.Code, ""}

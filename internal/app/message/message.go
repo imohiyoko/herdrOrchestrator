@@ -3,14 +3,16 @@
 package message
 
 import (
+	"bytes"
 	"context"
 	"errors"
-	"io"
 	"strconv"
+	"strings"
 
 	"github.com/imohiyoko/API/define"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/app"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/herdr"
 	msg "github.com/imohiyoko/herdrorchestrator/internal/message"
 )
 
@@ -31,15 +33,26 @@ type SendResult struct {
 	Held    string `api:"held,optional" json:"held,omitempty"`
 	Blocked string `api:"blocked,optional" json:"blocked,omitempty"`
 	Q       string `api:"q,optional" json:"q,omitempty"`
+	// Pending は、呼び出しそのもの(cmd:message:send)が承認待ちに積まれたとき(policy が ask)。
+	Pending *app.Pending `api:"pending,optional" json:"pending,omitempty"`
 }
+
+// SetPending は app.PendingSetter。
+func (r *SendResult) SetPending(p *app.Pending) { r.Pending = p }
 
 // FlushReq は message.flush の入力(無し)。
 type FlushReq struct{}
 
 // FlushResult は message.flush の結果。Code は届けられなかった宛先の最大の終了コード(無ければ 0)。
+// Out は配送の途中の出力(Env.Out が無いときだけ。あればそちらへ流す)。
 type FlushResult struct {
-	Code int `api:"code,optional" json:"code,omitempty"`
+	Code    int          `api:"code,optional" json:"code,omitempty"`
+	Out     string       `api:"out,optional" json:"out,omitempty"`
+	Pending *app.Pending `api:"pending,optional" json:"pending,omitempty"`
 }
+
+// SetPending は app.PendingSetter。
+func (r *FlushResult) SetPending(p *app.Pending) { r.Pending = p }
 
 // ReasonNoSender は送信者を herdr から決められなかった(tb は理由を出して 3)。
 const ReasonNoSender = "no_sender"
@@ -63,9 +76,10 @@ func Ops(env *app.Env) []app.Op {
 				return FlushResult{}, define.Errorf(define.CodeInternal, "%s", err.Error())
 			}
 			defer done()
+			var buf bytes.Buffer
 			w := env.Out
 			if w == nil {
-				w = io.Discard
+				w = &buf
 			}
 			code, err := msg.Flush(db, w, env.Warner(), func() {
 				if f, ok := w.(interface{ Flush() error }); ok {
@@ -75,7 +89,7 @@ func Ops(env *app.Env) []app.Op {
 			if err != nil {
 				return FlushResult{}, define.Errorf(define.CodeInternal, "%s", err.Error())
 			}
-			return FlushResult{Code: code}, nil
+			return FlushResult{Code: code, Out: buf.String()}, nil
 		},
 		define.Doc("積まれた送信(outbox の queued)を届ける(tb message flush)"),
 		define.Authz("cmd:message:flush"),
@@ -98,7 +112,11 @@ func send(env *app.Env, who string, in SendReq) (SendResult, error) {
 	if err := msg.CheckSend(db.DB, s); err != nil {
 		return SendResult{}, refused(err)
 	}
-	s.From, s.Pane, s.Session = env.ReporterOf(who)
+	if env.Reporter != nil {
+		s.From, s.Pane, s.Session = env.Reporter(who)
+	} else if s.From, s.Pane = agentPane(who); s.Pane == "" {
+		s.From = "" // 送れるのは pane のいる agent だけ(人・system: の主体は送信者として記録しない)
+	}
 	if s.From == "" {
 		return SendResult{}, &define.Error{Code: define.CodeUnauthenticated, Message: "送信者を特定できません", Reasons: []string{ReasonNoSender}}
 	}
@@ -107,6 +125,23 @@ func send(env *app.Env, who string, in SendReq) (SendResult, error) {
 		return SendResult{}, refused(err)
 	}
 	return SendResult{ID: "O-" + strconv.FormatInt(r.OID, 10), Code: r.Code, Held: r.Held, Blocked: r.Blocked, Q: r.Q}, nil
+}
+
+// agentPane は主体 who が agent なら、その名前と herdr の pane(いなければ空)。
+func agentPane(who string) (string, string) {
+	if who == "" || who == "human" || strings.HasPrefix(who, "system:") {
+		return "", ""
+	}
+	as, err := herdr.Agents()
+	if err != nil {
+		return who, ""
+	}
+	for _, a := range as {
+		if a.Name == who {
+			return who, a.PaneID
+		}
+	}
+	return who, ""
 }
 
 func refused(err error) error {
