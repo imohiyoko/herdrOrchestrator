@@ -33,7 +33,7 @@ sql internal/tbcli/agentapprove.go 2
 sql internal/tbcli/agentlife.go 2
 sql internal/tbcli/agentlist.go 3
 sql internal/tbcli/agentmisc.go 6
-sql internal/tbcli/agentread.go 2
+sql internal/tbcli/agentread.go 1
 sql internal/tbcli/agentshed.go 10
 sql internal/tbcli/alert.go 19
 sql internal/tbcli/approval.go 3

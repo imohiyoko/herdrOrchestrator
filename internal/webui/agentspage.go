@@ -222,6 +222,8 @@ func (s *Server) pageAgents(q *rq, c pageCtx) (string, string) {
 		}
 	}
 	body += errHTML(err) + table([]string{"名前", "状態", "workspace", "いま何を", "最終入力 / 停止", "警告", "止めてよいか", "操作"}, rows)
+	tree, mm := orgHTML(q)
+	body += `<h2 id="org">組織図</h2>` + tree + ifs(mm != "", `<p class=note><a href="/org">図で見る</a></p>`)
 	body += `<h2 id="roles">ロール別</h2>` + v.roleGroupsHTML(agents, reg) +
 		`<p class=note>誰が誰に何をしたか(spawn・指揮・依頼・報告・解析)は <a href="/agent-graph">関係グラフ</a> で見られます。</p>`
 	body += `<p class=note>「止めてよいか」は判定役(grants の agent:flag)か人が付けます。止めてよい印があり、未完了タスクが無いものは「停止」、` +

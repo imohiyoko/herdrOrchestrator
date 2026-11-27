@@ -262,6 +262,7 @@ var pages = map[string]pageFn{
 	"/docs":          (*Server).pageDocs,
 	"/agents":        (*Server).pageAgents,
 	"/agent-graph":   (*Server).pageAgentGraph,
+	"/org":           (*Server).pageOrg,
 	"/agent-new":     (*Server).pageAgentNewRoute,
 	"/statuses":      (*Server).pageStatuses,
 }
