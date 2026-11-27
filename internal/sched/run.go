@@ -43,18 +43,29 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		}
 		return finish(show(DefaultEnv(), name, stdout), stderr)
 	case "tick":
-		name := ""
-		if len(args) > 1 {
-			name = args[1]
+		te, rest := DefaultTickEnv(), args[1:]
+		if len(rest) > 0 && rest[0] == "--now" { // 今すぐ 1 回(時刻を見ない)
+			te.Force, rest = true, rest[1:]
 		}
-		return Tick(DefaultTickEnv(), name, stdout, stderr)
+		name := ""
+		if len(rest) > 0 {
+			name = rest[0]
+		}
+		return Tick(te, name, stdout, stderr)
 	case "jobs":
 		for _, j := range DefaultEnv().JobNames() {
 			fmt.Fprintln(stdout, j)
 		}
 		return 0
 	case "dispatch":
-		return Dispatch(args[1:], stdout, stderr)
+		jobs := args[1:]
+		if len(jobs) == 1 && jobs[0] == "--all" { // 毎分、その時の DB のジョブをすべて(tb job set で足したジョブも登録し直さずに動く)
+			jobs = DefaultEnv().JobNames()
+			if len(jobs) == 0 {
+				return 0
+			}
+		}
+		return Dispatch(jobs, stdout, stderr)
 	case "gen-plist":
 		return finish(GenPlist(DefaultEnv(), DefaultTickEnv().LogDir, args[1:], stdout), stderr)
 	case "install":
@@ -127,7 +138,7 @@ func ShowJSON(j *Job) ([]byte, error) {
 		{"start", j.Start}, {"end", j.End}, {"days", j.Days}, {"enabled", j.Enabled == "1"}, {"tz", j.TZ},
 		{"watcher", nullable(j.Watcher)}, {"owner", nullable(j.Owner)}, {"gate", j.Gate != ""},
 		{"prompt_rules", len(j.Rules)}, {"prompt_cmd", j.PromptCmd != ""}, {"prompt_vars", len(j.Vars)},
-		{"overridden", j.SettingsSrc != "none"}, {"source", j.Src}, {"settings_source", j.SettingsSrc},
+		{"overridden", j.SettingsSrc != "none"}, {"source", j.Src}, {"settings_source", j.SettingsSrc}, {"at", nullable(j.At)}, {"manual", j.Manual},
 	}
 	var b bytes.Buffer
 	b.WriteByte('{')

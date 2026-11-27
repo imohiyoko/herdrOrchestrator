@@ -90,11 +90,31 @@ func errText(code, msg string) string {
 	return code
 }
 
+// Place は agent を置く場所。空なら専用の workspace(label = 名前)。
+type Place struct {
+	Label     string // 新しく作る workspace の label(空なら agent の名前)
+	Split     string // この pane を分けて置く(既存の workspace に足す)。Label とは同時に使わない
+	Direction string // Split の向き: right / down(空は right)
+}
+
 // Spawn は herdr_spawn: 専用の workspace(label = 名前)を作り、その root pane で agent を起動する。
 // 失敗なら ok=false(Err に理由。作った workspace は閉じる。人の操作待ちなら Kept で閉じない)。
 func Spawn(dbPath, kind, name, cwd string, extra []string) (SpawnResult, bool) {
+	return SpawnAt(dbPath, kind, name, cwd, extra, Place{})
+}
+
+// SpawnAt は Spawn の置き場所を選べるもの。at.Split なら、その pane を分けた新しい pane で起動する
+// (失敗したら分けた pane だけを閉じる。WS は空)。
+func SpawnAt(dbPath, kind, name, cwd string, extra []string, at Place) (SpawnResult, bool) {
+	if at.Split != "" {
+		return spawnSplit(dbPath, kind, name, cwd, extra, at)
+	}
+	label := at.Label
+	if label == "" {
+		label = name
+	}
 	var r SpawnResult
-	out, err := herdr.CallCombined("workspace", "create", "--cwd", cwd, "--label", name, "--no-focus")
+	out, err := herdr.CallCombined("workspace", "create", "--cwd", cwd, "--label", label, "--no-focus")
 	m := firstJSON(out)
 	if err == nil && m != nil {
 		if res, ok := m["result"].(map[string]any); ok {
@@ -113,6 +133,35 @@ func Spawn(dbPath, kind, name, cwd string, extra []string) (SpawnResult, bool) {
 		spawnLog(dbPath, name, "workspace:"+code)
 		return SpawnResult{Err: "workspace を作れない(" + errText(code, msg) + ")"}, false
 	}
+	return start(dbPath, kind, name, extra, r)
+}
+
+func spawnSplit(dbPath, kind, name, cwd string, extra []string, at Place) (SpawnResult, bool) {
+	dir := at.Direction
+	if dir == "" {
+		dir = "right"
+	}
+	var r SpawnResult
+	out, err := herdr.CallCombined("pane", "split", at.Split, "--direction", dir, "--cwd", cwd, "--no-focus")
+	if m := firstJSON(out); err == nil && m != nil {
+		if res, ok := m["result"].(map[string]any); ok {
+			if p, ok := res["pane"].(map[string]any); ok {
+				if id, ok := p["pane_id"]; ok && id != nil && id != false {
+					r.Pane = jqText(id)
+				}
+			}
+		}
+	}
+	if err != nil || r.Pane == "" {
+		code, msg := spawnErrorOf(out, 1)
+		spawnLog(dbPath, name, "split:"+code)
+		return SpawnResult{Err: "pane " + at.Split + " を分けられない(" + errText(code, msg) + ")"}, false
+	}
+	return start(dbPath, kind, name, extra, r)
+}
+
+// start は用意した pane(r.Pane)で agent を起動する(人の操作待ちでなければ 3 回まで)。
+func start(dbPath, kind, name string, extra []string, r SpawnResult) (SpawnResult, bool) {
 	args := []string{"agent", "start", name, "--kind", kind, "--pane", r.Pane}
 	if len(extra) > 0 {
 		args = append(append(args, "--"), extra...)

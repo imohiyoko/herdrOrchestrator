@@ -30,6 +30,8 @@ type Env struct {
 	// PendingQ は、今積んだ承認待ち(source の source_id)の Q-<n> を返し、決められる agent に知らせる(tb の入口が入れる)。
 	// nil なら Q-<n> を引くだけ。
 	PendingQ func(db *sql.DB, source string, sourceID int64) string
+	// Deliver は、今書いた報告(comments の id)を宛先(指揮官など)に届ける(tb の入口が入れる。best effort)。nil なら届けない。
+	Deliver func(db *store.DB, commentID int64)
 }
 
 // Warner は Env.Warn(無ければ捨てる)。

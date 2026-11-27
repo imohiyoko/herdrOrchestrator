@@ -22,9 +22,10 @@ var updateLayers = flag.Bool("update", false, "testdata/layers-allow.txt を今�
 const mod = "github.com/imohiyoko/herdrorchestrator/"
 
 // 入口のパッケージ。import してよい内部パッケージは internal/app/... と下の entryOK だけ。
-var entries = []string{"internal/tbcli", "internal/webui"}
+// internal/agentset は API を呼ぶ外側の層(agent セット)で、tb の入口から使う。
+var entries = []string{"internal/tbcli", "internal/webui", "internal/agentset"}
 
-var entryOK = []string{"internal/kernel/env", "internal/kernel/identity"}
+var entryOK = []string{"internal/kernel/env", "internal/kernel/identity", "internal/agentset"}
 
 // herdrctl に入れない依存(imohiyoko/API の gRPC・YAML・契約の生成。ADR 0008 の 2a)。
 var forbiddenDeps = []string{

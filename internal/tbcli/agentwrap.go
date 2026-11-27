@@ -3,6 +3,7 @@ package tbcli
 import (
 	"io"
 
+	"github.com/imohiyoko/herdrorchestrator/internal/agents"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
@@ -79,3 +80,14 @@ func doAgentRestart(db *store.DB, st tickets.StatusSet, name, prompt, by string,
 }
 
 func secEnv(k string, def float64) float64 { return agent.SecEnv(k, def) }
+
+var reRoleName = agent.RoleNameRE
+
+func roleConflict(r *agents.Roles, name, role string) (string, bool) {
+	return agent.RoleConflict(r, name, role)
+}
+
+func doAgentNew(db *store.DB, name, cwd, model, role, prompt, kill, by, sby, stask, kind string, stderr io.Writer) opResult {
+	r := agent.New(db, name, cwd, model, role, prompt, kill, by, sby, stask, kind, stderr)
+	return opResult{code: r.Code, out: r.Out, note: r.Note}
+}
