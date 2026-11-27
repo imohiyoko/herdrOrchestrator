@@ -127,10 +127,10 @@ eq "agentset down: removes the adopted parent, keeps the adopted agent" "$($TB a
 # ---- schedule: up が scheduler のジョブ agentset-<セット>-<メンバー> を書き、down で消す
 as_reset
 $TB agentset add sd <<<$'cwd = '"$TMP"$'\n[member lead]\nschedule = every 30m: 未処理を確かめる\n' >/dev/null
-eq "agentset schedule: up writes the job" "$($TB agentset up sd | grep -c '^agentset-sd-lead: 定期の指示を書きました(30 分おき)') $($TB job show agentset-sd-lead 2>/dev/null | grep -E '^(TARGET|PROMPT|INTERVAL_MIN)=' | paste -sd' ' -)" "1 TARGET=sd-lead PROMPT='未処理を確かめる' INTERVAL_MIN=30"
-eq "agentset schedule: up again keeps it" "$($TB agentset up sd | grep -c '^agentset-sd-lead: 定期の指示は同じです')" "1"
+eq "agentset schedule: up writes the job" "$($TB agentset up sd | grep -c '^agentset-sd-lead: 定期の指示(30 分おき)を書きました') $($TB job show agentset-sd-lead 2>/dev/null | grep -E '^(TARGET|PROMPT|INTERVAL_MIN)=' | paste -sd' ' -)" "1 TARGET=sd-lead PROMPT='未処理を確かめる' INTERVAL_MIN=30"
+eq "agentset schedule: up again keeps it" "$($TB agentset up sd | grep -c '^agentset-sd-lead: 定期の指示(30 分おき)は同じです')" "1"
 eq "agentset schedule: an unreadable value is refused at add" "$(rc $TB agentset add sd2 <<<$'[member a]\nschedule = every 5m: /compact\n')" "2"
-eq "agentset schedule: down removes the job" "$($TB agentset down sd --force | grep -c '^agentset-sd-lead: 定期の指示を消しました') $(rc $TB job show agentset-sd-lead)" "1 1"
+eq "agentset schedule: down removes the job" "$($TB agentset down sd --force | grep -c '^agentset-sd-lead: ジョブを消しました') $(rc $TB job show agentset-sd-lead)" "1 1"
 
 # ---- autoscale: 条件を 1 回評価して増やす・減らす(増やすのは max まで、減らすのは count まで)
 as_reset
@@ -167,6 +167,20 @@ eq "agentset autoscale cooldown: waits after a change" "$($TB agentset autoscale
 $TB agentset down af --force >/dev/null 2>&1
 $TB agentset rm af >/dev/null
 eq "agentset rm removes the autoscale state" "$([ -e "$TB_AGENTSETS/.autoscale/af.json" ] && echo kept || echo gone)" "gone"
+
+# ---- up が書くジョブ: 条件があれば autoscale を autoscale_every ごとに、scale_at はその時刻に scale。down で消す
+as_reset
+$TB agentset add aj <<<$'cwd = '"$TMP"$'\nautoscale_every = 3m\n[member w]\ncount = 1\nmax = 3\nscale_out = queue > 5\nscale_at = weekdays 09:00: 2\nscale_at = at 2030-01-02 18:00: 1\n' >/dev/null
+out=$($TB agentset up aj 2>&1)
+eq "agentset up: writes the autoscale and scale_at jobs" "$(grep -c '^agentset-aj-autoscale: 自動スケールの評価(3 分おき)を書きました' <<<"$out") $(grep -c '^agentset-aj-w-at[12]: .*を書きました' <<<"$out")" "1 2"
+eq "agentset autoscale job: runs tb agentset autoscale every 3 minutes" "$($TB job show agentset-aj-autoscale 2>/dev/null | grep -E '^(COMMAND|INTERVAL_MIN)=' | sed 's/"[^"]*"/TB/' | paste -sd' ' -)" "COMMAND='TB agentset autoscale aj' INTERVAL_MIN=3"
+eq "agentset scale_at job: weekdays 09:00 → scale to 2" "$($TB job show agentset-aj-w-at1 2>/dev/null | grep -E '^(COMMAND|WINDOW|DAYS)=' | sed 's/"[^"]*" //' | paste -sd' ' -)" "COMMAND='agentset scale aj w 2' WINDOW=09:00-09:00 DAYS=\"weekdays\""
+eq "agentset scale_at job: at → AT" "$($TB job show agentset-aj-w-at2 2>/dev/null | grep '^AT=')" 'AT="2030-01-02 18:00"'
+$TB agentset add aj <<<$'cwd = '"$TMP"$'\nautoscale_every = off\n[member w]\ncount = 1\nmax = 3\nscale_out = queue > 5\nscale_at = weekdays 09:00: 2\n' >/dev/null
+out=$($TB agentset up aj 2>&1)
+eq "agentset up: jobs removed from the definition are removed" "$(grep -c '^agentset-aj-autoscale: ジョブを消しました' <<<"$out") $(grep -c '^agentset-aj-w-at2: ジョブを消しました' <<<"$out") $(rc $TB job show agentset-aj-w-at2)" "1 1 1"
+$TB agentset down aj --force >/dev/null 2>&1
+eq "agentset down: removes the scale_at jobs" "$(rc $TB job show agentset-aj-w-at1)" "1"
 
 as_reset
 unset HERDR_PANE_ID TB_DB TB_AGENTSETS TB_SPAWN_RETRY_SEC TB_AGENT_CWD FAKE_DYNAMIC FAKE_AGENTS

@@ -202,7 +202,7 @@ func Up(ctx context.Context, c Caller, by port.Principal, d Def) ([]Line, error)
 			need++
 		}
 	}
-	if need == 0 && len(d.Adopt) == 0 && len(d.scheduled()) == 0 {
+	if need == 0 && len(d.Adopt) == 0 && len(d.Jobs()) == 0 {
 		return []Line{{Name: d.Name, Out: "すべて動いています(何もしません)"}}, nil
 	}
 	if need > 0 && lr.Max >= 0 && lr.Running+need > lr.Max {
@@ -257,17 +257,25 @@ func Up(ctx context.Context, c Caller, by port.Principal, d Def) ([]Line, error)
 		}
 		out = append(out, Line{Name: a.Agent, Out: "親に " + p + " を足しました(親: " + strings.Join(r.Parents, " ") + ")"})
 	}
-	for _, m := range d.scheduled() {
+	want := map[string]bool{}
+	for _, j := range d.Jobs() {
+		want[j.Name] = true
 		var r job.Result
-		if err := c.Call(ctx, by, "job.set", job.SetReq{Name: d.JobName(m), Body: d.JobBody(m)}, &r); err != nil {
-			out = append(out, Line{Name: d.JobName(m), Err: err})
+		if err := c.Call(ctx, by, "job.set", job.SetReq{Name: j.Name, Body: j.Body}, &r); err != nil {
+			out = append(out, Line{Name: j.Name, Err: err})
 			return out, err
 		}
-		msg := "定期の指示を書きました(" + strconv.Itoa(m.Every) + " 分おき)"
+		msg := j.Desc + "を書きました"
 		if !r.Changed {
-			msg = "定期の指示は同じです(そのまま)"
+			msg = j.Desc + "は同じです(そのまま)"
 		}
-		out = append(out, Line{Name: d.JobName(m), Out: msg})
+		out = append(out, Line{Name: j.Name, Out: msg})
+	}
+	// 定義から外したジョブ(scale_at の行を減らした・条件を消したなど)は消す
+	lines, err := unschedule(ctx, c, by, d, want)
+	out = append(out, lines...)
+	if err != nil {
+		return out, err
 	}
 	return out, nil
 }
@@ -283,19 +291,22 @@ func (d Def) scheduled() []Member {
 	return out
 }
 
-// unschedule は schedule のジョブを消す(書いていなければ何もしない。定義から schedule を消したメンバーの古いジョブも消す)。
-func unschedule(ctx context.Context, c Caller, by port.Principal, d Def) ([]Line, error) {
+// unschedule はセットのジョブ(schedule・autoscale・scale_at)を消す。keep にある名前は残す(down は全部消す)。無いジョブは何も出さない。
+func unschedule(ctx context.Context, c Caller, by port.Principal, d Def, keep map[string]bool) ([]Line, error) {
 	var out []Line
 	var first error
-	for _, m := range d.Members {
+	for _, n := range d.allJobNames() {
+		if keep[n] {
+			continue
+		}
 		var r job.Result
-		if err := c.Call(ctx, by, "job.rm", job.RmReq{Name: d.JobName(m)}, &r); err != nil {
-			out = append(out, Line{Name: d.JobName(m), Err: err})
+		if err := c.Call(ctx, by, "job.rm", job.RmReq{Name: n}, &r); err != nil {
+			out = append(out, Line{Name: n, Err: err})
 			first = cmp.Or(first, err)
 			continue
 		}
 		if r.Changed {
-			out = append(out, Line{Name: d.JobName(m), Out: "定期の指示を消しました"})
+			out = append(out, Line{Name: n, Out: "ジョブを消しました"})
 		}
 	}
 	return out, first
@@ -328,7 +339,7 @@ func Down(ctx context.Context, c Caller, by port.Principal, d Def, force bool) (
 		return nil, err
 	}
 	plan := d.Known(have)
-	out, first := unschedule(ctx, c, by, d)
+	out, first := unschedule(ctx, c, by, d, nil)
 	lines, err := unadopt(ctx, c, by, d, have)
 	out, first = append(out, lines...), cmp.Or(first, err)
 	for i := len(plan) - 1; i >= 0; i-- {

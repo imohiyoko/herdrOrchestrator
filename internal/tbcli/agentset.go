@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -181,6 +182,11 @@ func agentsetLoad(args []string, verb string, stderr io.Writer) (*store.DB, agen
 	if err != nil {
 		db.Close()
 		return nil, d, nil, by, die("agentset %s: %s", verb, err)
+	}
+	if r := os.Getenv("TB_ROOT"); r != "" { // scheduler のジョブ(autoscale・scale_at)が呼ぶ tb
+		if abs, aerr := filepath.Abs(filepath.Join(r, "bin", "tb")); aerr == nil {
+			d.TB = abs
+		}
 	}
 	if by, err = callerPrincipal("tb agentset " + verb); err != nil {
 		db.Close()
