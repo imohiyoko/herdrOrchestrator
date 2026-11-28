@@ -9,6 +9,7 @@ import (
 	"io"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/app/ticket"
@@ -18,8 +19,6 @@ import (
 )
 
 var (
-	reEventID = regexp.MustCompile(`^E-([0-9]{1,18})$`)
-	reKind    = regexp.MustCompile(`^[a-z_]{1,32}$`)
 	reEvLimit = regexp.MustCompile(`^[0-9]{1,6}$`)
 )
 
@@ -134,17 +133,6 @@ func compactRows(w io.Writer, os []jv.Obj) {
 	}
 }
 
-func requireTask(db *store.DB, id string) error {
-	ok, err := tickets.Exists(db.DB, id)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return die("タスクが見つかりません: %s", id)
-	}
-	return nil
-}
-
 // cmdShow は tb show <id>: 1 件(担当 agent の最終活動とリンクつき)。
 func cmdShow(args []string, w, stderr io.Writer) error {
 	db, _, err := openCmd(stderr)
@@ -167,6 +155,16 @@ func cmdShow(args []string, w, stderr io.Writer) error {
 	return nil
 }
 
+// readText は読むだけの操作を呼んで、Text をそのまま出す。
+func readText(db *store.DB, what, op string, in any, w io.Writer) error {
+	var r ticket.TextResult
+	if err := callAppNoHerdr(db, what, io.Discard, op, in, &r); err != nil { // 主体で中身の変わらない読むだけの操作(herdr に聞けなくても読める)
+		return err
+	}
+	fmt.Fprint(w, r.Text)
+	return nil
+}
+
 // cmdTree は tb tree <id> | tree -p <project>。
 func cmdTree(args []string, w, stderr io.Writer) error {
 	db, _, err := openCmd(stderr)
@@ -174,7 +172,7 @@ func cmdTree(args []string, w, stderr io.Writer) error {
 		return err
 	}
 	defer db.Close()
-	root, project := "", ""
+	var in ticket.TreeReq
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
@@ -183,50 +181,34 @@ func cmdTree(args []string, w, stderr io.Writer) error {
 			if err != nil {
 				return err
 			}
-			project = v
+			in.Project = v
 			i++
 		case strings.HasPrefix(a, "-"):
 			return usage("tree: 不明な引数 %s", a)
 		default:
-			if root != "" {
+			if in.ID != "" {
 				return usage("tree <id> | tree -p <project>")
 			}
 			if err := needID(a); err != nil {
 				return err
 			}
-			root = a
+			in.ID = a
 		}
 	}
-	if root == "" && project == "" {
+	if in.ID == "" && in.Project == "" {
 		return usage("tree <id> | tree -p <project>")
 	}
-	seed, arg := "parent_id IS NULL AND project=?", project
-	if root != "" {
-		if err := requireTask(db, root); err != nil {
-			return err
-		}
-		seed, arg = "id=?", root
-	}
-	return sqlTSV(db.DB, w, `WITH RECURSIVE t(id, d, path) AS (
-      SELECT id, 0, id FROM tasks WHERE `+seed+`
-      UNION ALL SELECT c.id, t.d+1, t.path||'/'||c.id FROM tasks c JOIN t ON c.parent_id=t.id WHERE t.d < 20)
-    SELECT substr('                                        ', 1, t.d*2)||x.id, x.type, x.priority, x.status,
-           COALESCE(x.owner_agent,'-'), replace(x.title, char(10), ' ')
-    FROM t JOIN tasks x ON x.id=t.id ORDER BY t.path`, arg)
+	return readText(db, "tb tree", "ticket.tree", in, w)
 }
-
-// definedLabels は defined_labels: 設定 labels の「ラベル, 説明」(書いた順)。設定が無ければ ok=false。
-func definedLabels(db *store.DB) ([][2]string, bool) { return tickets.DefinedLabels(db) }
 
 // cmdLabels は tb labels [-p project] [--defined] [--json]。
 func cmdLabels(args []string, w, stderr io.Writer) error {
-	db, st, err := openCmd(stderr)
+	db, _, err := openCmd(stderr)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	where, qa := "1=1", []any{}
-	js, defined := false, false
+	var in ticket.LabelsReq
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "-p", "--project":
@@ -234,57 +216,27 @@ func cmdLabels(args []string, w, stderr io.Writer) error {
 			if err != nil {
 				return err
 			}
-			where += " AND t.project=?"
-			qa = append(qa, v)
+			in.Project = v
 			i++
 		case "--defined":
-			defined = true
+			in.Defined = true
 		case "--json":
-			js = true
+			in.JSON = true
 		default:
 			return usage("labels: 不明な引数 %s", args[i])
 		}
 	}
-	closed := st.SQLList("done", "cancelled")
-	var q string
-	if defined {
-		defs, ok := definedLabels(db)
-		if !ok {
-			return die("用意したラベルはありません(設定 labels が無いので、ラベルは自由に付けられます。用意するのは人: tb config edit labels)")
-		}
-		arr := []any{}
-		for _, d := range defs {
-			arr = append(arr, jv.Obj{{K: "label", V: d[0]}, {K: "description", V: d[1]}})
-		}
-		q = `WITH d AS (SELECT key AS ord, json_extract(value,'$.label') AS label, json_extract(value,'$.description') AS description FROM json_each(?))
-              SELECT d.label, COALESCE(SUM(t.id IS NOT NULL AND t.status NOT IN (` + closed + `)), 0) AS open, COUNT(t.id) AS total, d.description
-              FROM d LEFT JOIN (SELECT t.id, t.status, j.value AS lv FROM tasks t, json_each(t.labels) j WHERE (` + where + `)) t ON t.lv = d.label
-              GROUP BY d.ord ORDER BY d.ord`
-		qa = append([]any{jv.Compact(arr)}, qa...)
-	} else {
-		q = `SELECT j.value AS label, SUM(t.status NOT IN (` + closed + `)) AS open, COUNT(*) AS total
-            FROM tasks t, json_each(t.labels) j WHERE (` + where + `) GROUP BY j.value ORDER BY j.value`
-	}
-	if js {
-		os, err := sqlObjs(db.DB, nil, q, qa...)
-		if err != nil {
-			return err
-		}
-		compactRows(w, os)
-		return nil
-	}
-	return sqlTSV(db.DB, w, q, qa...)
+	return readText(db, "tb labels", "ticket.labels", in, w)
 }
 
 // cmdSprints は tb sprints [-p project] [--state S] [--json]。
 func cmdSprints(args []string, w, stderr io.Writer) error {
-	db, st, err := openCmd(stderr)
+	db, _, err := openCmd(stderr)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	where, qa := "1=1", []any{}
-	js := false
+	var in ticket.SprintsReq
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "-p", "--project", "--state":
@@ -293,42 +245,18 @@ func cmdSprints(args []string, w, stderr io.Writer) error {
 				return err
 			}
 			if args[i] == "--state" {
-				if !slices.Contains([]string{"planned", "active", "closed"}, v) {
-					return usage("state は planned / active / closed のどれか: %s", v)
-				}
-				where += " AND s.state=?"
+				in.State = v // 値は API が確かめる
 			} else {
-				where += " AND s.project=?"
+				in.Project = v
 			}
-			qa = append(qa, v)
 			i++
 		case "--json":
-			js = true
+			in.JSON = true
 		default:
 			return usage("sprints: 不明な引数 %s", args[i])
 		}
 	}
-	cancelled, done := st.SQLList("cancelled"), st.SQLList("done")
-	q := `SELECT 'S-'||s.id AS id, s.state, s.project, s.name, s.start_date, s.end_date, s.goal,
-              COALESCE(SUM(t.id IS NOT NULL AND t.status NOT IN (` + cancelled + `)),0) AS tasks, SUM(t.status IN (` + done + `)) AS done,
-              COALESCE(SUM(CASE WHEN t.status NOT IN (` + cancelled + `) THEN t.points END),0) AS points, COALESCE(SUM(CASE WHEN t.status IN (` + done + `) THEN t.points END),0) AS done_points
-            FROM sprints s LEFT JOIN tasks t ON t.sprint_id=s.id WHERE (` + where + `)
-            GROUP BY s.id ORDER BY s.project, CASE s.state WHEN 'active' THEN 1 WHEN 'planned' THEN 2 ELSE 3 END, s.id`
-	if js {
-		os, err := sqlObjs(db.DB, nil, q, qa...)
-		if err != nil {
-			return err
-		}
-		for i, o := range os {
-			if v := o.Get("done"); v == nil || v == false {
-				os[i] = o.Set("done", jv.Number("0"))
-			}
-		}
-		compactRows(w, os)
-		return nil
-	}
-	return sqlTSV(db.DB, w, `SELECT id, state, project, name, COALESCE(start_date,'-')||'..'||COALESCE(end_date,'-'),
-         COALESCE(done,0)||'/'||tasks, done_points||'/'||points FROM (`+q+`)`, qa...)
+	return readText(db, "tb sprints", "ticket.sprints", in, w)
 }
 
 // boardCols は ST_BOARD: 分類の順、同じ分類は書いた順。
@@ -346,13 +274,13 @@ func boardCols(st tickets.StatusSet) []string {
 
 // cmdBoard は tb board [S-<n> | -p <project>] [-l ラベル] [--json]。
 func cmdBoard(args []string, w, stderr io.Writer) error {
-	db, st, err := openCmd(stderr)
+	db, _, err := openCmd(stderr)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	sid, project, js := "", "", false
-	where, qa := "", []any{}
+	var in ticket.BoardReq
+	var ls []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
@@ -361,121 +289,35 @@ func cmdBoard(args []string, w, stderr io.Writer) error {
 			if err != nil {
 				return err
 			}
-			project = v
+			in.Project = v
 			i++
 		case a == "-l" || a == "--label":
 			v, err := argv(args, i)
 			if err != nil {
 				return err
 			}
-			ls, err := labels(v)
+			l, err := labels(v)
 			if err != nil {
 				return err
 			}
-			for _, l := range ls {
-				where += " AND EXISTS (SELECT 1 FROM json_each(tasks.labels) WHERE value=?)"
-				qa = append(qa, l)
-			}
+			ls = append(ls, l...)
 			i++
 		case a == "--json":
-			js = true
+			in.JSON = true
 		case strings.HasPrefix(a, "S-"):
 			if err := needSprint(a); err != nil {
 				return err
 			}
-			sid = a
+			in.Sprint = a
 		default:
 			return usage("board: 不明な引数 %s", a)
 		}
 	}
-	if sid == "" {
-		if project == "" {
-			return usage("board S-<n> | board -p <project>")
-		}
-		_ = db.DB.QueryRow("SELECT 'S-'||id FROM sprints WHERE project=? AND state='active'", project).Scan(&sid)
-		if sid == "" {
-			return die("project %s に active なスプリントがありません(tb sprints -p %s)", project, project)
-		}
+	if in.Sprint == "" && in.Project == "" {
+		return usage("board S-<n> | board -p <project>")
 	}
-	srows, err := sqlObjs(db.DB, nil, "SELECT * FROM sprints WHERE id=?", strings.TrimPrefix(sid, "S-"))
-	if err != nil {
-		return err
-	}
-	if len(srows) == 0 {
-		return die("スプリントが見つかりません: %s", sid)
-	}
-	row := srows[0]
-	q := `SELECT id, status, type, priority, COALESCE(owner_agent,'-') AS owner, points, labels, title FROM tasks
-            WHERE sprint_id=` + strings.TrimPrefix(sid, "S-") + where + ` ORDER BY ` + tickets.PriorityRank + `, id`
-	cols := boardCols(st)
-	err = qrows(db.DB, "SELECT DISTINCT status FROM ("+q+") ORDER BY status", qa, func(_ []string, v []any) error {
-		if c := tickets.Text(v[0]); c != "" && !slices.Contains(cols, c) {
-			cols = append(cols, c)
-		}
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	if js {
-		ts, err := sqlObjs(db.DB, []string{"labels"}, q, qa...)
-		if err != nil {
-			return err
-		}
-		sp := jv.Obj{}
-		for _, e := range row.Set("id", sid) {
-			if e.K != "herdr_session" {
-				sp = append(sp, e)
-			}
-		}
-		cs := jv.Obj{}
-		for _, c := range cols {
-			l := []any{}
-			for _, t := range ts {
-				if t.Get("status") == c {
-					l = append(l, t)
-				}
-			}
-			cs = cs.Set(c, l)
-		}
-		fmt.Fprintln(w, jv.Compact(jv.Obj{{K: "sprint", V: sp}, {K: "columns", V: cs}}))
-		return nil
-	}
-	or := func(k string) string {
-		if v := row.Get(k); v != nil && v != false {
-			return jv.Scalar(v)
-		}
-		return "-"
-	}
-	fmt.Fprintf(w, "%s %s [%s] %s..%s\n", sid, jv.Scalar(row.Get("name")), jv.Scalar(row.Get("state")), or("start_date"), or("end_date"))
-	if g := row.Get("goal"); g != nil && g != false {
-		fmt.Fprintf(w, "目標: %s\n", jv.Scalar(g))
-	}
-	for _, c := range cols {
-		fmt.Fprintf(w, "\n== %s ==\n", c)
-		if err := sqlTSV(db.DB, w, "SELECT id, priority, owner, COALESCE(points,'-'), replace(title, char(10), ' ') FROM ("+q+") WHERE status=?", append(append([]any{}, qa...), c)...); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-const eventCols = "'E-'||id AS id, task_id, kind, old, new, actor, ref, created_at"
-
-// eventsOut は events_out: このセッションの履歴(task_events には一時ビューが無いので herdr_session で絞る)。
-func eventsOut(db *store.DB, w io.Writer, js bool, cond string, args ...any) error {
-	where := "herdr_session=? AND (" + cond + ")"
-	args = append([]any{db.Session}, args...)
-	if js {
-		os, err := sqlObjs(db.DB, nil, "SELECT "+eventCols+" FROM main.task_events WHERE "+where+" ORDER BY main.task_events.id", args...)
-		if err != nil {
-			return err
-		}
-		compactRows(w, os)
-		return nil
-	}
-	return sqlTSV(db.DB, w, `SELECT 'E-'||id, created_at, task_id, kind, COALESCE(replace(old, char(10), ' '),'-'), COALESCE(replace(new, char(10), ' '),'-'), actor, COALESCE(ref,'-')
-         FROM main.task_events WHERE `+where+" ORDER BY main.task_events.id", args...)
+	in.Labels = strings.Join(ls, ",")
+	return readText(db, "tb board", "ticket.board", in, w)
 }
 
 // cmdHistory は tb history <id> [--json]。
@@ -485,30 +327,27 @@ func cmdHistory(args []string, w, stderr io.Writer) error {
 		return err
 	}
 	defer db.Close()
-	id, js := "", false
+	var in ticket.HistoryReq
 	for _, a := range args {
 		switch {
 		case a == "--json":
-			js = true
+			in.JSON = true
 		case strings.HasPrefix(a, "-"):
 			return usage("history: 不明な引数 %s", a)
 		default:
-			if id != "" {
+			if in.ID != "" {
 				return usage("history <id> [--json]")
 			}
 			if err := needID(a); err != nil {
 				return err
 			}
-			id = a
+			in.ID = a
 		}
 	}
-	if id == "" {
+	if in.ID == "" {
 		return usage("history <id> [--json]")
 	}
-	if err := requireTask(db, id); err != nil {
-		return err
-	}
-	return eventsOut(db, w, js, "task_id=?", id)
+	return readText(db, "tb history", "ticket.history", in, w)
 }
 
 // cmdEvents は tb events [--since E-n] [--kind K] [-p project] [--limit N] [--json]: 最新の N 件を古い順に。
@@ -518,8 +357,7 @@ func cmdEvents(args []string, w, stderr io.Writer) error {
 		return err
 	}
 	defer db.Close()
-	where, qa := "1=1", []any{}
-	limit, js := "50", false
+	var in ticket.EventsReq
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch a {
@@ -530,37 +368,27 @@ func cmdEvents(args []string, w, stderr io.Writer) error {
 			}
 			i++
 			switch a {
-			case "--since":
-				m := reEventID.FindStringSubmatch(v)
-				if m == nil {
-					return usage("events: --since は E-<数字>: %s", v)
-				}
-				where += " AND id > " + m[1]
+			case "--since": // 値は API が確かめる
+				in.Since = v
 			case "--kind":
-				if !reKind.MatchString(v) {
-					return usage("events: --kind が不正です: %s", v)
-				}
-				where += " AND kind=?"
-				qa = append(qa, v)
+				in.Kind = v
 			case "--limit":
 				n := strings.TrimLeft(v, "0")
 				if !reEvLimit.MatchString(v) || n == "" {
 					return usage("events: --limit は 1〜999999: %s", v)
 				}
-				limit = n
+				in.Limit, _ = strconv.Atoi(n)
 			default:
 				if err := needProject(v); err != nil {
 					return err
 				}
-				where += " AND task_id LIKE ?"
-				qa = append(qa, "T-"+v+"-%")
+				in.Project = v
 			}
 		case "--json":
-			js = true
+			in.JSON = true
 		default:
 			return usage("events: 不明な引数 %s", a)
 		}
 	}
-	return eventsOut(db, w, js, "id IN (SELECT id FROM main.task_events WHERE herdr_session=? AND "+where+" ORDER BY id DESC LIMIT "+limit+")",
-		append([]any{db.Session}, qa...)...)
+	return readText(db, "tb events", "ticket.events", in, w)
 }

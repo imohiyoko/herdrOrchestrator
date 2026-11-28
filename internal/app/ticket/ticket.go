@@ -47,7 +47,7 @@ func Ops(env *app.Env) []app.Op {
 		define.Expose(define.Internal, define.REST),
 		define.HTTP("POST /v1/comments/{id}/resolve"),
 	)
-	return append([]app.Op{resolve, getOp(env), showOp(env), countOp(env), moveOp(env), rmOp(env)}, append(append(stateOps(env), linkOps(env)...), append(append(editOps(env), commentOp(env), reopenOp(env), reportOp(env)), statusOps(env)...)...)...)
+	return append([]app.Op{resolve, getOp(env), showOp(env), countOp(env), moveOp(env), rmOp(env)}, append(append(stateOps(env), linkOps(env)...), append(append(editOps(env), commentOp(env), reopenOp(env), reportOp(env)), append(statusOps(env), readOps(env)...)...)...)...)
 }
 
 // ResolveComment は ticket.resolve の中身(門は通さない。レシピの部品 comment-resolve のように、呼び手が判定済みのとき)。

@@ -49,7 +49,6 @@ sql internal/tbcli/roles.go 2
 sql internal/tbcli/tbcli.go 1
 sql internal/tbcli/ticket.go 1
 sql internal/tbcli/ticketcomment.go 8
-sql internal/tbcli/ticketread.go 18
 sql internal/webui/agents.go 5
 sql internal/webui/approvals.go 10
 sql internal/webui/data.go 5
