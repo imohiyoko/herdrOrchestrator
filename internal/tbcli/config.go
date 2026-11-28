@@ -289,11 +289,11 @@ func configImport(db *store.DB, args []string, w io.Writer) error {
 				}
 				key = "role:" + name
 			}
-			var c int
-			if err := db.QueryRow(`SELECT COUNT(*) FROM main.config WHERE herdr_session=? AND key=?`, sname, key).Scan(&c); err != nil {
+			have, err := appconfig.HasRow(db, sname, key)
+			if err != nil {
 				return err
 			}
-			if c > 0 {
+			if have {
 				fmt.Fprintf(w, "%s(セッション %s): 行が既にあるので飛ばします\n", key, sname)
 				continue
 			}

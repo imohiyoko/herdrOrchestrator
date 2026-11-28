@@ -462,3 +462,10 @@ func KindSupports(kind, item string) bool {
 	}
 	return false
 }
+
+// RunningAt は台帳で pane に居る動作中の agent の名前(カンマ区切り。居なければ空)。
+func RunningAt(db *store.DB, pane string) string {
+	var reg string
+	_ = db.QueryRow(`SELECT COALESCE(group_concat(name, ','),'') FROM agents WHERE herdr_session=? AND pane_id=? AND state='running'`, db.Session, pane).Scan(&reg)
+	return reg
+}

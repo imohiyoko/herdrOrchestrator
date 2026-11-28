@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/agents"
+	"github.com/imohiyoko/herdrorchestrator/internal/app"
+	appticket "github.com/imohiyoko/herdrorchestrator/internal/app/ticket"
 	"github.com/imohiyoko/herdrorchestrator/internal/gate"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/identity"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
@@ -455,11 +457,11 @@ func reviewSubmit(db *store.DB, args []string, w io.Writer) error {
 	if by == gate.IngestSender {
 		return &exit{5, "送信者名 " + gate.IngestSender + " は取り込み口の予約名です。記録しません"}
 	}
-	if err := taskExists(db, tid); err != nil {
-		return err
+	var tk appticket.GetResult // 作者(タスクの owner)を確かめるため
+	if callAppRaw(db, app.Human(), "ticket.get", appticket.GetReq{ID: tid}, &tk) != nil {
+		return die("タスクが見つかりません: %s", tid)
 	}
-	var owner string
-	_ = db.QueryRow(`SELECT COALESCE(owner_agent,'') FROM tasks WHERE id=?`, tid).Scan(&owner)
+	owner := tk.Owner
 	fs := gate.Fixed()
 	if agent {
 		// 最小の職務分掌: agent はレビュー担当の役割だけ。作者と同一は拒否。作者が分からないときも拒否

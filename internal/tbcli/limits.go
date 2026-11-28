@@ -3,7 +3,6 @@ package tbcli
 // tb limits(taskboard/lib/limits.sh の cmd_limits): 動作 agent 数などの制限を見る・変える。
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -12,9 +11,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/imohiyoko/herdrorchestrator/internal/app"
+	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/config"
-	"github.com/imohiyoko/herdrorchestrator/internal/kernel/herdr"
-	"github.com/imohiyoko/herdrorchestrator/internal/kernel/jv"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 	"github.com/imohiyoko/herdrorchestrator/internal/limits"
 )
@@ -23,32 +22,7 @@ var reWatcher = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
 
 // limitsCounts は limits_counts: herdr と台帳を同期して、動作中(台帳で running)と作業中(herdr で working の名前つき agent)を数える。
 
-// openIncidents は limits_open_incidents: 今ある障害 workspace(ラベル inc-<3 桁>)の数。取れなければ ok=false。
-func openIncidents() (int, bool) {
-	out, err := herdr.Call("workspace", "list")
-	if err != nil {
-		return 0, false
-	}
-	var r struct {
-		Result struct {
-			Workspaces []struct {
-				Label any `json:"label"`
-			} `json:"workspaces"`
-		} `json:"result"`
-	}
-	if json.Unmarshal(out, &r) != nil || r.Result.Workspaces == nil {
-		return 0, false
-	}
-	n := 0
-	for _, w := range r.Result.Workspaces {
-		if l, _ := w.Label.(string); reIncident.MatchString(l) {
-			n++
-		}
-	}
-	return n, true
-}
-
-var reIncident = regexp.MustCompile(`^inc-[0-9]{3}$`)
+func openIncidents() (int, bool) { return agent.OpenIncidents() }
 
 func atoi(s string) int { n, _ := strconv.Atoi(s); return n }
 
@@ -73,7 +47,7 @@ func cmdLimits(args []string, w, stderr io.Writer) error {
 	}
 	switch sub {
 	case "show":
-		return limitsShow(db, set, args, w, stderr)
+		return limitsShow(db, args, w, stderr)
 	case "get":
 		if len(args) != 1 {
 			return usage("limits get <キー>")
@@ -222,7 +196,7 @@ func limitsCheckIncidentOpen(db *store.DB, set limits.Set, w, stderr io.Writer) 
 	return nil
 }
 
-func limitsShow(db *store.DB, set limits.Set, args []string, w, stderr io.Writer) error {
+func limitsShow(db *store.DB, args []string, w, stderr io.Writer) error {
 	js, line := false, false
 	for _, a := range args {
 		switch a {
@@ -234,85 +208,15 @@ func limitsShow(db *store.DB, set limits.Set, args []string, w, stderr io.Writer
 			return usage("limits show: 不明な引数 %s", a)
 		}
 	}
-	running, working, synced := limitsCounts(db)
-	rmax, rlim := set.Max("max_running_agents")
-	wmax, wlim := set.Max("max_working_agents")
-	imax, ilim := set.Max("incident_max_open")
-	amax, alim := set.Max("analyst_max")
-	smax, slim := set.Max("spawn_max_total")
-	inc, incOK := openIncidents()
-	var an, sp int
-	_ = db.QueryRow(`SELECT COUNT(*) FROM alerts WHERE status='analyzing'`).Scan(&an)
-	_ = db.QueryRow(`SELECT COUNT(*) FROM agents WHERE state='running' AND spawned_by IS NOT NULL`).Scan(&sp)
-	var over []string
-	if limits.Exceeds(running, rmax, rlim) {
-		over = append(over, "running")
+	var r agent.LimitsShowResult
+	if err := callAppW(db, app.Human(), io.Discard, "agent.limits.show", agent.LimitsShowReq{JSON: js, Line: line}, &r); err != nil {
+		return err
 	}
-	if limits.Exceeds(working, wmax, wlim) {
-		over = append(over, "working")
-	}
-	if incOK && limits.Exceeds(inc, imax, ilim) {
-		over = append(over, "incidents")
-	}
-	if limits.Exceeds(an, amax, alim) {
-		over = append(over, "analysts")
-	}
-	if limits.Exceeds(sp, smax, slim) {
-		over = append(over, "spawn")
-	}
-	if js {
-		num := func(n int) any { return jv.Number(strconv.Itoa(n)) }
-		// 上限なしの max は null(max_working_agents の 0 は前からの約束どおり 0)
-		pair := func(n any, max int, lim bool) jv.Obj {
-			var m any
-			if lim {
-				m = num(max)
-			}
-			return jv.Obj{{K: "n", V: n}, {K: "max", V: m}}
-		}
-		wpair := func(n any) jv.Obj {
-			if set.Get("max_working_agents") == "0" {
-				return jv.Obj{{K: "n", V: n}, {K: "max", V: num(0)}}
-			}
-			return pair(n, wmax, wlim)
-		}
-		var incN any
-		if incOK {
-			incN = num(inc)
-		}
-		keys := jv.Obj{}
-		for _, k := range limits.Keys {
-			_, src, _ := set.Raw(k)
-			keys = append(keys, jv.KV{K: k, V: jv.Obj{{K: "value", V: set.Get(k)}, {K: "source", V: src}}})
-		}
-		ov := []any{}
-		for _, o := range over {
-			ov = append(ov, o)
-		}
-		fmt.Fprintln(w, jv.Compact(jv.Obj{{K: "running", V: pair(num(running), rmax, rlim)}, {K: "working", V: wpair(num(working))},
-			{K: "incidents", V: pair(incN, imax, ilim)}, {K: "analysts", V: pair(num(an), amax, alim)}, {K: "spawn", V: pair(num(sp), smax, slim)},
-			{K: "mode", V: set.Mode}, {K: "over", V: ov}, {K: "limits", V: keys}}))
-		return nil
-	}
-	is := "?"
-	if incOK {
-		is = strconv.Itoa(inc)
-	}
-	fmt.Fprintf(w, "running %d/%s  working %d/%s  incidents %s/%s  analysts %d/%s  spawn %d/%s  mode %s\n", running, limits.Show(rmax, rlim), working, limits.Show(wmax, wlim),
-		is, limits.Show(imax, ilim), an, limits.Show(amax, alim), sp, limits.Show(smax, slim), set.Mode)
-	if line {
-		return nil
-	}
-	if len(over) > 0 {
-		fmt.Fprintf(w, "超過: %s(新しく作る経路は拒否されます。止める候補: tb agent-shed)\n", strings.Join(over, " "))
-	}
-	if !synced {
+	fmt.Fprint(w, r.Text)
+	if r.Unsynced && !js && !line {
 		flush(w) // 標準出力の行との順を bash と同じにする
 		fmt.Fprintln(stderr, "注意: herdr agent list に失敗したため、台帳の値で数えました")
 	}
-	for _, k := range limits.Keys {
-		_, src, _ := set.Raw(k)
-		fmt.Fprintf(w, "  %-22s = %s   (%s)\n", k, set.Get(k), src)
-	}
+	fmt.Fprint(w, r.Tail)
 	return nil
 }

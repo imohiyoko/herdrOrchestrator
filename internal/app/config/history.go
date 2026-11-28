@@ -52,3 +52,12 @@ func historyText(db *store.DB, key string) (string, error) {
 		func(cols []string, vals []any) error { return rowfmt.EmitRow(&b, false, cols, vals, "") })
 	return b.String(), err
 }
+
+// HasRow はセッション sess にキー key の DB の行があるか(tb config import が既にある行を飛ばすのに使う)。
+func HasRow(db *store.DB, sess, key string) (bool, error) {
+	var c int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM main.config WHERE herdr_session=? AND key=?`, sess, key).Scan(&c); err != nil {
+		return false, err
+	}
+	return c > 0, nil
+}

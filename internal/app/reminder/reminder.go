@@ -65,7 +65,7 @@ func Ops(env *app.Env) []app.Op {
 		define.Expose(define.Internal, define.REST),
 		define.HTTP("POST /v1/reminders/scan"),
 	)
-	return []app.Op{publish, scan}
+	return []app.Op{publish, scan, deadlinesOp(env)}
 }
 
 func withDB[T any](env *app.Env, f func(*store.DB) (T, error)) (T, error) {

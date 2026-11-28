@@ -30,12 +30,6 @@ import internal/tbcli internal/tickets
 import internal/webui internal/kernel/herdr
 import internal/webui internal/kernel/store
 import internal/webui internal/sched
-sql internal/tbcli/config.go 1
-sql internal/tbcli/deadlines.go 2
-sql internal/tbcli/gate.go 1
-sql internal/tbcli/herdrcmd.go 1
-sql internal/tbcli/limits.go 2
-sql internal/tbcli/tbcli.go 1
 sql internal/webui/agents.go 5
 sql internal/webui/approvals.go 10
 sql internal/webui/data.go 5
