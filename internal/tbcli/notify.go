@@ -12,11 +12,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imohiyoko/herdrorchestrator/internal/app"
 	appnotify "github.com/imohiyoko/herdrorchestrator/internal/app/notify"
-	"github.com/imohiyoko/herdrorchestrator/internal/kernel/capv"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/config"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
-	"github.com/imohiyoko/herdrorchestrator/internal/kernel/util"
 	"github.com/imohiyoko/herdrorchestrator/internal/notify"
 	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
 )
@@ -130,112 +129,26 @@ func cmdNotify(args []string, w, stderr io.Writer) error {
 	return usage("notify: 不明なサブコマンド %s(status|on|off|test|dry-run|tail|ack|flush|events|rules)", sub)
 }
 
-// field はこのセッションのイベントの 1 列(無ければ空)。
-func (n *notifyCmd) field(id int64, col string) string {
-	var v any
-	_ = n.db.QueryRow("SELECT "+col+" FROM notify_events WHERE id=?", id).Scan(&v)
-	return strings.TrimRight(tickets.Text(v), "\n")
-}
-
-func (n *notifyCmd) webhookState() string {
-	f := n.q.C.Get("webhook_file")
-	if f == "" {
-		return "未設定"
+// readText は通知の読むだけの操作を呼んで、Text をそのまま出す(人として呼ぶ。ticket の readText と同じ)。
+func (n *notifyCmd) readText(op string, in any) error {
+	var r appnotify.TextResult
+	if err := callAppW(n.db, app.Human(), io.Discard, op, in, &r); err != nil {
+		return err
 	}
-	if st, err := os.Stat(f); err != nil || !st.Mode().IsRegular() {
-		return "ファイルが無い"
-	}
-	if st, err := os.Lstat(f); err == nil && st.Mode()&(os.ModePerm|os.ModeSetuid|os.ModeSetgid|os.ModeSticky) == 0o600 && st.Mode().IsRegular() {
-		return "ok(0600)"
-	}
-	return "権限が 0600 ではない"
-}
-
-func setOrUnset(v, set, unset string) string {
-	if v != "" {
-		return set
-	}
-	return unset
-}
-
-func (n *notifyCmd) status(args []string) error {
-	c, w := n.q.C, n.w
-	var counts []string
-	_ = store.Each(n.db.DB, "SELECT slack_status, COUNT(*) FROM notify_events GROUP BY slack_status ORDER BY 1", nil, func(_ []string, vals []any) error {
-		counts = append(counts, tickets.Text(vals[0])+" "+tickets.Text(vals[1]))
-		return nil
-	})
-	cs := strings.Join(counts, ",")
-	if len(args) > 0 && args[0] == "--json" {
-		fmt.Fprintf(w, `{"enabled":%s,"slack_via":%s,"slack_target":%s,"notifier_agent":%s,"webhook_file":%s,"default_sinks":%s,"rate_per_min":%s,"rate_per_hour":%s,"max_len":%s,"slack_status_counts":%s}`+"\n",
-			util.JQString(c.Get("enabled")), util.JQString(c.Get("slack_via")), util.JQString(setOrUnset(c.Get("slack_target"), "set", "unset")),
-			util.JQString(c.Get("notifier_agent")), util.JQString(n.webhookState()), util.JQString(c.Get("sinks_default")),
-			notifyCapJSON(c, "rate_per_min"), notifyCapJSON(c, "rate_per_hour"), notifyCapJSON(c, "max_len"), util.JQString(cs))
-		return nil
-	}
-	fmt.Fprintf(w, "enabled: %s (%s)\n", c.Get("enabled"), c.Source("enabled"))
-	fmt.Fprintf(w, "default_sinks = %s\n", c.Get("sinks_default"))
-	for _, t := range notify.Types {
-		if s := c.SinksOf(t); s != c.Get("sinks_default") && t != "digest" {
-			fmt.Fprintf(w, "  sinks[%s]: %s\n", t, s)
-		}
-	}
-	fmt.Fprintf(w, "slack_via: %s\n", c.Get("slack_via"))
-	fmt.Fprintf(w, "slack_target: %s(値は表示しません)\n", setOrUnset(c.Get("slack_target"), "設定あり", "未設定"))
-	fmt.Fprintf(w, "notifier_agent: %s\n", c.Get("notifier_agent"))
-	fmt.Fprintf(w, "webhook_file: %s\n", n.webhookState())
-	fmt.Fprintf(w, "rate: %s/min, %s/hour(超えた分は 1 通にまとめる)  max_len: %s  dedupe_sec: %s\n", c.Get("rate_per_min"), c.Get("rate_per_hour"), c.Get("max_len"), c.Get("dedupe_sec"))
-	fmt.Fprintf(w, "hash_check: %s  ack_timeout_min: %s  ack_retries: %s\n", c.Get("hash_check"), c.Get("ack_timeout_min"), c.Get("ack_retries"))
-	fmt.Fprintf(w, "mask: email=%s ip=%s repo=%s account=%s host=%s  strip_raw_logs: %s\n", c.Get("mask_email"), c.Get("mask_ip"), c.Get("mask_repo"), c.Get("mask_account"), c.Get("mask_host"), c.Get("strip_raw_logs"))
-	fmt.Fprintln(w, "secret filter: 常に有効(秘密らしい値を含むイベントは外へ出さず、file にだけ伏せて残す)")
-	fmt.Fprintf(w, "events: %s\n", or(cs, "なし"))
+	fmt.Fprint(n.w, r.Text)
 	return nil
 }
 
-func or(s, d string) string {
-	if s == "" {
-		return d
-	}
-	return s
+func (n *notifyCmd) status(args []string) error {
+	return n.readText("notify.status", appnotify.StatusReq{JSON: len(args) > 0 && args[0] == "--json"})
 }
 
 func (n *notifyCmd) dryRun(args []string) error {
 	if len(args) != 0 {
 		return usage("notify dry-run(引数なし)")
 	}
-	c, w := n.q.C, n.w
-	if !c.On() {
-		fmt.Fprintln(w, "(enabled=off: 今は何も積まれず、何も送られません。下は、積まれているものを送るとしたときの内容)")
-	}
-	budget := n.q.Budget()
-	fmt.Fprintf(w, "# dry-run: 何も送りません。経路 slack_via=%s / 宛先 %s / 今回の枠 %d 通\n", c.Get("slack_via"), setOrUnset(c.Get("slack_target"), "設定あり", "未設定"), budget)
-	cnt := 0
-	err := store.Each(n.db.DB, "SELECT id, hash, text FROM notify_events WHERE slack_status='pending' AND blocked=0 ORDER BY id", nil, func(_ []string, v []any) error {
-		cnt++
-		fmt.Fprintf(w, "would send N-%s [%s] %s\n", tickets.Text(v[0]), tickets.Text(v[1]), tabRest(tickets.Text(v[2])))
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	if cnt > budget {
-		fmt.Fprintf(w, "# 枠を超える分は 1 通にまとめます(個別に送るのは最大 %d 件)\n", max(budget-1, 0))
-	}
-	err = store.Each(n.db.DB, "SELECT id, text FROM notify_events WHERE blocked=1 ORDER BY id DESC LIMIT 20", nil, func(_ []string, v []any) error {
-		fmt.Fprintf(w, "blocked N-%s(外へは送りません) %s\n", tickets.Text(v[0]), tabRest(tickets.Text(v[1])))
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	if cnt == 0 {
-		fmt.Fprintln(w, "(送るものはありません)")
-	}
-	return nil
+	return n.readText("notify.dryrun", appnotify.DryRunReq{})
 }
-
-// tabRest は IFS=$'\t' read の最後の変数と同じく、前後のタブを落とす(本文はタブを含まないので念のため)。
-func tabRest(s string) string { return strings.Trim(s, "\t") }
 
 func (n *notifyCmd) tail(args []string) error {
 	lines, follow := "20", false
@@ -310,31 +223,14 @@ func (n *notifyCmd) events(args []string) error {
 			return usage("notify events [--status S] [--limit N] [--json]")
 		}
 	}
-	where, qa := "1=1", []any{}
-	if st != "" {
-		if !reStatusW.MatchString(st) {
-			return usage("events: --status が不正")
-		}
-		where, qa = "slack_status=?", []any{st}
+	if st != "" && !reStatusW.MatchString(st) { // --limit 0 で op を呼ばないときも確かめる
+		return usage("events: --status が不正")
 	}
-	if js {
-		return store.Each(n.db.DB, "SELECT * FROM notify_events WHERE ("+where+") ORDER BY id DESC LIMIT "+lim, qa, func(cols []string, vals []any) error {
-			for i, c := range cols {
-				if c == "id" {
-					vals[i] = "N-" + tickets.Text(vals[i])
-				}
-			}
-			s, err := rowJSON(cols, vals)
-			if err != nil {
-				return err
-			}
-			_, err = fmt.Fprintln(n.w, s)
-			return err
-		})
+	l, _ := strconv.Atoi(lim)
+	if l == 0 { // --limit 0 は前と同じく 0 件(op の 0 は既定の 50)
+		return nil
 	}
-	return store.Each(n.db.DB, "SELECT 'N-'||id, type, slack_status, CASE WHEN blocked=1 THEN 'blocked' ELSE '-' END, created_at, text FROM notify_events WHERE ("+where+") ORDER BY id DESC LIMIT "+lim, qa, func(cols []string, vals []any) error {
-		return emitRow(n.w, false, cols, vals, "-")
-	})
+	return n.readText("notify.events", appnotify.EventsReq{Status: st, Limit: l, JSON: js})
 }
 
 func (n *notifyCmd) ack(args []string) error {
@@ -439,21 +335,7 @@ func (n *notifyCmd) rules(args []string) error {
 		if m == nil {
 			return usage("notify rules test E-<n>")
 		}
-		id, _ := strconv.ParseInt(m[1], 10, 64)
-		var one int
-		if n.db.QueryRow("SELECT 1 FROM main.task_events WHERE herdr_session=? AND id=?", n.db.Session, id).Scan(&one) != nil {
-			return die("イベントが見つかりません: E-%s", m[1])
-		}
-		hits, err := n.q.Apply(n.q.LoadRules(), id-1, id, true)
-		if err != nil {
-			return err
-		}
-		if len(hits) == 0 {
-			fmt.Fprintf(w, "E-%s: どの規則にも当たりません(送りません)\n", m[1])
-		} else {
-			fmt.Fprintf(w, "E-%s: 届け先 %s(当たった行: %s)。試すだけで、何も積みません\n", m[1], hits[0].Sinks, hits[0].Lines)
-		}
-		return nil
+		return n.readText("notify.rules.test", appnotify.RulesTestReq{ID: args[0]})
 	case "run":
 		if len(args) != 0 {
 			return usage("notify rules run")
@@ -463,12 +345,4 @@ func (n *notifyCmd) rules(args []string) error {
 		return nil
 	}
 	return usage("notify rules [show | test E-<n> | run]")
-}
-
-// notifyCapJSON は上限の設定を JSON の値にする(上限なしは null)。
-func notifyCapJSON(c *notify.Cfg, k string) string {
-	if capv.IsUnlimited(c.Get(k)) {
-		return "null"
-	}
-	return strconv.Itoa(c.Int(k))
 }
