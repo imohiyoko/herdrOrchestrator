@@ -6,12 +6,9 @@ package tbcli
 import (
 	"fmt"
 	"io"
-	"slices"
 	"strings"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/app/ticket"
-	"github.com/imohiyoko/herdrorchestrator/internal/kernel/config"
-	"github.com/imohiyoko/herdrorchestrator/internal/kernel/jv"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
 )
@@ -144,75 +141,28 @@ func ticketStatus(args []string, w, stderr io.Writer) error {
 	return usage("ticket status [list [--json] | add <状態> <分類> [-m 説明] [--after <状態>] | rm <状態> [--to <状態>]]")
 }
 
-// statusDescs は statuses_parse の説明(<状態> <分類> = 説明)。本文が不正なら空(組み込みに戻るので説明も無い)。
-func statusDescs(body string) map[string]string {
-	out := map[string]string{}
-	if _, _, ok := tickets.ParseStatuses(body); !ok {
-		return out
-	}
-	for _, line := range config.Lines(body) {
-		line = config.Trim(config.StripComment(line))
-		k, d, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		name, _ := config.FirstWord(config.Trim(k))
-		out[name] = config.Trim(d)
-	}
-	return out
-}
-
 func statusSource(db *store.DB) string { return tickets.StatusSource(db) }
 
 func ticketStatusList(args []string, w, stderr io.Writer) error {
-	db, st, err := openCmd(stderr)
+	db, _, err := openCmd(stderr)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	js := false
+	var in ticket.StatusListReq
 	for _, a := range args {
 		if a != "--json" {
 			return usage("ticket status list [--json]")
 		}
-		js = true
+		in.JSON = true
 	}
-	counts := map[string]int64{}
-	var order []string
-	if err := qrows(db.DB, "SELECT status, COUNT(*) FROM tasks GROUP BY status", nil, func(_ []string, v []any) error {
-		k := tickets.Text(v[0])
-		n, _ := v[1].(int64)
-		counts[k] = n
-		order = append(order, k)
-		return nil
-	}); err != nil {
+	var r ticket.StatusListResult
+	if err := callAppNoHerdr(db, "tb ticket status list", io.Discard, "ticket.status.list", in, &r); err != nil {
 		return err
 	}
-	body, src, _ := config.Lookup(db.DB, db.Session, "statuses")
-	descs := statusDescs(body)
-	all := boardCols(st)
-	for _, k := range order {
-		if !slices.Contains(all, k) {
-			all = append(all, k)
-		}
-	}
-	for _, k := range all {
-		c, n, d := st.Cat(k), counts[k], descs[k]
-		configured := slices.Contains(st.Names, k)
-		if js {
-			fmt.Fprintln(w, jv.Compact(jv.Obj{{K: "status", V: k}, {K: "category", V: c}, {K: "description", V: d}, {K: "tickets", V: jv.Number(fmt.Sprint(n))}, {K: "configured", V: configured}}))
-			continue
-		}
-		if c == "" {
-			c = "-"
-		}
-		if d == "" && !configured {
-			d = "(設定から外した状態)"
-		}
-		fmt.Fprintf(w, "%s\t%s\t%d\t%s\n", k, c, n, d)
-	}
-	if !js {
-		fmt.Fprintf(stderr, "# 設定 statuses: %s(状態 分類 件数 説明)\n", src)
+	fmt.Fprint(w, r.Text)
+	if !in.JSON {
+		fmt.Fprintf(stderr, "# 設定 statuses: %s(状態 分類 件数 説明)\n", r.Source)
 	}
 	return nil
 }

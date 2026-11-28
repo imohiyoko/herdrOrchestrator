@@ -14,16 +14,14 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/imohiyoko/herdrorchestrator/internal/kernel/jv"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 	"github.com/imohiyoko/herdrorchestrator/internal/message"
 	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
 )
 
 var (
-	commentKinds = []string{"done", "progress", "question", "blocked"}
-	reDigits     = regexp.MustCompile(`^[0-9]+$`)
-	reCRef       = regexp.MustCompile(`^C-[0-9]+$`)
+	reDigits = regexp.MustCompile(`^[0-9]+$`)
+	reCRef   = regexp.MustCompile(`^C-[0-9]+$`)
 )
 
 func joinDeliverables(s string) (string, bool) { return tickets.JoinDeliverables(s) }
@@ -52,17 +50,10 @@ func deliverComment(db *store.DB, w, stderr io.Writer, ref string) error {
 	return nil
 }
 
-// commentJSON は tb comments --json の 1 行(deliverables を JSON に、id を C-<n> に)。
-func commentRows(db *store.DB, w io.Writer, where string, args ...any) error {
-	rows, err := sqlObjs(db.DB, []string{"deliverables"}, "SELECT * FROM comments WHERE ("+where+") ORDER BY id", args...)
-	if err != nil {
-		return err
-	}
-	for _, r := range rows {
-		r = r.Set("id", "C-"+jv.Scalar(r.Get("id")))
-		fmt.Fprintln(w, jv.Compact(r))
-	}
-	return nil
+// commentRows は tb comments --json の行(ticket.comments を呼ぶ)。
+func commentRows(db *store.DB, w io.Writer, in ticket.CommentsReq) error {
+	in.JSON = true
+	return readText(db, "tb comments", "ticket.comments", in, w)
 }
 
 // cmdComment は tb comment <task-id> --kind K --text T [--deliverables a,b] [--json]。
@@ -132,7 +123,7 @@ func cmdComment(args []string, w, stderr io.Writer) error {
 		return pendingExit(w, res.Pending)
 	}
 	if js {
-		if err := commentRows(db, w, "id=?", res.ID); err != nil {
+		if err := commentRows(db, w, ticket.CommentsReq{ID: res.ID}); err != nil {
 			return err
 		}
 	} else {
@@ -160,16 +151,14 @@ func cmdComments(args []string, w, stderr io.Writer) error {
 		return err
 	}
 	defer db.Close()
-	where, qa := "1=1", []any{}
+	var in ticket.CommentsReq
 	if len(args) > 0 && strings.HasPrefix(args[0], "T-") {
 		if err := needID(args[0]); err != nil {
 			return err
 		}
-		where += " AND task_id=?"
-		qa = append(qa, args[0])
+		in.Task = args[0]
 		args = args[1:]
 	}
-	js, kind := false, ""
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--kind":
@@ -178,32 +167,18 @@ func cmdComments(args []string, w, stderr io.Writer) error {
 				return err
 			}
 			i++
-			kind = v
+			in.Kind = v // bash と同じく最後に指定した値を見る。空なら絞らない。値は API が確かめる
 		case "--undelivered":
-			where += " AND delivered_at IS NULL"
+			in.Undelivered = true
 		case "--open":
-			where += " AND kind IN ('question','blocked') AND resolved_at IS NULL" // 人の対応待ち
+			in.Open = true
 		case "--json":
-			js = true
+			in.JSON = true
 		default:
 			return usage("comments: 不明な引数 %s", args[i])
 		}
 	}
-	if kind != "" { // bash と同じく最後に指定した値を見る。空なら絞らない
-		if !contains(commentKinds, kind) {
-			return usage("comments: --kind は %s", strings.Join(commentKinds, " "))
-		}
-		where += " AND kind=?"
-		qa = append(qa, kind)
-	}
-	if js {
-		return commentRows(db, w, where, qa...)
-	}
-	// needs-human: 未対応の question/blocked(人の判断・承認待ち)。resolved: 人が対応済みにしたもの
-	return sqlTSV(db.DB, w, `SELECT 'C-'||id, kind, CASE WHEN resolved_at IS NOT NULL THEN 'resolved'
-		WHEN kind IN ('question','blocked') THEN 'needs-human' ELSE '-' END,
-		CASE WHEN delivered_at IS NULL THEN 'undelivered' ELSE 'delivered' END, task_id, from_name,
-		replace(replace(text, char(10), ' '), char(9), ' ') FROM comments WHERE (`+where+`) ORDER BY id`, qa...)
+	return readText(db, "tb comments", "ticket.comments", in, w)
 }
 
 // commentRefArgs は resolve / reopen の <C-n> [-m <メモ>]。
@@ -316,54 +291,21 @@ func cmdReport(args []string, w, stderr io.Writer) error {
 
 // cmdPending は tb pending [--json | --ids]: 未報告の完了と未配送のコメント。
 func cmdPending(args []string, w, stderr io.Writer) error {
-	db, st, err := openCmd(stderr)
+	db, _, err := openCmd(stderr)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	mode := "tsv"
+	var in ticket.PendingReq
 	for _, a := range args {
 		switch a {
 		case "--json":
-			mode = "json"
+			in.Mode = "json"
 		case "--ids":
-			mode = "ids"
+			in.Mode = "ids"
 		default:
 			return usage("pending: 不明な引数 %s", a)
 		}
 	}
-	// 未配送の done コメントがあるタスクは C-<n> の行で出す(同じ報告を 2 回送らない)
-	where := "status IN (" + st.SQLList("done") + ") AND (reported_at IS NULL OR reported_at='') AND NOT EXISTS (SELECT 1 FROM comments c WHERE c.task_id=tasks.id AND c.kind='done' AND c.delivered_at IS NULL)"
-	switch mode {
-	case "ids":
-		if err := sqlTSV(db.DB, w, "SELECT id FROM tasks WHERE ("+where+") ORDER BY updated_at, id"); err != nil {
-			return err
-		}
-		return sqlTSV(db.DB, w, "SELECT 'C-'||id FROM comments WHERE delivered_at IS NULL ORDER BY id")
-	case "json":
-		rows, err := sqlObjs(db.DB, []string{"deliverables"}, "SELECT * FROM tasks WHERE ("+where+") ORDER BY updated_at, id")
-		if err != nil {
-			return err
-		}
-		compactRows(w, rows)
-		return commentRows(db, w, "delivered_at IS NULL")
-	}
-	// 宛先は行を読み終えてから引く(接続は 1 本なので、行を読んでいる間に別の問い合わせをすると止まる)
-	var out [][3]string
-	line := func(_ []string, vals []any) error {
-		out = append(out, [3]string{tickets.Text(vals[0]), tickets.Text(vals[1]), tickets.Text(vals[2])})
-		return nil
-	}
-	if err := qrows(db.DB, "SELECT id, project, replace(replace(COALESCE(summary,''), char(10), ' '), char(9), ' ') FROM tasks WHERE ("+where+") ORDER BY updated_at, id", nil, line); err != nil {
-		return err
-	}
-	// 未配送のコメント: ID は C-<n>(tb report C-<n> で再送)
-	if err := qrows(db.DB, `SELECT 'C-'||c.id, COALESCE(t.project,''), '['||c.kind||'] '||substr(replace(replace(c.text, char(10), ' '), char(9), ' '),1,80)
-		FROM comments c LEFT JOIN tasks t ON t.id=c.task_id WHERE c.delivered_at IS NULL ORDER BY c.id`, nil, line); err != nil {
-		return err
-	}
-	for _, r := range out {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", r[0], r[1], message.TargetFor(db.DB, db.Session, r[1]), r[2])
-	}
-	return nil
+	return readText(db, "tb pending", "ticket.pending", in, w)
 }

@@ -317,6 +317,7 @@ ADR 0004 の依存の検査に次を足す。今ある違反は許容リスト�
 - 旧形式の DB の取り込み `config.db.import`(`internal/app/config` の dbimport.go。`POST /v1/config/db-import`、`tb db-import`)。旧 DB の確かめ・写しの移行・1 つのトランザクションでの取り込みは API の中。門は commands.tbl の inner の行 `cmd:config:db-import`(既定は agent を断る。system 主体は `system:` の行に従い、合う行がなければ通す)を `app.Cmd` で判定する。tb は引数を読んで結果を出すだけ。
 - レシピの実行 `recipe.run` / `recipe.runner`(`internal/app/recipe` の run.go。`POST /v1/recipes/{name}/run`、`POST /v1/recipe-runs/run`、`tb recipe run` / `runner`)。レシピと部品ごとの判定、待ち行列への積み込みと取り出し、部品の実行、履歴の記録は API の中。部品は tb のコマンドを呼ばず、API の中身(`agent.Stop` / `Revive` / `Restart`、`ticket.Show`、`ticket.ResolveComment`)を直接呼ぶ。部品 task-show のため、`tb show` の中身を `ticket.show`(`GET /v1/tickets/{id}/show`)に移した。
 - チケットの読むだけの操作 `ticket.tree` / `ticket.labels` / `ticket.sprints` / `ticket.board` / `ticket.history` / `ticket.events`(`internal/app/ticket` の read.go。`GET /v1/tickets/tree`・`/v1/tickets/labels`・`/v1/sprints`・`/v1/sprints/board`・`/v1/tickets/{id}/history`・`/v1/ticket-events`)。結果の `text` は tb の出力そのまま。tb は引数を読んで出すだけ。
+- 報告コメントと状態の読むだけの操作 `ticket.comments` / `ticket.pending` / `ticket.status.list`(`internal/app/ticket` の readcomments.go。`GET /v1/comments`・`/v1/reports/pending`・`/v1/ticket-statuses`)。tb comments / pending / ticket status list は引数を読んで出すだけ。
 
 ## 検討した代替案
 
