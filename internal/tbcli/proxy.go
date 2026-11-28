@@ -3,6 +3,7 @@ package tbcli
 import (
 	"errors"
 	"fmt"
+	"github.com/imohiyoko/herdrorchestrator/internal/app/rowfmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -181,26 +182,9 @@ func cmdProxyCheck(args []string, w, stderr io.Writer) error {
 	return nil
 }
 
-// emitRow は 1 行を --json なら jq -c の形、でなければ sqlite3 の -separator \t の形(NULL は null の文字)で書く。
+// emitRow は rowfmt.EmitRow(--json なら jq -c の形、でなければ sqlite3 の -separator \t の形。NULL は null の文字)。
 func emitRow(w io.Writer, js bool, cols []string, vals []any, null string) error {
-	if js {
-		s, err := rowJSON(cols, vals)
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintln(w, s)
-		return err
-	}
-	parts := make([]string, len(vals))
-	for i, v := range vals {
-		if v == nil {
-			parts[i] = null
-		} else {
-			parts[i] = tickets.Text(v)
-		}
-	}
-	_, err := fmt.Fprintln(w, strings.Join(parts, "\t"))
-	return err
+	return rowfmt.EmitRow(w, js, cols, vals, null)
 }
 
 const proxyUsage = `tb proxy request <task-id> --cmd C --why W --effect read-only|write|external [--expect E]   → "<id> <status>"

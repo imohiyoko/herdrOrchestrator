@@ -192,7 +192,7 @@ func Ops(env *app.Env) []app.Op {
 		define.Expose(define.Internal, define.REST),
 		define.HTTP("POST /v1/notify/events"),
 	)
-	return []app.Op{sw("on"), sw("off"), test, flush, ack, event}
+	return append([]app.Op{sw("on"), sw("off"), test, flush, ack, event}, readOps(env)...)
 }
 
 func who(ctx context.Context) string {

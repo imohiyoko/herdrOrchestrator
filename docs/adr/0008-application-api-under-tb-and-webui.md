@@ -319,6 +319,7 @@ ADR 0004 の依存の検査に次を足す。今ある違反は許容リスト�
 - チケットの読むだけの操作 `ticket.tree` / `ticket.labels` / `ticket.sprints` / `ticket.board` / `ticket.history` / `ticket.events`(`internal/app/ticket` の read.go。`GET /v1/tickets/tree`・`/v1/tickets/labels`・`/v1/sprints`・`/v1/sprints/board`・`/v1/tickets/{id}/history`・`/v1/ticket-events`)。結果の `text` は tb の出力そのまま。tb は引数を読んで出すだけ。
 - 報告コメントと状態の読むだけの操作 `ticket.comments` / `ticket.pending` / `ticket.status.list`(`internal/app/ticket` の readcomments.go。`GET /v1/comments`・`/v1/reports/pending`・`/v1/ticket-statuses`)。tb comments / pending / ticket status list は引数を読んで出すだけ。
 - 承認待ちと記録の読むだけの操作 `approval.list` / `approval.history`(`internal/app/approval` の read.go。`GET /v1/requests`・`/v1/requests/history`)。`--mine` と実行の結果を見せる相手は呼び手の主体で決める。tb は引数を読んで出すだけ。
+- 通知の読むだけの操作 `notify.status` / `notify.dryrun` / `notify.events` / `notify.rules.test`(`internal/app/notify` の read.go)。行を tb の出力の形にする関数(sqlite3 の -separator と jq -c の形)は `internal/app/rowfmt` にまとめ、tb と API の両方が使う。
 
 ## 検討した代替案
 
