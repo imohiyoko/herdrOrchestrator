@@ -326,6 +326,7 @@ ADR 0004 の依存の検査に次を足す。今ある違反は許容リスト�
 - レシピの読むだけの操作 `recipe.list` / `recipe.show` / `recipe.history` / `recipe.queue`(`internal/app/recipe` の read.go。`GET /v1/recipes`・`/v1/recipes/{name}`・`/v1/recipe-changes`・`/v1/recipe-runs`)、設定の変更の記録 `config.history`(`GET /v1/config/{key}/history`)、役割の変更の記録 `agent.role.log`(`GET /v1/role-changes`)。
 - tb に残っていた SQL を全部移した: チケットの一覧 `ticket.list`(`GET /v1/tickets`。同じ条件を繰り返すときはカンマ区切り)、制限の今の値 `agent.limits.show`(`GET /v1/limits`)、期限ファイルの行と取り込み済みか `reminder.deadlines`(`GET /v1/deadlines`)。review-submit は作者を `ticket.get` で、herdr pane close は台帳の pane を `agent.RunningAt` で、config import は既にある行を `config.HasRow` で確かめる。layers の allow list から tbcli の SQL の行が無くなった。
 - Web UI の読み取りは「人が決めること」の案どおり、`app/<サービス>` の query.go(画面向けの読み取り)に寄せる。接続は呼び手が渡す `rowfmt.Q`(Web UI はセッションの一時ビューの付いた読み取り専用の接続 `rowfmt.OpenSessionRO` で、`__<分類>_STATUSES__` を埋めて流す)。行の値は DB の値のまま(`rowfmt.Row`)。まず agents / data / edits / inbox / jobs / jobview / ledger / overview / pages / perms / permspage / roles / sessions の SQL を移した。
+- Web UI の残り(approvals / docs / docspage / notify / tasks)の SQL も query.go に移した(`app/approval`・`app/ticket` の querypage.go・`app/alert`・`app/notify`・`app/agent`)。承認待ちの条件は `app/approval` の `reqPending` 1 つだけになった。layers の allow list から `sql` の行が無くなった。Web UI の SQL を空の DB で EXPLAIN するテスト(`TestQueriesExplain`)は `app/*/query*.go` も見る。
 
 ## 検討した代替案
 

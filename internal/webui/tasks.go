@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/imohiyoko/herdrorchestrator/internal/app/ticket"
 )
 
 // tasks.go はタスク一覧(/tasks)とボード(/board)。読み取りのみ(views.page_tasks / page_board)。
@@ -81,11 +83,6 @@ func head(x any, n int) string {
 
 func runesN(s string, n int) string { return runesUpTo(s, n) }
 
-func (v *sv) statusRank() string {
-	return "CASE WHEN status IN (__BLOCKED_STATUSES__) THEN 1 WHEN status IN (__ACTIVE_STATUSES__) THEN 2" +
-		" WHEN status IN (__REVIEW_STATUSES__) THEN 3 WHEN status IN (__TODO_STATUSES__) THEN 4 ELSE 5 END"
-}
-
 // taskStale は作業中(分類 active)のまま 24 時間を超えて更新がない経過時間。
 func (v *sv) taskStale(t row, now time.Time) (int, bool) {
 	if !contains(v.stNames("active"), pyStr(t["status"])) || t["status"] == nil {
@@ -144,10 +141,6 @@ type counts map[string]int64
 // reportCounts は {task_id: {kind: 件数, "open": 未対応の question / blocked}}。
 func (v *sv) reportCounts(taskID any) map[string]counts {
 	out := map[string]counts{}
-	w, a := "", []any{}
-	if taskID != nil {
-		w, a = " WHERE task_id=?", []any{taskID}
-	}
 	add := func(tid any, k string, n any) {
 		key := pyStr(tid)
 		if out[key] == nil {
@@ -156,16 +149,11 @@ func (v *sv) reportCounts(taskID any) map[string]counts {
 		c, _ := n.(int64)
 		out[key][k] = c
 	}
-	for _, r := range v.q("SELECT task_id, kind, COUNT(*) AS n FROM comments"+w+" GROUP BY task_id, kind", a...) {
+	for _, r := range ticket.ReportCounts(v.qChecked, taskID, false) {
 		add(r["task_id"], pyStr(r["kind"]), r["n"])
 	}
 	if v.hasResolution() {
-		w2 := ""
-		if taskID != nil {
-			w2 = " AND task_id=?"
-		}
-		for _, r := range v.q("SELECT task_id, COUNT(*) AS n FROM comments WHERE kind IN ('question','blocked') AND resolved_at IS NULL"+w2+
-			" GROUP BY task_id", a...) {
+		for _, r := range ticket.ReportCounts(v.qChecked, taskID, true) {
 			add(r["task_id"], "open", r["n"])
 		}
 	}
@@ -408,7 +396,7 @@ func (s *Server) pageTasks(q *rq, c pageCtx) (string, string) {
 	}
 	taskStatuses := v.statusNames()
 	var present []string
-	for _, r := range v.q("SELECT DISTINCT status FROM tasks ORDER BY status") {
+	for _, r := range ticket.Distinct(v.qChecked, "status") {
 		present = append(present, pyStr(r["status"]))
 	}
 	var keep, bad []string
@@ -434,86 +422,30 @@ func (s *Server) pageTasks(q *rq, c pageCtx) (string, string) {
 	if len(sts) == 0 {
 		eview = orStr(view, "open")
 	}
-	var baseW []string
-	var baseP []any
-	if kw != "" {
-		lk := likeEsc(kw)
-		baseW = append(baseW, `(id LIKE ? ESCAPE '\' OR title LIKE ? ESCAPE '\')`)
-		baseP = append(baseP, lk, lk)
-	}
-	if proj != "" {
-		baseW, baseP = append(baseW, "project=?"), append(baseP, proj)
-	}
-	if owner == ownerNone {
-		baseW = append(baseW, "(owner_agent IS NULL OR owner_agent='')")
-	} else if owner != "" {
-		baseW, baseP = append(baseW, "owner_agent=?"), append(baseP, owner)
-	}
-	if unrep {
-		baseW = append(baseW, "reported_at IS NULL")
-	}
-	if ttype != "" {
-		baseW, baseP = append(baseW, "type=?"), append(baseP, ttype)
-	}
-	if prio != "" {
-		baseW, baseP = append(baseW, "priority=?"), append(baseP, prio)
-	}
-	if label != "" {
-		baseW, baseP = append(baseW, "EXISTS (SELECT 1 FROM json_each(tasks.labels) WHERE value=?)"), append(baseP, label)
-	}
 	today := todayStr()
-	switch dview {
-	case "overdue":
-		baseW = append(baseW, "due IS NOT NULL", "due<?", "status NOT IN (__CLOSED_STATUSES__)")
-		baseP = append(baseP, today)
-	case "soon":
-		baseW = append(baseW, "due IS NOT NULL", "due>=?", "due<=?", "status NOT IN (__CLOSED_STATUSES__)")
-		baseP = append(baseP, today, addDays(today, days))
+	lf := ticket.ListFilter{Project: proj, Owner: owner, NoOwner: owner == ownerNone, Unreported: unrep, Type: ttype, Priority: prio, Label: label,
+		Due: dview, Today: today, SoonTo: addDays(today, days), Statuses: sts, View: eview}
+	if lf.NoOwner {
+		lf.Owner = ""
 	}
-	where := append([]string(nil), baseW...)
-	params := append([]any(nil), baseP...)
-	switch {
-	case len(sts) > 0:
-		where = append(where, "status IN ("+strings.TrimSuffix(strings.Repeat("?,", len(sts)), ",")+")")
-		for _, x := range sts {
-			params = append(params, x)
-		}
-	case eview == "open":
-		where = append(where, "status NOT IN (__CLOSED_STATUSES__)")
-	case eview == "closed":
-		where = append(where, "status IN (__CLOSED_STATUSES__)")
+	if kw != "" {
+		lf.Keyword = likeEsc(kw)
 	}
 	if stale {
-		cutoff := nowFn().UTC().Add(-taskStaleHrs * time.Hour).Format("2006-01-02T15:04:05Z")
-		where = append(where, "status IN (__ACTIVE_STATUSES__)", "updated_at<?")
-		params = append(params, cutoff)
-	}
-	wh := ""
-	if len(where) > 0 {
-		wh = " WHERE " + strings.Join(where, " AND ")
+		lf.StaleBefore = nowFn().UTC().Add(-taskStaleHrs * time.Hour).Format("2006-01-02T15:04:05Z")
 	}
 	so, _ := sortOf(srt)
 	order := so.order
 	if order == "" {
-		openQ := ""
-		if v.hasResolution() {
-			openQ = "(EXISTS (SELECT 1 FROM comments c WHERE c.task_id=tasks.id AND c.kind IN ('question','blocked') AND c.resolved_at IS NULL" +
-				" AND tasks.status NOT IN (__CLOSED_STATUSES__))) DESC, "
-		}
-		order = openQ + v.statusRank() + ", project, updated_at DESC"
+		order = ticket.DefaultOrder(v.hasResolution())
 	}
-	rows := v.q("SELECT * FROM tasks"+wh+" ORDER BY "+order+" LIMIT "+strconv.Itoa(taskListMax), params...)
-	total := int64(len(rows))
-	if r := v.q("SELECT COUNT(*) AS n FROM tasks"+wh, params...); len(r) > 0 {
-		total = intOf(r[0]["n"])
-	}
-	bw := ""
-	if len(baseW) > 0 {
-		bw = " WHERE " + strings.Join(baseW, " AND ")
+	rows, total, ok := ticket.ListRows(v.qChecked, lf, order, taskListMax)
+	if !ok {
+		total = int64(len(rows))
 	}
 	summ := map[string]int64{}
 	var summKeys []string
-	for _, r := range v.q("SELECT status, COUNT(*) AS n FROM tasks"+bw+" GROUP BY status", baseP...) {
+	for _, r := range ticket.ListStatusCounts(v.qChecked, lf) {
 		k := pyStr(r["status"])
 		summ[k] = intOf(r["n"])
 		summKeys = append(summKeys, k)
@@ -528,19 +460,19 @@ func (s *Server) pageTasks(q *rq, c pageCtx) (string, string) {
 	}
 	vcount := map[string]int64{"open": nAll - nClosed, "closed": nClosed, "all": nAll}
 	var projects, owners, labels []string
-	for _, r := range v.q("SELECT DISTINCT project FROM tasks ORDER BY project") {
+	for _, r := range ticket.Distinct(v.qChecked, "project") {
 		projects = append(projects, pyStr(r["project"]))
 	}
-	for _, r := range v.q("SELECT DISTINCT owner_agent FROM tasks WHERE owner_agent IS NOT NULL AND owner_agent!='' ORDER BY owner_agent") {
+	for _, r := range ticket.Distinct(v.qChecked, "owner") {
 		owners = append(owners, pyStr(r["owner_agent"]))
 	}
 	kids := map[string]int64{}
-	for _, r := range v.q("SELECT parent_id, COUNT(*) AS n FROM tasks WHERE parent_id IS NOT NULL GROUP BY parent_id") {
+	for _, r := range ticket.ChildCounts(v.qChecked) {
 		kids[pyStr(r["parent_id"])] = intOf(r["n"])
 	}
 	if tf {
 		labels = v.definedLabels() // 用意したラベルは、まだ使われていなくても選べるように先に並べる
-		for _, r := range v.q("SELECT DISTINCT j.value FROM tasks, json_each(tasks.labels) j ORDER BY j.value") {
+		for _, r := range ticket.Distinct(v.qChecked, "label") {
 			if x := pyStr(r["value"]); !contains(labels, x) {
 				labels = append(labels, x)
 			}
@@ -609,14 +541,7 @@ func (s *Server) pageTasks(q *rq, c pageCtx) (string, string) {
 	}
 	closedLabel := E(strings.Join(closedSet, " / "))
 	if hd {
-		var nOver, nSoon int64
-		if r := v.q("SELECT COUNT(*) AS n FROM tasks WHERE due IS NOT NULL AND due<? AND status NOT IN (__CLOSED_STATUSES__)", today); len(r) > 0 {
-			nOver = intOf(r[0]["n"])
-		}
-		if r := v.q("SELECT COUNT(*) AS n FROM tasks WHERE due IS NOT NULL AND due>=? AND due<=? AND status NOT IN (__CLOSED_STATUSES__)",
-			today, addDays(today, dueSoonDays)); len(r) > 0 {
-			nSoon = intOf(r[0]["n"])
-		}
+		nOver, nSoon := ticket.DueCounts(v.qChecked, today, addDays(today, dueSoonDays))
 		if nOver != 0 || nSoon != 0 {
 			cls := "note"
 			if nOver != 0 {
@@ -793,7 +718,7 @@ func (s *Server) pageTasks(q *rq, c pageCtx) (string, string) {
 }
 
 func (v *sv) hasSprints() bool {
-	return len(v.q("SELECT name FROM sqlite_master WHERE name='sprints'")) > 0 && v.hasColumn("tasks", "sprint_id")
+	return ticket.HasSprintTable(v.qChecked) && v.hasColumn("tasks", "sprint_id")
 }
 
 func (s *Server) pageBoard(q *rq, c pageCtx) (string, string) {
@@ -813,17 +738,7 @@ func (s *Server) pageBoard(q *rq, c pageCtx) (string, string) {
 		errs = append(errs, "ラベルは 40 文字までで、空白・カンマ・引用符を含みません")
 		label = ""
 	}
-	sq := "SELECT s.*, COALESCE(SUM(t.id IS NOT NULL AND t.status NOT IN (__CANCELLED_STATUSES__)),0) AS n, SUM(t.status IN (__DONE_STATUSES__)) AS done_n," +
-		" COALESCE(SUM(CASE WHEN t.status NOT IN (__CANCELLED_STATUSES__) THEN t.points END),0) AS pts," +
-		" COALESCE(SUM(CASE WHEN t.status IN (__DONE_STATUSES__) THEN t.points END),0) AS done_pts" +
-		" FROM sprints s LEFT JOIN tasks t ON t.sprint_id=s.id" + ifs(proj != "", " WHERE s.project=?") +
-		" GROUP BY s.id ORDER BY CASE s.state WHEN 'active' THEN 1 WHEN 'planned' THEN 2 ELSE 3 END, s.project, s.id DESC"
-	var sprints []row
-	if proj != "" {
-		sprints = v.q(sq, proj)
-	} else {
-		sprints = v.q(sq)
-	}
+	sprints := ticket.SprintRows(v.qChecked, proj)
 	var cur row
 	if sid != "" {
 		for _, x := range sprints {
@@ -850,7 +765,7 @@ func (s *Server) pageBoard(q *rq, c pageCtx) (string, string) {
 		body += errHTML(strings.Join(errs, "。"))
 	}
 	var projects []string
-	for _, r := range v.q("SELECT DISTINCT project FROM sprints ORDER BY project") {
+	for _, r := range ticket.Distinct(v.qChecked, "sprint-project") {
 		projects = append(projects, pyStr(r["project"]))
 	}
 	popts := `<option value="">(すべて)</option>`
@@ -885,9 +800,7 @@ func (s *Server) pageBoard(q *rq, c pageCtx) (string, string) {
 			body += "<p>目標: " + ev(cur["goal"]) + "</p>"
 		}
 		body += fmt.Sprintf(`<p>完了 %d / %d 件・ポイント %d / %d</p>`, intOf(cur["done_n"]), intOf(cur["n"]), intOf(cur["done_pts"]), intOf(cur["pts"]))
-		rows := v.q("SELECT * FROM tasks WHERE sprint_id=? AND (?='' OR EXISTS (SELECT 1 FROM json_each(tasks.labels) WHERE value=?))"+
-			" ORDER BY CASE priority WHEN 'highest' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END, id"+
-			" LIMIT 300", cid, label, label)
+		rows := ticket.SprintTasks(v.qChecked, cid, label)
 		card := func(t row) string {
 			pts := ""
 			if t["points"] != nil {

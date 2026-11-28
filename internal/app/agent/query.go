@@ -38,3 +38,37 @@ func LedgerStopped(q rowfmt.Q) []rowfmt.Row {
 	r, _ := q(killableSQL + " WHERE a.state='stopped' ORDER BY a.stopped_at DESC LIMIT 50")
 	return r
 }
+
+// CwdOf は Claude の session sid の作業ディレクトリの行(列は cwd。agent_activity)。
+func CwdOf(q rowfmt.Q, sid any) []rowfmt.Row {
+	r, _ := q("SELECT cwd FROM agent_activity WHERE session_id=?", sid)
+	return r
+}
+
+// Cwds は agent の作業ディレクトリ(空でないもの。重なりなし。列は cwd)。
+func Cwds(q rowfmt.Q) []rowfmt.Row {
+	r, _ := q("SELECT DISTINCT cwd FROM agent_activity WHERE cwd IS NOT NULL AND cwd != ''")
+	return r
+}
+
+// OpRows は agent の操作の記録(L-<n>)を新しい順に limit 件まで。status が空でなければその状態だけ。
+func OpRows(q rowfmt.Q, status string, limit int) []rowfmt.Row {
+	if status != "" {
+		r, _ := q("SELECT * FROM agent_ops WHERE status=? ORDER BY id DESC LIMIT ?", status, limit)
+		return r
+	}
+	r, _ := q("SELECT * FROM agent_ops ORDER BY id DESC LIMIT ?", limit)
+	return r
+}
+
+// ActivityBySession は Claude の session sid の活動の行(全部の列)。
+func ActivityBySession(q rowfmt.Q, sid any) []rowfmt.Row {
+	r, _ := q("SELECT * FROM agent_activity WHERE session_id=?", sid)
+	return r
+}
+
+// ActivityByPane は pane の最新の活動の行(全部の列。1 行まで)。
+func ActivityByPane(q rowfmt.Q, pane any) []rowfmt.Row {
+	r, _ := q("SELECT * FROM agent_activity WHERE pane_id=? ORDER BY updated_at DESC LIMIT 1", pane)
+	return r
+}

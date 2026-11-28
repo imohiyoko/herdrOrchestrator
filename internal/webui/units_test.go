@@ -766,15 +766,3 @@ func TestStatuses(t *testing.T) {
 		t.Error("不正な本文なら組み込みに戻る")
 	}
 }
-
-// 承認待ちの条件は tb approval list(internal/app/approval の reqPending)と同じ文にする(食い違うと画面と tb で件数がずれる)。
-func TestReqPendingSameAsTB(t *testing.T) {
-	b, err := os.ReadFile(filepath.Join("..", "app", "approval", "read.go"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := strings.ReplaceAll(string(b), "\r\n", "\n") // Windows の checkout は CRLF
-	if !strings.Contains(src, "const reqPending = `"+reqPendingSQL+"`") {
-		t.Error("internal/app/approval/read.go の reqPending と reqPendingSQL が違う")
-	}
-}

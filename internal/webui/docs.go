@@ -12,6 +12,10 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	appagent "github.com/imohiyoko/herdrorchestrator/internal/app/agent"
+	appalert "github.com/imohiyoko/herdrorchestrator/internal/app/alert"
+	appticket "github.com/imohiyoko/herdrorchestrator/internal/app/ticket"
 )
 
 // docs.go は docs.py: agent が報告した成果物(ローカルのファイル)を見つけて、安全に読む。
@@ -176,7 +180,7 @@ func (v *sv) cwdFor(session any) string {
 	if !truthy(session) {
 		return ""
 	}
-	r := v.q("SELECT cwd FROM agent_activity WHERE session_id=?", session)
+	r := appagent.CwdOf(v.qChecked, session)
 	if len(r) == 0 || !truthy(r[0]["cwd"]) {
 		return ""
 	}
@@ -272,11 +276,10 @@ func (v *sv) lookupDoc(ref string) (docEntry, bool) {
 	switch {
 	case m[1] != "":
 		id, _ := strconv.Atoi(m[2])
-		rows := v.q("SELECT id,task_id,kind,deliverables,from_name,from_session,created_at FROM comments WHERE id=?", id)
-		if len(rows) == 0 {
+		c := appticket.CommentDoc(v.qChecked, id)
+		if c == nil {
 			return docEntry{}, false
 		}
-		c := rows[0]
 		i, _ := strconv.Atoi(m[3])
 		dl := jsonStrList(c["deliverables"])
 		if i >= len(dl) {
@@ -286,11 +289,10 @@ func (v *sv) lookupDoc(ref string) (docEntry, bool) {
 		return docEntry{ref: ref, raw: dl[i], path: resolveDocPath(dl[i], base), task: c["task_id"], from: c["from_name"],
 			ts: c["created_at"], kind: pyStr(c["kind"])}, true
 	case m[4] != "":
-		rows := v.q("SELECT id,owner_agent,session_id,deliverables,updated_at FROM tasks WHERE id=?", m[5])
-		if len(rows) == 0 {
+		t := appticket.TaskDoc(v.qChecked, m[5])
+		if t == nil {
 			return docEntry{}, false
 		}
-		t := rows[0]
 		i, _ := strconv.Atoi(m[6])
 		dl := jsonStrList(t["deliverables"])
 		if i >= len(dl) {
@@ -301,11 +303,10 @@ func (v *sv) lookupDoc(ref string) (docEntry, bool) {
 			ts: t["updated_at"], kind: "task"}, true
 	}
 	id, _ := strconv.Atoi(m[8])
-	rows := v.q("SELECT id,title,result_path,result_report,result_by,analyzed_at FROM alerts WHERE id=?", id)
-	if len(rows) == 0 || !(truthy(rows[0]["result_path"]) || truthy(rows[0]["result_report"])) {
+	a := appalert.Doc(v.qChecked, id)
+	if a == nil || !(truthy(a["result_path"]) || truthy(a["result_report"])) {
 		return docEntry{}, false
 	}
-	a := rows[0]
 	raw := ""
 	if truthy(a["result_path"]) {
 		raw = pyStr(a["result_path"])
@@ -551,14 +552,11 @@ func (v *sv) recentDocs(limit int) []docEntry {
 			}
 		}
 	}
-	add(v.q("SELECT id,task_id,kind,deliverables,from_name,from_session,created_at FROM comments "+
-		"WHERE deliverables IS NOT NULL AND deliverables NOT IN ('','[]') ORDER BY id DESC LIMIT 300"),
+	add(appticket.CommentDocs(v.qChecked, 300),
 		"task_id", "C-", "from_session", "from_name", "created_at", "kind", "")
-	add(v.q("SELECT id,owner_agent,session_id,deliverables,updated_at FROM tasks "+
-		"WHERE deliverables IS NOT NULL AND deliverables NOT IN ('','[]') ORDER BY updated_at DESC LIMIT 300"),
+	add(appticket.TaskDocs(v.qChecked, 300),
 		"id", "task:", "session_id", "owner_agent", "updated_at", "", "task")
-	for _, a := range v.q("SELECT id,title,result_path,result_report,result_by,analyzed_at FROM alerts " +
-		"WHERE result_path IS NOT NULL OR result_report IS NOT NULL ORDER BY id DESC LIMIT 100") {
+	for _, a := range appalert.Docs(v.qChecked, 100) {
 		items = append(items, docEntry{ref: "A-" + pyStr(a["id"]), raw: orEmpty(a["result_path"]), path: resolveDocPath(a["result_path"], ""),
 			report: a["result_report"], from: a["result_by"], ts: orEmpty(a["analyzed_at"]), kind: "alert", title: a["title"], hasTitle: true})
 	}
@@ -590,7 +588,7 @@ func taskRefs(tid any, deliverables any) []docRef {
 // allowedRoots は docs.allowed_roots: パス指定で開いてよい範囲(実体の絶対パス)。agent の作業ディレクトリと WEBUI_DOC_ROOTS(: 区切り)。
 func (v *sv) allowedRoots() []string {
 	var cands []string
-	for _, r := range v.q("SELECT DISTINCT cwd FROM agent_activity WHERE cwd IS NOT NULL AND cwd != ''") {
+	for _, r := range appagent.Cwds(v.qChecked) {
 		cands = append(cands, pyStr(r["cwd"]))
 	}
 	for _, x := range strings.Split(cfg("WEBUI_DOC_ROOTS", ""), string(os.PathListSeparator)) {

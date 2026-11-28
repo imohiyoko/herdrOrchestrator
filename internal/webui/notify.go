@@ -8,6 +8,12 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	appagent "github.com/imohiyoko/herdrorchestrator/internal/app/agent"
+	appalert "github.com/imohiyoko/herdrorchestrator/internal/app/alert"
+	appapproval "github.com/imohiyoko/herdrorchestrator/internal/app/approval"
+	appnotify "github.com/imohiyoko/herdrorchestrator/internal/app/notify"
+	"github.com/imohiyoko/herdrorchestrator/internal/app/ticket"
 )
 
 // notify.go は data.py の緊急通知の集計(urgent_items)と、承認待ちの数(badge_count)。
@@ -39,14 +45,8 @@ type human struct {
 
 // needsHuman は承認待ち: 未対応の question/blocked の報告(未完了タスク)、pending-human の代行依頼、blocked の agent。
 func (v *sv) needsHuman() human {
-	res := ""
-	if v.hasResolution() {
-		res = " AND c.resolved_at IS NULL"
-	}
-	comments := v.q("SELECT c.*, t.status AS task_status, t.title AS task_title FROM comments c " +
-		"LEFT JOIN tasks t ON t.id=c.task_id WHERE c.kind IN ('question','blocked') " +
-		"AND COALESCE(t.status,'') NOT IN (__CLOSED_STATUSES__)" + res + " ORDER BY c.id DESC LIMIT 100")
-	proxies := v.q("SELECT * FROM proxy_requests WHERE status='pending-human' ORDER BY id DESC LIMIT 100")
+	comments := ticket.OpenQuestions(v.qChecked, v.hasResolution())
+	proxies := ticket.ProxyPendingHuman(v.qChecked)
 	agents, _ := getAgents(v.sess)
 	var blocked []map[string]any
 	for _, a := range agents {
@@ -63,21 +63,14 @@ func (v *sv) badgeCount() int {
 	return len(h.comments) + len(h.proxies) + len(h.blocked) + len(v.pendingRequests(notifyMax))
 }
 
-// reqPendingSQL は承認待ち(Q-<n>)のうち、まだ決まっていないもの(tb approval list と同じ。internal/app/approval の reqPending)。
-// 送信と agent の操作は元の行(outbox・agent_ops)の状態が正、コマンドは requests の状態が正。
-const reqPendingSQL = `((r.source='cmd' AND r.status='pending')
-  OR (r.source='outbox' AND EXISTS (SELECT 1 FROM outbox o WHERE o.id=r.source_id AND o.status='pending'))
-  OR (r.source='agent_ops' AND EXISTS (SELECT 1 FROM agent_ops a WHERE a.id=r.source_id AND a.status='pending')))`
-
 // pendingRequests は承認待ち(Q-<n>)。優先度の高い順、同じなら古い順(tb approval list と同じ)。
 func (v *sv) pendingRequests(limit int) []row {
-	return v.q("SELECT r.id, r.source, r.source_id, r.requester, r.op, r.target, r.priority, r.detail, r.created_at FROM requests r WHERE "+
-		reqPendingSQL+" ORDER BY r.priority DESC, r.id LIMIT ?", limit)
+	return appapproval.PendingRows(v.qChecked, limit)
 }
 
 // requestOf は元の行(outbox・agent_ops の id)の承認待ちの番号(Q-<n>)。無ければ ""。
 func (v *sv) requestOf(source string, id any) string {
-	if r := v.q("SELECT id FROM requests WHERE source=? AND source_id=?", source, id); len(r) > 0 {
+	if r := appapproval.RequestOf(v.qChecked, source, id); len(r) > 0 {
 		return "Q-" + pyStr(r[0]["id"])
 	}
 	return ""
@@ -94,19 +87,16 @@ func priorityLabel(p any) string {
 }
 
 func (v *sv) agentOps(status string, limit int) []row {
-	if status != "" {
-		return v.q("SELECT * FROM agent_ops WHERE status=? ORDER BY id DESC LIMIT ?", status, limit)
-	}
-	return v.q("SELECT * FROM agent_ops ORDER BY id DESC LIMIT ?", limit)
+	return appagent.OpRows(v.qChecked, status, limit)
 }
 
 func (v *sv) activityFor(a map[string]any) row {
 	var rows []row
 	if sid := agentSession(a); truthy(sid) {
-		rows = v.q("SELECT * FROM agent_activity WHERE session_id=?", sid)
+		rows = appagent.ActivityBySession(v.qChecked, sid)
 	}
 	if len(rows) == 0 && truthy(a["pane_id"]) {
-		rows = v.q("SELECT * FROM agent_activity WHERE pane_id=? ORDER BY updated_at DESC LIMIT 1", a["pane_id"])
+		rows = appagent.ActivityByPane(v.qChecked, a["pane_id"])
 	}
 	if len(rows) == 0 {
 		return nil
@@ -178,7 +168,7 @@ func remP(x any) (int, bool) {
 }
 
 func (v *sv) remindersLast() *reminders {
-	rows := v.q("SELECT value, updated_at FROM notify_seen WHERE key='reminders:last'")
+	rows := appnotify.RemindersLast(v.qChecked)
 	if len(rows) == 0 {
 		return nil
 	}
@@ -322,13 +312,13 @@ func (v *sv) urgentItems() []item {
 				short("agent の代わりに人が実行するか決める。実行したら手元で tb proxy resolve "+id+" --status done --result '結果'、断るなら --status denied", 300),
 				"/tasks/" + pyQuote(pyStr(r["task_id"]), ""), Clean(or(r["updated_at"], ""))})
 		}
-		for _, al := range v.q("SELECT * FROM alerts WHERE status='analyzed' AND severity IN ('critical','high') ORDER BY id DESC LIMIT 50") {
+		for _, al := range appalert.Analyzed(v.qChecked) {
 			id := pyStr(al["id"])
 			add(item{"r:" + id + ":" + Clean(pyStr(al["analyzed_at"])), "alert_result", "アラート解析結果(" + Clean(pyStr(al["severity"])) + ")",
 				short("A-"+id+" "+pyStr(al["title"]), 80), short(or(al["result_summary"], ""), 200),
 				"全文は手元で tb alerts A-" + id + "。対応したら tb alert-close A-" + id, "/notifications", Clean(or(al["analyzed_at"], ""))})
 		}
-		for _, al := range v.q("SELECT * FROM alerts WHERE status='awaiting-approval' ORDER BY id DESC LIMIT 50") {
+		for _, al := range appalert.AwaitingApproval(v.qChecked) {
 			id := pyStr(al["id"])
 			add(item{"w:" + id, "alert_approval", "アラート(解析役の起動待ち)",
 				short("A-"+id+" "+pyStr(al["title"]), 80), short(or(al["body"], ""), 200),
@@ -376,8 +366,7 @@ func (v *sv) urgentItems() []item {
 			}
 		}
 		// 通知の規則で届け先に webui を書いたチケットの通知。直近 webuiRuleHours 時間
-		for _, ev := range v.q("SELECT id, ref, text, created_at FROM notify_events WHERE type='ticket' AND (' ' || sinks || ' ') LIKE '% webui %'"+
-			" AND julianday(created_at) >= julianday('now') - ? / 24.0 ORDER BY id DESC LIMIT 50", webuiRuleHours) {
+		for _, ev := range appnotify.WebuiEvents(v.qChecked, webuiRuleHours) {
 			text := Clean(or(ev["text"], ""))
 			href := "/tasks"
 			if m := ticketRef(text); m != "" {

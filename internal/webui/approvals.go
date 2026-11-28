@@ -33,64 +33,12 @@ var (
 	reQID = regexp.MustCompile(`^Q-?([0-9]{1,12})$`)
 )
 
-// approvalStatusSQL は Q-<n> の決まり方(pending / approved / rejected / running / done / failed / allowed / denied)。
-// 送信・agent の操作は、元の行(outbox・agent_ops)がまだ承認待ちなら pending。決めた記録が Q にあればそれ(tb が承認・却下のときに残す)、
-// 無い古い行は元の行から読む(却下なら rejected、それ以外は approved)。届いたか・実行できたかは approvalResultSQL。
-const approvalStatusSQL = `CASE r.source
-  WHEN 'outbox' THEN CASE COALESCE((SELECT o.status FROM outbox o WHERE o.id=r.source_id), '')
-    WHEN 'pending' THEN 'pending' WHEN '' THEN r.status
-    ELSE CASE WHEN r.status IN ('approved','rejected') THEN r.status
-      WHEN (SELECT o.status FROM outbox o WHERE o.id=r.source_id)='denied' THEN 'rejected' ELSE 'approved' END END
-  WHEN 'agent_ops' THEN CASE COALESCE((SELECT a.status FROM agent_ops a WHERE a.id=r.source_id), '')
-    WHEN 'pending' THEN 'pending' WHEN '' THEN r.status
-    ELSE CASE WHEN r.status IN ('approved','rejected') THEN r.status
-      WHEN (SELECT a.status FROM agent_ops a WHERE a.id=r.source_id)='rejected' THEN 'rejected' ELSE 'approved' END END
-  ELSE r.status END`
-
-// approvalResultSQL は承認のあとどうなったか(送信: queued / sent / denied(届けられなかった)、agent の操作: done / failed)。
-// 却下されたもの・まだ決まっていないもの・コマンド(状態がそのまま結果)は空。
-const approvalResultSQL = `CASE r.source
-  WHEN 'outbox' THEN COALESCE((SELECT o.status FROM outbox o WHERE o.id=r.source_id AND o.status<>'pending'
-    AND (o.status<>'denied' OR r.status='approved')), '')
-  WHEN 'agent_ops' THEN COALESCE((SELECT a.status FROM agent_ops a WHERE a.id=r.source_id AND a.status NOT IN ('pending','rejected')), '')
-  ELSE '' END`
-
 type approvalFilter struct {
 	view, tier, status, requester, by, id string
 }
 
-// where は絞り込みの条件。tier が空なら allow を除く(allow は tb を叩くたびに残るので既定では畳む)。
-func (f approvalFilter) where(withStatus bool) (string, []any) {
-	var w []string
-	var a []any
-	switch f.tier {
-	case "":
-		w = append(w, "r.tier<>'allow'")
-	case "all":
-	default:
-		w = append(w, "r.tier=?")
-		a = append(a, f.tier)
-	}
-	if f.requester != "" {
-		w = append(w, "r.requester=?")
-		a = append(a, f.requester)
-	}
-	if f.by != "" {
-		w = append(w, "COALESCE(r.decided_by,'')=?")
-		a = append(a, f.by)
-	}
-	if f.id != "" {
-		w = append(w, "r.id=?")
-		a = append(a, f.id)
-	}
-	if withStatus && f.status != "" {
-		w = append(w, "("+approvalStatusSQL+")=?")
-		a = append(a, f.status)
-	}
-	if len(w) == 0 {
-		return "", nil
-	}
-	return " WHERE " + strings.Join(w, " AND "), a
+func (f approvalFilter) app() appapproval.Filter {
+	return appapproval.Filter{Tier: f.tier, Status: f.status, Requester: f.requester, By: f.by, ID: f.id}
 }
 
 func (s *Server) pageApprovals(q *rq, c pageCtx) (string, string) {
@@ -151,12 +99,9 @@ func (s *Server) pageApprovals(q *rq, c pageCtx) (string, string) {
 	}
 
 	// 判定ごとの件数(判定以外の絞り込みを反映)と、状態ごとの件数(状態以外の絞り込みを反映)
-	tf := f
-	tf.tier = "all"
-	tw, ta := tf.where(true)
 	tcount := map[string]int64{}
 	var tall int64
-	for _, r := range v.q("SELECT r.tier, COUNT(*) AS n FROM requests r"+tw+" GROUP BY r.tier", ta...) {
+	for _, r := range appapproval.TierCounts(v.qChecked, f.app()) {
 		tcount[pyStr(r["tier"])] = intOf(r["n"])
 		tall += intOf(r["n"])
 	}
@@ -173,10 +118,9 @@ func (s *Server) pageApprovals(q *rq, c pageCtx) (string, string) {
 		tabs.WriteString(`<a class="pill` + sel(f.tier == o[0], " on") + `" href="` + E(link(func(d *approvalFilter) { d.tier = o[0] })) + `">` +
 			E(o[1]) + ` ` + strconv.FormatInt(n, 10) + `</a>`)
 	}
-	sw, sa := f.where(false)
 	scount := map[string]int64{}
 	present := []string{}
-	for _, r := range v.q("SELECT "+approvalStatusSQL+" AS st, COUNT(*) AS n FROM requests r"+sw+" GROUP BY st", sa...) {
+	for _, r := range appapproval.StatusCounts(v.qChecked, f.app()) {
 		k := pyStr(r["st"])
 		scount[k] = intOf(r["n"])
 		present = append(present, k)
@@ -221,10 +165,7 @@ func (s *Server) pageApprovals(q *rq, c pageCtx) (string, string) {
 		`<label>決めた人 <input type=text name=by value="` + E(f.by) + `" size=14 placeholder="human / policy / agent"></label> ` +
 		`<button type=submit>絞り込む</button> <a href="/approvals">解除</a></p></form>`
 
-	w, a := f.where(true)
-	rows := v.q("SELECT r.id, r.source, r.source_id, r.tier, "+approvalStatusSQL+" AS status, r.requester, r.op, r.target, r.priority, "+
-		"COALESCE(r.decided_by,'') AS decided_by, COALESCE(r.rule,'') AS rule, r.created_at, COALESCE(r.decided_at,'') AS decided_at, "+
-		"r.detail, COALESCE(r.result,'') AS result, "+approvalResultSQL+" AS outcome FROM requests r"+w+" ORDER BY r.id DESC LIMIT ?", append(a, approvalsMax)...)
+	rows := appapproval.Rows(v.qChecked, f.app(), approvalsMax)
 	qlink := func(r row) string {
 		id := pyStr(r["id"])
 		return `<a href="` + E(link(func(d *approvalFilter) { *d = approvalFilter{view: f.view, tier: "all", id: id} })) + `">Q-` + E(id) + `</a>`
@@ -382,10 +323,7 @@ func (s *Server) postApprovalOp(q *rq, f form) (string, string, string, func(pag
 	if op := f["op"]; op != "approve" && op != "reject" && op != "exception" && op != "always" {
 		return "", "", "", nil
 	}
-	cur := ""
-	if r := q.data().q("SELECT "+approvalStatusSQL+" AS st FROM requests r WHERE r.id=?", id); len(r) > 0 {
-		cur = pyStr(r[0]["st"])
-	}
+	cur := appapproval.StatusOf(q.data().qChecked, id)
 	switch {
 	case cur == "":
 		return back, "", "Q-" + id + " が見つかりません", render
