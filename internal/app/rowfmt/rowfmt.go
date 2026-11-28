@@ -250,11 +250,21 @@ func OpenSessionRO(path, sess string, busyMS int) *sql.DB {
 			db.Close()
 			return nil
 		}
+		bad := false
 		for rows.Next() {
 			var n string
-			if rows.Scan(&n) == nil && kind.want[n] {
+			if rows.Scan(&n) != nil {
+				bad = true
+				break
+			}
+			if kind.want[n] {
 				names = append(names, n)
 			}
+		}
+		if bad || rows.Err() != nil { // 途中で読めなくなったら、包めない表が残るので開かない
+			rows.Close()
+			db.Close()
+			return nil
 		}
 		rows.Close()
 		for _, t := range names {
