@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	appconfig "github.com/imohiyoko/herdrorchestrator/internal/app/config"
 )
 
 // roles.go はロールの解決(tb の role_files_for / name_matches と同じ)。
@@ -37,8 +39,7 @@ func (v *sv) rolesDir() string {
 // roleDB は DB の役割の定義(config の role:<名前> / role-map)。このセッションの行が共通の行より勝つ。
 func (v *sv) roleDB() map[string]string {
 	return cached(v.sess, "role-db", func() map[string]string {
-		rows, _ := v.qChecked("SELECT herdr_session AS s, key, body FROM main.config "+
-			"WHERE (key LIKE 'role:%' OR key='role-map') AND herdr_session IN (?, '*')", v.sess)
+		rows := appconfig.RoleRows(v.qChecked, v.sess)
 		sort.SliceStable(rows, func(i, j int) bool { return rows[i]["s"] == "*" && rows[j]["s"] != "*" })
 		out := map[string]string{}
 		for _, r := range rows {

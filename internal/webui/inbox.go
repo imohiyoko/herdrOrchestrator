@@ -1,9 +1,6 @@
 package webui
 
 import (
-	"github.com/imohiyoko/herdrorchestrator/internal/app"
-	"github.com/imohiyoko/herdrorchestrator/internal/app/ticket"
-
 	"bytes"
 	"context"
 	"fmt"
@@ -14,6 +11,10 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/imohiyoko/herdrorchestrator/internal/app"
+	appmessage "github.com/imohiyoko/herdrorchestrator/internal/app/message"
+	"github.com/imohiyoko/herdrorchestrator/internal/app/ticket"
 )
 
 // inbox.go は報告・承認待ち(views.page_inbox)と、報告を対応済みにする操作(POST /resolve。書き込みは tb resolve)。
@@ -120,7 +121,6 @@ func (v *sv) remindersHTML() string {
 const (
 	heldMax     = 100
 	heldTextMax = 20000
-	heldCols    = "SELECT id, outbox_id, from_name, recipient, kind, task_id, created_at, read_at"
 )
 
 func (v *sv) hasInbox() bool {
@@ -153,7 +153,7 @@ func (v *sv) heldHTML() string {
 	if !v.hasInbox() {
 		return ""
 	}
-	rows := v.q(heldCols+" FROM main.inbox WHERE herdr_session=? ORDER BY id DESC LIMIT ?", v.sess, heldMax)
+	rows := appmessage.HeldRows(v.qChecked, v.sess, heldMax)
 	if len(rows) == 0 {
 		return ""
 	}
@@ -186,8 +186,8 @@ func (v *sv) heldDetailHTML(pc pageCtx) string {
 	var m row
 	if reHeldID.MatchString(hid) && v.hasInbox() {
 		n, _ := strconv.ParseInt(hid, 10, 64)
-		if rows := v.q(heldCols+", text FROM main.inbox WHERE herdr_session=? AND id=?", v.sess, n); len(rows) > 0 {
-			m = cleanRow(rows[0])
+		if r := appmessage.HeldRow(v.qChecked, v.sess, n); r != nil {
+			m = cleanRow(r)
 		}
 	}
 	if m == nil {
@@ -248,7 +248,7 @@ func (s *Server) pageInbox(q *rq, pc pageCtx) (string, string) {
 	body += "<h3>blocked の agent</h3>" + table([]string{"agent", "workspace", ""}, rows)
 	body += v.heldHTML()
 	rows = nil
-	for _, c := range v.q("SELECT * FROM comments ORDER BY id DESC LIMIT 60") {
+	for _, c := range ticket.RecentComments(v.qChecked, 60) {
 		if ids[pyStr(c["id"])] {
 			continue
 		}

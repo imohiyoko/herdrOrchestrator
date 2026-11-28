@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	appconfig "github.com/imohiyoko/herdrorchestrator/internal/app/config"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/job"
 	"github.com/imohiyoko/herdrorchestrator/internal/sched"
 )
@@ -43,7 +44,7 @@ func filesOK() bool { return os.Getenv("SCHED_FILE_FALLBACK") == "1" }
 
 func (v *sv) dbJobs() map[string]bool {
 	out := map[string]bool{}
-	for _, r := range v.q("SELECT DISTINCT substr(key, 11) AS name FROM main.config WHERE key LIKE 'sched-job:%' AND herdr_session IN (?, '*')", v.sess) {
+	for _, r := range appconfig.JobNames(v.qChecked, v.sess) {
 		if n, ok := r["name"].(string); ok && JobRE.MatchString(n) {
 			out[n] = true
 		}
@@ -53,7 +54,7 @@ func (v *sv) dbJobs() map[string]bool {
 
 // dbBody は DB の本文(このセッション > 共通)。無ければ false。
 func (v *sv) dbBody(key string) (string, bool) {
-	rows := v.q("SELECT body FROM main.config WHERE key = ? AND herdr_session IN (?, '*') ORDER BY herdr_session = '*' LIMIT 1", key, v.sess)
+	rows := appconfig.Body(v.qChecked, key, v.sess)
 	if len(rows) == 0 || rows[0]["body"] == nil {
 		return "", false
 	}

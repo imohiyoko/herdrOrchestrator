@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	appapproval "github.com/imohiyoko/herdrorchestrator/internal/app/approval"
 )
 
 // permspage.go は権限(/perms。設定 policy の読み取り。views.page_perms と _catalog_section)。変更操作は置かない。
@@ -124,7 +126,7 @@ func (s *Server) catalogSection(c pageCtx, p *perms, err string, catalog []catEn
 }
 
 func (v *sv) approvalHistory(limit int) []row {
-	return v.q("SELECT id, pattern, value, created_at FROM approval_changes ORDER BY id DESC LIMIT ?", limit)
+	return appapproval.Changes(v.qChecked, limit)
 }
 
 func (s *Server) pagePerms(q *rq, c pageCtx) (string, string) {

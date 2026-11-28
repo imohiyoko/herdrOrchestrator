@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	appagent "github.com/imohiyoko/herdrorchestrator/internal/app/agent"
 )
 
 // perms.go は設定 policy の読み取りと照合(読み取り専用。tb の perm_authorize と同じ考え。ADR 0007)。
@@ -163,7 +165,7 @@ func triOf(b bool) tri {
 
 // roleMatch は @<役割> の照合。台帳を読めず役割を確かめられないときは triUnknown。
 func (p *perms) roleMatch(name, pat string) tri {
-	reg, ok := p.v.qChecked("SELECT role FROM agents WHERE name=?", name)
+	reg, ok := appagent.LedgerRole(p.v.qChecked, name)
 	if !ok {
 		if p.v.roleExists(name, "") {
 			return triOf(p.v.nameMatches(name, pat, ""))

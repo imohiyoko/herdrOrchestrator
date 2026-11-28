@@ -15,13 +15,15 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	appconfig "github.com/imohiyoko/herdrorchestrator/internal/app/config"
+	"github.com/imohiyoko/herdrorchestrator/internal/app/rowfmt"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 )
 
 // data.go は tasks.db とログの読み取り(読み取り専用)。
 
 // row は 1 行(列名 → 値。値は int64 / float64 / string / []byte / nil)。
-type row map[string]any
+type row = rowfmt.Row
 
 // sv はリクエストの中の 1 つの herdr セッションの読み取り(data.py の db_conn と request_db)。
 // 接続は 1 本だけにして(一時ビューは接続ごと)、リクエストの間は使い回す。
@@ -41,18 +43,6 @@ func (v *sv) close() {
 	}
 }
 
-var reTableName = regexp.MustCompile(`^[a-z_]{1,64}$`)
-
-func nameSet(names []string) map[string]bool {
-	m := map[string]bool{}
-	for _, n := range names {
-		if reTableName.MatchString(n) {
-			m[n] = true
-		}
-	}
-	return m
-}
-
 // conn は DB を読み取り専用で開き、このセッションの行だけの一時ビューを作る(data.py の session_views)。無い・開けなければ nil。
 func (v *sv) conn() *sql.DB {
 	if v.tried {
@@ -63,41 +53,8 @@ func (v *sv) conn() *sql.DB {
 	if !isFile(p) {
 		return nil
 	}
-	db, err := store.OpenRO(p, 2000)
-	if err != nil {
-		return nil
-	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	db.SetConnMaxLifetime(0)
-	lit := store.Quote(v.sess)
-	for _, kind := range []struct {
-		typ  string
-		want map[string]bool
-	}{{"table", nameSet(store.SessionTables())}, {"view", nameSet(store.SessionViews())}} {
-		var names []string
-		rows, err := db.Query("SELECT m.name FROM main.sqlite_master m WHERE m.type=? AND EXISTS "+
-			"(SELECT 1 FROM pragma_table_info(m.name) p WHERE p.name='herdr_session')", kind.typ)
-		if err != nil {
-			db.Close()
-			return nil
-		}
-		for rows.Next() {
-			var n string
-			if rows.Scan(&n) == nil && kind.want[n] {
-				names = append(names, n)
-			}
-		}
-		rows.Close()
-		for _, t := range names {
-			if _, err := db.Exec("CREATE TEMP VIEW " + t + " AS SELECT * FROM main." + t + " WHERE herdr_session=" + lit); err != nil {
-				db.Close()
-				return nil
-			}
-		}
-	}
-	if _, err := db.Exec("PRAGMA query_only=ON"); err != nil {
-		db.Close()
+	db := rowfmt.OpenSessionRO(p, v.sess, 2000)
+	if db == nil {
 		return nil
 	}
 	v.db = db
@@ -396,8 +353,7 @@ func (v *sv) configText(key string) (string, string, bool) {
 			return s, "file:" + p, ok
 		}
 	}
-	rows, _ := v.qChecked("SELECT herdr_session AS s, substr(body, 1, ?) AS body FROM main.config WHERE key=? AND herdr_session IN (?, '*') "+
-		"ORDER BY herdr_session='*' LIMIT 1", configMax+1, key, v.sess)
+	rows := appconfig.BodyFrom(v.qChecked, key, v.sess, configMax+1)
 	if len(rows) > 0 {
 		b := rows[0]["body"]
 		return pyStr(b), "db:" + pyStr(rows[0]["s"]), b != nil
@@ -544,7 +500,7 @@ func (v *sv) stSQL(cats ...string) string {
 		q = append(q, store.Quote(k))
 	}
 	if len(q) == 0 {
-		return "SELECT NULL WHERE 0"
+		return rowfmt.EmptyIn
 	}
 	return strings.Join(q, ",")
 }

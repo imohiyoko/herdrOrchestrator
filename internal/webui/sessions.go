@@ -1,13 +1,13 @@
 package webui
 
 import (
-	"database/sql"
 	"os"
 	"path/filepath"
 	"sort"
 	"sync"
 	"time"
 
+	appconfig "github.com/imohiyoko/herdrorchestrator/internal/app/config"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 )
 
@@ -44,20 +44,7 @@ func sessionsFromDB(out map[string]bool) {
 		return
 	}
 	defer db.Close()
-	for _, q := range []string{"SELECT DISTINCT herdr_session FROM main.agents", "SELECT DISTINCT herdr_session FROM main.tasks",
-		"SELECT DISTINCT herdr_session FROM main.config"} {
-		rows, err := db.Query(q)
-		if err != nil { // 表・列が無い(古い DB)
-			continue
-		}
-		for n := 0; n < sessMax && rows.Next(); n++ {
-			var s sql.NullString
-			if rows.Scan(&s) == nil && s.Valid {
-				out[s.String] = true
-			}
-		}
-		rows.Close()
-	}
+	appconfig.Sessions(db, sessMax, out)
 }
 
 func collectSessions() []string {

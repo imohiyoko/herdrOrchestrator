@@ -7,6 +7,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	appagent "github.com/imohiyoko/herdrorchestrator/internal/app/agent"
+	appticket "github.com/imohiyoko/herdrorchestrator/internal/app/ticket"
 )
 
 // agents.go は agent の画面のための読み取り: graph.py の関係グラフと役割の一覧、data.py の台帳(止めてよいか・保護)と担当タスク、
@@ -234,14 +237,6 @@ func mermaidGraph(nodes []gnode, es []*edge) string {
 
 // ---- 台帳(止めてよいか・保護)
 
-const killableSQL = `SELECT a.*, CASE WHEN a.killable!='yes' THEN a.killable
-      WHEN a.killable_session IS NOT NULL AND a.session_id IS NOT NULL AND a.killable_session!=a.session_id THEN 'stale'
-      WHEN EXISTS (SELECT 1 FROM agent_activity aa WHERE (aa.session_id=a.session_id OR aa.pane_id=a.pane_id)
-                   AND julianday(aa.last_prompt_at) > julianday(a.killable_at)) THEN 'stale'
-      ELSE 'yes' END AS killable_now,
-    (SELECT COUNT(*) FROM tasks t WHERE t.owner_agent=a.name AND t.status IN (__HELD_STATUSES__)) AS open_tasks
-    FROM agents a`
-
 type protectRule struct{ pat, why string }
 
 // protectRules は config の protect([(パターン, 理由)])。
@@ -300,7 +295,7 @@ func (v *sv) withProtect(rows []row) []row {
 // agentRegistry は tb の台帳(agents)。{名前: 行}。
 func (v *sv) agentRegistry() map[string]row {
 	out := map[string]row{}
-	for _, r := range v.withProtect(v.q(killableSQL + " ORDER BY a.name")) {
+	for _, r := range v.withProtect(appagent.LedgerAll(v.qChecked)) {
 		out[pyStr(r["name"])] = r
 	}
 	return out
@@ -318,21 +313,21 @@ func (v *sv) registryRow(reg map[string]row, name string) row {
 }
 
 func (v *sv) stoppedAgents() []row {
-	return v.withProtect(v.q(killableSQL + " WHERE a.state='stopped' ORDER BY a.stopped_at DESC LIMIT 50"))
+	return v.withProtect(appagent.LedgerStopped(v.qChecked))
 }
 
 // tasksForAgent は担当(名前か session)の閉じていないタスク。
 func (v *sv) tasksForAgent(a map[string]any) []row {
 	var rows []row
 	if truthy(a["name"]) {
-		rows = append(rows, v.q("SELECT * FROM tasks WHERE owner_agent=? AND status NOT IN (__CLOSED_STATUSES__) ORDER BY updated_at DESC", a["name"])...)
+		rows = append(rows, appticket.OpenByOwner(v.qChecked, a["name"])...)
 	}
 	if sid := agentSession(a); truthy(sid) {
 		have := map[string]bool{}
 		for _, r := range rows {
 			have[pyKey(r["id"])] = true
 		}
-		for _, r := range v.q("SELECT * FROM tasks WHERE session_id=? AND status NOT IN (__CLOSED_STATUSES__) ORDER BY updated_at DESC", sid) {
+		for _, r := range appticket.OpenBySession(v.qChecked, sid) {
 			if !have[pyKey(r["id"])] {
 				rows = append(rows, r)
 			}
