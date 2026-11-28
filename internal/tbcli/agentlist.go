@@ -75,9 +75,6 @@ func cmdAgents(args []string, w, stderr io.Writer) error {
 		if g.LiveErr {
 			fmt.Fprintln(stderr, liveErrList)
 		}
-		if g.EdgesErr {
-			return die("関係を読めません(DB)")
-		}
 		return printGraph(w, g, js)
 	}
 	var res agent.LedgerResult

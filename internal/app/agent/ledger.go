@@ -67,8 +67,8 @@ type OpsResult struct {
 func ledgerOps(env *app.Env) []app.Op {
 	pass := func(context.Context, *app.Env, string, any) app.Decision { return app.Decision{} }
 	ledger := app.Query(env, "agent.ledger", pass,
-		func(_ context.Context, in LedgerReq) (LedgerResult, error) {
-			return withDB(env, func(db *store.DB) (LedgerResult, error) { return ledgerRows(db, in) })
+		func(ctx context.Context, in LedgerReq) (LedgerResult, error) {
+			return withDB(env, func(db *store.DB) (LedgerResult, error) { return ledgerRows(ctx, db, in) })
 		},
 		define.Doc("台帳の agent の行(tb agents。開いているタスク・質問の数、最後の活動、herdr の状態、役割のファイルつき)"),
 		define.Authz("cmd:agent:list"),
@@ -76,11 +76,11 @@ func ledgerOps(env *app.Env) []app.Op {
 		define.HTTP("GET /v1/agents/ledger"),
 	)
 	shed := app.Query(env, "agent.shed", pass,
-		func(_ context.Context, in ShedReq) (ShedResult, error) {
+		func(ctx context.Context, in ShedReq) (ShedResult, error) {
 			if in.Count < 0 {
 				return ShedResult{}, define.Errorf(define.CodeInvalidArgument, "agent-shed: --count は 0 以上の整数")
 			}
-			return withDB(env, func(db *store.DB) (ShedResult, error) { return shedRows(db, in) })
+			return withDB(env, func(db *store.DB) (ShedResult, error) { return shedRows(ctx, db, in) })
 		},
 		define.Doc("絞る候補の一覧(tb agent-shed。読み取り専用: 何も止めない)"),
 		define.Authz("cmd:agent:shed"),
@@ -103,8 +103,8 @@ func ledgerOps(env *app.Env) []app.Op {
 		define.HTTP("GET /v1/agent-ops"),
 	)
 	graph := app.Query(env, "agent.graph", pass,
-		func(_ context.Context, in GraphReq) (GraphResult, error) {
-			return withDB(env, func(db *store.DB) (GraphResult, error) { return graphOf(db, in) })
+		func(ctx context.Context, in GraphReq) (GraphResult, error) {
+			return withDB(env, func(db *store.DB) (GraphResult, error) { return graphOf(ctx, db, in) })
 		},
 		define.Doc("agent の関係図(tb agents --graph。点と 主体 -動詞→ 対象 のエッジ、直近 7 日)"),
 		define.Authz("cmd:agent:list"),
@@ -114,8 +114,8 @@ func ledgerOps(env *app.Env) []app.Op {
 	return []app.Op{ledger, graph, shed, ops}
 }
 
-func ledgerRows(db *store.DB, in LedgerReq) (LedgerResult, error) {
-	rows, liveErr, err := ledgerObjs(db, in.All)
+func ledgerRows(ctx context.Context, db *store.DB, in LedgerReq) (LedgerResult, error) {
+	rows, liveErr, err := ledgerObjs(ctx, db, in.All)
 	if err != nil {
 		return LedgerResult{}, err
 	}
@@ -134,9 +134,9 @@ func scalar(v any) string {
 }
 
 // ledgerObjs は台帳の行に実効の判定フラグと herdr の状態・役割のファイルを足したもの。
-func ledgerObjs(db *store.DB, all bool) ([]jv.Obj, bool, error) {
+func ledgerObjs(ctx context.Context, db *store.DB, all bool) ([]jv.Obj, bool, error) {
 	st := tickets.LoadStatuses(db.DB, db.Session)
-	live, lerr := agents.SyncLive(db.DB, db.Session)
+	live, lerr := agents.SyncLiveContext(ctx, db.DB, db.Session)
 	where := "1=1"
 	if !all {
 		where = "(a.state='running' OR a.stopped_at > strftime('%Y-%m-%dT%H:%M:%SZ','now','-7 days'))"
@@ -197,24 +197,23 @@ type GraphEdge struct {
 	LastAt string  `api:"last_at" json:"last_at"`
 }
 
-// GraphResult は agent.graph の結果。EdgesErr は関係を読めなかった。
+// GraphResult は agent.graph の結果。関係(taskboard/sql/agent_edges.sql)を読めなければエラー。
 type GraphResult struct {
-	Nodes    []GraphNode `api:"nodes" json:"nodes"`
-	Edges    []GraphEdge `api:"edges" json:"edges"`
-	LiveErr  bool        `api:"live_err,optional" json:"live_err,omitempty"`
-	EdgesErr bool        `api:"edges_err,optional" json:"edges_err,omitempty"`
+	Nodes   []GraphNode `api:"nodes" json:"nodes"`
+	Edges   []GraphEdge `api:"edges" json:"edges"`
+	LiveErr bool        `api:"live_err,optional" json:"live_err,omitempty"`
 }
 
-func graphOf(db *store.DB, in GraphReq) (GraphResult, error) {
-	rows, liveErr, err := ledgerObjs(db, in.All)
+func graphOf(ctx context.Context, db *store.DB, in GraphReq) (GraphResult, error) {
+	rows, liveErr, err := ledgerObjs(ctx, db, in.All)
 	if err != nil {
 		return GraphResult{}, err
 	}
 	res := GraphResult{LiveErr: liveErr}
 	edges, err := agentEdges(db)
 	if err != nil {
-		res.EdgesErr = true
-		return res, nil
+		// tb は前と同じ文言で落ちる(原因の err は出さない: 前も出していない)
+		return GraphResult{}, define.Errorf(define.CodeFailedPrecondition, "関係を読めません(DB)")
 	}
 	have := map[string]bool{}
 	for _, r := range rows {
@@ -311,9 +310,9 @@ func names(db *store.DB, q string, a ...any) []string {
 
 func isDigits(s string) bool { return s != "" && strings.Trim(s, "0123456789") == "" }
 
-func shedRows(db *store.DB, in ShedReq) (ShedResult, error) {
+func shedRows(ctx context.Context, db *store.DB, in ShedReq) (ShedResult, error) {
 	st := tickets.LoadStatuses(db.DB, db.Session)
-	live, lerr := agents.SyncLive(db.DB, db.Session)
+	live, lerr := agents.SyncLiveContext(ctx, db.DB, db.Session)
 	held, closed := st.SQLList("active", "review", "blocked"), st.SQLList("done", "cancelled")
 	conductors := message.ConductorNames(db.DB, db.Session)
 	var out []ShedRow

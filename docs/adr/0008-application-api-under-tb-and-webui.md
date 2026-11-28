@@ -267,7 +267,7 @@ ADR 0004 の依存の検査に次を足す。今ある違反は許容リスト�
 - 自動スケールの条件に使う読み取り(#297): `ticket.count`(project・label・状態の分類・担当なしで絞った数)と、`agent.list` の `status`(herdr の agent_status)。
 - job を今すぐ動かす `job.run`(#302、`POST /v1/jobs/{name}/run`、`tb job run`): 中身は `herdrctl sched tick --now <job>`。時刻は見ず、ENABLED・GATE・SKIP_IF・ロックは毎分の回と同じ。既定は人だけ(policy の `cmd:job:run` で agent にも許せる)。scheduler を通さず、API を呼べば job が動く。
 - 組織図の読み取り `agent.org`(`GET /v1/org`、`tb org`): 台帳の agent と設定 org で決まる上司。`tb org` の計算をここへ寄せ、Web UI の agent 一覧の組織図と `/org` も同じプロセスで呼ぶ。
-- まだ残るもの: 一覧(`tb agents` / `agent-ops`)の読み取りの全部と、Web UI の agents 画面を同じプロセスで呼ぶこと。agent セットが使う最小の読み取り `agent.list` は入れた(今の親 `Parents` も返す)。
+- 一覧(`tb agents` / `agent-shed` / `agent-ops`)の読み取りも入れた(下の段 2 の `agent.ledger` など)。まだ残るもの: Web UI の agents 画面を同じプロセスで呼ぶこと。agent セットが使う最小の読み取り `agent.list` は入れた(今の親 `Parents` も返す)。
 
 ### agent セット(`internal/agentset`、`tb agentset`)
 

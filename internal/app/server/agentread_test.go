@@ -24,4 +24,12 @@ func TestAgentReadOps(t *testing.T) {
 	if r, e := callOp[appagent.ShedResult](t, env, app.Human(), "agent.shed", appagent.ShedReq{}); e != nil || len(r.Rows) != 0 {
 		t.Errorf("agent.shed の空: %v %v", r.Rows, e)
 	}
+	t.Setenv("TB_ROOT", t.TempDir())
+	if _, e := callOp[appagent.GraphResult](t, env, app.Human(), "agent.graph", appagent.GraphReq{}); e == nil || e.Message != "関係を読めません(DB)" {
+		t.Errorf("agent.graph の SQL が無い: %v", e)
+	}
+	t.Setenv("TB_ROOT", "../../../taskboard")
+	if r, e := callOp[appagent.GraphResult](t, env, app.Human(), "agent.graph", appagent.GraphReq{}); e != nil || len(r.Nodes) != 0 || len(r.Edges) != 0 {
+		t.Errorf("agent.graph の空: %+v %v", r, e)
+	}
 }
