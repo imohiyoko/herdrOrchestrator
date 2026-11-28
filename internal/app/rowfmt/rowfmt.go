@@ -3,15 +3,44 @@ package rowfmt
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
 	"strconv"
 	"strings"
 
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/jv"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/util"
 	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
 )
+
+// Value は sqlite3 -json の 1 つの値(数は jv.Number、NULL は nil、ほかは文字列)。
+func Value(v any) any {
+	switch x := v.(type) {
+	case nil:
+		return nil
+	case int64, float64:
+		return jv.Number(tickets.Text(x))
+	default:
+		return tickets.Text(v)
+	}
+}
+
+// Objs は sqlite3 -json の行(列の順のまま)。
+func Objs(db *sql.DB, q string, args ...any) ([]jv.Obj, error) {
+	var out []jv.Obj
+	err := store.Each(db, q, args, func(cols []string, vals []any) error {
+		o := jv.Obj{}
+		for i, c := range cols {
+			o = append(o, jv.KV{K: c, V: Value(vals[i])})
+		}
+		out = append(out, o)
+		return nil
+	})
+	return out, err
+}
 
 // jqValue は JSON の値を jq -c と同じ形に書き直す(キーの順は保つ)。
 func jqValue(dec *json.Decoder, b *strings.Builder) error {

@@ -166,7 +166,7 @@ func Ops(env *app.Env) []app.Op {
 		define.Expose(define.Internal, define.REST),
 		define.HTTP("POST /v1/alerts/{id}/close"),
 	)
-	return []app.Op{raise, dispatch, approve, result, closeOp}
+	return append([]app.Op{raise, dispatch, approve, result, closeOp}, readOps(env)...)
 }
 
 func who(ctx context.Context) string {

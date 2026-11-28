@@ -4,10 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
+	"github.com/imohiyoko/herdrorchestrator/internal/app"
 	appdigest "github.com/imohiyoko/herdrorchestrator/internal/app/digest"
-	"github.com/imohiyoko/herdrorchestrator/internal/kernel/jv"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 )
 
@@ -85,32 +86,18 @@ func cmdDigests(args []string, w, stderr io.Writer) error {
 		return err
 	}
 	defer db.Close()
-	withDid := func(o jv.Obj) jv.Obj { return o.Set("id", "D-"+jv.Scalar(o.Get("id"))) }
+	in := appdigest.ListReq{JSON: json}
 	if did != "" {
-		rows, _ := sqlObjs(db.DB, nil, `SELECT * FROM digests WHERE id=?`, did)
-		if len(rows) == 0 {
+		n, err := strconv.ParseInt(did, 10, 64)
+		if err != nil || n == 0 { // 0 や桁あふれは無い番号(op の 0 は一覧)
 			return die("digest が見つかりません: D-%s", did)
 		}
-		o := rows[0]
-		if json {
-			fmt.Fprintln(w, jv.Compact(withDid(o)))
-		} else {
-			fmt.Fprintf(w, "D-%s → %s (%s 件, %s)\n%s\n", jqStr(o.Get("id")), jqStr(o.Get("target")), jqStr(o.Get("item_count")), jqStr(o.Get("created_at")), jqStr(o.Get("body")))
-		}
-		return nil
+		in.ID = n
 	}
-	if json {
-		rows, err := sqlObjs(db.DB, nil, `SELECT * FROM digests ORDER BY id DESC LIMIT 50`)
-		if err != nil {
-			return err
-		}
-		for _, o := range rows {
-			fmt.Fprintln(w, jv.Compact(withDid(o)))
-		}
-		return nil
+	var r appdigest.ListResult
+	if err := callAppW(db, app.Human(), io.Discard, "digest.list", in, &r); err != nil { // 主体で中身の変わらない読み取り
+		return err
 	}
-	for _, r := range strRows(db, `SELECT 'D-'||id, target, item_count, created_at FROM digests ORDER BY id DESC LIMIT 50`) {
-		fmt.Fprintln(w, strings.Join(r, "\t"))
-	}
-	return nil
+	_, err = fmt.Fprint(w, r.Text)
+	return err
 }

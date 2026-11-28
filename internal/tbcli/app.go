@@ -96,6 +96,15 @@ func callAppAs(db *store.DB, by port.Principal, op string, in, out any) error {
 }
 
 // callAppW は callAppAs に、操作の途中の警告の書き込み先(標準エラー)を足したもの。
+// callAppRaw は callAppW と同じだが、操作のエラーを tb の終了コードにせずそのまま返す(*define.Error で分けたいとき)。
+func callAppRaw(db *store.DB, by port.Principal, op string, in, out any) error {
+	c, err := server.New(appEnv(db, io.Discard))
+	if err != nil {
+		return err
+	}
+	return c.Call(context.Background(), by, op, in, out)
+}
+
 func callAppW(db *store.DB, by port.Principal, stderr io.Writer, op string, in, out any) error {
 	c, err := server.New(appEnv(db, stderr))
 	if err != nil {

@@ -372,7 +372,7 @@ func Ops(env *app.Env) []app.Op {
 		define.Authz("cmd:digest:run"),
 		define.Expose(define.Internal, define.REST),
 		define.HTTP("POST /v1/digests"),
-	)}
+	), listOp(env)}
 }
 
 // Run は tb digest の中身。

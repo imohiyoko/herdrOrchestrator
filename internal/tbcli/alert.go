@@ -1,16 +1,18 @@
 package tbcli
 
 import (
-	"github.com/imohiyoko/API/port"
-
+	"errors"
 	"fmt"
-	"github.com/imohiyoko/herdrorchestrator/internal/app"
 	"io"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/imohiyoko/API/define"
+	"github.com/imohiyoko/API/port"
+
+	"github.com/imohiyoko/herdrorchestrator/internal/app"
 	appalert "github.com/imohiyoko/herdrorchestrator/internal/app/alert"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/jv"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
@@ -44,12 +46,22 @@ func needVal(args []string, i int) (string, error) {
 }
 
 // alertRow は alert_row(session_row alerts id n)。無ければ nil。
-func alertRow(db *store.DB, id int64) jv.Obj {
-	rows, err := sqlObjs(db.DB, nil, `SELECT * FROM alerts WHERE id=?`, id)
-	if err != nil || len(rows) == 0 {
-		return nil
+// 無いときだけ nil, nil(ほかの失敗はエラー)。
+func alertRow(db *store.DB, id int64) (jv.Obj, error) {
+	var r appalert.TextResult
+	if err := callAppRaw(db, app.Human(), "alert.get", appalert.GetReq{ID: fmt.Sprintf("A-%d", id)}, &r); err != nil {
+		var e *define.Error
+		if errors.As(err, &e) && e.Code == define.CodeNotFound {
+			return nil, nil
+		}
+		return nil, appErr(err)
 	}
-	return rows[0]
+	vs, err := jv.DecodeAll([]byte(r.Text))
+	if err != nil || len(vs) != 1 {
+		return nil, fmt.Errorf("alert.get の結果を読めません: %v", err)
+	}
+	o, _ := vs[0].(jv.Obj)
+	return o, nil
 }
 
 // jqStr は jq の文字列埋め込み \(.x) の値(null は "null")。
@@ -153,7 +165,11 @@ func cmdAlert(args []string, w, stderr io.Writer) error {
 	}
 	if json {
 		id, _ := validAid(r.ID)
-		if o := alertRow(db, id); o != nil {
+		o, err := alertRow(db, id)
+		if err != nil {
+			return err
+		}
+		if o != nil {
 			fmt.Fprintln(w, jv.Compact(withAid(o)))
 		}
 		return nil
@@ -251,7 +267,9 @@ func cmdAlertResult(args []string, w, stderr io.Writer) error {
 		return err
 	}
 	defer db.Close()
-	if alertRow(db, id) == nil {
+	if o, err := alertRow(db, id); err != nil {
+		return err
+	} else if o == nil {
 		return die("アラートが見つかりません: A-%d", id)
 	}
 	rtext := ""
@@ -308,7 +326,10 @@ func cmdAlerts(args []string, w, stderr io.Writer) error {
 			return err
 		}
 		defer db.Close()
-		o := alertRow(db, id)
+		o, err := alertRow(db, id)
+		if err != nil {
+			return err
+		}
 		if o == nil {
 			return die("アラートが見つかりません: %s", args[0])
 		}
@@ -353,30 +374,10 @@ func cmdAlerts(args []string, w, stderr io.Writer) error {
 		return err
 	}
 	defer db.Close()
-	where, qa := "1=1", []any{}
-	if st != "" {
-		where, qa = "status=?", []any{st}
+	var r appalert.TextResult
+	if err := callAppW(db, app.Human(), io.Discard, "alert.list", appalert.ListReq{Status: st, JSON: json}, &r); err != nil { // 主体で中身の変わらない読み取り
+		return err
 	}
-	if json {
-		rows, err := sqlObjs(db.DB, nil, `SELECT * FROM alerts WHERE (`+where+`) ORDER BY id DESC LIMIT 100`, qa...)
-		if err != nil {
-			return err
-		}
-		for _, o := range rows {
-			fmt.Fprintln(w, jv.Compact(withAid(o)))
-		}
-		return nil
-	}
-	return qrows(db.DB, `SELECT 'A-'||id, COALESCE(severity,'未解析'), status, count, COALESCE(analyst,'-'), last_seen, title FROM alerts WHERE (`+where+`) ORDER BY id DESC LIMIT 100`, qa, func(_ []string, vals []any) error {
-		parts := make([]string, len(vals))
-		for i, v := range vals {
-			if v == nil {
-				parts[i] = "-"
-			} else {
-				parts[i] = sqlText(v)
-			}
-		}
-		fmt.Fprintln(w, strings.Join(parts, "\t"))
-		return nil
-	})
+	_, err = fmt.Fprint(w, r.Text)
+	return err
 }
