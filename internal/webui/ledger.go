@@ -8,6 +8,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	appmessage "github.com/imohiyoko/herdrorchestrator/internal/app/message"
 )
 
 // ledger.go は送信履歴(tb の messages 表。読み取り専用。views.page_ledger と data.py の ledger_*)。
@@ -22,7 +24,7 @@ var (
 
 func (v *sv) ledgerKinds() []string {
 	var out []string
-	for _, r := range v.q("SELECT DISTINCT kind FROM messages ORDER BY kind") {
+	for _, r := range appmessage.LedgerKinds(v.qChecked) {
 		out = append(out, pyStr(r["kind"]))
 	}
 	return out
@@ -30,37 +32,16 @@ func (v *sv) ledgerKinds() []string {
 
 type ledgerFilter struct{ target, from, to, kind, result string }
 
-func ledgerWhere(f ledgerFilter, hideFailed bool) (string, []any) {
-	var w []string
-	var a []any
-	add := func(cond, val string) {
-		if val != "" {
-			w = append(w, cond)
-			a = append(a, val)
-		}
-	}
-	add("target=?", f.target)
-	add("substr(created_at,1,10)>=?", f.from)
-	add("substr(created_at,1,10)<=?", f.to)
-	add("kind=?", f.kind)
-	if f.result != "" {
-		add("result=?", f.result)
-	} else if hideFailed {
-		w = append(w, "result!='failed'")
-	}
-	if len(w) == 0 {
-		return "", a
-	}
-	return " WHERE " + strings.Join(w, " AND "), a
+func (f ledgerFilter) app() appmessage.LedgerFilter {
+	return appmessage.LedgerFilter{Target: f.target, From: f.from, To: f.to, Kind: f.kind, Result: f.result}
 }
 
 type ledgerRow struct{ kind, ref, target, result, createdAt, first string }
 
 // ledgerRows は新しい順に最大 ledgerMax 件(result が空なら failed を除く)。本文は 1 行目の先頭 200 文字だけ。
 func (v *sv) ledgerRows(f ledgerFilter, includeFailed bool) []ledgerRow {
-	where, a := ledgerWhere(f, f.result == "" && !includeFailed)
 	var out []ledgerRow
-	for _, r := range v.q("SELECT id, kind, ref, target, body, result, created_at FROM messages"+where+" ORDER BY id DESC LIMIT ?", append(a, ledgerMax)...) {
+	for _, r := range appmessage.LedgerRows(v.qChecked, f.app(), f.result == "" && !includeFailed, ledgerMax) {
 		first, _, _ := strings.Cut(Clean(or(r["body"], "")), "\n")
 		first = strings.TrimFunc(first, pyIsSpace)
 		if utf8.RuneCountInString(first) > 200 {
@@ -134,8 +115,7 @@ func (s *Server) pageLedger(q *rq, c pageCtx) (string, string) {
 		}
 		return "/ledger?" + E(pyURLEncode(kv))
 	}
-	where, a := ledgerWhere(ledgerFilter{target: f.target, from: f.from, to: f.to}, false)
-	summ := v.q("SELECT kind, result, COUNT(*) AS n FROM messages"+where+" GROUP BY kind, result ORDER BY kind, result", a...)
+	summ := appmessage.LedgerSummary(v.qChecked, f.app())
 	type kr struct{ k, r string }
 	sm := map[kr]int64{}
 	seen := map[string]bool{}

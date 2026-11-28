@@ -10,6 +10,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	appagent "github.com/imohiyoko/herdrorchestrator/internal/app/agent"
 	"github.com/imohiyoko/herdrorchestrator/internal/sched"
 )
 
@@ -771,8 +772,8 @@ func (v *sv) agentState(target string) agentSt {
 		}
 	}
 	out := agentSt{count: len(hit), registry: row{}}
-	if rows, ok := v.qChecked("SELECT * FROM agents WHERE name=?", target); ok && len(rows) > 0 {
-		out.registry = rows[0]
+	if r, _ := appagent.LedgerRow(v.qChecked, target); r != nil {
+		out.registry = r
 	}
 	if len(hit) == 1 {
 		a := hit[0]

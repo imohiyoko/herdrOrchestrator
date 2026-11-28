@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -202,4 +203,80 @@ func EmitRow(w io.Writer, js bool, cols []string, vals []any, null string) error
 	}
 	_, err := fmt.Fprintln(w, strings.Join(parts, "\t"))
 	return err
+}
+
+// Row は読み取りの 1 行(列名 → 値。値は DB の値のまま: int64 / float64 / string / []byte / nil)。
+type Row = map[string]any
+
+// Q は読むだけの接続で SQL を流す口。照会できなければ ok=false(DB が無い・表が無いなど)。
+// Web UI はセッションの一時ビューの付いた読み取り専用の接続で、SQL の中の __<分類>_STATUSES__ を設定 statuses で埋めて流す。
+// 画面向けの読み取り(app/<サービス> の query.go)はこれを受けて SQL を書く(ADR 0008「人が決めること」の案: 読み取りは別ファイル)。
+type Q func(q string, args ...any) ([]Row, bool)
+
+// EmptyIn は IN (...) の中身が無いときに入れるもの(どの値にも合わない)。
+const EmptyIn = "SELECT NULL WHERE 0"
+
+var reTableName = regexp.MustCompile(`^[a-z_]{1,64}$`)
+
+func nameSet(names []string) map[string]bool {
+	m := map[string]bool{}
+	for _, n := range names {
+		if reTableName.MatchString(n) {
+			m[n] = true
+		}
+	}
+	return m
+}
+
+// OpenSessionRO は DB を読み取り専用で開き、セッション sess の行だけの一時ビューを作る(表とビューの名前はそのまま)。
+// 接続は 1 本だけ(一時ビューは接続ごと)。開けなければ nil。
+func OpenSessionRO(path, sess string, busyMS int) *sql.DB {
+	db, err := store.OpenRO(path, busyMS)
+	if err != nil {
+		return nil
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(0)
+	lit := store.Quote(sess)
+	for _, kind := range []struct {
+		typ  string
+		want map[string]bool
+	}{{"table", nameSet(store.SessionTables())}, {"view", nameSet(store.SessionViews())}} {
+		var names []string
+		rows, err := db.Query("SELECT m.name FROM main.sqlite_master m WHERE m.type=? AND EXISTS "+
+			"(SELECT 1 FROM pragma_table_info(m.name) p WHERE p.name='herdr_session')", kind.typ)
+		if err != nil {
+			db.Close()
+			return nil
+		}
+		bad := false
+		for rows.Next() {
+			var n string
+			if rows.Scan(&n) != nil {
+				bad = true
+				break
+			}
+			if kind.want[n] {
+				names = append(names, n)
+			}
+		}
+		if bad || rows.Err() != nil { // 途中で読めなくなったら、包めない表が残るので開かない
+			rows.Close()
+			db.Close()
+			return nil
+		}
+		rows.Close()
+		for _, t := range names {
+			if _, err := db.Exec("CREATE TEMP VIEW " + t + " AS SELECT * FROM main." + t + " WHERE herdr_session=" + lit); err != nil {
+				db.Close()
+				return nil
+			}
+		}
+	}
+	if _, err := db.Exec("PRAGMA query_only=ON"); err != nil {
+		db.Close()
+		return nil
+	}
+	return db
 }

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	appmessage "github.com/imohiyoko/herdrorchestrator/internal/app/message"
 )
 
 // pages.go は画面の枠と、いくつかの画面。
@@ -157,7 +159,7 @@ type outboxRow struct {
 // outboxRows は outbox の一覧(新しい順に最大 100 件。text は先頭 80 文字だけ)。
 func (v *sv) outboxRows() []outboxRow {
 	var out []outboxRow
-	for _, o := range v.q("SELECT id, from_name, target, kind, task_id, status, text, created_at FROM outbox ORDER BY id DESC LIMIT ?", outboxListMax) {
+	for _, o := range appmessage.OutboxRows(v.qChecked, outboxListMax) {
 		r := outboxRow{id: pyStr(o["id"]), fromName: Clean(pyStr(o["from_name"])), target: Clean(pyStr(o["target"])), kind: Clean(pyStr(o["kind"])),
 			taskID: Clean(or(o["task_id"], "")), status: Clean(pyStr(o["status"])), text: short(o["text"], 80)}
 		if t, ok := parseTS(o["created_at"]); ok {

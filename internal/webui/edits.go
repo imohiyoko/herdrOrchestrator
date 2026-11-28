@@ -192,7 +192,7 @@ func (s *Server) postEdit(q *rq, path string, f form, csrf string) {
 // ---- チケットの状態(tb ticket move)
 
 func (v *sv) taskExists(id string) bool {
-	return reTaskID.MatchString(id) && len(v.q("SELECT id FROM tasks WHERE id=?", id)) > 0
+	return reTaskID.MatchString(id) && ticket.Exists(v.qChecked, id)
 }
 
 func (s *Server) postTaskStatus(q *rq, f form) (string, string, string, func(pageCtx) (string, string, string)) {
@@ -301,7 +301,7 @@ func (s *Server) pageStatuses(q *rq, c pageCtx) (string, string) {
 	st := v.statuses()
 	_, src, _ := v.configText("statuses")
 	counts := map[string]int64{}
-	for _, r := range v.q("SELECT status, COUNT(*) AS n FROM tasks GROUP BY status") {
+	for _, r := range ticket.StatusCounts(v.qChecked) {
 		counts[pyStr(r["status"])] = intOf(r["n"])
 	}
 	var b strings.Builder
@@ -405,13 +405,11 @@ func (v *sv) sprintForm(c pageCtx) string {
 	}
 	seen := map[string]bool{}
 	var dl strings.Builder
-	for _, sq := range []string{"SELECT DISTINCT project FROM tasks ORDER BY project", "SELECT DISTINCT project FROM sprints ORDER BY project"} {
-		for _, r := range v.q(sq) {
-			p := pyStr(r["project"])
-			if !seen[p] && reProjName.MatchString(p) {
-				seen[p] = true
-				dl.WriteString(`<option value="` + E(p) + `">`)
-			}
+	for _, r := range ticket.Projects(v.qChecked) {
+		p := pyStr(r["project"])
+		if !seen[p] && reProjName.MatchString(p) {
+			seen[p] = true
+			dl.WriteString(`<option value="` + E(p) + `">`)
 		}
 	}
 	return `<h2>スプリントを作る</h2><form method=post action="/sprint-op"><input type=hidden name=csrf value="` + E(c.csrf) + `">` +
@@ -593,8 +591,7 @@ func (s *Server) postPolicy(q *rq, f form) (string, string, string, func(pageCtx
 
 // jobConfEdit は Web UI から書けるジョブの定義(conf の本文)と、書くときの tb の引数。書けなければ理由。
 func (v *sv) jobConfEdit(name string) (text, src string, args []string, why string) {
-	rows := v.q("SELECT herdr_session AS s, body FROM main.config WHERE key = ? AND herdr_session IN (?, '*') ORDER BY herdr_session = '*' LIMIT 1",
-		"sched-job:"+name, v.sess)
+	rows := appconfig.BodyFrom(v.qChecked, "sched-job:"+name, v.sess, 0)
 	if len(rows) == 0 || rows[0]["body"] == nil {
 		return "", "", nil, "定義が DB にありません(jobs/" + name + ".conf のままです)。先に手元で tb job import " + name + " で取り込みます"
 	}

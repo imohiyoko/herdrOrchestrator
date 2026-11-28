@@ -325,6 +325,7 @@ ADR 0004 の依存の検査に次を足す。今ある違反は許容リスト�
 - agent の台帳・関係図・絞る候補・操作の記録の読むだけの操作 `agent.ledger` / `agent.graph` / `agent.shed` / `agent.ops`(`internal/app/agent` の ledger.go。`GET /v1/agents/ledger`・`/v1/agents/graph`・`/v1/agents/shed`・`/v1/agent-ops`)。herdr の一覧を読めなかったときは結果の `live_err` で知らせ、tb は前と同じ注意を stderr に出す。
 - レシピの読むだけの操作 `recipe.list` / `recipe.show` / `recipe.history` / `recipe.queue`(`internal/app/recipe` の read.go。`GET /v1/recipes`・`/v1/recipes/{name}`・`/v1/recipe-changes`・`/v1/recipe-runs`)、設定の変更の記録 `config.history`(`GET /v1/config/{key}/history`)、役割の変更の記録 `agent.role.log`(`GET /v1/role-changes`)。
 - tb に残っていた SQL を全部移した: チケットの一覧 `ticket.list`(`GET /v1/tickets`。同じ条件を繰り返すときはカンマ区切り)、制限の今の値 `agent.limits.show`(`GET /v1/limits`)、期限ファイルの行と取り込み済みか `reminder.deadlines`(`GET /v1/deadlines`)。review-submit は作者を `ticket.get` で、herdr pane close は台帳の pane を `agent.RunningAt` で、config import は既にある行を `config.HasRow` で確かめる。layers の allow list から tbcli の SQL の行が無くなった。
+- Web UI の読み取りは「人が決めること」の案どおり、`app/<サービス>` の query.go(画面向けの読み取り)に寄せる。接続は呼び手が渡す `rowfmt.Q`(Web UI はセッションの一時ビューの付いた読み取り専用の接続 `rowfmt.OpenSessionRO` で、`__<分類>_STATUSES__` を埋めて流す)。行の値は DB の値のまま(`rowfmt.Row`)。まず agents / data / edits / inbox / jobs / jobview / ledger / overview / pages / perms / permspage / roles / sessions の SQL を移した。
 
 ## 検討した代替案
 

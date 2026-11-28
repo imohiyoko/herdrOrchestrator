@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	appticket "github.com/imohiyoko/herdrorchestrator/internal/app/ticket"
 )
 
 // overview.go は概要(/。views.page_overview)。読み取りのみ。
@@ -56,8 +58,7 @@ func (s *Server) pageOverview(q *rq, c pageCtx) (string, string) {
 	}
 	body += fmt.Sprintf("<h2>滞留 (working のまま %d 分超)</h2>", stallMin) + table([]string{"agent", "最終入力"}, rows)
 	rows = nil
-	for _, t := range v.q("SELECT id,project,title,owner_agent,updated_at FROM tasks WHERE status IN (__DONE_STATUSES__) " +
-		"ORDER BY updated_at DESC LIMIT 5") {
+	for _, t := range appticket.RecentDone(v.qChecked, 5) {
 		rows = append(rows, []string{tlink(t["id"]), ev(t["project"]), ev(t["title"]), ev(t["owner_agent"]), ev(t["updated_at"])})
 	}
 	body += "<h2>直近の完了</h2>" + table([]string{"タスク", "PJ", "題", "担当", "更新"}, rows)
