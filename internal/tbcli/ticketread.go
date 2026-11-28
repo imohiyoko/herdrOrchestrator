@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -79,18 +78,6 @@ func qrows(db *sql.DB, q string, args []any, f func(cols []string, vals []any) e
 	return rows.Err()
 }
 
-// sqlTSV は sql -separator $'\t'(NULL は空)。
-func sqlTSV(db *sql.DB, w io.Writer, q string, args ...any) error {
-	return qrows(db, q, args, func(_ []string, vals []any) error {
-		s := make([]string, len(vals))
-		for i, v := range vals {
-			s[i] = tickets.Text(v)
-		}
-		fmt.Fprintln(w, strings.Join(s, "\t"))
-		return nil
-	})
-}
-
 // jvValue は sqlite3 -json の 1 つの値。
 func jvValue(v any) any {
 	switch x := v.(type) {
@@ -102,35 +89,6 @@ func jvValue(v any) any {
 		return jv.Number(tickets.Text(x))
 	default:
 		return tickets.Text(v)
-	}
-}
-
-// sqlObjs は sql -json の行(列の順のまま)。fromjson の列は JSON として読む。
-func sqlObjs(db *sql.DB, fromjson []string, q string, args ...any) ([]jv.Obj, error) {
-	var out []jv.Obj
-	err := qrows(db, q, args, func(cols []string, vals []any) error {
-		o := jv.Obj{}
-		for i, c := range cols {
-			v := jvValue(vals[i])
-			if slices.Contains(fromjson, c) {
-				s, _ := v.(string)
-				vs, err := jv.DecodeAll([]byte(s))
-				if err != nil || len(vs) != 1 {
-					return fmt.Errorf("jq: error: %s を JSON として読めません", c)
-				}
-				v = vs[0]
-			}
-			o = append(o, jv.KV{K: c, V: v})
-		}
-		out = append(out, o)
-		return nil
-	})
-	return out, err
-}
-
-func compactRows(w io.Writer, os []jv.Obj) {
-	for _, o := range os {
-		fmt.Fprintln(w, jv.Compact(o))
 	}
 }
 

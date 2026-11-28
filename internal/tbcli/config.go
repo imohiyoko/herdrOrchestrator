@@ -3,7 +3,6 @@ package tbcli
 import (
 	"errors"
 	"fmt"
-	"github.com/imohiyoko/herdrorchestrator/internal/kernel/perms"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,9 +11,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imohiyoko/herdrorchestrator/internal/app"
 	appconfig "github.com/imohiyoko/herdrorchestrator/internal/app/config"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/config"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/env"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/perms"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
 )
@@ -70,9 +71,12 @@ func cmdConfig(args []string, w, stderr io.Writer) error {
 		if err := keyOK(args[0]); err != nil {
 			return err
 		}
-		return store.Each(db.DB, `SELECT id, herdr_session, how, changed_by, changed_at, CASE WHEN body IS NULL THEN '(消した)' ELSE length(body) || ' 文字' END
-    FROM main.config_changes WHERE key=? AND herdr_session IN (?, '*') ORDER BY id DESC LIMIT 50`, []any{args[0], db.Session},
-			func(cols []string, vals []any) error { return emitRow(w, false, cols, vals, "") })
+		var r appconfig.HistoryResult
+		if err := callAppW(db, app.Human(), io.Discard, "config.history", appconfig.HistoryReq{Key: args[0]}, &r); err != nil {
+			return err
+		}
+		fmt.Fprint(w, r.Text)
+		return nil
 	}
 	return usage("%s", configUsage)
 }

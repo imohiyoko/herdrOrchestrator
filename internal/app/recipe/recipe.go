@@ -91,7 +91,7 @@ func Ops(env *app.Env) []app.Op {
 		define.Expose(define.Internal, define.REST),
 		define.HTTP("POST /v1/recipe-runs/{id}/cancel"),
 	)
-	return append([]app.Op{set, rm, cancel}, runOps(env)...)
+	return append(append([]app.Op{set, rm, cancel}, runOps(env)...), readOps(env)...)
 }
 
 func who(ctx context.Context) string {

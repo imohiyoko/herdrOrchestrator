@@ -121,35 +121,18 @@ func cmdRecipeRunner(args []string, w, stderr io.Writer) error {
 
 // cmdRecipeQueue は tb recipe-queue [--all] [--json]。
 func cmdRecipeQueue(args []string, w, stderr io.Writer) error {
-	where := "status IN ('queued','running')"
-	json := false
+	var in apprecipe.QueueReq
 	for _, a := range args {
 		switch a {
 		case "--all":
-			where = "1=1"
+			in.All = true
 		case "--json":
-			json = true
+			in.JSON = true
 		default:
 			return usage("recipe-queue: 不明な引数 %s", a)
 		}
 	}
-	db, _, err := openCmd(stderr)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	if json {
-		rows, err := sqlObjs(db.DB, []string{"plan"}, `SELECT 'R-'||id AS id, status, name, target, requester, via, task_id, plan, 'E-'||event_id AS event, created_at, started_at, finished_at, result FROM recipe_runs WHERE `+where+` ORDER BY recipe_runs.id`)
-		if err != nil {
-			return err
-		}
-		compactRows(w, rows)
-		return nil
-	}
-	for _, r := range strRows(db, `SELECT 'R-'||id, status, name, target, requester, created_at, COALESCE(replace(result, char(10), ' '),'-') FROM recipe_runs WHERE `+where+` ORDER BY recipe_runs.id`) {
-		fmt.Fprintln(w, strings.Join(r, "\t"))
-	}
-	return nil
+	return recipeRead(stderr, "recipe.queue", in, w)
 }
 
 // cmdRecipeCancel は tb recipe-cancel R-<n>: 待ち行列の queued を取り消す。人と、頼んだ agent 自身だけ。
