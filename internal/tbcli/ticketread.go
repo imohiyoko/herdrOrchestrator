@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/imohiyoko/herdrorchestrator/internal/app"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/ticket"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/jv"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
@@ -155,10 +156,11 @@ func cmdShow(args []string, w, stderr io.Writer) error {
 	return nil
 }
 
-// readText は読むだけの操作を呼んで、Text をそのまま出す。
-func readText(db *store.DB, what, op string, in any, w io.Writer) error {
+// readText は読むだけの操作を呼んで、Text をそのまま出す。主体で中身の変わらない読み取りで、入口の段は tb が判定済みなので、
+// 呼び手は人として呼ぶ(pane の中でも herdr に聞かない。移す前と同じく DB だけを読む)。
+func readText(db *store.DB, _ string, op string, in any, w io.Writer) error {
 	var r ticket.TextResult
-	if err := callAppNoHerdr(db, what, io.Discard, op, in, &r); err != nil { // 主体で中身の変わらない読むだけの操作(herdr に聞けなくても読める)
+	if err := callAppW(db, app.Human(), io.Discard, op, in, &r); err != nil {
 		return err
 	}
 	fmt.Fprint(w, r.Text)
