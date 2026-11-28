@@ -96,7 +96,7 @@ func Ops(env *app.Env) []app.Op {
 		define.Expose(define.Internal, define.REST),
 		define.HTTP("POST /v1/messages/flush"),
 	)
-	return []app.Op{send, flush, readOp(env)}
+	return append([]app.Op{send, flush, readOp(env)}, listOps(env)...)
 }
 
 func send(env *app.Env, who string, in SendReq) (SendResult, error) {

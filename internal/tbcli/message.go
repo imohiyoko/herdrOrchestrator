@@ -5,16 +5,15 @@ import (
 	"fmt"
 	"io"
 	"regexp"
-	"slices"
-	"strconv"
 	"strings"
+
+	"github.com/imohiyoko/API/port"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/app"
 	appmessage "github.com/imohiyoko/herdrorchestrator/internal/app/message"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 	"github.com/imohiyoko/herdrorchestrator/internal/message"
 	"github.com/imohiyoko/herdrorchestrator/internal/requests"
-	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
 )
 
 // tb message(taskboard/lib/send.sh の send / flush / outbox / inbox / inbox-read)。
@@ -161,35 +160,22 @@ func send(db *store.DB, args []string, w, stderr io.Writer) error {
 
 // outboxJSON は send --json の 1 行(outbox の行。保留したら inbox、止めたら blocked を足す)。
 func outboxJSON(db *store.DB, oid int64, held, blocked string, w io.Writer) error {
-	return store.Each(db.DB, `SELECT * FROM outbox WHERE id=?`, []any{oid}, func(cols []string, vals []any) error {
-		prefixID(cols, vals, "id", "O-")
-		s, err := rowJSON(cols, vals)
-		if err != nil {
-			return err
-		}
-		s = strings.TrimSuffix(s, "}")
-		if held != "" {
-			s += `,"inbox":` + jqString(held)
-		}
-		if blocked != "" {
-			s += `,"blocked":true`
-		}
-		_, err = fmt.Fprintln(w, s+"}")
+	var r appmessage.TextResult
+	if err := callAppW(db, app.Human(), io.Discard, "message.outbox", appmessage.OutboxReq{ID: oid}, &r); err != nil {
 		return err
-	})
-}
-
-// prefixID は jq の .<列> = "<接頭辞>\(.<列>)"(NULL は "null")。
-func prefixID(cols []string, vals []any, col, prefix string) {
-	for i, c := range cols {
-		if c == col {
-			if vals[i] == nil {
-				vals[i] = prefix + "null"
-			} else {
-				vals[i] = prefix + tickets.Text(vals[i])
-			}
-		}
 	}
+	if r.Text == "" {
+		return nil
+	}
+	s := strings.TrimSuffix(strings.TrimSuffix(r.Text, "\n"), "}")
+	if held != "" {
+		s += `,"inbox":` + jqString(held)
+	}
+	if blocked != "" {
+		s += `,"blocked":true`
+	}
+	_, err := fmt.Fprintln(w, s+"}")
+	return err
 }
 
 // flushOutbox は cmd_flush: 積まれた送信を届ける。宛先ごとに古い順で、使用中の宛先は次回に回す。
@@ -227,23 +213,17 @@ func outboxList(db *store.DB, args []string, w io.Writer) error {
 			return usage("outbox: 不明な引数 %s", args[i])
 		}
 	}
-	where, qa := "1=1", []any{}
-	if st != "" {
-		if !slices.Contains([]string{"pending", "queued", "sent", "denied"}, st) {
-			return usage("outbox: --status は pending|queued|sent|denied")
-		}
-		where, qa = "status=?", []any{st}
+	return msgRead(db, app.Human(), "message.outbox", appmessage.OutboxReq{Status: st, JSON: js}, w) // 値は API が確かめる
+}
+
+// msgRead は送信・受信の読むだけの操作を by として呼び、Text を出す。
+func msgRead(db *store.DB, by port.Principal, op string, in any, w io.Writer) error {
+	var r appmessage.TextResult
+	if err := callAppW(db, by, io.Discard, op, in, &r); err != nil {
+		return err
 	}
-	if js {
-		return store.Each(db.DB, "SELECT * FROM outbox WHERE ("+where+") ORDER BY id DESC LIMIT 100", qa, func(cols []string, vals []any) error {
-			prefixID(cols, vals, "id", "O-")
-			return emitRow(w, true, cols, vals, "")
-		})
-	}
-	return store.Each(db.DB, `SELECT 'O-'||id, status, from_name, target, kind, COALESCE(task_id,'-'), created_at,
-	     substr(replace(replace(text, char(10), ' '), char(9), ' '),1,80) FROM outbox WHERE (`+where+`) ORDER BY id DESC LIMIT 100`, qa, func(cols []string, vals []any) error {
-		return emitRow(w, false, cols, vals, "-")
-	})
+	fmt.Fprint(w, r.Text)
+	return nil
 }
 
 // inboxList は cmd_inbox: 読み手は HERDR_PANE_ID + herdr agent list から決まる(自己申告にしない)。自分宛ての行だけを見る。
@@ -265,21 +245,7 @@ func inboxList(db *store.DB, args []string, w, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	where := "recipient=?"
-	if unread {
-		where += " AND read_at IS NULL"
-	}
-	if js {
-		return store.Each(db.DB, "SELECT * FROM inbox WHERE "+where+" ORDER BY id", []any{l.Name}, func(cols []string, vals []any) error {
-			prefixID(cols, vals, "id", "I-")
-			prefixID(cols, vals, "outbox_id", "O-")
-			return emitRow(w, true, cols, vals, "")
-		})
-	}
-	return store.Each(db.DB, `SELECT 'I-'||id, CASE WHEN read_at IS NULL THEN 'unread' ELSE 'read' END, from_name, kind, COALESCE(task_id,'-'), created_at,
-	     substr(replace(replace(text, char(10), ' '), char(9), ' '),1,200) FROM inbox WHERE `+where+` ORDER BY id`, []any{l.Name}, func(cols []string, vals []any) error {
-		return emitRow(w, false, cols, vals, "-")
-	})
+	return msgRead(db, app.PrincipalOf(l.Name), "message.inbox", appmessage.InboxReq{Unread: unread, JSON: js}, w)
 }
 
 // inboxRead は cmd_inbox-read: 1 件を全文で出し、既読にする(自分宛てでなければ「見つからない」。ほかの agent の行があるかも漏らさない)
@@ -302,21 +268,10 @@ func inboxRead(db *store.DB, args []string, w, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	iid, perr := strconv.ParseInt(num, 10, 64)
-	var cols []string
-	var vals []any
-	if perr == nil {
-		if err := store.Each(db.DB, `SELECT * FROM inbox WHERE id=? AND recipient=?`, []any{iid, l.Name}, func(c []string, v []any) error {
-			if cols == nil {
-				cols, vals = c, v
-			}
-			return nil
-		}); err != nil {
-			return err
-		}
-	}
-	if cols == nil {
-		return die("inbox に見つかりません: I-%s", num)
+	// 読んだ印を付ける前の行を出す(--json の read_at は前と同じく印の前の値)
+	var got appmessage.TextResult
+	if err := callAppW(db, app.PrincipalOf(l.Name), io.Discard, "message.inbox.get", appmessage.InboxGetReq{ID: "I-" + num, JSON: js}, &got); err != nil {
+		return err
 	}
 	env := appEnv(db, stderr)
 	env.Reporter = func(string) (string, string, string) { return l.Name, l.Pane, l.Session }
@@ -324,23 +279,6 @@ func inboxRead(db *store.DB, args []string, w, stderr io.Writer) error {
 	if err := callAppEnv(env, app.Agent(l.Name), "message.read", appmessage.ReadReq{ID: "I-" + num}, &rr); err != nil {
 		return err
 	}
-	if js {
-		prefixID(cols, vals, "id", "I-")
-		prefixID(cols, vals, "outbox_id", "O-")
-		return emitRow(w, true, cols, vals, "")
-	}
-	f := map[string]string{}
-	for i, c := range cols {
-		if vals[i] == nil {
-			f[c] = "null"
-		} else {
-			f[c] = tickets.Text(vals[i])
-		}
-	}
-	task := f["task_id"]
-	if task == "null" {
-		task = "-"
-	}
-	fmt.Fprintf(w, "I-%s  from: %s / %s / %s / %s  (O-%s)\n\n%s\n", f["id"], f["from_name"], f["kind"], task, f["created_at"], f["outbox_id"], f["text"])
+	fmt.Fprint(w, got.Text)
 	return nil
 }
