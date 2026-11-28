@@ -17,7 +17,6 @@ import (
 	"github.com/imohiyoko/herdrorchestrator/internal/app"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
 	appapproval "github.com/imohiyoko/herdrorchestrator/internal/app/approval"
-	"github.com/imohiyoko/herdrorchestrator/internal/approval"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/herdr"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/identity"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/perms"
@@ -36,11 +35,6 @@ func qidNum(s string) int64 { return requests.Num(s) }
 
 // runArgs は今の tb の引数(承認待ちに積むコマンド)。
 var runArgs []string
-
-// reqPending は承認待ちの行(元の行の状態を見る)。
-const reqPending = `((r.source='cmd' AND r.status='pending')
-  OR (r.source='outbox' AND EXISTS (SELECT 1 FROM outbox o WHERE o.id=r.source_id AND o.status='pending'))
-  OR (r.source='agent_ops' AND EXISTS (SELECT 1 FROM agent_ops a WHERE a.id=r.source_id AND a.status='pending')))`
 
 // envPriority は TB_PRIORITY(high / normal / low。無ければ normal)。
 func envPriority() (int, error) {
@@ -165,67 +159,34 @@ func insertCmd(tier, op, target, rule string, withStdin bool) (string, error) {
 	return "Q-" + strconv.FormatInt(id, 10), nil
 }
 
+// callerRead は呼び手の名前(callerName)の主体で読むだけの操作を呼び、Text を出す。
+func callerRead(db *store.DB, op string, in any, w io.Writer) error {
+	who, err := callerName()
+	if err != nil {
+		return die("herdr agent list に失敗したため、実行者を特定できません")
+	}
+	var r appapproval.TextResult
+	if err := callAppW(db, app.PrincipalOf(who), io.Discard, op, in, &r); err != nil {
+		return err
+	}
+	fmt.Fprint(w, r.Text)
+	return nil
+}
+
 // approvalList は tb approval list(承認待ち Q-<n>。優先度の高い順、同じなら古い順)。
 func approvalList(db *store.DB, args []string, w io.Writer) error {
-	asJSON, mine := false, false
+	var in appapproval.ListReq
 	for _, a := range args {
 		switch a {
 		case "--json":
-			asJSON = true
+			in.JSON = true
 		case "--mine":
-			mine = true
+			in.Mine = true
 		default:
 			return usage("approval list: 不明な引数 %s", a)
 		}
 	}
-	filter := ""
-	if mine {
-		// 呼んだ agent が approve: で決められるものだけ(人は全部)
-		who, err := callerName()
-		if err != nil {
-			return die("herdr agent list に失敗したため、実行者を特定できません")
-		}
-		var all []int64
-		err = qrows(db.DB, `SELECT r.id FROM requests r WHERE `+reqPending, nil, func(_ []string, vals []any) error {
-			id, _ := strconv.ParseInt(fmt.Sprint(vals[0]), 10, 64)
-			all = append(all, id)
-			return nil
-		})
-		if err != nil {
-			return err
-		}
-		// 行を読み終えてから 1 件ずつ見る(読みかけのまま同じ DB に問い合わせると、接続が 1 本のとき止まる)
-		var ids []string
-		j := approval.NewJudge(db.DB, db.Session)
-		for _, id := range all {
-			if r, ok, _ := loadRequest(db.DB, id); ok && appapproval.CanDecide(db, j, r, who) {
-				ids = append(ids, strconv.FormatInt(id, 10))
-			}
-		}
-		if len(ids) == 0 {
-			ids = []string{"-1"}
-		}
-		filter = ` AND r.id IN (` + strings.Join(ids, ",") + `)`
-	}
-	q := `SELECT 'Q-'||r.id AS id, CASE r.priority WHEN 2 THEN 'high' WHEN 0 THEN 'low' ELSE 'normal' END AS priority,
-	  r.op, r.requester AS requested_by, r.target, r.created_at, r.detail
-	  FROM requests r WHERE ` + reqPending + filter + ` ORDER BY r.priority DESC, r.id`
-	if asJSON {
-		rows, err := sqlObjs(db.DB, nil, q)
-		if err != nil {
-			return err
-		}
-		compactRows(w, rows)
-		return nil
-	}
-	return qrows(db.DB, `SELECT id, priority, op, requested_by, target, created_at FROM (`+q+`)`, nil, func(_ []string, vals []any) error {
-		s := make([]string, len(vals))
-		for i, v := range vals {
-			s[i] = fmt.Sprint(v)
-		}
-		_, err := fmt.Fprintln(w, strings.Join(s, "\t"))
-		return err
-	})
+	return callerRead(db, "approval.list", in, w)
 }
 
 // 送信(O-<n>)と agent の操作(L-<n>)の承認・却下は、どの入口(Q-<n> / O-<n> / L-<n> / tb agent-approve)から決めても、
@@ -328,17 +289,13 @@ func reqErr(err error) error {
 
 // approvalHistory は tb approval history: allow / ask / deny の記録(新しい順)。誰が依頼し、何が・誰が決め、どうなったか。
 func approvalHistory(db *store.DB, args []string, w io.Writer) error {
-	asJSON, by, limit := false, "", 50
+	var in appapproval.HistoryReq
 	for i := 0; i < len(args); i++ {
 		switch a := args[i]; a {
 		case "--json":
-			asJSON = true
+			in.JSON = true
 		case "--mine":
-			who, err := callerName()
-			if err != nil {
-				return die("herdr agent list に失敗したため、実行者を特定できません")
-			}
-			by = who
+			in.Mine = true
 		case "--by", "--limit":
 			if i+1 >= len(args) {
 				return usage("%s に値が必要です", a)
@@ -346,52 +303,19 @@ func approvalHistory(db *store.DB, args []string, w io.Writer) error {
 			v := args[i+1]
 			i++
 			if a == "--by" {
-				by = v
+				in.By = v
 			} else {
 				n, err := strconv.Atoi(v)
 				if err != nil || n < 1 || n > 1000 {
 					return usage("--limit は 1〜1000")
 				}
-				limit = n
+				in.Limit = n
 			}
 		default:
 			return usage("approval history: 不明な引数 %s", a)
 		}
 	}
-	// 送信・agent の操作は元の行の状態を見せる
-	q := `SELECT 'Q-'||r.id AS id, r.tier, CASE r.source
-	    WHEN 'outbox' THEN COALESCE((SELECT o.status FROM outbox o WHERE o.id=r.source_id), r.status)
-	    WHEN 'agent_ops' THEN COALESCE((SELECT a.status FROM agent_ops a WHERE a.id=r.source_id), r.status)
-	    ELSE r.status END AS status,
-	  r.requester AS requested_by, r.op, r.target, COALESCE(r.decided_by, '') AS decided_by, COALESCE(r.rule, '') AS rule,
-	  r.created_at, COALESCE(r.decided_at, '') AS decided_at, r.detail, COALESCE(r.result, '') AS result
-	  FROM requests r WHERE r.herdr_session=? AND (?='' OR r.requester=?) ORDER BY r.id DESC LIMIT ?`
-	// 実行の結果(出力の末尾)は、依頼者本人と人にだけ見せる(ほかの agent の出力を読ませない)
-	viewer, err := callerName()
-	if err != nil {
-		return die("herdr agent list に失敗したため、実行者を特定できません")
-	}
-	q = strings.Replace(q, `COALESCE(r.result, '') AS result`, `CASE WHEN ?='human' OR r.requester=? THEN COALESCE(r.result, '') ELSE '' END AS result`, 1)
-	qa := []any{viewer, viewer, db.Session, by, by, limit}
-	if asJSON {
-		rows, err := sqlObjs(db.DB, nil, q, qa...)
-		if err != nil {
-			return err
-		}
-		compactRows(w, rows)
-		return nil
-	}
-	return qrows(db.DB, `SELECT id, tier, status, requested_by, op, target, decided_by, created_at FROM (`+q+`)`, qa, func(_ []string, vals []any) error {
-		s := make([]string, len(vals))
-		for i, v := range vals {
-			s[i] = fmt.Sprint(v)
-			if s[i] == "" {
-				s[i] = "-"
-			}
-		}
-		_, err := fmt.Fprintln(w, strings.Join(s, "\t"))
-		return err
-	})
+	return callerRead(db, "approval.history", in, w)
 }
 
 // approvedRun は tb approval approve が立てた子(承認したコマンドの機械的な実行)の確かめ。

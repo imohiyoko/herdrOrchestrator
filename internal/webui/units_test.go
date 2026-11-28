@@ -767,14 +767,14 @@ func TestStatuses(t *testing.T) {
 	}
 }
 
-// 承認待ちの条件は tb approval list(internal/tbcli の reqPending)と同じ文にする(食い違うと画面と tb で件数がずれる)。
+// 承認待ちの条件は tb approval list(internal/app/approval の reqPending)と同じ文にする(食い違うと画面と tb で件数がずれる)。
 func TestReqPendingSameAsTB(t *testing.T) {
-	b, err := os.ReadFile(filepath.Join("..", "tbcli", "request.go"))
+	b, err := os.ReadFile(filepath.Join("..", "app", "approval", "read.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	src := strings.ReplaceAll(string(b), "\r\n", "\n") // Windows の checkout は CRLF
 	if !strings.Contains(src, "const reqPending = `"+reqPendingSQL+"`") {
-		t.Error("internal/tbcli/request.go の reqPending と reqPendingSQL が違う")
+		t.Error("internal/app/approval/read.go の reqPending と reqPendingSQL が違う")
 	}
 }
