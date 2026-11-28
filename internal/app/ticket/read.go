@@ -79,7 +79,7 @@ func badArg(format string, a ...any) error {
 }
 
 func readOps(env *app.Env) []app.Op {
-	return append(readCommentOps(env),
+	return append(readCommentOps(env), listOp(env),
 		readOp(env, "ticket.tree", "cmd:ticket:tree", "GET /v1/tickets/tree", "チケットの木(tb tree)", tree, define.Resource("ticket", "id")),
 		readOp(env, "ticket.labels", "cmd:ticket:labels", "GET /v1/tickets/labels", "ラベルごとの数(tb labels)", labelsText),
 		readOp(env, "ticket.sprints", "cmd:ticket:sprints", "GET /v1/sprints", "スプリントの一覧と進み(tb sprints)", sprints),

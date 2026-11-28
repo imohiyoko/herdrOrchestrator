@@ -324,6 +324,7 @@ ADR 0004 の依存の検査に次を足す。今ある違反は許容リスト�
 - アラートとまとめの読むだけの操作 `alert.get` / `alert.list`(`internal/app/alert` の read.go。`GET /v1/alerts/{id}`・`/v1/alerts`)と `digest.list`(`internal/app/digest` の list.go。`GET /v1/digests`)。`alert.get` は行の JSON を返し、tb はそれを読んで前と同じ形で出す。
 - agent の台帳・関係図・絞る候補・操作の記録の読むだけの操作 `agent.ledger` / `agent.graph` / `agent.shed` / `agent.ops`(`internal/app/agent` の ledger.go。`GET /v1/agents/ledger`・`/v1/agents/graph`・`/v1/agents/shed`・`/v1/agent-ops`)。herdr の一覧を読めなかったときは結果の `live_err` で知らせ、tb は前と同じ注意を stderr に出す。
 - レシピの読むだけの操作 `recipe.list` / `recipe.show` / `recipe.history` / `recipe.queue`(`internal/app/recipe` の read.go。`GET /v1/recipes`・`/v1/recipes/{name}`・`/v1/recipe-changes`・`/v1/recipe-runs`)、設定の変更の記録 `config.history`(`GET /v1/config/{key}/history`)、役割の変更の記録 `agent.role.log`(`GET /v1/role-changes`)。
+- tb に残っていた SQL を全部移した: チケットの一覧 `ticket.list`(`GET /v1/tickets`。同じ条件を繰り返すときはカンマ区切り)、制限の今の値 `agent.limits.show`(`GET /v1/limits`)、期限ファイルの行と取り込み済みか `reminder.deadlines`(`GET /v1/deadlines`)。review-submit は作者を `ticket.get` で、herdr pane close は台帳の pane を `agent.RunningAt` で、config import は既にある行を `config.HasRow` で確かめる。layers の allow list から tbcli の SQL の行が無くなった。
 
 ## 検討した代替案
 

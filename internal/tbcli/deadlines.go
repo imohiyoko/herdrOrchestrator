@@ -8,7 +8,8 @@ import (
 	"io"
 	"strings"
 
-	"github.com/imohiyoko/herdrorchestrator/internal/reminder"
+	"github.com/imohiyoko/herdrorchestrator/internal/app"
+	appreminder "github.com/imohiyoko/herdrorchestrator/internal/app/reminder"
 )
 
 // cmdDeadlinesImport は tb deadlines-import [-p project] [--dry-run]: 期限ファイルの行を、担当なしで期日つきのチケットにする
@@ -41,28 +42,30 @@ func cmdDeadlinesImport(args []string, w, stderr io.Writer) error {
 		return err
 	}
 	defer db.Close()
-	var hasDue int
-	_ = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('tasks') WHERE name='due'`).Scan(&hasDue)
-	if hasDue == 0 {
+	var plan appreminder.DeadlinesResult
+	if err := callAppW(db, app.Human(), io.Discard, "reminder.deadlines", appreminder.DeadlinesReq{}, &plan); err != nil {
+		return err
+	}
+	if plan.NoDue {
 		return die("deadlines-import: この DB には期日の列がありません(スキーマが古い)")
 	}
-	env := reminder.LoadEnv()
-	lines, ok := env.Lines()
-	if !ok {
-		fmt.Fprintf(w, "期限ファイルがありません: %s\n", env.Deadlines)
+	if plan.Missing {
+		fmt.Fprintf(w, "期限ファイルがありません: %s\n", plan.File)
 		return nil
 	}
 	label := systemLabelOf(db, stderr, "deadline")
 	n, m := 0, 0
-	for _, l := range lines {
-		var valid int
-		_ = db.QueryRow(`SELECT date(?1) IS ?1`, l.Date).Scan(&valid)
-		if valid != 1 {
+	added := map[[2]string]string{} // このファイルの前の行で作ったもの(同じ行が 2 度あれば 2 度目は取り込み済み)
+	for _, l := range plan.Lines {
+		if id, ok := added[[2]string{l.Date, l.Label}]; ok && l.State == "new" {
+			l.State, l.Ticket = "have", id
+		}
+		switch l.State {
+		case "invalid":
 			fmt.Fprintf(w, "skip(日付が正しくない): %s | %s\n", l.Date, l.Label)
 			continue
-		}
-		if have := reminder.DeadlineTicket(db.DB, l.Date, l.Label); have != "" {
-			fmt.Fprintf(w, "skip(取り込み済み %s): %s | %s\n", have, l.Date, l.Label)
+		case "have":
+			fmt.Fprintf(w, "skip(取り込み済み %s): %s | %s\n", l.Ticket, l.Date, l.Label)
 			m++
 			continue
 		}
@@ -76,7 +79,9 @@ func cmdDeadlinesImport(args []string, w, stderr io.Writer) error {
 			finish(err, stderr) // bash は cmd_add の die の文を出してから、ここで止まる
 			return die("deadlines-import: チケットを作れませんでした: %s", l.Label)
 		}
-		fmt.Fprintf(w, "add %s: %s | %s\n", strings.TrimRight(out.String(), "\n"), l.Date, l.Label)
+		id := strings.TrimRight(out.String(), "\n")
+		added[[2]string{l.Date, l.Label}] = id
+		fmt.Fprintf(w, "add %s: %s | %s\n", id, l.Date, l.Label)
 		n++
 	}
 	suffix := ""

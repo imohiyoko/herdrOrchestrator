@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/agents"
+	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/herdr"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/identity"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
@@ -193,8 +194,7 @@ func cmdHerdrPaneClose(args []string, w, stderr io.Writer) error {
 			in = append(in, a)
 		}
 	}
-	var reg string // 台帳で動作中の agent の pane(同期の後も running なら守る)
-	_ = db.QueryRow(`SELECT COALESCE(group_concat(name, ','),'') FROM agents WHERE herdr_session=? AND pane_id=? AND state='running'`, db.Session, pane).Scan(&reg)
+	reg := agent.RunningAt(db, pane) // 台帳で動作中の agent の pane(同期の後も running なら守る)
 	if reg != "" && len(in) == 0 {
 		in = append(in, herdrAgent{name: reg, pane: pane})
 	}

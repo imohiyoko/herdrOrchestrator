@@ -111,7 +111,7 @@ func ledgerOps(env *app.Env) []app.Op {
 		define.Expose(define.Internal, define.REST),
 		define.HTTP("GET /v1/agents/graph"),
 	)
-	return []app.Op{ledger, graph, shed, ops, roleLogOp(env)}
+	return []app.Op{ledger, graph, shed, ops, roleLogOp(env), limitsShowOp(env)}
 }
 
 func ledgerRows(ctx context.Context, db *store.DB, in LedgerReq) (LedgerResult, error) {

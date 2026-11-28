@@ -3,23 +3,23 @@
 package tbcli
 
 import (
-	"database/sql"
-	"github.com/imohiyoko/herdrorchestrator/internal/approval"
-	"github.com/imohiyoko/herdrorchestrator/internal/kernel/identity"
-	"sort"
-
 	"bufio"
+	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/imohiyoko/herdrorchestrator/internal/agents"
 	"io"
 	"os"
 	"regexp"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/imohiyoko/herdrorchestrator/internal/agents"
+	appticket "github.com/imohiyoko/herdrorchestrator/internal/app/ticket"
+	"github.com/imohiyoko/herdrorchestrator/internal/approval"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/env"
+	"github.com/imohiyoko/herdrorchestrator/internal/kernel/identity"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/perms"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
@@ -434,9 +434,7 @@ func cmdList(args []string, w, stderr io.Writer) error {
 		return err
 	}
 	defer db.Close()
-	closed := st.SQLList("done", "cancelled")
-	var f tickets.Filter
-	project, status, sort := "", "", ""
+	var in appticket.ListReq
 	long, js := false, false
 	need := func(i int) (string, error) {
 		if i+1 >= len(args) {
@@ -455,43 +453,37 @@ func cmdList(args []string, w, stderr io.Writer) error {
 			i++
 			switch a {
 			case "-p", "--project":
-				project = v
+				in.Project = v
 			case "-s", "--status":
-				status = v
+				in.Status = v
 			case "--type":
 				if err := oneOf(tickets.Types, v, "種別"); err != nil {
 					return err
 				}
-				f.Add("type=?", v)
+				appticket.AddTo(&in.Types, v)
 			case "--priority":
 				if err := oneOf(tickets.Priorities, v, "優先度"); err != nil {
 					return err
 				}
-				f.Add("priority=?", v)
+				appticket.AddTo(&in.Priorities, v)
 			case "-l", "--label":
 				ls, err := labels(v)
 				if err != nil {
 					return err
 				}
-				for _, l := range ls {
-					f.Add("EXISTS (SELECT 1 FROM json_each(tasks.labels) WHERE value=?)", l)
-				}
+				appticket.AddTo(&in.Labels, ls...)
 			case "--owner":
-				f.Add("owner_agent=?", v)
+				appticket.AddTo(&in.Owners, v)
 			case "--parent":
 				if !reID.MatchString(v) {
 					return usage("タスク ID は T-<project>-NNN 形式: %s", v)
 				}
-				f.Add("parent_id=?", v)
+				appticket.AddTo(&in.Parents, v)
 			case "--sprint":
-				if v == "backlog" {
-					f.Add("sprint_id IS NULL")
-				} else {
-					if !reSprint.MatchString(v) {
-						return usage("スプリント ID は S-<番号> 形式: %s", v)
-					}
-					f.Add("sprint_id=?", strings.TrimPrefix(v, "S-"))
+				if v != "backlog" && !reSprint.MatchString(v) {
+					return usage("スプリント ID は S-<番号> 形式: %s", v)
 				}
+				appticket.AddTo(&in.Sprints, v)
 			case "--due-within":
 				if !reDays.MatchString(v) {
 					return usage("list: --due-within は 0〜9999 の日数: %s", v)
@@ -500,22 +492,19 @@ func cmdList(args []string, w, stderr io.Writer) error {
 				if err != nil {
 					return err
 				}
-				n := strings.TrimLeft(v, "0")
-				if n == "" {
-					n = "0"
-				}
-				f.Add("due IS NOT NULL AND due >= ? AND due <= date(?, '+"+n+" days') AND status NOT IN ("+closed+")", td, td)
+				in.Today = td
+				appticket.AddTo(&in.DueWithin, v)
 			case "--sort":
-				sort = v
+				in.Sort = v
 			}
 		case "--overdue":
 			td, err := today()
 			if err != nil {
 				return err
 			}
-			f.Add("due IS NOT NULL AND due < ? AND status NOT IN ("+closed+")", td)
+			in.Today, in.Overdue = td, true
 		case "--has-due":
-			f.Add("due IS NOT NULL")
+			in.HasDue = true
 		case "--long":
 			long = true
 		case "--json":
@@ -524,40 +513,19 @@ func cmdList(args []string, w, stderr io.Writer) error {
 			return usage("list: 不明な引数 %s", a)
 		}
 	}
-	if project != "" {
-		f.Add("project=?", project)
-	}
-	if status != "" {
-		if err := oneOf(st.Names, status, "status"); err != nil {
+	if in.Status != "" {
+		if err := oneOf(st.Names, in.Status, "status"); err != nil {
 			return err
 		}
-		f.Add("status=?", status)
 	}
-	order, ok := tickets.Order(sort)
-	if !ok {
-		return usage("list: --sort は priority / updated / created / id / due のどれか: %s", sort)
+	if _, ok := tickets.Order(in.Sort); !ok {
+		return usage("list: --sort は priority / updated / created / id / due のどれか: %s", in.Sort)
 	}
 	// --json と --long を両方付けたら、tb と同じく --json が勝つ
-	format := tickets.Short
 	if js {
-		format = tickets.JSON
+		in.Format = "json"
 	} else if long {
-		format = tickets.Long
+		in.Format = "long"
 	}
-	return tickets.List(db.DB, &f, order, format, func(cols []string, vals []any) error {
-		if format == tickets.JSON {
-			s, err := rowJSON(cols, vals)
-			if err != nil {
-				return err
-			}
-			_, err = fmt.Fprintln(w, s)
-			return err
-		}
-		parts := make([]string, len(vals))
-		for i, v := range vals {
-			parts[i] = tickets.Text(v)
-		}
-		_, err := fmt.Fprintln(w, strings.Join(parts, "\t"))
-		return err
-	})
+	return readText(db, "tb list", "ticket.list", in, w)
 }
