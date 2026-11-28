@@ -3,8 +3,10 @@ package ticket
 // チケットの一覧(tb list)。
 
 import (
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/imohiyoko/API/define"
 
@@ -60,6 +62,19 @@ func bad(format string, a ...any) error {
 }
 
 func list(db *store.DB, st tickets.StatusSet, in ListReq) (string, error) {
+	if in.Status != "" && !slices.Contains(st.Names, in.Status) {
+		return "", bad("status は %s のどれか: %s", strings.Join(st.Names, " / "), in.Status)
+	}
+	if in.Today != "" {
+		if _, err := time.Parse("2006-01-02", in.Today); err != nil || len(in.Today) != 10 {
+			return "", bad("期日は YYYY-MM-DD の日付: %s", in.Today)
+		}
+	}
+	for _, v := range split(in.Sprints) {
+		if v != "backlog" && !reSprint.MatchString(v) {
+			return "", bad("スプリント ID は S-<番号> 形式: %s", v)
+		}
+	}
 	var f tickets.Filter
 	closed := st.SQLList("done", "cancelled")
 	for _, v := range split(in.Types) {

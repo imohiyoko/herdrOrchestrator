@@ -67,7 +67,7 @@ func limitsShowOp(env *app.Env) app.Op {
 				return limitsShow(db, limits.Load(db.DB, db.Session), in.JSON, in.Line), nil
 			})
 		},
-		define.Doc("制限の今の値と数(tb limits show。動作中・作業中・障害・解析役・spawn の数と上限、超過、各キーの値と出どころ)"),
+		define.Doc("制限の今の値と数(tb limits show。数える前に herdr の一覧で台帳を同期する。動作中・作業中・障害・解析役・spawn の数と上限、超過、各キーの値と出どころ)"),
 		define.Authz("cmd:agent:limits-show"),
 		define.Expose(define.Internal, define.REST),
 		define.HTTP("GET /v1/limits"),

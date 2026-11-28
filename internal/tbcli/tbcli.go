@@ -435,6 +435,7 @@ func cmdList(args []string, w, stderr io.Writer) error {
 	}
 	defer db.Close()
 	var in appticket.ListReq
+	noOwner := false
 	long, js := false, false
 	need := func(i int) (string, error) {
 		if i+1 >= len(args) {
@@ -473,6 +474,9 @@ func cmdList(args []string, w, stderr io.Writer) error {
 				}
 				appticket.AddTo(&in.Labels, ls...)
 			case "--owner":
+				if v == "" {
+					noOwner = true // owner_agent='' に合うチケットは無い(空の値はカンマ区切りで渡せない)
+				}
 				appticket.AddTo(&in.Owners, v)
 			case "--parent":
 				if !reID.MatchString(v) {
@@ -526,6 +530,9 @@ func cmdList(args []string, w, stderr io.Writer) error {
 		in.Format = "json"
 	} else if long {
 		in.Format = "long"
+	}
+	if noOwner {
+		return nil
 	}
 	return readText(db, "tb list", "ticket.list", in, w)
 }
