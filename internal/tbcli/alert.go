@@ -1,16 +1,18 @@
 package tbcli
 
 import (
-	"github.com/imohiyoko/API/port"
-
+	"errors"
 	"fmt"
-	"github.com/imohiyoko/herdrorchestrator/internal/app"
 	"io"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/imohiyoko/API/define"
+	"github.com/imohiyoko/API/port"
+
+	"github.com/imohiyoko/herdrorchestrator/internal/app"
 	appalert "github.com/imohiyoko/herdrorchestrator/internal/app/alert"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/jv"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
@@ -44,17 +46,22 @@ func needVal(args []string, i int) (string, error) {
 }
 
 // alertRow は alert_row(session_row alerts id n)。無ければ nil。
-func alertRow(db *store.DB, id int64) jv.Obj {
+// 無いときだけ nil, nil(ほかの失敗はエラー)。
+func alertRow(db *store.DB, id int64) (jv.Obj, error) {
 	var r appalert.TextResult
-	if callAppW(db, app.Human(), io.Discard, "alert.get", appalert.GetReq{ID: id}, &r) != nil {
-		return nil
+	if err := callAppRaw(db, app.Human(), "alert.get", appalert.GetReq{ID: fmt.Sprintf("A-%d", id)}, &r); err != nil {
+		var e *define.Error
+		if errors.As(err, &e) && e.Code == define.CodeNotFound {
+			return nil, nil
+		}
+		return nil, appErr(err)
 	}
 	vs, err := jv.DecodeAll([]byte(r.Text))
 	if err != nil || len(vs) != 1 {
-		return nil
+		return nil, fmt.Errorf("alert.get の結果を読めません: %v", err)
 	}
 	o, _ := vs[0].(jv.Obj)
-	return o
+	return o, nil
 }
 
 // jqStr は jq の文字列埋め込み \(.x) の値(null は "null")。
@@ -158,7 +165,11 @@ func cmdAlert(args []string, w, stderr io.Writer) error {
 	}
 	if json {
 		id, _ := validAid(r.ID)
-		if o := alertRow(db, id); o != nil {
+		o, err := alertRow(db, id)
+		if err != nil {
+			return err
+		}
+		if o != nil {
 			fmt.Fprintln(w, jv.Compact(withAid(o)))
 		}
 		return nil
@@ -256,7 +267,9 @@ func cmdAlertResult(args []string, w, stderr io.Writer) error {
 		return err
 	}
 	defer db.Close()
-	if alertRow(db, id) == nil {
+	if o, err := alertRow(db, id); err != nil {
+		return err
+	} else if o == nil {
 		return die("アラートが見つかりません: A-%d", id)
 	}
 	rtext := ""
@@ -313,7 +326,10 @@ func cmdAlerts(args []string, w, stderr io.Writer) error {
 			return err
 		}
 		defer db.Close()
-		o := alertRow(db, id)
+		o, err := alertRow(db, id)
+		if err != nil {
+			return err
+		}
 		if o == nil {
 			return die("アラートが見つかりません: %s", args[0])
 		}

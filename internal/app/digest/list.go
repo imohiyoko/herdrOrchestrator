@@ -10,6 +10,7 @@ import (
 	"github.com/imohiyoko/API/define"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/app"
+	"github.com/imohiyoko/herdrorchestrator/internal/app/rowfmt"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/jv"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
@@ -51,27 +52,6 @@ func listOp(env *app.Env) app.Op {
 	)
 }
 
-func rowObjs(db *store.DB, q string, args ...any) ([]jv.Obj, error) {
-	var out []jv.Obj
-	err := store.Each(db.DB, q, args, func(cols []string, vals []any) error {
-		o := jv.Obj{}
-		for i, c := range cols {
-			var v any
-			switch x := vals[i].(type) {
-			case nil:
-			case int64, float64:
-				v = jv.Number(tickets.Text(x))
-			default:
-				v = tickets.Text(x)
-			}
-			o = append(o, jv.KV{K: c, V: v})
-		}
-		out = append(out, o)
-		return nil
-	})
-	return out, err
-}
-
 // str は jq の文字列埋め込み \(.x) の値(null は "null")。
 func str(v any) string {
 	if v == nil {
@@ -84,7 +64,10 @@ func listText(db *store.DB, in ListReq) (string, error) {
 	withDid := func(o jv.Obj) jv.Obj { return o.Set("id", "D-"+jv.Scalar(o.Get("id"))) }
 	var b strings.Builder
 	if in.ID != 0 {
-		rows, _ := rowObjs(db, `SELECT * FROM digests WHERE id=?`, in.ID)
+		rows, err := rowfmt.Objs(db.DB, `SELECT * FROM digests WHERE id=?`, in.ID)
+		if err != nil {
+			return "", err
+		}
 		if len(rows) == 0 {
 			return "", define.Errorf(define.CodeNotFound, "digest が見つかりません: D-%d", in.ID)
 		}
@@ -97,7 +80,7 @@ func listText(db *store.DB, in ListReq) (string, error) {
 		return b.String(), nil
 	}
 	if in.JSON {
-		rows, err := rowObjs(db, `SELECT * FROM digests ORDER BY id DESC LIMIT 50`)
+		rows, err := rowfmt.Objs(db.DB, `SELECT * FROM digests ORDER BY id DESC LIMIT 50`)
 		if err != nil {
 			return "", err
 		}

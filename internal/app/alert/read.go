@@ -4,20 +4,20 @@ package alert
 
 import (
 	"context"
-	"database/sql"
+	"strconv"
 	"strings"
 
 	"github.com/imohiyoko/API/define"
 
 	"github.com/imohiyoko/herdrorchestrator/internal/app"
+	"github.com/imohiyoko/herdrorchestrator/internal/app/rowfmt"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/jv"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
-	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
 )
 
-// GetReq は alert.get の入力(A-<n> の n)。
+// GetReq は alert.get の入力(A-<n>。n だけでもよい)。
 type GetReq struct {
-	ID int64 `api:"id,path"`
+	ID string `api:"id,path"`
 }
 
 // ListReq は alert.list の入力。Status で絞る(空なら全部)。新しい順に 100 件。
@@ -36,12 +36,17 @@ func readOps(env *app.Env) []app.Op {
 	get := app.Query(env, "alert.get", pass,
 		func(_ context.Context, in GetReq) (TextResult, error) {
 			return withDB(env, func(db *store.DB) (TextResult, error) {
-				rows, err := objs(db.DB, `SELECT * FROM alerts WHERE id=?`, in.ID)
+				n := strings.TrimPrefix(in.ID, "A-")
+				id, perr := strconv.ParseInt(n, 10, 64)
+				if perr != nil || n == "" || strings.Trim(n, "0123456789") != "" {
+					return TextResult{}, define.Errorf(define.CodeInvalidArgument, "アラート ID は A-<数字>: %s", in.ID)
+				}
+				rows, err := rowfmt.Objs(db.DB, `SELECT * FROM alerts WHERE id=?`, id)
 				if err != nil {
 					return TextResult{}, define.Errorf(define.CodeInternal, "%s", err.Error())
 				}
 				if len(rows) == 0 {
-					return TextResult{}, define.Errorf(define.CodeNotFound, "アラートが見つかりません: A-%d", in.ID)
+					return TextResult{}, define.Errorf(define.CodeNotFound, "アラートが見つかりません: A-%d", id)
 				}
 				return TextResult{Text: jv.Compact(rows[0])}, nil
 			})
@@ -69,31 +74,6 @@ func readOps(env *app.Env) []app.Op {
 	return []app.Op{get, list}
 }
 
-// objs は sqlite3 -json の行(列の順のまま)。
-func objs(db *sql.DB, q string, args ...any) ([]jv.Obj, error) {
-	var out []jv.Obj
-	err := store.Each(db, q, args, func(cols []string, vals []any) error {
-		o := jv.Obj{}
-		for i, c := range cols {
-			o = append(o, jv.KV{K: c, V: jvValue(vals[i])})
-		}
-		out = append(out, o)
-		return nil
-	})
-	return out, err
-}
-
-func jvValue(v any) any {
-	switch x := v.(type) {
-	case nil:
-		return nil
-	case int64, float64:
-		return jv.Number(tickets.Text(x))
-	default:
-		return tickets.Text(v)
-	}
-}
-
 func listText(db *store.DB, in ListReq) (string, error) {
 	where, qa := "1=1", []any{}
 	if in.Status != "" {
@@ -101,7 +81,7 @@ func listText(db *store.DB, in ListReq) (string, error) {
 	}
 	var b strings.Builder
 	if in.JSON {
-		rows, err := objs(db.DB, `SELECT * FROM alerts WHERE (`+where+`) ORDER BY id DESC LIMIT 100`, qa...)
+		rows, err := rowfmt.Objs(db.DB, `SELECT * FROM alerts WHERE (`+where+`) ORDER BY id DESC LIMIT 100`, qa...)
 		if err != nil {
 			return "", err
 		}
@@ -116,7 +96,7 @@ func listText(db *store.DB, in ListReq) (string, error) {
 			if v == nil {
 				parts[i] = "-"
 			} else {
-				parts[i] = jv.Scalar(jvValue(v))
+				parts[i] = jv.Scalar(rowfmt.Value(v))
 			}
 		}
 		b.WriteString(strings.Join(parts, "\t") + "\n")

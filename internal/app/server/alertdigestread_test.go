@@ -13,8 +13,11 @@ import (
 func TestAlertDigestReadOps(t *testing.T) {
 	t.Setenv("HERDR_PANE_ID", "")
 	env, _ := fixture(t, "")
-	if _, e := callOp[appalert.TextResult](t, env, app.Human(), "alert.get", appalert.GetReq{ID: 1}); e == nil || e.Code != define.CodeNotFound {
+	if _, e := callOp[appalert.TextResult](t, env, app.Human(), "alert.get", appalert.GetReq{ID: "A-1"}); e == nil || e.Code != define.CodeNotFound {
 		t.Errorf("alert.get の無い番号: %v", e)
+	}
+	if _, e := callOp[appalert.TextResult](t, env, app.Human(), "alert.get", appalert.GetReq{ID: "A-x"}); e == nil || e.Code != define.CodeInvalidArgument {
+		t.Errorf("alert.get の不正な ID: %v", e)
 	}
 	if r, e := callOp[appalert.TextResult](t, env, app.Agent("w1"), "alert.list", appalert.ListReq{JSON: true}); e != nil || r.Text != "" {
 		t.Errorf("alert.list の空: %q %v", r.Text, e)
