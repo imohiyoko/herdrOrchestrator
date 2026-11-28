@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	appticket "github.com/imohiyoko/herdrorchestrator/internal/app/ticket"
 )
 
 // docspage.go はドキュメント(/docs、/docs/view)とタスクの詳細(/tasks/<id>)。読み取りのみ(views.page_docs / page_doc / page_task)。
@@ -345,11 +347,10 @@ const historyMax = 100
 // pageTask は views.page_task。無いタスクは ok=false(404)。
 func (s *Server) pageTask(q *rq, tid string, c pageCtx) (string, string, bool) {
 	v := q.data()
-	rows := v.q("SELECT * FROM tasks WHERE id=?", tid)
-	if len(rows) == 0 {
+	t := appticket.Task(v.qChecked, tid)
+	if t == nil {
 		return "", "", false
 	}
-	t := rows[0]
 	type kv struct{ k, v string }
 	var info []kv
 	for _, k := range []string{"id", "project", "title", "status", "owner_agent", "session_id", "account", "parent_id", "reported_at", "created_at", "updated_at"} {
@@ -404,7 +405,7 @@ func (s *Server) pageTask(q *rq, tid string, c pageCtx) (string, string, bool) {
 		}
 		b.WriteString(f)
 	}
-	if kids := v.q("SELECT id, title, status, owner_agent, updated_at FROM tasks WHERE parent_id=? ORDER BY id", tid); len(kids) > 0 {
+	if kids := appticket.Children(v.qChecked, tid); len(kids) > 0 {
 		var rs [][]string
 		for _, k := range kids {
 			rs = append(rs, []string{tlink(k["id"]), E(head(k["title"], titleMax)), ev(k["status"]), ev(k["owner_agent"]), ev(k["updated_at"])})
@@ -412,10 +413,7 @@ func (s *Server) pageTask(q *rq, tid string, c pageCtx) (string, string, bool) {
 		b.WriteString("<h2>子タスク</h2>" + table([]string{"タスク", "題", "状態", "担当", "更新"}, rs))
 	}
 	if _, ok := t["labels"]; ok {
-		lk := v.q("SELECT CASE WHEN l.from_id=? THEN l.link_type WHEN l.link_type='blocks' THEN 'blocked by'"+
-			" WHEN l.link_type='duplicates' THEN 'duplicated by' ELSE 'relates' END AS rel,"+
-			" x.id, x.title, x.status FROM task_links l JOIN tasks x ON x.id = CASE WHEN l.from_id=? THEN l.to_id ELSE l.from_id END"+
-			" WHERE l.from_id=? OR l.to_id=? ORDER BY l.id", tid, tid, tid, tid)
+		lk := appticket.Links(v.qChecked, tid)
 		if len(lk) > 0 {
 			var rs [][]string
 			for _, x := range lk {
@@ -425,7 +423,7 @@ func (s *Server) pageTask(q *rq, tid string, c pageCtx) (string, string, bool) {
 		}
 	}
 	// 履歴(018 の task_events。ADR 0003)。表の無い DB では出さない。新しい順に最大 historyMax 件
-	if evs := v.q("SELECT id, kind, old, new, actor, ref, created_at FROM task_events WHERE task_id=? ORDER BY id DESC LIMIT ?", tid, historyMax); len(evs) > 0 {
+	if evs := appticket.Events(v.qChecked, tid, historyMax); len(evs) > 0 {
 		var rs [][]string
 		for _, x := range evs {
 			rs = append(rs, []string{"E-" + pyStr(x["id"]), ev(x["created_at"]), ev(x["kind"]), E(head(x["old"], titleMax)), E(head(x["new"], titleMax)),
@@ -438,7 +436,7 @@ func (s *Server) pageTask(q *rq, tid string, c pageCtx) (string, string, bool) {
 	}
 	back := "/tasks/" + pyQuote(tid, "")
 	var rs [][]string
-	for _, cm := range v.q("SELECT * FROM comments WHERE task_id=? ORDER BY id DESC", tid) {
+	for _, cm := range appticket.Comments(v.qChecked, tid) {
 		rs = append(rs, []string{"C-" + pyStr(cm["id"]), ev(cm["kind"]), `<pre>` + E(head(cm["text"], reportMax)) + `</pre>`,
 			docLinks(commentRefs(cm["id"], cm["deliverables"])), ev(cm["from_name"]), ifElse(truthy(cm["delivered_at"]), "済", "未"),
 			ev(cm["created_at"]), resolveCell(cm, back, c)})
@@ -447,7 +445,7 @@ func (s *Server) pageTask(q *rq, tid string, c pageCtx) (string, string, bool) {
 	b.WriteString(fmt.Sprintf("<p class=note>本文は先頭 %d 文字だけです(…は続きがあるしるし)。全文は手元で <code>tb comments %s</code> か、", reportMax, E(Clean(tid))) +
 		"成果物のパスで読んでください。</p>")
 	rs = nil
-	for _, p := range v.q("SELECT * FROM proxy_requests WHERE task_id=? ORDER BY id DESC", tid) {
+	for _, p := range appticket.ProxyRequests(v.qChecked, tid) {
 		rs = append(rs, []string{ev(p["id"]), ev(p["status"]), ev(p["effect"]), `<pre>` + ev(p["cmd"]) + `</pre>`, ev(p["why"]), ev(p["result"])})
 	}
 	b.WriteString("<h2>代行依頼</h2>" + table([]string{"id", "状態", "effect", "コマンド", "理由", "結果"}, rs))
