@@ -125,10 +125,10 @@ func ProxyRequests(q rowfmt.Q, id string) []rowfmt.Row {
 }
 
 // OpenQuestions は未対応の question / blocked の報告(閉じていないチケットのもの。task_status・task_title つき)を新しい順に 100 件まで。
-// resolved が真なら対応済み(resolved_at のある)ものを除く(列の無い古い DB では偽で呼ぶ)。
-func OpenQuestions(q rowfmt.Q, resolved bool) []rowfmt.Row {
+// hasResolvedCol は comments に resolved_at の列があるか(あれば対応済みのものを除く。列の無い古い DB では偽で呼ぶ)。
+func OpenQuestions(q rowfmt.Q, hasResolvedCol bool) []rowfmt.Row {
 	res := ""
-	if resolved {
+	if hasResolvedCol {
 		res = " AND c.resolved_at IS NULL"
 	}
 	r, _ := q("SELECT c.*, t.status AS task_status, t.title AS task_title FROM comments c " +

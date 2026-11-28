@@ -151,7 +151,8 @@ func DueCounts(q rowfmt.Q, today, until string) (over, soon int64) {
 	return over, soon
 }
 
-// Distinct はチケットのある値の一覧(名前の順の行)。what は status / project / owner / label(列は status / project / owner_agent / value)。
+// Distinct は値の一覧(名前の順の行)。what はチケットの status / project / owner / label(列は status / project / owner_agent / value)と、
+// スプリントの sprint-project(列は project)。ほかの値なら nil。
 func Distinct(q rowfmt.Q, what string) []rowfmt.Row {
 	var s string
 	switch what {

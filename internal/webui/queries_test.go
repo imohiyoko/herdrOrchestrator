@@ -49,7 +49,11 @@ func TestQueriesExplain(t *testing.T) {
 		parsed[filepath.Dir(f)] = append(parsed[filepath.Dir(f)], file)
 	}
 	// 定数は同じパッケージの全部のファイルから集める(query.go が同じパッケージの別ファイルの定数を使うことがある)
+	dirs := make([]string, 0, len(parsed))
 	for dir := range parsed {
+		dirs = append(dirs, dir)
+	}
+	for _, dir := range dirs {
 		if dir == "." {
 			continue
 		}
