@@ -63,7 +63,7 @@ func (v *sv) badgeCount() int {
 	return len(h.comments) + len(h.proxies) + len(h.blocked) + len(v.pendingRequests(notifyMax))
 }
 
-// reqPendingSQL は承認待ち(Q-<n>)のうち、まだ決まっていないもの(tb approval list と同じ。internal/tbcli の reqPending)。
+// reqPendingSQL は承認待ち(Q-<n>)のうち、まだ決まっていないもの(tb approval list と同じ。internal/app/approval の reqPending)。
 // 送信と agent の操作は元の行(outbox・agent_ops)の状態が正、コマンドは requests の状態が正。
 const reqPendingSQL = `((r.source='cmd' AND r.status='pending')
   OR (r.source='outbox' AND EXISTS (SELECT 1 FROM outbox o WHERE o.id=r.source_id AND o.status='pending'))

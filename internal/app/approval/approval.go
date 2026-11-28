@@ -41,7 +41,7 @@ type PatternReq struct {
 
 // Ops は承認の操作。
 func Ops(env *app.Env) []app.Op {
-	return []app.Op{decideOp(env, true), decideOp(env, false), patternOp(env, "allow"), patternOp(env, "ask"), priorityOp(env)}
+	return append([]app.Op{decideOp(env, true), decideOp(env, false), patternOp(env, "allow"), patternOp(env, "ask"), priorityOp(env)}, readOps(env)...)
 }
 
 func decideOp(env *app.Env, approve bool) app.Op {
