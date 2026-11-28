@@ -5,8 +5,8 @@ import (
 	"io"
 	"strings"
 
+	"github.com/imohiyoko/herdrorchestrator/internal/app"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/agent"
-	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
 )
 
 // agent の小さなコマンド(taskboard/lib/agents.sh の cmd_agent-ops / cmd_agent-flag、kinds.sh の cmd_agent-kinds、
@@ -45,34 +45,12 @@ func cmdAgentOps(args []string, w, stderr io.Writer) error {
 		return err
 	}
 	defer db.Close()
-	where, qa := "1=1", []any{}
-	if st != "" {
-		where, qa = "status=?", []any{st}
+	var res agent.OpsResult
+	if err := callAppW(db, app.Human(), io.Discard, "agent.ops", agent.OpsReq{Status: st, JSON: json}, &res); err != nil {
+		return err
 	}
-	if json {
-		rows, err := sqlObjs(db.DB, nil, `SELECT * FROM agent_ops WHERE (`+where+`) ORDER BY id DESC LIMIT 100`, qa...)
-		if err != nil {
-			return err
-		}
-		for i, o := range rows {
-			rows[i] = o.Set("id", "L-"+tickets.Text(o.Get("id")))
-		}
-		compactRows(w, rows)
-		return nil
-	}
-	return qrows(db.DB, `SELECT 'L-'||id, op, target, requested_by, status, created_at, COALESCE(result,'') FROM agent_ops WHERE (`+where+`) ORDER BY id DESC LIMIT 100`, qa,
-		func(_ []string, vals []any) error {
-			s := make([]string, len(vals))
-			for i, v := range vals {
-				if v == nil {
-					s[i] = "-"
-				} else {
-					s[i] = tickets.Text(v)
-				}
-			}
-			fmt.Fprintln(w, strings.Join(s, "\t"))
-			return nil
-		})
+	fmt.Fprint(w, res.Text)
+	return nil
 }
 
 func cmdAgentFlag(args []string, w, stderr io.Writer) error {
