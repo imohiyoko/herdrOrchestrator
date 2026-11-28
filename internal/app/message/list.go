@@ -54,7 +54,10 @@ func listOps(env *app.Env) []app.Op {
 	)
 	inbox := app.Query(env, "message.inbox", pass,
 		func(ctx context.Context, in InboxReq) (TextResult, error) {
-			who := recipient(ctx)
+			who, err := recipient(ctx)
+			if err != nil {
+				return TextResult{}, err
+			}
 			return textOf(env, func(db *store.DB) (string, error) { return inboxText(db, who, in) })
 		},
 		define.Doc("呼び手宛ての受信の一覧(tb inbox)"),
@@ -64,7 +67,10 @@ func listOps(env *app.Env) []app.Op {
 	)
 	get := app.Query(env, "message.inbox.get", pass,
 		func(ctx context.Context, in InboxGetReq) (TextResult, error) {
-			who := recipient(ctx)
+			who, err := recipient(ctx)
+			if err != nil {
+				return TextResult{}, err
+			}
 			return textOf(env, func(db *store.DB) (string, error) { return inboxGet(db, who, in) })
 		},
 		define.Doc("呼び手宛ての受信 1 件の全文(tb inbox-read の表示。読んだ印は付けない)"),
@@ -75,9 +81,13 @@ func listOps(env *app.Env) []app.Op {
 	return []app.Op{outbox, inbox, get}
 }
 
-func recipient(ctx context.Context) string {
+// recipient は呼び手の名前(受信者)。決められなければ Unauthenticated(message.read と同じ)。
+func recipient(ctx context.Context) (string, error) {
 	p, _ := define.PrincipalFrom(ctx)
-	return app.Who(p)
+	if who := app.Who(p); who != "" {
+		return who, nil
+	}
+	return "", &define.Error{Code: define.CodeUnauthenticated, Message: "受信者を特定できません", Reasons: []string{app.ReasonNoSender}}
 }
 
 func textOf(env *app.Env, f func(*store.DB) (string, error)) (TextResult, error) {
@@ -164,6 +174,9 @@ func inboxText(db *store.DB, who string, in InboxReq) (string, error) {
 func inboxGet(db *store.DB, who string, in InboxGetReq) (string, error) {
 	num := strings.TrimPrefix(in.ID, "I-")
 	iid, perr := strconv.ParseInt(num, 10, 64)
+	if num == "" || strings.Trim(num, "0123456789") != "" { // message.read と同じ(+1 などは受けない)
+		perr = strconv.ErrSyntax
+	}
 	var cols []string
 	var vals []any
 	if perr == nil {

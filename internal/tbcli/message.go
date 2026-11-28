@@ -222,8 +222,8 @@ func msgRead(db *store.DB, by port.Principal, op string, in any, w io.Writer) er
 	if err := callAppW(db, by, io.Discard, op, in, &r); err != nil {
 		return err
 	}
-	fmt.Fprint(w, r.Text)
-	return nil
+	_, err := fmt.Fprint(w, r.Text)
+	return err
 }
 
 // inboxList は cmd_inbox: 読み手は HERDR_PANE_ID + herdr agent list から決まる(自己申告にしない)。自分宛ての行だけを見る。
@@ -279,6 +279,6 @@ func inboxRead(db *store.DB, args []string, w, stderr io.Writer) error {
 	if err := callAppEnv(env, app.Agent(l.Name), "message.read", appmessage.ReadReq{ID: "I-" + num}, &rr); err != nil {
 		return err
 	}
-	fmt.Fprint(w, got.Text)
-	return nil
+	_, err = fmt.Fprint(w, got.Text)
+	return err
 }
