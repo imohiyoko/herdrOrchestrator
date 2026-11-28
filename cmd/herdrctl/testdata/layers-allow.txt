@@ -33,10 +33,8 @@ import internal/webui internal/sched
 sql internal/tbcli/agentlist.go 3
 sql internal/tbcli/agentmisc.go 2
 sql internal/tbcli/agentshed.go 10
-sql internal/tbcli/alert.go 3
 sql internal/tbcli/config.go 2
 sql internal/tbcli/deadlines.go 2
-sql internal/tbcli/digest.go 3
 sql internal/tbcli/gate.go 1
 sql internal/tbcli/herdrcmd.go 1
 sql internal/tbcli/limits.go 2

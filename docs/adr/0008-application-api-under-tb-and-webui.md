@@ -321,6 +321,7 @@ ADR 0004 の依存の検査に次を足す。今ある違反は許容リスト�
 - 承認待ちと記録の読むだけの操作 `approval.list` / `approval.history`(`internal/app/approval` の read.go。`GET /v1/requests`・`/v1/requests/history`)。`--mine` と実行の結果を見せる相手は呼び手の主体で決める。tb は引数を読んで出すだけ。
 - 通知の読むだけの操作 `notify.status` / `notify.dryrun` / `notify.events` / `notify.rules.test`(`internal/app/notify` の read.go)。行を tb の出力の形にする関数(sqlite3 の -separator と jq -c の形)は `internal/app/rowfmt` にまとめ、tb と API の両方が使う。
 - 送信と受信の読むだけの操作 `message.outbox` / `message.inbox` / `message.inbox.get`(`internal/app/message` の list.go。`GET /v1/outbox`・`/v1/inbox`・`/v1/inbox/{id}`)。受信の一覧と 1 件は呼び手宛ての行だけ。tb inbox-read は 1 件を読んでから `message.read` で印を付ける。
+- アラートとまとめの読むだけの操作 `alert.get` / `alert.list`(`internal/app/alert` の read.go。`GET /v1/alerts/{id}`・`/v1/alerts`)と `digest.list`(`internal/app/digest` の list.go。`GET /v1/digests`)。`alert.get` は行の JSON を返し、tb はそれを読んで前と同じ形で出す。
 
 ## 検討した代替案
 

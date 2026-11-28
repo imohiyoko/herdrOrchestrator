@@ -45,11 +45,16 @@ func needVal(args []string, i int) (string, error) {
 
 // alertRow は alert_row(session_row alerts id n)。無ければ nil。
 func alertRow(db *store.DB, id int64) jv.Obj {
-	rows, err := sqlObjs(db.DB, nil, `SELECT * FROM alerts WHERE id=?`, id)
-	if err != nil || len(rows) == 0 {
+	var r appalert.TextResult
+	if callAppW(db, app.Human(), io.Discard, "alert.get", appalert.GetReq{ID: id}, &r) != nil {
 		return nil
 	}
-	return rows[0]
+	vs, err := jv.DecodeAll([]byte(r.Text))
+	if err != nil || len(vs) != 1 {
+		return nil
+	}
+	o, _ := vs[0].(jv.Obj)
+	return o
 }
 
 // jqStr は jq の文字列埋め込み \(.x) の値(null は "null")。
@@ -353,30 +358,10 @@ func cmdAlerts(args []string, w, stderr io.Writer) error {
 		return err
 	}
 	defer db.Close()
-	where, qa := "1=1", []any{}
-	if st != "" {
-		where, qa = "status=?", []any{st}
+	var r appalert.TextResult
+	if err := callAppW(db, app.Human(), io.Discard, "alert.list", appalert.ListReq{Status: st, JSON: json}, &r); err != nil { // 主体で中身の変わらない読み取り
+		return err
 	}
-	if json {
-		rows, err := sqlObjs(db.DB, nil, `SELECT * FROM alerts WHERE (`+where+`) ORDER BY id DESC LIMIT 100`, qa...)
-		if err != nil {
-			return err
-		}
-		for _, o := range rows {
-			fmt.Fprintln(w, jv.Compact(withAid(o)))
-		}
-		return nil
-	}
-	return qrows(db.DB, `SELECT 'A-'||id, COALESCE(severity,'未解析'), status, count, COALESCE(analyst,'-'), last_seen, title FROM alerts WHERE (`+where+`) ORDER BY id DESC LIMIT 100`, qa, func(_ []string, vals []any) error {
-		parts := make([]string, len(vals))
-		for i, v := range vals {
-			if v == nil {
-				parts[i] = "-"
-			} else {
-				parts[i] = sqlText(v)
-			}
-		}
-		fmt.Fprintln(w, strings.Join(parts, "\t"))
-		return nil
-	})
+	_, err = fmt.Fprint(w, r.Text)
+	return err
 }
