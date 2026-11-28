@@ -424,10 +424,15 @@ type RoleLogReq struct {
 	JSON bool `api:"json,optional"`
 }
 
+// RoleLogResult は tb role-log の出力。
+type RoleLogResult struct {
+	Text string `api:"text" json:"text"`
+}
+
 func roleLogOp(env *app.Env) app.Op {
 	return app.Query(env, "agent.role.log", func(context.Context, *app.Env, string, any) app.Decision { return app.Decision{} },
-		func(_ context.Context, in RoleLogReq) (OpsResult, error) {
-			return withDB(env, func(db *store.DB) (OpsResult, error) {
+		func(_ context.Context, in RoleLogReq) (RoleLogResult, error) {
+			return withDB(env, func(db *store.DB) (RoleLogResult, error) {
 				var b strings.Builder
 				var err error
 				if in.JSON {
@@ -448,9 +453,9 @@ func roleLogOp(env *app.Env) app.Op {
 						})
 				}
 				if err != nil {
-					return OpsResult{}, define.Errorf(define.CodeInternal, "%s", err.Error())
+					return RoleLogResult{}, define.Errorf(define.CodeInternal, "%s", err.Error())
 				}
-				return OpsResult{Text: b.String()}, nil
+				return RoleLogResult{Text: b.String()}, nil
 			})
 		},
 		define.Doc("役割の変更の記録(tb role-log。新しい順に 100 件)"),

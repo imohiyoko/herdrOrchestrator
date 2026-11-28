@@ -371,7 +371,7 @@ func cmdRoleLog(args []string, w, stderr io.Writer) error {
 		return err
 	}
 	defer db.Close()
-	var r agent.OpsResult
+	var r agent.RoleLogResult
 	if err := callAppW(db, app.Human(), io.Discard, "agent.role.log", agent.RoleLogReq{JSON: len(args) > 0 && args[0] == "--json"}, &r); err != nil {
 		return err
 	}

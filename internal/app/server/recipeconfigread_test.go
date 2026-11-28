@@ -28,7 +28,7 @@ func TestRecipeConfigRoleReadOps(t *testing.T) {
 	if _, e := callOp[appconfig.HistoryResult](t, env, app.Human(), "config.history", appconfig.HistoryReq{Key: "nope"}); e == nil || e.Code != define.CodeInvalidArgument {
 		t.Errorf("config.history の不明なキー: %v", e)
 	}
-	if r, e := callOp[appagent.OpsResult](t, env, app.Human(), "agent.role.log", appagent.RoleLogReq{}); e != nil || r.Text != "" {
+	if r, e := callOp[appagent.RoleLogResult](t, env, app.Human(), "agent.role.log", appagent.RoleLogReq{}); e != nil || r.Text != "" {
 		t.Errorf("agent.role.log の空: %q %v", r.Text, e)
 	}
 }
