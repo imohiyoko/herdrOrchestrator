@@ -9,24 +9,9 @@ import (
 
 	"github.com/imohiyoko/herdrorchestrator/internal/app"
 	appdigest "github.com/imohiyoko/herdrorchestrator/internal/app/digest"
-	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 )
 
 // まとめ送信(tb digest は app/digest の digest.run)と、まとめの一覧(tb digests)。
-
-// strRows は sql -separator の行(NULL は空文字)。読み終えてから返す(1 本の接続のため)。
-func strRows(db *store.DB, q string, args ...any) [][]string {
-	var out [][]string
-	_ = qrows(db.DB, q, args, func(_ []string, vals []any) error {
-		r := make([]string, len(vals))
-		for i, v := range vals {
-			r[i] = sqlText(v)
-		}
-		out = append(out, r)
-		return nil
-	})
-	return out
-}
 
 func firstJSONObj(out []byte) map[string]any {
 	var v any

@@ -6,10 +6,9 @@ import (
 	"os"
 	"strings"
 
+	"github.com/imohiyoko/herdrorchestrator/internal/app"
 	apprecipe "github.com/imohiyoko/herdrorchestrator/internal/app/recipe"
-	"github.com/imohiyoko/herdrorchestrator/internal/kernel/jv"
 	"github.com/imohiyoko/herdrorchestrator/internal/recipe"
-	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
 )
 
 // レシピの登録・一覧・中身・履歴(taskboard/lib/recipes.sh の cmd_recipe-set / rm / list / show / history)。
@@ -121,33 +120,7 @@ func cmdRecipeList(args []string, w, stderr io.Writer) error {
 		}
 		json = true
 	}
-	db, _, err := openCmd(stderr)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	rows, err := sqlObjs(db.DB, nil, `SELECT name, body, risk, steps, updated_by, updated_at FROM recipes ORDER BY name`)
-	if err != nil {
-		return err
-	}
-	for _, o := range rows {
-		body, _ := o.Get("body").(string)
-		risk, desc := "invalid", "(今のコードでは検査を通らない。実行しない)"
-		if r, why := recipe.Parse(body); why == "" {
-			risk, desc = r.Risk, r.Desc
-		}
-		if json {
-			fmt.Fprintln(w, jv.Compact(jv.Obj{}.Set("name", o.Get("name")).Set("risk", risk).Set("risk_at_set", o.Get("risk")).
-				Set("steps", o.Get("steps")).Set("updated_by", o.Get("updated_by")).Set("updated_at", o.Get("updated_at")).Set("desc", desc)))
-			continue
-		}
-		if risk != tickets.Text(o.Get("risk")) {
-			risk += "!"
-		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", tickets.Text(o.Get("name")), risk, tickets.Text(o.Get("steps")),
-			tickets.Text(o.Get("updated_by")), tickets.Text(o.Get("updated_at")), dashIfEmpty(desc))
-	}
-	return nil
+	return recipeRead(stderr, "recipe.list", apprecipe.ListReq{JSON: json}, w)
 }
 
 func cmdRecipeShow(args []string, w, stderr io.Writer) error {
@@ -158,30 +131,7 @@ func cmdRecipeShow(args []string, w, stderr io.Writer) error {
 	if err := validRecipeName(name); err != nil {
 		return err
 	}
-	db, _, err := openCmd(stderr)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	var body, by, at string
-	if db.QueryRow(`SELECT body, updated_by, updated_at FROM recipes WHERE name=?`, name).Scan(&body, &by, &at) != nil {
-		return die("レシピが登録されていません: %s", name)
-	}
-	fmt.Fprintf(w, "name: %s\nop: recipe:%s:<対象>(既定の対象は依頼者自身)\nupdated: %s %s\n", name, name, by, at)
-	if r, why := recipe.Parse(body); why == "" {
-		fmt.Fprintf(w, "risk: %s\n", r.Risk)
-		for i, s := range r.Steps {
-			p, _ := recipe.Lookup(recipe.StepPart(s))
-			fmt.Fprintf(w, "step %d: %s(%s / %s / %s / 操作名 %s)\n", i+1, s, p.Side, p.Risk, p.Runner, dashIfEmpty(p.Ops))
-		}
-	} else {
-		fmt.Fprintln(w, "risk: invalid(今のコードでは検査を通らないため、実行しない)")
-		for _, l := range strings.Split(why, "\n") {
-			fmt.Fprintf(w, "error: %s\n", l)
-		}
-	}
-	fmt.Fprintf(w, "---\n%s\n", body)
-	return nil
+	return recipeRead(stderr, "recipe.show", apprecipe.NameReq{Name: name}, w)
 }
 
 func cmdRecipeHistory(args []string, w, stderr io.Writer) error {
@@ -202,22 +152,20 @@ func cmdRecipeHistory(args []string, w, stderr io.Writer) error {
 			name = a
 		}
 	}
+	return recipeRead(stderr, "recipe.history", apprecipe.HistoryReq{Name: name, JSON: json}, w)
+}
+
+// recipeRead は読むだけの操作 op を呼び、tb の出力(Text)をそのまま出す。
+func recipeRead(stderr io.Writer, op string, in any, w io.Writer) error {
 	db, _, err := openCmd(stderr)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	where, qa := "1=1", []any{}
-	if name != "" {
-		where, qa = "name=?", []any{name}
+	var r apprecipe.TextResult
+	if err := callAppW(db, app.Human(), io.Discard, op, in, &r); err != nil {
+		return err
 	}
-	if json {
-		rows, err := sqlObjs(db.DB, nil, `SELECT id, name, how, old_body, new_body, risk, changed_by, changed_at FROM recipe_changes WHERE `+where+` ORDER BY id`, qa...)
-		if err != nil {
-			return err
-		}
-		compactRows(w, rows)
-		return nil
-	}
-	return sqlTSV(db.DB, w, `SELECT changed_at, name, how, COALESCE(risk,'-'), changed_by FROM recipe_changes WHERE `+where+` ORDER BY id`, qa...)
+	fmt.Fprint(w, r.Text)
+	return nil
 }

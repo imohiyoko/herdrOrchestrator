@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -30,11 +31,25 @@ func Value(v any) any {
 
 // Objs は sqlite3 -json の行(列の順のまま)。
 func Objs(db *sql.DB, q string, args ...any) ([]jv.Obj, error) {
+	return ObjsJSON(db, nil, q, args...)
+}
+
+// ObjsJSON は Objs で、fromjson の列は中身の JSON を読んだ値にする(jq の fromjson)。
+func ObjsJSON(db *sql.DB, fromjson []string, q string, args ...any) ([]jv.Obj, error) {
 	var out []jv.Obj
 	err := store.Each(db, q, args, func(cols []string, vals []any) error {
 		o := jv.Obj{}
 		for i, c := range cols {
-			o = append(o, jv.KV{K: c, V: Value(vals[i])})
+			v := Value(vals[i])
+			if slices.Contains(fromjson, c) {
+				s, _ := v.(string)
+				vs, err := jv.DecodeAll([]byte(s))
+				if err != nil || len(vs) != 1 {
+					return fmt.Errorf("jq: error: %s を JSON として読めません", c)
+				}
+				v = vs[0]
+			}
+			o = append(o, jv.KV{K: c, V: v})
 		}
 		out = append(out, o)
 		return nil

@@ -84,7 +84,7 @@ func Ops(env *app.Env) []app.Op {
 		define.Expose(define.Internal, define.REST),
 		define.HTTP("DELETE /v1/config/{key}"),
 	)
-	return []app.Op{set, unset, dbImportOp(env)}
+	return []app.Op{set, unset, dbImportOp(env), historyOp(env)}
 }
 
 // howGate は set / edit の門: 記録の理由 How が edit なら cmd:<サービス>:edit、ほかは cmd:<サービス>:set の行で判定する

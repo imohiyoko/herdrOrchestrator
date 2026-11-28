@@ -371,15 +371,12 @@ func cmdRoleLog(args []string, w, stderr io.Writer) error {
 		return err
 	}
 	defer db.Close()
-	if len(args) > 0 && args[0] == "--json" {
-		os, err := sqlObjs(db.DB, nil, `SELECT * FROM role_changes ORDER BY id DESC LIMIT 100`)
-		if err != nil {
-			return err
-		}
-		compactRows(w, os)
-		return nil
+	var r agent.RoleLogResult
+	if err := callAppW(db, app.Human(), io.Discard, "agent.role.log", agent.RoleLogReq{JSON: len(args) > 0 && args[0] == "--json"}, &r); err != nil {
+		return err
 	}
-	return sqlTSV(db.DB, w, `SELECT created_at, agent, COALESCE(old_role,'-')||' -> '||new_role, changed_by, COALESCE(reason,'') FROM role_changes ORDER BY id DESC LIMIT 100`)
+	fmt.Fprint(w, r.Text)
+	return nil
 }
 
 // cmdRoles は tb roles [--json]: agent ごとの役割と、渡した版が最新か。

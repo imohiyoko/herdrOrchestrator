@@ -111,7 +111,7 @@ func ledgerOps(env *app.Env) []app.Op {
 		define.Expose(define.Internal, define.REST),
 		define.HTTP("GET /v1/agents/graph"),
 	)
-	return []app.Op{ledger, graph, shed, ops}
+	return []app.Op{ledger, graph, shed, ops, roleLogOp(env)}
 }
 
 func ledgerRows(ctx context.Context, db *store.DB, in LedgerReq) (LedgerResult, error) {
@@ -417,4 +417,50 @@ func opsText(db *store.DB, in OpsReq) (string, error) {
 			return nil
 		})
 	return b.String(), err
+}
+
+// RoleLogReq は agent.role.log の入力。
+type RoleLogReq struct {
+	JSON bool `api:"json,optional"`
+}
+
+// RoleLogResult は tb role-log の出力。
+type RoleLogResult struct {
+	Text string `api:"text" json:"text"`
+}
+
+func roleLogOp(env *app.Env) app.Op {
+	return app.Query(env, "agent.role.log", func(context.Context, *app.Env, string, any) app.Decision { return app.Decision{} },
+		func(_ context.Context, in RoleLogReq) (RoleLogResult, error) {
+			return withDB(env, func(db *store.DB) (RoleLogResult, error) {
+				var b strings.Builder
+				var err error
+				if in.JSON {
+					var rows []jv.Obj
+					rows, err = rowfmt.Objs(db.DB, `SELECT * FROM role_changes ORDER BY id DESC LIMIT 100`)
+					for _, o := range rows {
+						b.WriteString(jv.Compact(o) + "\n")
+					}
+				} else {
+					err = store.Each(db.DB, `SELECT created_at, agent, COALESCE(old_role,'-')||' -> '||new_role, changed_by, COALESCE(reason,'') FROM role_changes ORDER BY id DESC LIMIT 100`, nil,
+						func(_ []string, vals []any) error {
+							s := make([]string, len(vals))
+							for i, v := range vals {
+								s[i] = tickets.Text(v)
+							}
+							b.WriteString(strings.Join(s, "\t") + "\n")
+							return nil
+						})
+				}
+				if err != nil {
+					return RoleLogResult{}, define.Errorf(define.CodeInternal, "%s", err.Error())
+				}
+				return RoleLogResult{Text: b.String()}, nil
+			})
+		},
+		define.Doc("役割の変更の記録(tb role-log。新しい順に 100 件)"),
+		define.Authz("cmd:agent:role-log"),
+		define.Expose(define.Internal, define.REST),
+		define.HTTP("GET /v1/role-changes"),
+	)
 }
