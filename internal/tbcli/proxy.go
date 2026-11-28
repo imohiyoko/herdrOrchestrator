@@ -3,7 +3,6 @@ package tbcli
 import (
 	"errors"
 	"fmt"
-	"github.com/imohiyoko/herdrorchestrator/internal/app/rowfmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imohiyoko/herdrorchestrator/internal/app/rowfmt"
 	"github.com/imohiyoko/herdrorchestrator/internal/proxy"
 	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
 )
