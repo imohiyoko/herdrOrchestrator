@@ -50,8 +50,8 @@ func deliverComment(db *store.DB, w, stderr io.Writer, ref string) error {
 	return nil
 }
 
-// commentRows は tb comments --json の行(ticket.comments を呼ぶ)。
-func commentRows(db *store.DB, w io.Writer, in ticket.CommentsReq) error {
+// printComment は書いたコメント 1 件を tb comments --json の形で出す(ticket.comments を呼ぶ)。
+func printComment(db *store.DB, w io.Writer, in ticket.CommentsReq) error {
 	in.JSON = true
 	return readText(db, "tb comments", "ticket.comments", in, w)
 }
@@ -123,7 +123,7 @@ func cmdComment(args []string, w, stderr io.Writer) error {
 		return pendingExit(w, res.Pending)
 	}
 	if js {
-		if err := commentRows(db, w, ticket.CommentsReq{ID: res.ID}); err != nil {
+		if err := printComment(db, w, ticket.CommentsReq{ID: fmt.Sprint(res.ID)}); err != nil {
 			return err
 		}
 	} else {

@@ -5,6 +5,7 @@ package ticket
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -20,7 +21,7 @@ import (
 
 // CommentsReq は ticket.comments の入力。空の項目は絞らない。Open は人の対応待ち(未対応の question / blocked)。
 type CommentsReq struct {
-	ID          int64  `api:"id,optional"` // C-<n> の n(1 件だけ)
+	ID          string `api:"id,optional"` // C-<n> か n(1 件だけ)
 	Task        string `api:"task,optional"`
 	Kind        string `api:"kind,optional"`
 	Undelivered bool   `api:"undelivered,optional"`
@@ -43,6 +44,8 @@ type StatusListResult struct {
 	Text   string `api:"text" json:"text"`
 	Source string `api:"source" json:"source"`
 }
+
+var reDigitsOnly = regexp.MustCompile(`^[0-9]{1,18}$`)
 
 // CommentKinds は報告コメントの種類。
 var CommentKinds = []string{"done", "progress", "question", "blocked"}
@@ -70,9 +73,13 @@ func commentRows(b *strings.Builder, db *store.DB, where string, args ...any) er
 
 func comments(db *store.DB, _ tickets.StatusSet, in CommentsReq) (string, error) {
 	where, qa := "1=1", []any{}
-	if in.ID != 0 {
+	if in.ID != "" {
+		n := strings.TrimPrefix(in.ID, "C-")
+		if !reDigitsOnly.MatchString(n) {
+			return "", badArg("コメント ID は C-<数字>: %s", in.ID)
+		}
 		where += " AND id=?"
-		qa = append(qa, in.ID)
+		qa = append(qa, n)
 	}
 	if in.Task != "" {
 		if !ReID.MatchString(in.Task) {

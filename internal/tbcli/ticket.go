@@ -8,6 +8,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/imohiyoko/herdrorchestrator/internal/app"
 	"github.com/imohiyoko/herdrorchestrator/internal/app/ticket"
 	"github.com/imohiyoko/herdrorchestrator/internal/kernel/store"
 	"github.com/imohiyoko/herdrorchestrator/internal/tickets"
@@ -157,7 +158,7 @@ func ticketStatusList(args []string, w, stderr io.Writer) error {
 		in.JSON = true
 	}
 	var r ticket.StatusListResult
-	if err := callAppNoHerdr(db, "tb ticket status list", io.Discard, "ticket.status.list", in, &r); err != nil {
+	if err := callAppW(db, app.Human(), io.Discard, "ticket.status.list", in, &r); err != nil { // readText と同じく人として読む
 		return err
 	}
 	fmt.Fprint(w, r.Text)
