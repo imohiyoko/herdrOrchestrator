@@ -171,8 +171,15 @@ func list(db *store.DB, who string, in ListReq) (string, error) {
 		var ids []string
 		j := japproval.NewJudge(db.DB, db.Session)
 		for _, v := range rows {
-			id, _ := strconv.ParseInt(fmt.Sprint(v[0]), 10, 64)
-			if r, ok, _ := requests.Load(db.DB, id); ok && CanDecide(db, j, r, who) {
+			id, err := strconv.ParseInt(fmt.Sprint(v[0]), 10, 64)
+			if err != nil {
+				return "", err
+			}
+			r, ok, err := requests.Load(db.DB, id)
+			if err != nil {
+				return "", err
+			}
+			if ok && CanDecide(db, j, r, who) {
 				ids = append(ids, strconv.FormatInt(id, 10))
 			}
 		}

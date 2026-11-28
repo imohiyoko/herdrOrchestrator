@@ -159,11 +159,15 @@ func insertCmd(tier, op, target, rule string, withStdin bool) (string, error) {
 	return "Q-" + strconv.FormatInt(id, 10), nil
 }
 
-// callerRead は呼び手の名前(callerName)の主体で読むだけの操作を呼び、Text を出す。
-func callerRead(db *store.DB, op string, in any, w io.Writer) error {
-	who, err := callerName()
-	if err != nil {
-		return die("herdr agent list に失敗したため、実行者を特定できません")
+// callerRead は読むだけの操作を呼び、Text を出す。asCaller なら呼び手の名前(callerName)の主体で、でなければ人として(herdr に聞かない)。
+func callerRead(db *store.DB, op string, in any, w io.Writer, asCaller bool) error {
+	who := "human"
+	if asCaller {
+		n, err := callerName()
+		if err != nil {
+			return die("herdr agent list に失敗したため、実行者を特定できません")
+		}
+		who = n
 	}
 	var r appapproval.TextResult
 	if err := callAppW(db, app.PrincipalOf(who), io.Discard, op, in, &r); err != nil {
@@ -186,7 +190,7 @@ func approvalList(db *store.DB, args []string, w io.Writer) error {
 			return usage("approval list: 不明な引数 %s", a)
 		}
 	}
-	return callerRead(db, "approval.list", in, w)
+	return callerRead(db, "approval.list", in, w, in.Mine) // --mine のときだけ呼び手で決まる
 }
 
 // 送信(O-<n>)と agent の操作(L-<n>)の承認・却下は、どの入口(Q-<n> / O-<n> / L-<n> / tb agent-approve)から決めても、
@@ -294,8 +298,8 @@ func approvalHistory(db *store.DB, args []string, w io.Writer) error {
 		switch a := args[i]; a {
 		case "--json":
 			in.JSON = true
-		case "--mine":
-			in.Mine = true
+		case "--mine": // --by と --mine は後に書いた方
+			in.Mine, in.By = true, ""
 		case "--by", "--limit":
 			if i+1 >= len(args) {
 				return usage("%s に値が必要です", a)
@@ -303,7 +307,7 @@ func approvalHistory(db *store.DB, args []string, w io.Writer) error {
 			v := args[i+1]
 			i++
 			if a == "--by" {
-				in.By = v
+				in.By, in.Mine = v, false
 			} else {
 				n, err := strconv.Atoi(v)
 				if err != nil || n < 1 || n > 1000 {
@@ -315,7 +319,7 @@ func approvalHistory(db *store.DB, args []string, w io.Writer) error {
 			return usage("approval history: 不明な引数 %s", a)
 		}
 	}
-	return callerRead(db, "approval.history", in, w)
+	return callerRead(db, "approval.history", in, w, true) // 実行の結果を見せるかを呼び手で決める
 }
 
 // approvedRun は tb approval approve が立てた子(承認したコマンドの機械的な実行)の確かめ。
